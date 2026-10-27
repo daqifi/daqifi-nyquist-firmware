@@ -17,6 +17,7 @@ run_1000_tests
 run_1055_tests
 run_985_tests
 run_1057_tests
+run_1039_tests
 run_1039_log_ceiling_tests
 run_1112_tests
 run_1121_tests
@@ -26,6 +27,7 @@ run_1029_tests
 run_1098_tests
 run_1125_tests
 run_1141_tests
+run_1152_tests
 run_1034_tests
 run_1154_tests
 CircularBuffer_uut.c
@@ -36,6 +38,7 @@ gen_1000_log_budget.h
 gen_1029_log_budget.h
 gen_1029_log_budget.h.tmp
 gen_1125_log_once_claim.h
+gen_1039_log_budget.h
 *.o
 
 # ⛔ #756 r7: PATTERN, not another hand-maintained line. Every binary above was

@@ -492,6 +492,56 @@ SDLOG1029_GEN := gen_1029_log_budget.h
 SD_MGR_SRC    := ../../firmware/src/services/sd_card_services/sd_card_manager.c
 SD_MGR_HDR    := ../../firmware/src/services/sd_card_services/sd_card_manager.h
 PYTHON        ?= python3
+# #1039: four more LOG_E messages cut by the SAME Util/Logger.c message frame
+# $(SDLOG_BIN) above measures #1000's site against -- in app_freertos.c,
+# SCPIADC.c and wifi_manager.c. Same host-testability situation (none of those
+# three is includable here, and neither is Logger.c, which pulls in FreeRTOS),
+# so this test also mirrors LogMessageFormatImpl and runs the REAL texts
+# through it. Independent of $(SDLOG_BIN)/$(GEN_1000): different sites,
+# separate extraction, its own mirror -- a mistake in one does not become the
+# other's baseline.
+#
+# The extraction is a Python generator rather than the sed/grep pipeline
+# $(SDLOG_BIN) uses, because three of these four format strings are
+# concatenated across physical lines and a shell one-liner cannot reassemble
+# one without risking a FRAGMENT -- and a fragment understates a message's
+# length, which passes every assertion in the test while checking nothing.
+# gen_1039_log_budget.py anchors each site on the CODE that gates it (never on
+# the message text: a re-word must re-MEASURE, not fail the build), requires
+# the anchor to be unique, refuses a literal run that is not followed by ','
+# or ')', and pins each site's conversion signature so a changed substitution
+# count re-derives the worst case instead of being measured with stale
+# arguments. It exits non-zero with a named diagnostic on any of that.
+#
+# WHAT IT SHARES WITH tools/lint/log_budget.py, AND WHAT IT MUST NOT.
+#
+# ⛔ An earlier revision of this comment said it "deliberately does NOT reuse
+# tools/lint/log_budget.py's parser". That stopped being true, on purpose, and
+# the comment outlived the decision -- so read the split precisely:
+#
+#   * the MEASUREMENT is not shared, and must never be. That tool is the
+#     static gate, and it MODELS truncation; this test's value is running the
+#     real strings through real vsnprintf. The model must not sit on both
+#     sides of the check.
+#   * the CEILING READER is shared, and must be. `LOG_MESSAGE_SIZE - 2` and
+#     the min() clamp are two integers transcribed out of Logger.c, with one
+#     right answer, so two readers can only agree or be wrong -- and they
+#     silently disagreed twice (codex audit on #1110 r4 and r5).
+#
+# $(LOG_BUDGET_GATE) is therefore a REAL BUILD INPUT of $(LOG1039_GEN), not a
+# neighbouring tool. It is listed as a prerequisite below and in
+# host-tests.yml's path filters; `gen_1039_log_budget.py --self-test` asserts
+# both of those registrations still exist, so the edge cannot be dropped
+# silently the way it was when the seam was first added (r5 finding 4).
+LOG1039_BIN := run_1039_tests
+LOG1039_GEN := gen_1039_log_budget.h
+FW_APP_SRC  := ../../firmware/src/app_freertos.c
+FW_ADC_SCPI := ../../firmware/src/services/SCPI/SCPIADC.c
+FW_WIFI_SRC := ../../firmware/src/services/wifi_services/wifi_manager.c
+# Imported by gen_1039_log_budget.py at run time (see _gate()). Same shape as
+# $(CDEF) below: a tools/lint module a host-test target genuinely reads.
+LOG_BUDGET_GATE := ../../tools/lint/log_budget.py
+PYTHON      ?= python3
 
 # #1039 (PR #1116, split from the parked #1110): the four LOG_E messages
 # #1039 shortened, measured against the SAME ceiling $(SDLOG_BIN) measures --
@@ -744,14 +794,84 @@ START_BIN := run_998_tests
 START_CLAIMED_SRC := ../../firmware/src/services/SCPI/SCPIInterface.c
 START_CLAIMED_BEGIN := if (!sd_card_manager_TryClaim()) {
 START_CLAIMED_END := while (!sd_card_manager_IsWriteReady() && readyWait < 500) {
-# RE-DERIVED at #1055 r4, not bumped blind. The slice changed because two of
-# its `return SCPI_RES_ERR;` lines became `return SCPI_StartFailedAfterStop();`
-# (:5916 and :5996) so every post-stop exit emits the owed session summary.
-# VERIFIED the three modelled orderings still describe the slice before
-# touching this: claim @5909 is single and precedes the arm @5969; the
-# refusal branch clears @5972 before releasing @5973; and the whole refusal
-# branch precedes the poll head @6028. Both edits are pure return-statement
-# swaps that move nothing.
+# ⛔ MERGE (#1055 x main): RECOMPUTED FROM THE MERGED SLICE, and the answer
+# is THIS BRANCH'S value -- which I did not assume, and first guessed wrong.
+# MEASURED, with main's own recipe, on the merged working tree:
+#
+#   CRLF slice (what CI hashes)  6450eeb12fbf76b3ec202676df7dafc25c9bac768cdcb0f5446632a0854f7d0f
+#   LF   slice (same bytes)      3867c7f228c29b849c068b98f85f62b70afa23929876367bda32e2b7615626f8
+#
+# main's pin 404e01fd... is STALE for the merge, not wrong for main: main
+# changed this pin and the comment below it, but nothing INSIDE the slice,
+# while this branch turned two `return SCPI_RES_ERR;` into
+# `return SCPI_StartFailedAfterStop();` so every post-stop exit emits the
+# owed session summary. The merged slice is therefore this branch's content,
+# and its hash is this branch's hash. I had written 'it matches NEITHER side'
+# here before computing it; that was a guess, and recomputing is what caught
+# it. Never carry either side's pin through a merge on the strength of which
+# side looks newer -- re-derive, because the pin describes CONTENT.
+#
+# The extraction was checked for well-formedness before the hash was believed:
+# exactly ONE occurrence of each anchor, opening at :5968 below... above the
+# closing at :6087, 120 lines of slice. An anchor that had moved or vanished
+# would make the sed range run to EOF and report a misleading 'the code
+# changed' -- the hash would be real and meaningless.
+#
+# AND THE THREE MODELLED ORDERINGS WERE RE-VERIFIED ON THE MERGED SOURCE,
+# because both sides' notes stated them at line numbers the merge invalidated
+# (ours said 5909/5969/5972/5973/6028, main's 5823/5935/5836/5880; the merged
+# file has the slice at 5968-6087). Measured here:
+#   - exactly ONE code-level sd_card_manager_TryClaim(), at :5968. A raw grep
+#     reports TWO; the second is prose at :5633 inside a block comment, and
+#     the comment-stripped count is the authoritative one. The Makefile's own
+#     anchor-count check pins this separately and passed.
+#   - ClearStartupDirFull @:5988 precedes ReleaseClaim @:6032.
+#   - the claim @:5968 precedes the poll head @:6087.
+# Line numbers are recorded as OF THIS MERGE and will drift again; the
+# properties are what matter, and each is re-derivable with the greps above.
+# ⚠ THIS VALUE IS THE **CRLF** SLICE, AND THAT IS NOT INCIDENTAL -- DO NOT
+# "CORRECT" IT TO THE LF ONE. I did exactly that in this branch and broke CI;
+# this comment is here so the next reader does not repeat it.
+#
+# .gitattributes marks this path `text eol=crlf`, so a compliant checkout --
+# including CI's -- writes CRLF, and the recipe below hashes the WORKING TREE.
+# Measured, both representations of the same commit:
+#
+#   CRLF working tree  404e01fdd3b7...  <- this pin, and what CI computes
+#   LF   (same bytes)  80d9cebbee1b...
+#
+# ⛔ THE TRAP: `git ls-files --eol` reports `i/lf w/lf attr/text eol=crlf` in
+# some worktrees here -- the attribute says crlf and the file on disk is LF
+# anyway. In such a tree the guard fails locally while CI passes, and every
+# obvious instinct then makes it worse:
+#
+#   - Hashing the committed blob (`git show <rev>:<path>`) CANNOT reproduce
+#     this pin at ANY revision, because git stores the blob LF-normalised. So
+#     a history sweep over blobs returns "the pin never matched once", which is
+#     consistent, confident, and measuring the wrong artifact. That is the
+#     error I made, and it reads as proof precisely because it is uniform.
+#   - Stripping CR before hashing is the same mistake spelled differently.
+#   - A local `make run` proves nothing in either direction: green means the
+#     tree's endings happen to match the pin's origin, red means they do not.
+#
+# To re-derive this pin, reproduce CI's representation explicitly rather than
+# trusting the checkout:
+#
+#   git show HEAD:firmware/src/services/SCPI/SCPIInterface.c | sed 's/$/\r/' \
+#     | sed -n '/^[[:space:]]*<BEGIN anchor>/,/^[[:space:]]*<END anchor>/p' \
+#     | sha256sum
+#
+# ⚠ The sibling pin SD_ARM_HELPER_SHA is NOT exposed to this, because it goes
+# through hash_function.py instead of `sed | sha256sum`. That asymmetry is the
+# real defect here: a line-ending-sensitive guard in a repo that rewrites line
+# endings on checkout. Routing this pin through the same helper would remove
+# the hazard rather than document it, and is the right follow-up -- deliberately
+# NOT done inside a merge-refresh commit.
+#
+# Independently of the hash, the model's three properties do still hold in the
+# slice (SCPIInterface.c:5816-5935): refusal at 5823 before the poll at 5935,
+# ClearStartupDirFull at 5836 before ReleaseClaim at 5880, and exactly one
+# TryClaim in the file, which the anchor-count check above pins separately.
 START_CLAIMED_SHA := 6450eeb12fbf76b3ec202676df7dafc25c9bac768cdcb0f5446632a0854f7d0f
 
 $(BIN): test_circularbuffer.c test_framework.h stubs/Logger.h stubs/osal/osal.h $(FW_UTIL)/CircularBuffer.c $(FW_UTIL)/CircularBuffer.h $(RECIPES)
@@ -1866,6 +1986,20 @@ $(STARTARM_BIN): test_1121_start_streaming_arm_cascade.c test_framework.h \
 # `grep -c` could not distinguish. index() is literal, so `()` and `;` in the
 # patterns need no regex escaping.
 #   $(1)=source file   $(2)=function name   $(3)=literal pattern
+# #908 (r9): like CNT_IN_FN but anchored on the DEFINITION, not the first
+# declaration. CNT_IN_FN matches "^(static )?scpi_result_t <fn>[(]" and then
+# exits at the next such line -- so for a function with a FORWARD DECLARATION
+# it starts at the prototype and exits immediately, counting 0. Both
+# ADCChanCalm/CalbSetClaimed are forward-declared, so the generic helper
+# reports 0 for a body that plainly contains the pattern.
+# ⚠ A guard that expects ABSENCE would PASS vacuously on that 0, so this is
+# worth knowing beyond this row.
+CNT_IN_FN_DEF = awk -v fn="$(2)" -v pat='$(3)' \
+	'$$0 ~ "^(static )?scpi_result_t " fn "[(]" && /{[[:space:]]*$$/ { f=1; next } \
+	 f && /^(static )?scpi_result_t .*{[[:space:]]*$$/                { exit } \
+	 f && index($$0, pat)                                             { n++ } \
+	 END { print n+0 }' $(1)
+
 CNT_IN_FN = awk -v fn="$(2)" -v pat='$(3)' \
 	'$$0 ~ "^(static )?scpi_result_t " fn "[(]" { f=1; next } \
 	 f && /^(static )?scpi_result_t /           { exit } \
@@ -2570,6 +2704,21 @@ $(SDLOG_BIN): test_1000_sd_log_arm_budget.c test_framework.h $(SCPI_IFACE_SRC) $
 # Plus fw#1055's $(SUMBUDGET_BIN) (the session-end loss summary's 125-byte
 # budget), unioned in on the same principle as every collision above: each
 # side's target rule left INTACT, only `run` and `clean` merged.
+$(LOG1039_GEN): gen_1039_log_budget.py $(LOG_BUDGET_GATE) $(FW_APP_SRC) \
+                $(FW_ADC_SCPI) $(FW_WIFI_SRC) $(FW_LOG_H) $(FW_LOG_C) \
+                $(RECIPES)
+	# The generator's own invariants run FIRST, so a defect in the
+	# extractor fails the build rather than producing a fixture that
+	# measures a different string than the firmware ships (codex audit on
+	# #1110: UTF-8 shrank the literal; a prefix match mis-read the ceiling;
+	# backslash-newline was spliced after escapes instead of before).
+	$(PYTHON) gen_1039_log_budget.py --self-test
+	$(PYTHON) gen_1039_log_budget.py --out $(LOG1039_GEN)
+
+$(LOG1039_BIN): test_1039_log_message_budget.c test_framework.h \
+                $(LOG1039_GEN) $(RECIPES)
+	$(CC) $(CFLAGS) -o $(LOG1039_BIN) test_1039_log_message_budget.c
+
 # #1039: see the LOGCEIL_BIN comment block above for what this proves and
 # why it is deliberately independent of the parked #1110 tooling.
 $(LOGCEIL_BIN): test_1039_log_message_ceiling.c test_framework.h \
@@ -3048,7 +3197,383 @@ $(HEXWIN_BIN): test_1141_hex_record_upper_panel_error.c test_framework.h \
 	$(CC) $(CFLAGS) -I$(BTL_SYSCFG_DIR) -I$(BTL_SYSCFG_DIR)/framework/bootloader/src \
 	      -o $(HEXWIN_BIN) test_1141_hex_record_upper_panel_error.c
 
-# Every suite, and every one of the FIFTEEN binaries. Additive collisions in
+# Every suite, and every one of the binaries named in `run` below. Additive
+# collisions in this block as a LINEAGE rather than an ordinal -- main replaced the
+# ordinal deliberately, because each branch numbered its own collisions, the ordinals
+# disagreed (#971 said EIGHTH, main said NINTH), and three stale copies of this
+# banner with three different counts had accumulated:
+#   fw#961 vs fw#983; fw#913 vs fw#1004/fw#1000/fw#980/fw#985; fw#999 vs
+#   fw#985/fw#1057; fw#971's ARM_BIN vs each of those as it landed; fw#971 vs
+#   fw#947 (SYSINFO_BIN); fw#1039 vs fw#1108 (the first where one side APPENDS while
+#   the other RETIRES from the same line); and now fw#1039 vs fw#958 (fw#1027,
+#   merged 4ecb59e64), which brought $(ARM_BIN) and $(NAME_BIN).
+# Resolved the same way every time: keep each side's target rule INTACT and union
+# only `run` and `clean`. Dropping a rule loses a suite silently; duplicating one
+# silently shadows the other.
+# PR #1152 (the #1148 follow-up): CONF:ADC:USECal must not hand the STORED
+# settings type to daqifi_settings_SaveToNvm.
+#
+# DaqifiSettings is { checksum[16], type, settings } and both integrity
+# checks cover `.settings` only, so `type` is whatever bytes are physically
+# at the flash address. #1148 reordered ADCUseCalSetClaimed() to install the
+# new calibration coefficients BEFORE persisting the selector; a corrupted
+# stored type then makes the persist fail after the install, which is the
+# silent-wrong-data shape test_1152_usecal_type_trust.c reproduces.
+#
+# Same technique and same reason as $(SCAN1112_BIN) and $(SUSPENDREASON_BIN):
+# neither SCPIADC.c nor daqifi_settings.c is host-includable (Harmony's
+# configuration.h/definitions.h, the WINC driver headers, the board graph),
+# so the load/install/save shape is re-implemented against an in-memory NVM
+# and the pre-/post-fix shapes compared on identical fixtures.
+#
+# The CHECKSUM is not re-implemented. $(FW_UTIL)/CRC32.c includes only its
+# own header (stdint.h + stddef.h), so this target compiles and links the
+# REAL one -- which is what makes "the record validates and the type is still
+# wrong" a demonstration rather than an assumption. It needs no stub on the
+# include path at all, so this is -I$(FW_UTIL) and not $(INCLUDES).
+#
+# Three guard blocks, because the model rests on three claims it cannot check
+# for itself:
+#
+#   A. THE FIX IS STILL THERE, AND STILL IN ORDER. One normalization of
+#      tmpTopLevelSettings.type, sitting between the LoadFromNvm that produced
+#      the struct and the SaveToNvm that consumes it. The ordering is checked
+#      by line number rather than by presence alone: a normalization that
+#      drifted BELOW the install would still satisfy a bare grep while
+#      reopening the window the test models, and one below the save would do
+#      nothing at all.
+#   B. THE PREMISE IS STILL TRUE. Both of daqifi_settings.c's validators
+#      (CRC32 and the legacy MD5 fallback) still span `.settings` rather than
+#      the whole struct; LoadFromNvm still copies the WHOLE record out, which
+#      is what carries `type` to the caller; and SaveToNvm still dispatches on
+#      settings->type with a `default: return false` that precedes any flash
+#      I/O. If any of those changed, this file's entire premise would be gone
+#      and the build must say so rather than pass a stale model green.
+#   C. THE ENUM IS STILL WHAT THE MODEL ASSUMES. The test hardcodes 0..3 for
+#      the four types and sweeps "out of enum" against that bound, so the
+#      guard pins the four enumerators, their order, and that none of them
+#      carries an explicit value.
+#
+# Two more guards were added later, after this recipe's own coverage proved
+# incomplete, and are not part of the "three claims" above -- they pin
+# ADCUseCalSetClaimed()'s round 9+ recovery shape instead of the original
+# type-trust premise: round 9 added a per-message LOG_E byte-budget check
+# (below, near the end of this recipe), and round 10 added a check that
+# daqifi_settings_TopLevelMatchesCommitted's own body still compares calVals
+# alone (also below) -- the model and the ordering guard above only ever
+# pinned that function's CALL SITE by presence and position, never its body.
+#
+# Comment lines are stripped before any search in A and B, because the
+# firmware's own comments at both sites name these identifiers on purpose --
+# #1152's rationale block mentions daqifi_settings_SaveToNvm and
+# tmpTopLevelSettings.type in prose directly above the code that does them. A
+# comment restyled so its lines do not begin with `*` or `/` therefore fails
+# these guards, loudly, which is the right outcome for a guard whose job is to
+# notice edits to these functions. CRs are stripped too: every firmware source
+# in this repo is CRLF and this Makefile is not.
+USECALTYPE_BIN      := run_1152_tests
+DAQIFI_SETTINGS_SRC := $(FW_SVC)/daqifi_settings.c
+DAQIFI_SETTINGS_H   := $(FW_SVC)/daqifi_settings.h
+CRC32_SRC           := $(FW_UTIL)/CRC32.c
+CRC32_H             := $(FW_UTIL)/CRC32.h
+
+$(USECALTYPE_BIN): test_1152_usecal_type_trust.c test_framework.h \
+                   $(SCPIADC_SRC) $(DAQIFI_SETTINGS_SRC) $(DAQIFI_SETTINGS_H) \
+                   $(CRC32_SRC) $(CRC32_H) $(RECIPES)
+	@body=`sed -n '/^static scpi_result_t ADCUseCalSetClaimed(scpi_t \* context) {/,/^}/p' $(SCPIADC_SRC) | tr -d '\r' | grep -v '^[[:space:]]*[*/]'`; \
+	 test -n "$$body" \
+	   || { echo "ERROR: ADCUseCalSetClaimed() was not found in $(SCPIADC_SRC),"; \
+	        echo "       or no longer opens at column 0 -- the guards below can see"; \
+	        echo "       nothing, and a guard that examines nothing must fail."; \
+	        exit 1; }; \
+	 nnorm=`printf '%s\n' "$$body" | grep -o 'tmpTopLevelSettings\.type = DaqifiSettings_TopLevelSettings;' | wc -l | tr -d ' '`; \
+	 test "$$nnorm" -eq 1 \
+	   || { echo "ERROR: ADCUseCalSetClaimed() in $(SCPIADC_SRC) no longer normalizes"; \
+	        echo "       the loaded settings type exactly once (found $$nnorm, want 1)."; \
+	        echo "       That one line IS #1152: without it the struct handed to"; \
+	        echo "       daqifi_settings_SaveToNvm carries whatever type byte NVM held,"; \
+	        echo "       which the payload checksum does not cover -- and the save then"; \
+	        echo "       fails, or writes another bank, AFTER the new coefficients are"; \
+	        echo "       already live. test_1152_usecal_type_trust.c models the"; \
+	        echo "       normalized shape, so it would pass regardless."; \
+	        exit 1; }; \
+	 l=`printf '%s\n' "$$body" | grep -n 'daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings,' | cut -d: -f1`; \
+	 n=`printf '%s\n' "$$body" | grep -n 'tmpTopLevelSettings\.type = DaqifiSettings_TopLevelSettings;' | cut -d: -f1`; \
+	 v=`printf '%s\n' "$$body" | grep -n 'daqifi_settings_ValidateADCCalBank(calType)' | cut -d: -f1`; \
+	 ni=`printf '%s\n' "$$body" | grep -c 'daqifi_settings_LoadADCCalSettings(calType, pRuntimeAInChannels)'`; \
+	 i=`printf '%s\n' "$$body" | grep -n 'daqifi_settings_LoadADCCalSettings(calType, pRuntimeAInChannels)' | cut -d: -f1`; \
+	 s=`printf '%s\n' "$$body" | grep -n 'daqifi_settings_SaveToNvm(&tmpTopLevelSettings)' | cut -d: -f1`; \
+	 r=`printf '%s\n' "$$body" | grep -n 'daqifi_settings_TopLevelMatchesCommitted(&tmpTopLevelSettings)' | cut -d: -f1`; \
+	 cr=`printf '%s\n' "$$body" | grep -n 'bool committedReadable = daqifi_settings_LoadFromNvm(' | cut -d: -f1`; \
+	 cb=`printf '%s\n' "$$body" | grep -n 'LOG_E("CONF:ADC:USECal %d: continuing - committed rec matches "' | cut -d: -f1`; \
+	 nrc=`printf '%s\n' "$$body" | grep -c 'pRunTimeStreamConfig->RawOutputMode = false;'`; \
+	 rc=`printf '%s\n' "$$body" | grep -n 'pRunTimeStreamConfig->RawOutputMode = false;' | head -1 | cut -d: -f1`; \
+	 test -n "$$l" && test -n "$$n" && test -n "$$v" && test -n "$$r" \
+	   && test -n "$$cr" && test -n "$$cb" && test -n "$$i" && test -n "$$s" && test -n "$$rc" \
+	   && test "$$ni" -eq 1 && test "$$nrc" -eq 1 \
+	   && test "$$rc" -lt "$$l" \
+	   && test "$$l" -lt "$$n" && test "$$n" -lt "$$v" \
+	   && test "$$v" -lt "$$s" && test "$$s" -lt "$$r" \
+	   && test "$$r" -lt "$$cr" && test "$$cr" -lt "$$cb" && test "$$cb" -lt "$$i" \
+	   || { echo "ERROR: ADCUseCalSetClaimed() in $(SCPIADC_SRC) no longer runs"; \
+	        echo "       RAW-MODE-CLEAR -> load -> normalize -> validate -> save ->"; \
+	        echo "       VERIFY-COMMITTED -> re-read-committed -> CONTINUING-fallthrough ->"; \
+	        echo "       final-install, in that order"; \
+	        echo "       (rawClear='$$rc' nRawClear=$$nrc load='$$l' normalize='$$n'"; \
+	        echo "        validate='$$v' save='$$s' verify='$$r' reread='$$cr'"; \
+	        echo "        continuing='$$cb' finalInstall='$$i' nInstall=$$ni)."; \
+	        echo "       Each adjacency carries a defect if it inverts:"; \
+	        echo "         the raw-mode clear anywhere but FIRST (before the load) is"; \
+	        echo "           #1152 round 8's regression -- ruling 9=A requires USECal"; \
+	        echo "           0/1 to leave raw mode UNCONDITIONALLY, independent of"; \
+	        echo "           whether the bank load below succeeds; a clear that drifted"; \
+	        echo "           back to the end of the function (the pre-round-8 shape) or"; \
+	        echo "           that got duplicated (nRawClear != 1) reopens the hardware"; \
+	        echo "           repro: USECal 2 -> USECal 0/1 against a blank bank -> -200,"; \
+	        echo "           still raw, forever, on a board with no populated cal bank;"; \
+	        echo "         normalize below the save does nothing -- SaveToNvm would see"; \
+	        echo "           the type NVM held, not the one we asked for;"; \
+	        echo "         install ABOVE the save is the audited #1152 r1 defect -- the"; \
+	        echo "           coefficients go live and then the persist fails, leaving"; \
+	        echo "           USECal? reporting a selector that disagrees with what"; \
+	        echo "           acquisition is using, with NO indication (a write-protected"; \
+	        echo "           page leaves the old record VALID, and any later"; \
+	        echo "           CONF:VOLT:SAVE erases the invalid-record indication);"; \
+	        echo "         a MISSING or misplaced verify-committed step re-opens the"; \
+	        echo "           r2 finding: SaveToNvm reports failure over a write that"; \
+	        echo "           LANDED (its success test is a readback comparison against"; \
+	        echo "           the shared staging buffer), so giving up there leaves the"; \
+	        echo "           NEW selector stored and the OLD coefficients live;"; \
+	        echo "         validate below the save re-opens #1148 -- a selector would"; \
+	        echo "           persist for a bank that cannot be loaded;"; \
+	        echo "         a MISSING re-read of the committed record (reread not strictly"; \
+	        echo "           between verify and continuing), or a second occurrence of"; \
+	        echo "           the install call (nInstall != 1), reopens round 8's own"; \
+	        echo "           regression: round 8 installed the validated bank on EVERY"; \
+	        echo "           TopLevelMatchesCommitted mismatch, on the false premise that"; \
+	        echo "           the erase already ran either way -- it had not, on a"; \
+	        echo "           write-protected page the OLD valid record survives, and"; \
+	        echo "           round 8's install then overwrote live coefficients that"; \
+	        echo "           already agreed with that surviving OLD selector. Round 9"; \
+	        echo "           reads the committed record again and installs ONLY when it"; \
+	        echo "           is reached via 'continuing' (the fallthrough for a record"; \
+	        echo "           that DOES carry the intended selector) -- an install line"; \
+	        echo "           that drifted back inside the mismatch branch (before"; \
+	        echo "           'continuing') satisfies nInstall==1 but fails the"; \
+	        echo "           cb < finalInstall ordering below, which is why that ordering"; \
+	        echo "           is checked and not just presence;"; \
+	        echo "         a missing or misordered final-install (final install not"; \
+	        echo "           strictly after verify, re-read and continuing) reopens"; \
+	        echo "           round 7's finding on the TopLevelMatchesCommitted mismatch"; \
+	        echo "           branch -- returning without installing on a MATCHING"; \
+	        echo "           (landed) record leaves the PREVIOUS bank live while the"; \
+	        echo "           NEW selector is already committed, so USECal? reports the"; \
+	        echo "           new selection while acquisition still applies the old slope."; \
+	        echo "       All of these still satisfy the presence check above, which is"; \
+	        echo "       why this one is positional."; \
+	        echo "       If the body was legitimately restructured, re-read it against"; \
+	        echo "       the model in test_1152_usecal_type_trust.c."; \
+	        exit 1; }
+	@grep -qF 'uint32_t crc = CRC32_Compute(&(tmpSettings.settings), dataSize);' $(DAQIFI_SETTINGS_SRC) \
+	  || { echo "ERROR: daqifi_settings_LoadFromNvm's CRC32 in $(DAQIFI_SETTINGS_SRC)"; \
+	       echo "       no longer spans '.settings' exactly. If the checksum now covers"; \
+	       echo "       the WHOLE DaqifiSettings struct, a corrupted 'type' can no"; \
+	       echo "       longer reach the caller and test_1152_usecal_type_trust.c's"; \
+	       echo "       premise is gone -- retire or rewrite it rather than relaxing"; \
+	       echo "       this guard."; \
+	       exit 1; }
+	@grep -qF 'uint32_t crc = CRC32_Compute(&(settings->settings), dataSize);' $(DAQIFI_SETTINGS_SRC) \
+	  || { echo "ERROR: daqifi_settings_SaveToNvm's CRC32 in $(DAQIFI_SETTINGS_SRC)"; \
+	       echo "       no longer spans '.settings' exactly -- see the message above."; \
+	       exit 1; }
+	@grep -qF 'CRYPT_MD5_DataAdd(&md5Ctx, (const uint8_t*) &(tmpSettings.settings), dataSize);' $(DAQIFI_SETTINGS_SRC) \
+	  || { echo "ERROR: the legacy MD5 fallback in $(DAQIFI_SETTINGS_SRC) no longer"; \
+	       echo "       spans '.settings' exactly. It is the SECOND validator on the"; \
+	       echo "       load path, so it has to exclude 'type' for the same reason the"; \
+	       echo "       CRC32 does; test_1152_usecal_type_trust.c models one span for"; \
+	       echo "       both (its FIDELITY 2) and that would no longer be true."; \
+	       exit 1; }
+	@grep -qF 'memcpy(settings, &tmpSettings, sizeof (DaqifiSettings));' $(DAQIFI_SETTINGS_SRC) \
+	  || { echo "ERROR: daqifi_settings_LoadFromNvm in $(DAQIFI_SETTINGS_SRC) no longer"; \
+	       echo "       copies the WHOLE record out on a valid checksum. That copy is"; \
+	       echo "       what carries the unchecked 'type' field to the caller -- it is"; \
+	       echo "       the defect's carrier, and the model assumes it."; \
+	       exit 1; }
+	@sbody=`sed -n '/^bool daqifi_settings_SaveToNvm(DaqifiSettings\* settings) {/,/^}/p' $(DAQIFI_SETTINGS_SRC) | tr -d '\r' | grep -v '^[[:space:]]*[*/]'`; \
+	 test -n "$$sbody" \
+	   || { echo "ERROR: daqifi_settings_SaveToNvm() was not found in"; \
+	        echo "       $(DAQIFI_SETTINGS_SRC), or no longer opens at column 0 --"; \
+	        echo "       the guard below can see nothing, so it must fail."; \
+	        exit 1; }; \
+	 printf '%s\n' "$$sbody" | grep -qF 'switch (settings->type) {' \
+	   || { echo "ERROR: daqifi_settings_SaveToNvm() in $(DAQIFI_SETTINGS_SRC) no"; \
+	        echo "       longer dispatches on settings->type. That dispatch is what"; \
+	        echo "       makes an unchecked type field reach flash addressing at all,"; \
+	        echo "       and the whole model is built on it."; \
+	        exit 1; }; \
+	 d=`printf '%s\n' "$$sbody" | grep -n '^[[:space:]]*default:' | head -1 | cut -d: -f1`; \
+	 c=`printf '%s\n' "$$sbody" | grep -n 'daqifi_settings_ClearNvm(settings->type)' | cut -d: -f1`; \
+	 nxt=`printf '%s\n' "$$sbody" | sed -n "$$((d+1))p" | tr -d '[:space:]'`; \
+	 test -n "$$d" && test -n "$$c" && test "$$d" -lt "$$c" \
+	   && test "$$nxt" = "returnfalse;" \
+	   || { echo "ERROR: daqifi_settings_SaveToNvm() in $(DAQIFI_SETTINGS_SRC) no"; \
+	        echo "       longer rejects an unknown type with 'return false' BEFORE the"; \
+	        echo "       first daqifi_settings_ClearNvm() call"; \
+	        echo "       (default:='$$d' next-line='$$nxt' ClearNvm='$$c')."; \
+	        echo "       test_1152_usecal_type_trust.c asserts that this failure erases"; \
+	        echo "       and writes NOTHING -- that is what distinguishes it from the"; \
+	        echo "       flash-I/O residual #1148 documents and accepts. If the"; \
+	        echo "       rejection moved below the erase, that distinction is gone and"; \
+	        echo "       the model, not this guard, is what needs fixing."; \
+	        exit 1; }
+	@ebody=`sed -n '/typedef enum eDaqifiSettingsType {/,/} DaqifiSettingsType;/p' $(DAQIFI_SETTINGS_H) | tr -d '\r'`; \
+	 test -n "$$ebody" \
+	   || { echo "ERROR: the eDaqifiSettingsType enum was not found in"; \
+	        echo "       $(DAQIFI_SETTINGS_H) -- the guard below can see nothing."; \
+	        exit 1; }; \
+	 got=`printf '%s\n' "$$ebody" | grep -o 'DaqifiSettings_[A-Za-z]*' | tr '\n' ','`; \
+	 want='DaqifiSettings_TopLevelSettings,DaqifiSettings_Wifi,DaqifiSettings_FactAInCalParams,DaqifiSettings_UserAInCalParams,'; \
+	 neq=`printf '%s\n' "$$ebody" | grep -c '=' || true`; \
+	 test "$$got" = "$$want" && test "$$neq" -eq 0 \
+	   || { echo "ERROR: eDaqifiSettingsType in $(DAQIFI_SETTINGS_H) is no longer the"; \
+	        echo "       four implicitly-numbered enumerators the model assumes."; \
+	        echo "         want $$want (and no explicit values)"; \
+	        echo "         got  $$got ($$neq lines carrying '=')"; \
+	        echo "       test_1152_usecal_type_trust.c hardcodes 0..3 for these and"; \
+	        echo "       sweeps 'out of enum' against that bound, and maps each type"; \
+	        echo "       onto its NVM page by that same value -- adding, renumbering"; \
+	        echo "       or reordering a type invalidates all three."; \
+	        exit 1; }
+# #1152 round 10 (finding a): the host model only exercises a REIMPLEMENTATION
+# of daqifi_settings_TopLevelMatchesCommitted (model_TopLevelMatchesCommitted,
+# test_1152_usecal_type_trust.c), and the ordering guard above only pins that
+# function's CALL SITE in $(SCPIADC_SRC) by presence and position -- neither
+# touches the real function's OWN body in $(DAQIFI_SETTINGS_SRC). Pin that body
+# directly: it must keep comparing calVals alone, never the whole payload (the
+# r5 defect -- a whole-payload compare makes every OTHER legitimate TopLevel
+# writer, e.g. CONF:VOLT:SAVE / SYST:DEVICE:NAME:SAVE, a false negative; see the
+# function's own doc comment in $(DAQIFI_SETTINGS_H)).
+	@tlbody=`sed -n '/^bool daqifi_settings_TopLevelMatchesCommitted(const DaqifiSettings\* expected)/,/^}/p' $(DAQIFI_SETTINGS_SRC) | tr -d '\r' | grep -v '^[[:space:]]*[*/]'`; \
+	 test -n "$$tlbody" \
+	   || { echo "ERROR: daqifi_settings_TopLevelMatchesCommitted() was not found in"; \
+	        echo "       $(DAQIFI_SETTINGS_SRC), or no longer opens at column 0 --"; \
+	        echo "       the guard below can see nothing, so it must fail."; \
+	        exit 1; }; \
+	 printf '%s\n' "$$tlbody" | grep -qF 'committed.settings.topLevelSettings.calVals ==' \
+	   && printf '%s\n' "$$tlbody" | grep -qF 'expected->settings.topLevelSettings.calVals' \
+	   || { echo "ERROR: daqifi_settings_TopLevelMatchesCommitted() in"; \
+	        echo "       $(DAQIFI_SETTINGS_SRC) no longer compares calVals against"; \
+	        echo "       expected->...calVals. The model and the ordering guard"; \
+	        echo "       above only pin this function's CALL SITE by presence and"; \
+	        echo "       position -- neither exercises the real body, so a changed"; \
+	        echo "       comparison here would pass every test in this file"; \
+	        echo "       silently."; \
+	        exit 1; }; \
+	 if printf '%s\n' "$$tlbody" | grep -q 'memcmp'; then \
+	   echo "ERROR: daqifi_settings_TopLevelMatchesCommitted() in"; \
+	   echo "       $(DAQIFI_SETTINGS_SRC) appears to compare more than calVals"; \
+	   echo "       now (found a memcmp) -- a whole-payload comparison is the"; \
+	   echo "       r5 defect this function exists to avoid."; \
+	   exit 1; \
+	 fi
+# #1152 round 11: committedMatchesIntended (added in round 10, fixing round
+# 9's own unchecked premise) is pinned only by the ordering guard's call
+# sites above (reread, continuing) -- neither touches this LOCAL variable's
+# own derivation, or what it gates. Round 9's actual regression was
+# classifying this exact branch by readability ALONE; pin the three facts
+# that regression would undo: the variable exists, it is derived from
+# comparing calVals on BOTH sides (committed vs. intended) rather than
+# readability alone, and that derivation -- not some other condition --
+# gates the branch deciding whether to fall through to the shared
+# "continuing" install.
+	@body=`sed -n '/^static scpi_result_t ADCUseCalSetClaimed(scpi_t \* context) {/,/^}/p' $(SCPIADC_SRC) | tr -d '\r' | grep -v '^[[:space:]]*[*/]'`; \
+	 test -n "$$body" \
+	   || { echo "ERROR: ADCUseCalSetClaimed() was not found in $(SCPIADC_SRC) for"; \
+	        echo "       the committedMatchesIntended guard -- it can see nothing."; \
+	        exit 1; }; \
+	 cmidecl=`printf '%s\n' "$$body" | grep -n 'bool committedMatchesIntended = committedReadable &&' | cut -d: -f1`; \
+	 cmicommitted=`printf '%s\n' "$$body" | grep -n 'committedSettings\.settings\.topLevelSettings\.calVals ==' | cut -d: -f1`; \
+	 cmiintended=`printf '%s\n' "$$body" | grep -n 'tmpTopLevelSettings\.settings\.topLevelSettings\.calVals;' | cut -d: -f1`; \
+	 cmigate=`printf '%s\n' "$$body" | grep -n 'if (!committedMatchesIntended)' | cut -d: -f1`; \
+	 test -n "$$cmidecl" && test -n "$$cmicommitted" && test -n "$$cmiintended" && test -n "$$cmigate" \
+	   && test "$$cmicommitted" -eq "$$((cmidecl+1))" \
+	   && test "$$cmiintended" -eq "$$((cmidecl+2))" \
+	   && test "$$cmigate" -gt "$$cmidecl" \
+	   || { echo "ERROR: ADCUseCalSetClaimed() in $(SCPIADC_SRC) no longer derives"; \
+	        echo "       committedMatchesIntended from a two-sided calVals comparison"; \
+	        echo "       (committedSettings...calVals == tmpTopLevelSettings...calVals)"; \
+	        echo "       directly below its own declaration, with that declaration"; \
+	        echo "       gating the 'if (!committedMatchesIntended)' branch below it"; \
+	        echo "       (decl='$$cmidecl' committedSide='$$cmicommitted'"; \
+	        echo "        intendedSide='$$cmiintended' gate='$$cmigate')."; \
+	        echo "       Round 9's own regression classified this branch by"; \
+	        echo "       committedReadable ALONE -- i.e. exactly this calVals"; \
+	        echo "       derivation removed -- so a guard that cannot see it cannot"; \
+	        echo "       see round 9's bug coming back either."; \
+	        exit 1; }
+# #1152 round 9: every LOG_E in ADCUseCalSetClaimed() must render at or under
+# the 125-byte usable payload (LOG_MESSAGE_SIZE 128, Logger.h:361, clamped to
+# LOG_MESSAGE_SIZE-3 in LogMessageFormatImpl, Logger.c:398,405 -- the tail past
+# that is silently dropped). Unlike $(LOGCEIL_BIN)'s check_log_block, which
+# pins an exact expected copy, this extracts the REAL text from $(SCPIADC_SRC)
+# and measures IT -- a message can be edited freely as long as it still fits,
+# which is the actual constraint, rather than frozen verbatim. Each call finds
+# its LOG_E's opening line (asserted unique and present), walks forward to the
+# statement's closing '");' or ');', and concatenates every pure
+# string-literal continuation line (one whose first non-blank character is
+# '"') -- deliberately skipping lines like '(param1 == 1) ? "user" :
+# "factory");' whose quotes are substitution ARGUMENTS, not format text, which
+# a naive one-quote-pair-per-line extraction would misread as part of the
+# message. %d is always a single digit here (param1 is 0 or 1 by this point),
+# so its widening is fixed at one char; %s widens to whichever named argument
+# renders longest (checked against validation_fail's "factory" vs "user").
+	@check_usecal_log_len() { \
+	  f="$$1"; anchor="$$2"; dwide="$$3"; swide="$$4"; label="$$5"; \
+	  start=$$(grep -n "$$anchor" "$$f" | tr -d '\r' | head -1 | cut -d: -f1); \
+	  if [ -z "$$start" ]; then \
+	    echo "ERROR: $$label's LOG_E anchor was not found in $$f -- either"; \
+	    echo "       it was edited, removed, or no longer opens on its own"; \
+	    echo "       line, and the byte-budget check below can measure"; \
+	    echo "       nothing. anchor=[$$anchor]"; \
+	    return 1; \
+	  fi; \
+	  end=$$(awk -v s="$$start" 'NR>=s { line=$$0; gsub(/\r$$/,"",line); if (line ~ /\);/) { print NR; exit } }' "$$f"); \
+	  block=$$(sed -n "$${start},$${end}p" "$$f" | tr -d '\r'); \
+	  anchorline=$$(printf '%s\n' "$$block" | head -1); \
+	  piece1=$$(printf '%s' "$$anchorline" | sed -n 's/^[^"]*"\(.*\)"[^"]*$$/\1/p'); \
+	  rest=$$(printf '%s\n' "$$block" | tail -n +2); \
+	  contlines=$$(printf '%s\n' "$$rest" | grep '^[[:space:]]*"' || true); \
+	  pieces2=""; \
+	  if [ -n "$$contlines" ]; then \
+	    pieces2=$$(printf '%s\n' "$$contlines" | sed -n 's/^[[:space:]]*"\(.*\)"[^"]*$$/\1/p' | tr -d '\n'); \
+	  fi; \
+	  text="$${piece1}$${pieces2}"; \
+	  wide=$$(printf '%s' "$$text" | sed "s/%d/$$dwide/g; s/%s/$$swide/g"); \
+	  len=$$(printf '%s' "$$wide" | wc -c); \
+	  if [ "$$len" -gt 125 ]; then \
+	    echo "ERROR: $$label's LOG_E in $$f renders to $$len usable bytes"; \
+	    echo "       with the widest substitution, over the 125-byte ceiling"; \
+	    echo "       (LOG_MESSAGE_SIZE 128, Logger.h:361, clamped -3 in"; \
+	    echo "       LogMessageFormatImpl, Logger.c:398,405). Rendered text:"; \
+	    echo "       [$$wide]"; \
+	    echo "       Shorten it -- the tail past byte 125 is silently"; \
+	    echo "       dropped, so whatever falls past there never reaches a"; \
+	    echo "       log reader. Remedy-first wording survives truncation"; \
+	    echo "       best; keep it at the front of the message."; \
+	    return 1; \
+	  fi; \
+	}; \
+	check_usecal_log_len $(SCPIADC_SRC) 'LOG_E("CONF:ADC:USECal %d: top-level settings NVM read failed; "' 1 '' top_level_read_fail || exit 1; \
+	check_usecal_log_len $(SCPIADC_SRC) 'LOG_E("CONF:ADC:USECal %d: no calibration bank for this value",' 1 '' unreachable_bank || exit 1; \
+	check_usecal_log_len $(SCPIADC_SRC) 'LOG_E("CONF:ADC:USECal %d: %s cal bank failed validation "' 1 factory validation_fail || exit 1; \
+	check_usecal_log_len $(SCPIADC_SRC) 'LOG_E("CONF:ADC:USECal %d: selection unchanged - prior "' 1 '' round9_case_a_selection_unchanged || exit 1; \
+	check_usecal_log_len $(SCPIADC_SRC) 'LOG_E("CONF:ADC:USECal %d: selection unreadable - reboot "' 1 '' round9_case_c_selection_unreadable || exit 1; \
+	check_usecal_log_len $(SCPIADC_SRC) 'LOG_E("CONF:ADC:USECal %d: continuing - committed rec matches "' 1 '' case_b_continuing || exit 1; \
+	check_usecal_log_len $(SCPIADC_SRC) 'LOG_E("CONF:ADC:USECal %d: reboot or re-select - bank re-read "' 1 '' reload_fail || exit 1
+	$(CC) $(CFLAGS) -I$(FW_UTIL) -o $(USECALTYPE_BIN) \
+	      test_1152_usecal_type_trust.c $(CRC32_SRC)
+
+# Every suite, and every one of the 28 binaries. Additive collisions in
 # this block so far: fw#961 vs fw#983, fw#913 vs fw#1004, fw#913 vs fw#1000,
 # fw#913 vs fw#980, fw#913 vs fw#985, fw#999 vs fw#985, fw#999 vs fw#1057, and
 # fw#971's own ARM_BIN colliding with fw#913/fw#980/fw#1000/fw#985 and then
@@ -3062,6 +3587,9 @@ $(HEXWIN_BIN): test_1141_hex_record_upper_panel_error.c test_framework.h \
 # time: keep each side's target rule INTACT and union only `run` and `clean`.
 # Dropping a rule loses a suite silently; duplicating one silently shadows the
 # other. Update the count above whenever a resolution touches `run`.
+# fw#1152 adds $(USECALTYPE_BIN); the count above is the RESOLVED union, counted
+# from `run` rather than carried from either side -- both sides' banners disagreed
+# with each other and with the list (HEAD said TWENTY-FOUR, main said FIFTEEN).
 #
 # #1026 is the ticket to stop this and PR #1040 implements it, moving each
 # target into tests/host/tests/<issue>-<slug>.mk so a new suite appends to an
@@ -3093,21 +3621,31 @@ $(HEXWIN_BIN): test_1141_hex_record_upper_panel_error.c test_framework.h \
 # the same way as every earlier collision: keep each side's target rule INTACT
 # and union only `run` and `clean`.
 #
-# Every suite, and every one of the EIGHTEEN binaries: the seventeen above plus
-# #1098's $(REPLYBUF_BIN) (the Take/Give pairing of the four SCPI reply
-# callbacks moved off the stack onto the shared response buffer). ELEVENTH
-# additive collision in this block -- resolved the same way as every earlier
-# one: keep each side's target rule INTACT and union only `run` and `clean`.
+# Every suite, and every one of the TWENTY-SIX binaries. SIXTEENTH additive
+# collision in this block, resolved the same way as the fifteen before it:
+# each side's target rule kept INTACT and only `run` and `clean` unioned.
+# This refresh unions #1110's $(LOG1039_BIN) (the log-budget lint tool) with
+# #1013's $(FAILNEXT_BIN)/$(FAILNEXT_REAL_BIN), which main gained on
+# 2026-10-12 while this row sat at its reviewed head.
 #
-# Every suite, and every one of the TWENTY-FOUR binaries: the nineteen above
-# plus $(LOGONCE_BIN), $(DACREINIT_BIN), $(CALFINITE_BIN) and $(SDLOG1029_BIN).
+# THE COUNT IS DERIVED, NOT ASSERTED -- 28 binaries in `run`, counted from
+# the resolved prerequisite list below by the resolver rather than written by hand.
+# Both sides' stated counts were stale for this result (ours TWENTY-SIX, main's
+# TWENTY-FOUR, each right about its own side) -- the trap the thirteenth collision
+# recorded and every one since has restated.
 #
-# FOURTEENTH additive collision in this block, resolved the same way as the
-# thirteen before it: each side's target rule kept INTACT and only `run` and
-# `clean` unioned. This branch adds #1029's $(SDLOG1029_BIN) (three
-# sd_card_manager.c LOG_E remedies measured against Logger's 125-byte ceiling)
-# while main added #1125's $(LOGONCE_BIN) via fw#1126, merged 2026-09-29.
+# ALSO FIXED HERE, and NOT a union: the `clean:` recipe's $(SDLOG1029_GEN).tmp
+# line was missing its line-continuation backslash, so make parsed the
+# following tab-indented line as a SECOND recipe command and tried to EXECUTE
+# `run_1039_tests gen_1039_log_budget.h` instead of deleting the two files.
+# `make clean` therefore failed with "No such file or directory" / Error 127 at
+# the reviewed head, and the two 1039 artifacts were never removed. CI runs
+# only `make run`, never `clean`, so no gate on this row could observe it.
 #
+# $(LOG1039_BIN)/$(LOG1039_GEN) carry the 1039 suffix so they cannot shadow
+# #1029's $(SDLOG1029_BIN)/$(SDLOG1029_GEN); #1029's in turn carry 1029 so they
+# cannot shadow #1000's $(SDLOG_BIN)/$(GEN_1000). main's side of THIS collision is
+# $(ARM_BIN) and $(NAME_BIN), from fw#958/fw#1027.
 # BOTH SIDES' COUNTS WERE STALE FOR THE RESULT -- ours said TWENTY-ONE, main's
 # said TWENTY-TWO, and each was right about its own side. The union is
 # TWENTY-SEVEN. Corrected here rather than carried, for the reason the
@@ -3130,6 +3668,33 @@ $(HEXWIN_BIN): test_1141_hex_record_upper_panel_error.c test_framework.h \
 # is the failure this block's own history keeps recording.
 # #1029's names carry the 1029 suffix so they cannot shadow #1000's
 # $(SDLOG_BIN)/$(GEN_1000).
+#
+# SIXTEENTH additive collision, same resolution: each side's target rule kept
+# INTACT, only `run` and `clean` unioned. This branch adds #908's
+# $(SEQ908_BIN) (the cal-source seqlock guard); main added #904's
+# $(TEAR904_BIN) and $(FORCEGATE_BIN).
+#
+# COUNTS, MEASURED ON THE MERGED LISTS -- 31 run prerequisites, 31 `./$(X)`
+# recipe lines, 36 `clean` entries (35 unique). Base had 28/28/33, so main's
+# two and this branch's one account for all three deltas exactly. The
+# parenthetical in the FIFTEENTH paragraph above is superseded: it was bumped
+# by one when main's merge added two, and read 29/29/34 against a tree that
+# measured 30/30/35.
+#
+# ⚠ WHAT THIS PARAGRAPH IS ACTUALLY FOR. My first attempt at this merge
+# unioned the two conflict regions as TEXT and produced 29 prerequisites with
+# ONE `./$(X)` line -- every other test's invocation deleted, while the
+# prerequisite list still named them. That builds all 29 binaries and runs one,
+# so `make run` EXITS 0 having executed a single test: a green suite that tests
+# almost nothing. Nothing in this file would have objected.
+#
+# So the resolution is not complete until prerequisites and invocations are
+# measured and AGREE -- as SETS, both directions, not as totals, since equal
+# totals are reachable from a swapped pair. `clean` additionally holds four
+# generated artifacts that are not run prerequisites ($(UUT), $(GEN_1000),
+# $(GEN_1125), $(SDLOG1029_GEN)), which is why only its number differs; the
+# $(SDLOG1029_GEN) duplicate predates the merge base and is a harmless
+# second `rm -f`, not something this merge introduced.
 # ---------------------------------------------------------------------------
 # PR firmware#1048 (issue #904): the CalM/CalB 64-bit pair, BOTH halves.
 #
@@ -3238,11 +3803,311 @@ $(TEAR904_BIN): test_904_cal_pair_tear.c test_framework.h cal_order_904.awk cal_
 # ABSENCE passes VACUOUSLY on that false 0 -- is kept in cal_order_904.awk's
 # header, where the definition-vs-prototype rule is actually implemented.
 
-run: $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(ARM_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) \
-     $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) $(NAME_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) \
-     $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
-     $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) \
-     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(SUMBUDGET_BIN)
+# ⛔ #1110 r8 review LOW: THE SPELLED-OUT COUNTS ABOVE ARE HISTORICAL, AND
+# NONE OF THEM IS A CLAIM ABOUT THIS LIST. Each belongs to one past merge and
+# was true at that merge -- TWENTY-FOUR, TWENTY-FIVE, TWENTY-SIX, TWENTY-SEVEN
+# are a lineage, not a running total, and the block already records twice that
+# both sides' counts were stale for the result. Read as a current total the
+# most recent one is simply false: `make -n run` expands to 31 today.
+#
+# So the live number is DERIVED ON DEMAND and deliberately written nowhere:
+#
+#     make -n run | grep -c '^\./run_'
+#
+# and the ordinals are superseded for the reason this block gives further up --
+# each branch numbered its own collisions, so two merges claimed the same
+# ordinal and whichever landed second was wrong. The LIST is the record.
+# Do not add another count here; it is stale the next time anyone merges.
+#
+# MERGE (fw#1152 round 9 x fw#1048/#904): the two `run:` prerequisite lists
+# are UNIONED rather than picked -- main's 30 (this TEAR904_BIN block plus 29
+# others) union this branch's 30 (the same 29 plus USECALTYPE_BIN) is 31,
+# verified by cross-check against the `./$(X)` invocation list and `clean:`
+# below, which both already carried the full union untouched by this conflict.
+# ---------------------------------------------------------------------------
+# PR firmware#1077 round 8 (issue #908): identity.cal.source composite
+# coherence. The reported source is a pair of facts -- "are the live
+# coefficients identity" and "which bank did they come from" -- and
+# daqifi_settings_LoadADCCalSettings changes them in that order, publishing
+# the bank LAST (round 3's fix, so the bank cannot name a load that did not
+# land). A reader pre-empting between the two therefore sees the OLD bank
+# while scanning the NEW coefficients.
+#
+# Round 6 compared the bank before and after the scan, which catches a
+# COMPLETED load and is blind to one IN PROGRESS. Round 8 brackets the whole
+# composite update with a generation counter and the reader takes a seqlock
+# read. test_908_cal_source_seqlock.c models all three reader shapes and
+# asserts the middle one's blindness, so the file fails if the seqlock is
+# weakened back to a bank comparison.
+#
+# The model cannot see the FIRMWARE, so the guards below pin the real thing:
+# two increments in the writer with the first BEFORE the copy, and both arms
+# of the seqlock in the reader. An order check, not a presence check -- a
+# presence check passes if someone moves the pre-copy increment after the loop,
+# which is precisely the mutation that reopens the defect.
+SETTINGS_SRC := ../../firmware/src/services/daqifi_settings.c
+SEQ908_BIN := run_908_tests
+
+# ⚠ BOTH sources are prerequisites because BOTH are read by the guards below:
+# SETTINGS_SRC for the load-order and reader-yield checks, SCPIADC_SRC for the
+# setter-bracket check. A guard that reads a file it does not depend on does
+# not run when that file changes -- make reuses the binary and the check is
+# silently skipped, which is a guard that cannot fail rather than a guard.
+$(SEQ908_BIN): test_908_cal_source_seqlock.c test_framework.h $(SETTINGS_SRC) $(SCPIADC_SRC) $(SCPI_IFACE_SRC) cal_compose_908.awk check_seq908_order.py seq908_order_fixture.c check_comment_integrity.py $(RECIPES)
+	@sed -n '/^bool daqifi_settings_LoadADCCalSettings/,/^}/p' $(SETTINGS_SRC) \
+	   > /tmp/.fw908_load.$$$$; \
+	 n=`grep -cE 'daqifi_settings_(Begin|End)CalWrite' /tmp/.fw908_load.$$$$`; \
+	 gen1=`grep -n 'daqifi_settings_BeginCalWrite' /tmp/.fw908_load.$$$$ | head -1 | cut -d: -f1`; \
+	 cpy=`grep -n '\.CalM = calArray' /tmp/.fw908_load.$$$$ | head -1 | cut -d: -f1`; \
+	 bank=`grep -n 'gActiveCalBank = type' /tmp/.fw908_load.$$$$ | head -1 | cut -d: -f1`; \
+	 gen2=`grep -n 'daqifi_settings_EndCalWrite' /tmp/.fw908_load.$$$$ | tail -1 | cut -d: -f1`; \
+	 rm -f /tmp/.fw908_load.$$$$; \
+	 test "$$n" = "2" && test -n "$$gen1" && test -n "$$cpy" && test -n "$$bank" \
+	   && test "$$gen1" -lt "$$cpy" && test "$$gen2" -gt "$$bank" \
+	  || { echo "ERROR: daqifi_settings_LoadADCCalSettings in $(SETTINGS_SRC) no"; \
+	       echo "       longer brackets its composite update with exactly one"; \
+	       echo "       daqifi_settings_BeginCalWrite BEFORE the coefficient copy"; \
+	       echo "       and one EndCalWrite AFTER gActiveCalBank is published."; \
+	       echo "       (found n=$$n gen1=$$gen1 copy=$$cpy bank=$$bank gen2=$$gen2)"; \
+	       echo "       Without the PRE-copy increment the generation never goes"; \
+	       echo "       odd, so a reader cannot see an update IN PROGRESS and"; \
+	       echo "       reports the old bank against the new coefficients --"; \
+	       echo "       the SHAPE_BANKCMP row of test_908_cal_source_seqlock.c."; \
+	       exit 1; }
+	@sed -n '/^DaqifiCalSource daqifi_settings_GetCalSource/,/^}/p' $(SETTINGS_SRC) \
+	   > /tmp/.fw908_rd.$$$$; \
+	 ok=1; \
+	 grep -qF '& 1u' /tmp/.fw908_rd.$$$$ || ok=0; \
+	 grep -qF 'gCalGeneration != genBefore' /tmp/.fw908_rd.$$$$ || ok=0; \
+	 rm -f /tmp/.fw908_rd.$$$$; \
+	 test "$$ok" = 1 \
+	  || { echo "ERROR: daqifi_settings_GetCalSource in $(SETTINGS_SRC) is missing"; \
+	       echo "       an arm of its seqlock read: it must REFUSE an odd"; \
+	       echo "       generation (& 1u) AND require the generation unchanged"; \
+	       echo "       across the scan. Either arm alone is insufficient --"; \
+	       echo "       the odd check misses a load that starts and finishes"; \
+	       echo "       during the scan, and the unchanged check misses one"; \
+	       echo "       already in flight when the scan begins."; \
+	       exit 1; }
+	@sed -n '/^DaqifiCalSource daqifi_settings_GetCalSource/,/^}/p' $(SETTINGS_SRC) \
+	   > /tmp/.fw908_yield.$$$$; \
+	 y=`grep -c 'vTaskDelay' /tmp/.fw908_yield.$$$$`; \
+	 rm -f /tmp/.fw908_yield.$$$$; \
+	 test "$$y" -ge 1 \
+	  || { echo "ERROR: daqifi_settings_GetCalSource in $(SETTINGS_SRC) retries"; \
+	       echo "       without yielding. It runs on a SCPI transport task at"; \
+	       echo "       priority 7; a bank load runs at priority 2, so spinning is"; \
+	       echo "       a priority inversion -- the writer it waits for cannot be"; \
+	       echo "       scheduled, every attempt sees the same odd generation, and"; \
+	       echo "       a suspended load turns real calibration into a permanent"; \
+	       echo "       source:\"none\". Yield (bounded) between attempts."; \
+	       exit 1; }
+	@for fn in ADCChanCalmSetClaimed ADCChanCalbSetClaimed; do \
+	   b=`$(call CNT_IN_FN_DEF,$(SCPIADC_SRC),$$fn,daqifi_settings_BeginCalWrite)`; \
+	   e=`$(call CNT_IN_FN_DEF,$(SCPIADC_SRC),$$fn,daqifi_settings_EndCalWrite)`; \
+	   test "$$b" = "1" && test "$$e" = "1" \
+	     || { echo "ERROR: $$fn in $(SCPIADC_SRC) does not bracket its CalM/CalB"; \
+	          echo "       store with daqifi_settings_BeginCalWrite/EndCalWrite"; \
+	          echo "       (found begin=$$b end=$$e, want 1 and 1)."; \
+	          echo "       ONE setter alone yields a genuine before-or-after, so"; \
+	          echo "       this looks exempt and is not: TWO setters let an"; \
+	          echo "       early-exiting identity scan read channel 0 as identity,"; \
+	          echo "       then one clears a later channel while the other sets"; \
+	          echo "       channel 0, and the scan concludes ALL identity -- a view"; \
+	          echo "       that held at no instant. See test_908's two-setter case."; \
+	          exit 1; }; \
+	 done
+	@sed -n '/^DaqifiCalSource daqifi_settings_GetCalSource/,/^}/p' $(SETTINGS_SRC) \
+	   > /tmp/.fw908_unk.$$$$; \
+	 nu=`grep -c 'DAQIFI_CAL_SOURCE_UNKNOWN' /tmp/.fw908_unk.$$$$`; \
+	 lastret=`grep -n 'return ' /tmp/.fw908_unk.$$$$ | tail -1 | cut -d: -f2-`; \
+	 rm -f /tmp/.fw908_unk.$$$$; \
+	 case "$$lastret" in *DAQIFI_CAL_SOURCE_UNKNOWN*) ok=1;; *) ok=0;; esac; \
+	 test "$$ok" = 1 && test "$$nu" = "1" \
+	  || { echo "ERROR: daqifi_settings_GetCalSource in $(SETTINGS_SRC) does not"; \
+	       echo "       end by returning DAQIFI_CAL_SOURCE_UNKNOWN."; \
+	       echo "       (last return was:$$lastret ; UNKNOWN mentions=$$nu, want 1)"; \
+	       echo "       That final return is the RETRIES-EXHAUSTED path: every"; \
+	       echo "       attempt saw a load in flight, so no coherent scan"; \
+	       echo "       completed and nothing is known about the coefficients."; \
+	       echo "       Returning DAQIFI_CAL_SOURCE_NONE there -- which is what"; \
+	       echo "       it did before r10 -- is not a cautious understatement,"; \
+	       echo "       it is the POSITIVE claim \"every channel is identity,"; \
+	       echo "       readings are unscaled\", asserted by a reader that never"; \
+	       echo "       looked. The state is reachable exactly while a bank is"; \
+	       echo "       LOADING, i.e. when real coefficients are most likely"; \
+	       echo "       present, so the worst answer was reachable in the case"; \
+	       echo "       that mattered most."; \
+	       echo "       Exactly ONE mention is required so UNKNOWN stays"; \
+	       echo "       unreachable from the scan-completed paths above: if it"; \
+	       echo "       can also be returned after a successful scan, then"; \
+	       echo "       'unknown' on the wire stops meaning 'the read did not"; \
+	       echo "       complete' and the value is no longer diagnostic."; \
+	       exit 1; }
+	@sed -n '/switch (daqifi_settings_GetCalSource/,/^    }/p' $(SCPI_IFACE_SRC) \
+	   > /tmp/.fw908_sw.$$$$; \
+	 nc=`grep -c 'case DAQIFI_CAL_SOURCE_' /tmp/.fw908_sw.$$$$`; \
+	 dflt=`grep 'default:' /tmp/.fw908_sw.$$$$`; \
+	 rm -f /tmp/.fw908_sw.$$$$; \
+	 case "$$dflt" in *unknown*) dok=1;; *) dok=0;; esac; \
+	 test "$$nc" = "4" && test "$$dok" = 1 \
+	  || { echo "ERROR: the identity.cal.source switch in $(SCPI_IFACE_SRC) must"; \
+	       echo "       name all FOUR DaqifiCalSource values explicitly and its"; \
+	       echo "       default arm must answer \"unknown\"."; \
+	       echo "       (found cases=$$nc want 4; default arm:$$dflt)"; \
+	       echo "       ⚠ THIS GUARD EXISTS BECAUSE -Wswitch CANNOT CATCH IT. A"; \
+	       echo "       switch with a default arm is exhaustive by definition, so"; \
+	       echo "       adding a value to the enum produces no warning -- the new"; \
+	       echo "       value is absorbed SILENTLY by whatever default says. The"; \
+	       echo "       pre-r10 form was exactly that: FACTORY, USER, and"; \
+	       echo "       default->\"none\", which would have reported the new"; \
+	       echo "       UNKNOWN state as \"none\" and reintroduced the very"; \
+	       echo "       collapse the fourth value was added to remove, while a"; \
+	       echo "       reviewer saw a switch that handled every case."; \
+	       echo "       The default must say \"unknown\" and not \"none\" because"; \
+	       echo "       that is the fail-safe direction: an enum value this code"; \
+	       echo "       cannot interpret is something it knows nothing about."; \
+	       exit 1; }
+	@$(CC) -fpreprocessed -E -P -x c - < $(SCPIADC_SRC) > /tmp/.fw908_fp.$$$$ 2>/dev/null; \
+	 tot=`grep -cE 'daqifi_settings_(Clear|Mark)FactoryCalMissing\(' /tmp/.fw908_fp.$$$$`; \
+	 inref=`sed -n '/^static void RefreshFactoryCalPresence/,/^}/p' /tmp/.fw908_fp.$$$$ \
+	        | grep -cE 'daqifi_settings_(Clear|Mark)FactoryCalMissing\('`; \
+	 val=`sed -n '/^static void RefreshFactoryCalPresence/,/^}/p' /tmp/.fw908_fp.$$$$ \
+	      | grep -c 'daqifi_settings_ValidateADCCalBank('`; \
+	 sav=`sed -n '/^static scpi_result_t CalSaveCommon/,/^}/p' /tmp/.fw908_fp.$$$$ \
+	      | grep -c 'RefreshFactoryCalPresence()'`; \
+	 lod=`sed -n '/^static scpi_result_t CalLoadCommon/,/^}/p' /tmp/.fw908_fp.$$$$ \
+	      | grep -c 'RefreshFactoryCalPresence()'`; \
+	 rm -f /tmp/.fw908_fp.$$$$; \
+	 test "$$tot" = "2" && test "$$inref" = "2" && test "$$val" = "1" \
+	   && test "$$sav" = "1" && test "$$lod" = "1" \
+	  || { echo "ERROR: factory_present is no longer derived from the PAGE by a"; \
+	       echo "       single writer in $(SCPIADC_SRC)."; \
+	       echo "       (Clear/Mark calls: $$tot in the file, $$inref inside"; \
+	       echo "        RefreshFactoryCalPresence; ValidateADCCalBank in it:"; \
+	       echo "        $$val; RefreshFactoryCalPresence calls -- save: $$sav"; \
+	       echo "        load: $$lod. Want 2 / 2 / 1 / 1 / 1.)"; \
+	       echo "       ⛔ EQUAL COUNTS ARE THE POINT: every Clear/Mark in the"; \
+	       echo "       file must be INSIDE the one helper. factory_present is a"; \
+	       echo "       claim about what is ON THE PAGE, and any other call site"; \
+	       echo "       would be deriving it from something else -- which is the"; \
+	       echo "       r13 defect: it came from SaveADCCalSettings's RETURN"; \
+	       echo "       VALUE, a claim about the WRITE. #1153's race (LAN:SAVE"; \
+	       echo "       takes no claim and shares gTempFflashBuffer) makes that"; \
+	       echo "       return true over a corrupt slot or false over an intact"; \
+	       echo "       one, and the flag then stays wrong in BOTH directions."; \
+	       echo "       The LOAD call site is pinned too: before r13 that path"; \
+	       echo "       touched the flag at all, so a stale 'missing' survived a"; \
+	       echo "       successful LOADFcal -- the one operation that proves the"; \
+	       echo "       page is valid."; \
+	       exit 1; }
+	@$(CC) -fpreprocessed -E -P -x c - < $(SCPIADC_SRC) > /tmp/.fw908_cmp.$$$$ 2>/dev/null; \
+	 bad=; \
+	 for fn in ADCChanCalmSetClaimed ADCChanCalbSetClaimed; do \
+	   seq=`awk -v fn=$$fn -f cal_compose_908.awk /tmp/.fw908_cmp.$$$$`; \
+	   test "$$seq" = "GEVXH" || bad="$$bad $$fn=[$$seq]"; \
+	 done; \
+	 rm -f /tmp/.fw908_cmp.$$$$; \
+	 test -z "$$bad" \
+	  || { echo "ERROR: a calibration setter in $(SCPIADC_SRC) does not COMPOSE"; \
+	       echo "       the generation bracket with the critical section as"; \
+	       echo "       G E V X H (begin / enter / store / exit / end)."; \
+	       echo "       Offending:$$bad"; \
+	       echo "       Read as: G=BeginCalWrite E=taskENTER_CRITICAL"; \
+	       echo "       V=the .CalM/.CalB store X=taskEXIT_CRITICAL"; \
+	       echo "       H=EndCalWrite, in SOURCE order, adjacent repeats"; \
+	       echo "       collapsed. An EMPTY sequence means the function"; \
+	       echo "       DEFINITION was not found, not that it is clean."; \
+	       echo "       ⚠ NEITHER EXISTING GUARD SET CAN SEE THIS, and the gap"; \
+	       echo "       was authored by the #1048 merge rather than by an edit,"; \
+	       echo "       so no diff line reveals it: cal_order_904.awk emits no"; \
+	       echo "       token for BeginCalWrite, so EVX scores the same whether"; \
+	       echo "       the bracket is outside the section, inside it, or gone;"; \
+	       echo "       and the 908 bracket check above counts begin/end without"; \
+	       echo "       regard to position. Each set is satisfied by the"; \
+	       echo "       arrangement the other was meant to exclude."; \
+	       echo "       Both orderings are load-bearing: the generation must"; \
+	       echo "       span the WHOLE write, or a reader samples an even"; \
+	       echo "       generation mid-write and believes it; and the critical"; \
+	       echo "       section must be INNERMOST around the store, or the"; \
+	       echo "       64-bit CalM/CalB pair can tear (#904)."; \
+	       exit 1; }
+	@$(PYTHON) check_comment_integrity.py $(SETTINGS_SRC) $(SCPIADC_SRC) $(SCPI_IFACE_SRC) \
+	  || { echo "ERROR: a firmware file this target's guards READ no longer has"; \
+	       echo "       intact comment structure, so it almost certainly does not"; \
+	       echo "       compile. See the line(s) above."; \
+	       echo "       ⚠ WHY THIS GUARD EXISTS: every other #908 source check"; \
+	       echo "       below reads these files with sed/grep/awk, and NOTHING in"; \
+	       echo "       tests/host COMPILES them. On 2026-10-27 a #define inserted"; \
+	       echo "       into the middle of a block comment closed it early and"; \
+	       echo "       stranded 13 lines at file scope; the firmware did not"; \
+	       echo "       build, and this suite reported 31 binaries / 318 tests /"; \
+	       echo "       0 failed with every position pin PASSING, because a pin"; \
+	       echo "       over grep line numbers is happy with invalid C."; \
+	       echo "       ⛔ A pass here is NOT a compile. Only a build is."; \
+	       exit 1; }
+	@$(PYTHON) check_seq908_order.py $(CC) seq908_order_fixture.c \
+	  || { echo "ERROR: the cal-source seqlock's ORDERING property failed."; \
+	       echo "       See the two lines above: the guard is differential, and"; \
+	       echo "       WHICH line failed decides what is wrong. A failure on"; \
+	       echo "       reader_barriered means the firmware property is broken;"; \
+	       echo "       a failure on reader_unbarriered means this compiler did"; \
+	       echo "       not reorder, so the other line proves nothing."; \
+	       exit 1; }
+	@sed -n '/^DaqifiCalSource daqifi_settings_GetCalSource/,/^}/p' $(SETTINGS_SRC) \
+	   > /tmp/.fw908_bar.$$$$; \
+	 g1=`grep -n 'genBefore = gCalGeneration' /tmp/.fw908_bar.$$$$ | head -1 | cut -d: -f1`; \
+	 b1=`grep -n 'CAL_BARRIER' /tmp/.fw908_bar.$$$$ | head -1 | cut -d: -f1`; \
+	 sc=`grep -n 'daqifi_settings_CalIsIdentity' /tmp/.fw908_bar.$$$$ | head -1 | cut -d: -f1`; \
+	 bk=`grep -n 'bank = gActiveCalBank' /tmp/.fw908_bar.$$$$ | head -1 | cut -d: -f1`; \
+	 b2=`grep -n 'CAL_BARRIER' /tmp/.fw908_bar.$$$$ | tail -1 | cut -d: -f1`; \
+	 g2=`grep -n 'gCalGeneration != genBefore' /tmp/.fw908_bar.$$$$ | head -1 | cut -d: -f1`; \
+	 nb=`grep -c 'CAL_BARRIER' /tmp/.fw908_bar.$$$$`; \
+	 rm -f /tmp/.fw908_bar.$$$$; \
+	 test "$$nb" = "2" && test -n "$$g1" && test -n "$$bk" && test -n "$$g2" \
+	   && test "$$g1" -lt "$$b1" && test "$$b1" -lt "$$sc" \
+	   && test "$$sc" -lt "$$bk" && test "$$bk" -lt "$$b2" \
+	   && test "$$b2" -lt "$$g2" \
+	  || { echo "ERROR: daqifi_settings_GetCalSource in $(SETTINGS_SRC) no longer"; \
+	       echo "       brackets its snapshot with exactly two CAL_BARRIER()s in"; \
+	       echo "       the required POSITIONS."; \
+	       echo "       (barriers=$$nb want 2; order read=$$g1 bar=$$b1 scan=$$sc"; \
+	       echo "        bank=$$bk bar=$$b2 check=$$g2, each must increase)"; \
+	       echo "       ⚠ THE FIXTURE GUARD ABOVE CANNOT CATCH THIS. It compiles"; \
+	       echo "       seq908_order_fixture.c, which is a MODEL -- it would keep"; \
+	       echo "       passing with the firmware's barriers deleted. Position is"; \
+	       echo "       pinned rather than presence because two barriers in the"; \
+	       echo "       wrong places constrain nothing: the second one is what"; \
+	       echo "       keeps the bank load above the closing generation read,"; \
+	       echo "       and a barrier after that read is free of charge."; \
+	       exit 1; }
+	@bb=`sed -n '/^void daqifi_settings_BeginCalWrite/,/^}/p' $(SETTINGS_SRC) \
+	      | grep -n 'gCalGeneration++\|CAL_BARRIER' | head -2 | cut -d: -f2- | tr -d ' \t' | paste -sd,`; \
+	 ee=`sed -n '/^void daqifi_settings_EndCalWrite/,/^}/p' $(SETTINGS_SRC) \
+	      | grep -n 'gCalGeneration++\|CAL_BARRIER' | head -2 | cut -d: -f2- | tr -d ' \t' | paste -sd,`; \
+	 case "$$bb" in gCalGeneration++*,CAL_BARRIER*) ok=1;; *) ok=0;; esac; \
+	 case "$$ee" in CAL_BARRIER*,gCalGeneration++*) ;; *) ok=0;; esac; \
+	 test "$$ok" = 1 \
+	  || { echo "ERROR: the generation bracket's own barriers are missing or"; \
+	       echo "       mis-ordered in $(SETTINGS_SRC)."; \
+	       echo "       BeginCalWrite must be increment-then-barrier (saw: $$bb)"; \
+	       echo "       EndCalWrite   must be barrier-then-increment (saw: $$ee)"; \
+	       echo "       They are MIRROR IMAGES, and swapping either one makes the"; \
+	       echo "       mark useless without making it absent: nothing may sink"; \
+	       echo "       below the ODD increment and nothing may rise above the"; \
+	       echo "       EVEN one, or a reader that correctly observes an even"; \
+	       echo "       generation can still see a partially-applied write."; \
+	       echo "       Marking an update does not help if the optimiser may"; \
+	       echo "       move the update out of the marks."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -o $(SEQ908_BIN) test_908_cal_source_seqlock.c
+
+run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) \
+     $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) \
+     $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) \
+     $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(USECALTYPE_BIN) $(ARM_BIN) $(NAME_BIN) \
+     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(SUMBUDGET_BIN)
+	./$(SEQ908_BIN)
 	./$(TEAR904_BIN)
 	./$(SUMBUDGET_BIN)
 	./$(BIN)
@@ -3268,9 +4133,11 @@ run: $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(ARM_BIN) $(JS
 	./$(REPLYBUF_BIN)
 	./$(HEXWIN_BIN)
 	./$(LOGONCE_BIN)
+	./$(USECALTYPE_BIN)
 	./$(DACREINIT_BIN)
 	./$(CALFINITE_BIN)
 	./$(SDLOG1029_BIN)
+	./$(LOG1039_BIN)
 	./$(FAILNEXT_BIN)
 	./$(FAILNEXT_REAL_BIN)
 	./$(SCPIDAC_RAILGATE_BIN)
@@ -3535,12 +4402,13 @@ $(SUMBUDGET_BIN): test_1055_stream_end_summary_budget.c test_framework.h \
 	$(CC) $(CFLAGS) -DFW_LOG_MESSAGE_SIZE=$(LOG_MSG_SIZE) -o $(SUMBUDGET_BIN) test_1055_stream_end_summary_budget.c
 
 clean:
+	rm -f $(SEQ908_BIN)
 	rm -f $(TEAR904_BIN)
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) \
-	      $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) \
-	      $(HEXWIN_BIN) $(LOGONCE_BIN) $(GEN_1125) $(DACREINIT_BIN) $(CALFINITE_BIN) \
-	      $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(NAME_BIN) $(SDLOG1029_GEN).tmp $(FAILNEXT_BIN) \
-	      $(FAILNEXT_REAL_BIN) $(ARM_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(SUMBUDGET_BIN)
+	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) \
+	      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(GEN_1125) \
+	      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(SDLOG1029_GEN).tmp \
+	      $(USECALTYPE_BIN) $(NAME_BIN) $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(ARM_BIN) $(SCPIDAC_RAILGATE_BIN) \
+	      $(FORCEGATE_BIN) $(LOG1039_BIN) $(LOG1039_GEN) $(SUMBUDGET_BIN)
 
 .PHONY: run clean

@@ -249,12 +249,241 @@ extern "C" {
     bool daqifi_settings_LoadADCCalSettings(DaqifiSettingsType type, AInRuntimeArray* channelRuntimeConfig);
 
     /**
+     * Answers whether an ADC calibration bank is loadable, WITHOUT installing
+     * it into any runtime array.
+     *
+     * This is the first half of daqifi_settings_LoadADCCalSettings: that
+     * function validates the stored record (daqifi_settings_LoadFromNvm) and
+     * resolves the bank, then copies CalM/CalB into the caller's array in a
+     * loop that cannot fail. Splitting the validation out lets a caller prove
+     * a bank is good BEFORE it mutates anything, so the runtime install is
+     * never attempted unless the bank was already proven loadable -- THIS
+     * COMMAND'S OWN failure path cannot leave a half-applied install.
+     *
+     * NOT a guarantee that the runtime array and NVM stay in agreement in
+     * general: it proves only that the bank was loadable at the moment it
+     * looked. An unclaimed saver, or a save that reports success when it did
+     * not land, can still make them disagree afterwards -- that is the
+     * accepted #1153 residual, which this function does not close.
+     *
+     * Deliberately a separate function rather than a NULL `channelRuntimeConfig`
+     * overload on LoadADCCalSettings: a NULL passed by accident would silently
+     * skip the install and still return true, which is the silent-permissive
+     * shape this file should not grow.
+     *
+     * Its DaqifiSettings scratch lives in this function's own frame, so a
+     * caller that validates and then installs pays max(), not sum(), of the two
+     * frames -- unlike a scratch buffer held in the caller across both steps,
+     * which costs MAX_AIN_RUNTIME_CHANNEL*2 doubles (768 B) for the whole call
+     * including every successful one.
+     *
+     * @param type The calibration bank to check (FactAInCalParams or
+     *             UserAInCalParams; any other type answers false)
+     * @return True if the bank's stored record validates and the type names a
+     *         calibration bank, false otherwise
+     */
+    bool daqifi_settings_ValidateADCCalBank(DaqifiSettingsType type);
+
+    /**
+     * Answers whether the COMMITTED top-level record in NVM already equals the
+     * record a caller intended to persist.
+     *
+     * Exists because daqifi_settings_SaveToNvm can report failure over a write
+     * that LANDED: it stages into the shared global gTempFflashBuffer and
+     * nvm_WriteRowtoAddr's success test is a readback comparison against that
+     * same buffer, so any concurrent settings writer on another transport can
+     * make the comparison fail without touching the flash. This function reads
+     * the medium independently -- LoadFromNvm into this function's own local,
+     * never through the staging buffer -- and requires checksum validation, the
+     * expected top-level type (which rides out of LoadFromNvm uncovered by the
+     * checksum), and equality of the SELECTOR FIELD `calVals`.
+     *
+     * ⛔ Deliberately NOT whole-payload equality. Other fields of this record
+     * have other legitimate owners, and SaveToNvm auto-captures
+     * voltagePrecision and friendlyDeviceName on every save, so a payload
+     * comparison answers a strictly stronger question than the caller asks and
+     * is false whenever anyone else writes.
+     *
+     * ⛔ THIS IS NOT TRANSACTION SAFETY, and a caller must not claim it is.
+     * Another top-level writer can overwrite the record after this returns; a
+     * save prepared earlier elsewhere can land after the caller has returned;
+     * the caller's own subsequent work may still re-read other pages; and a
+     * save that HANGS never reaches this check at all. What it closes is the
+     * specific demonstrated interleaving: a readback comparison corrupted by a
+     * concurrent writer, over a write that succeeded.
+     *
+     * @param expected The record the caller handed to SaveToNvm. Only its
+     *                 `settings.topLevelSettings.calVals` field is the
+     *                 comparand -- see above (and
+     *                 daqifi_settings.c:424-437, the implementation) for why
+     *                 a whole-payload compare is deliberately NOT used.
+     * @return True only if a valid top-level record is committed, its
+     *         stored type is DaqifiSettings_TopLevelSettings, and its
+     *         `calVals` equals `expected`'s. False on NULL, on no valid
+     *         record, on an unexpected stored type, or on a DIFFERENT
+     *         `calVals`. Every OTHER payload field (voltagePrecision,
+     *         friendlyDeviceName, ...) is NOT compared, by design, so a
+     *         difference there does not make this return false.
+     */
+    bool daqifi_settings_TopLevelMatchesCommitted(const DaqifiSettings* expected);
+
+    /**
      * Saves the ADC calibration settings
      * @param type The type of settings to save
      * @param channelRuntimeConfig Channel config from which to save the settings
      * @return True on success, false otherwise
      */
     bool daqifi_settings_SaveADCCalSettings(DaqifiSettingsType type, AInRuntimeArray* channelRuntimeConfig);
+
+    /**
+     * #908: Records that the factory ADC-calibration NVM page does not
+     * hold a valid calibration. Called from boot when the factory-cal
+     * load fails (daqifi_settings_LoadADCCalSettings), leaving the
+     * runtime CalM/CalB at their identity defaults; also called from
+     * SCPIADC.c's CalSaveCommon when a CONF:ADC:SAVEFcal FAILS, since
+     * daqifi_settings_SaveToNvm erases the target page before writing its
+     * replacement record, so a failed write can leave the page erased or
+     * partially written rather than restoring its prior state.
+     */
+    void daqifi_settings_MarkFactoryCalMissing(void);
+
+    /**
+     * #908: Records that the factory ADC-calibration NVM page now holds a
+     * real calibration -- called after a SUCCESSFUL CONF:ADC:SAVEFcal
+     * (SCPIADC.c's CalSaveCommon), so a capability query between the save
+     * and the next reboot reports the slot as present rather than the
+     * stale boot-time reading. Neither this nor
+     * daqifi_settings_MarkFactoryCalMissing persists anything; each is
+     * called only when its own caller has independently confirmed the
+     * state (a failed boot load, or a successful save) from the real NVM
+     * operation, never from each other or from a stored flag.
+     */
+    void daqifi_settings_ClearFactoryCalMissing(void);
+
+    /**
+     * #908: True when the factory ADC calibration is currently missing --
+     * either boot found no valid factory calibration and it has not since
+     * been established by a successful CONF:ADC:SAVEFcal (see
+     * daqifi_settings_MarkFactoryCalMissing /
+     * daqifi_settings_ClearFactoryCalMissing). Reported, inverted, as
+     * identity.cal.factory_present in CONF:CAP:JSON?.
+     * @return true if the factory calibration is missing, false otherwise
+     */
+    bool daqifi_settings_FactoryCalIsMissing(void);
+
+    /**
+     * #908 (Qodo item 3): which calibration bank the live coefficients were
+     * last successfully loaded from.
+     *
+     * ⚠ This answers a DIFFERENT question from
+     * daqifi_settings_FactoryCalIsMissing, which reports whether the factory
+     * NVM slot is populated. Conflating the two is the defect Qodo reported:
+     * a failed SAVEFcal sets the missing flag, and reporting that as
+     * source:"identity" claimed the device was uncalibrated while it carried
+     * on measuring with unchanged non-identity coefficients.
+     *
+     * ⚠ Nor does it imply calibration is in effect -- a bank can load
+     * successfully and contain identity. Pair it with
+     * daqifi_settings_CalIsIdentity to answer that.
+     *
+     * @return DaqifiSettings_FactAInCalParams or
+     *         DaqifiSettings_UserAInCalParams (factory until a load succeeds)
+     */
+    DaqifiSettingsType daqifi_settings_GetActiveCalBank(void);
+
+    /**
+     * #908: bracket a write to the live CalM/CalB so a concurrent
+     * CONF:CAP:JSON? cannot report a composite that never existed.
+     *
+     * EVERY writer of the live coefficients must call Begin before its first
+     * store and End after its last -- the bank load, CONF:ADC:chanCALM and
+     * chanCALB. ⚠ Two independent setters are sufficient to manufacture a
+     * fiction even though one is not: an early-exiting identity scan can read
+     * channel 0 as identity, then one setter clears a later channel while
+     * another sets channel 0, and the scan concludes "all identity" -- a view
+     * that held at no instant.
+     *
+     * The counter itself is private, so a caller can neither forget to pair
+     * these nor set it directly.
+     */
+    void daqifi_settings_BeginCalWrite(void);
+    void daqifi_settings_EndCalWrite(void);
+
+    /**
+     * #908 (Qodo item 3): true when every channel's live coefficients are the
+     * identity pair (CalM == 1.0f, CalB == 0.0f), i.e. no calibration is in
+     * effect and readings are unscaled.
+     *
+     * A question about the RUNTIME ARRAY, not about NVM, and the one the
+     * CONF:CAP:JSON? "source" key is named after. Uses exact float comparison
+     * deliberately: the identity defaults are assigned as 1.0f/0.0f, so an
+     * uncalibrated channel is bit-identical to them, whereas an epsilon would
+     * answer the weaker "is it nearly identity" and misreport a real
+     * coefficient close to unity as no calibration at all.
+     *
+     * @param channelRuntimeConfig the live AIn runtime array; NULL or empty
+     *        reads as identity, since no channel then carries calibration
+     * @return true if no calibration is in effect
+     */
+    bool daqifi_settings_CalIsIdentity(const AInRuntimeArray* channelRuntimeConfig);
+
+    /**
+     * #908: what CONF:CAP:JSON?'s identity.cal.source reports.
+     *
+     * Operator ruling, 2026-10-25 (item 3): the wire values are
+     * {factory, user, none}. NONE means every channel's live coefficients are
+     * CalM = 1 / CalB = 0 -- no correction applied -- whichever bank was
+     * selected.
+     *
+     * Operator ruling, 2026-10-27: a FOURTH value, UNKNOWN -> "unknown", for
+     * the unstable-read path ONLY.
+     *
+     * ⚠ WHY A FOURTH VALUE RATHER THAN REUSING NONE. The three above are all
+     * positive claims about the coefficients: NONE asserts that every channel
+     * is identity and readings are unscaled. The seqlock reader can exhaust
+     * its retries without ever completing a coherent scan, and it then knows
+     * NOTHING about the coefficients -- so answering NONE there states a fact
+     * the device never established, and states the one a client is most likely
+     * to act on ("this device is uncalibrated"). UNKNOWN is the absence of an
+     * answer, which is a different kind of thing from any of the three.
+     *
+     * ⛔ UNKNOWN IS NOT A SYNONYM FOR "IDENTITY" OR FOR "BUSY". It means the
+     * read did not complete. A caller that cannot handle it should retry, not
+     * substitute a value -- collapsing it into NONE is exactly the defect it
+     * exists to prevent.
+     *
+     * Appended rather than inserted, so FACTORY and USER keep their numbering
+     * (CLAUDE.md: append new values at the end, never renumber). NONE stays 0,
+     * which means a zero-initialised DaqifiCalSource still reads as NONE
+     * rather than UNKNOWN -- pre-existing, and deliberately not changed here,
+     * because moving it would renumber the other two.
+     */
+    typedef enum eDaqifiCalSource {
+        DAQIFI_CAL_SOURCE_NONE = 0,
+        DAQIFI_CAL_SOURCE_FACTORY,
+        DAQIFI_CAL_SOURCE_USER,
+        DAQIFI_CAL_SOURCE_UNKNOWN,
+    } DaqifiCalSource;
+
+    /**
+     * #908 (codex-r6): the cal source as ONE coherent answer.
+     *
+     * ⚠ Use this rather than pairing daqifi_settings_CalIsIdentity() with
+     * daqifi_settings_GetActiveCalBank() yourself. Those are two reads, and a
+     * higher-priority CONF:ADC:LOADcal / LOADFcal between them -- or part-way
+     * through the identity scan -- produces a pair the device never had:
+     * identity measured against one bank, attributed to the other.
+     *
+     * Detects interference rather than excluding it, so it takes no critical
+     * section: a seqlock read requiring an EVEN generation that is UNCHANGED
+     * across the scan. A bank comparison is NOT sufficient -- the bank is
+     * published last, so it cannot see a load that is still in progress.
+     * Bounded retries; on exhaustion reports NONE, the understating direction.
+     *
+     * @param channelRuntimeConfig the live AIn runtime array
+     * @return the source to report
+     */
+    DaqifiCalSource daqifi_settings_GetCalSource(const AInRuntimeArray* channelRuntimeConfig);
 
     /**
      * #14: Sets the runtime device friendly name cache. The value is

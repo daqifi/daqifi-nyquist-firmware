@@ -521,6 +521,56 @@ script's own header comment for the full account, including why linking
 `SCPIInterface.c` itself was tried first and ruled out, and what a textual
 guard still does not establish.
 
+`test_1039_log_message_budget.c` covers four more `LOG_E` messages cut by the
+same `Util/Logger.c` message frame `test_1000_sd_log_arm_budget.c` measures
+#1000's site against (issue #1039): the `#716` clock-mismatch warning in
+`app_freertos.c`, the `CONF:ADC:CHAN` not-addressable refusal in `SCPIADC.c`,
+and the two `#589` SPI4/SD-card hints in `wifi_manager.c`. Same technique —
+mirror `LogMessageFormatImpl` (real `vsnprintf`, same bound, same clamp, same
+three-branch CRLF fixup) and run the real texts through it at their worst-case
+substitution, asserting the emitted bytes equal the intended bytes. It is
+independent of `test_1000`'s target: different sites, its own extraction, its
+own mirror, so a mistake in one does not become the other's baseline.
+
+None of these four formats ends in CRLF, which makes the boundary simpler than
+#1000's: the fixup always appends a fresh CRLF, so there is no degenerate
+window and the first byte past 125 is a byte of the message.
+
+It also carries the four **pre-fix** texts as frozen literals (315, 181, 139
+and 139 bytes at worst case) and asserts each was cut and lost its remedy —
+without that half every assertion would pass just as happily on a tree where
+#1039 was never fixed. Proven by reverting one real message in the tree: five
+of the eight tests then fail, naming the site, its byte overage and the lost
+remedy.
+
+Like `test_1029`, it does not grep-and-copy its firmware constants.
+`gen_1039_log_budget.py` **extracts** them at build time — `LOG_MESSAGE_SIZE`,
+both of `Logger.c`'s reservations, and all four live format strings — anchoring
+each site on the CODE that gates it rather than on its message text (a re-word
+must re-*measure*, not fail the build), requiring that anchor to be unique,
+refusing a literal run not followed by `,` or `)` (a fragment would understate
+a message's length and pass everything), and pinning each site's conversion
+signature so a changed substitution count re-derives the worst case instead of
+being measured with stale arguments. It **fails the build** with a named
+diagnostic on any of it. It shares exactly one thing with
+`tools/lint/log_budget.py`, and the split is load-bearing in both directions
+(the unqualified “shares nothing with the gate” claim this paragraph used to
+make was refuted by the #1110 r4 audit, and the generator's own header records
+what it cost):
+
+* **The measurement is NOT shared, and must never be.** The gate *models*
+  truncation — fixed bytes plus a conservative per-specifier width. This
+  test's whole value is that it runs the real strings through the real
+  `vsnprintf` and the real clamp instead. Two independent models of one thing
+  is the point.
+* **The ceiling IS shared, and must be.** `LOG_MESSAGE_SIZE - 2` and
+  `min((LOG_MESSAGE_SIZE - 3), …)` are not a model of anything — they are two
+  integers transcribed out of `Logger.c`, so two readers can only agree or be
+  wrong. When the reader existed twice they disagreed by 10 bytes on
+  `min((LOG_MESSAGE_SIZE - 3) - 10, size)` with nothing comparing them, so the
+  independence bought divergence and no detection. `gen_1039_log_budget.py`
+  now imports it, and there is one of it.
+
 `test_1112_scan_list_snapshot_race.c` covers `MC12b_ComputeScanList()`
 (`HAL/ADC/MC12bADC.c`) and the mask form of `ADCChanEnableSetClaimed()`
 (`services/SCPI/SCPIADC.c`), issue #267 / PR firmware#1112 round 3. Neither
@@ -744,6 +794,120 @@ OPEN_FILE(WRITE_PLUS)` remount, which truncates the log file; see
 `gFailNextWrite`'s block comment in `sd_card_manager.c`). Real-hardware
 validation of the SCPI-to-drain path is `test_981_sd_failnext_hook.py`
 (daqifi-python-test-suite)'s job.
+
+`test_1152_usecal_type_trust.c` covers `ADCUseCalSetClaimed()`
+(`services/SCPI/SCPIADC.c`) -- the body of `CONF:ADC:USECal` -- and the
+`DaqifiSettings` record it carries from `daqifi_settings_LoadFromNvm()` to
+`daqifi_settings_SaveToNvm()` (PR #1152, the follow-up to #1148).
+
+#1148 reordered that body to validate -> apply -> persist, so the calibration
+coefficients are installed into the live runtime array before the selector is
+written, and a reload that fails can no longer leave a stale selector
+persisted. Its promise is that the save is then the only step left that can
+fail, and only for a reason no caller argument can provoke -- a flash fault.
+A blind-leg review found that was not true. `DaqifiSettings` is `{ checksum[16],
+type, settings }` and **both** integrity checks cover the payload only
+(`CRC32_Compute(&(...settings), dataSize)`, and the legacy MD5 fallback the
+same way), while `LoadFromNvm` copies the **whole** stored record out once the
+payload validates. So `type` is whatever bytes are physically at that flash
+address, and `SaveToNvm` dispatches on it.
+
+Two outcomes, and the second is worse. An **out-of-enum** type hits
+`default: return false` before any flash I/O, so the command answers -200 --
+but the install has already happened, and `USECal?` still reports the old
+selector while acquisition converts against the new bank. An **in-enum but
+wrong** type (1, 2 or 3) takes a *real* arm: it erases and rewrites a
+*different* page -- the WiFi settings, or a calibration bank -- with the
+TopLevelSettings image and a checksum computed over that bank's span, and
+returns **OK**. Type 2 is the factory bank, so `USECal 0` can destroy the very
+coefficients it was asked to select, silently. Neither needs faulty hardware
+and both repeat on every call against that record. The fix is one line,
+immediately after the load: `tmpTopLevelSettings.type =
+DaqifiSettings_TopLevelSettings;` -- the pattern `SCPI_SaveAutoPowerOnUsb`,
+`SCPI_SaveDataPrecision` and `SCPI_SaveDeviceName` (`SCPIInterface.c`) already
+follow at the three other sites that reuse a loaded struct for a save.
+
+Same technique as `test_1112` / `test_985` / `test_943` and for the same
+reason -- neither `SCPIADC.c` nor `daqifi_settings.c` is host-includable -- so
+the load/install/save shape is re-implemented against an in-memory NVM and the
+pre-/post-fix shapes compared on identical fixtures, one binary carrying both.
+The **checksum is not re-implemented**: `Util/CRC32.c` includes only its own
+header, so this target links the real one, which is what makes "the record
+validates and the type is still wrong" a demonstration rather than an
+assumption.
+
+Covered: the premise itself (moving `type` does not move the CRC, moving a
+payload byte does); both defect shapes asserted as shapes, not as error
+returns -- the out-of-enum one pinned to *zero* erases and *zero* writes, which
+is what distinguishes it from #1148's accepted flash-fault residual; all 256
+single-byte stored values plus three wide ones; and four regressions that must
+**not** move -- a healthy record is byte-for-byte identical in both shapes,
+#1148's own gate still refuses a bad bank before installing or persisting, the
+flash-fault residual behaves identically before and after, and the raw-mode and
+out-of-range returns still touch no NVM. The headline is `test_1112`'s: over
+the full (stored type x value x bank validity x erase fault x write fault)
+matrix the two shapes differ in **exactly** the cells where the stored type is
+wrong and the run reached the save.
+
+Rounds 2-10 moved this well past that original shape. The order as of round 10
+is RAW-MODE-CLEAR (ruling 9=A: USECal 0/1 always leaves raw output mode,
+unconditionally, before any step that can fail) -> load -> normalize ->
+validate -> save -> install, and install is no longer unconditional on a
+save failure: an earlier revision of this file said "load -> normalize ->
+install -> save **in that order**", which was the round-1 shape and stopped
+being true once the save was moved ahead of the install (round 2) to close
+the #1148 follow-up this file is named for.
+
+On a reported save failure, the function re-reads the committed record
+*twice*, and round 10's fix is that **both** reads now classify by the same
+selector field (`calVals`) that `daqifi_settings_TopLevelMatchesCommitted`
+itself compares -- not just "is a record present". That gives three cases
+rather than two:
+
+  * a valid record naming the INTENDED selector -- the write LANDED and only
+    the readback comparison (against the shared staging buffer) was
+    corrupted by a concurrent writer; install, so live and stored agree;
+  * a valid record naming a DIFFERENT selector -- some other write (or the
+    surviving old one, on a write-protected page) is what is actually
+    committed; do not install, the live coefficients already agree with it;
+  * no valid record at all -- do not install; nothing survives to protect,
+    and the next boot falls back to factory.
+
+Round 9 got the shape right but the second read wrong: it classified only
+by "is there a valid record", and asserted -- in a comment, unchecked -- that
+a valid record reaching that point must be case two. It is not: round 9's
+own first read (`TopLevelMatchesCommitted`) and the second, independent
+re-read are two separate calls a few lines apart with no claim held across
+the gap, so they are not guaranteed to agree.
+
+Because it models rather than includes, the Makefile carries five guard
+blocks: that the real `ADCUseCalSetClaimed()` still normalizes the type
+exactly once and still runs RAW-MODE-CLEAR -> load -> normalize -> validate
+-> save -> VERIFY-COMMITTED -> re-read-committed -> CONTINUING-fallthrough ->
+install, in that order (positional, because e.g. a normalization that
+drifted below the install would satisfy a bare grep while reopening the
+window, and an install that drifted back inside the mismatch branch would
+satisfy a bare presence check while reopening round 8's own regression);
+that both of `daqifi_settings.c`'s validators still span `.settings`, that
+`LoadFromNvm` still copies the whole record, and that `SaveToNvm` still
+rejects an unknown type *before* the erase; that `eDaqifiSettingsType` is
+still the same four implicitly-numbered enumerators the model maps onto
+pages; that every `LOG_E` in the function still renders at or under the
+125-byte usable payload with its widest substitution (round 9); and that
+`daqifi_settings_TopLevelMatchesCommitted`'s own body still compares
+`calVals` alone rather than the whole payload (round 10 -- added because the
+model of that function, and the ordering guard above, both only pin its
+CALL SITE by presence and position; neither exercises its own body, so a
+widened or narrowed comparison there would have passed every test in this
+file silently). The first three were mutation-proven to fire (twelve
+mutations: a renamed function, a deleted, duplicated and relocated
+normalization, each of the four `daqifi_settings.c` spans widened, a removed
+dispatch, the rejection both `break`ing and moved below the erase, and a
+renumbered and a reordered enumerator), and five mutations of the model
+itself were proven to turn the suite red (the post-fix shape not normalizing
+-- i.e. the firmware at this PR's base commit -- the pre-fix shape
+normalizing too, normalizing to the wrong constant, #1148's order reverted,
+and a rejection that erases first).
 
 ## Framework
 
