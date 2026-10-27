@@ -697,6 +697,43 @@ def read_ceiling(logger_h_text, logger_c_text):
             f"message in the tree is measured against.")
     size = int(raw_size)
 
+    # ⛔ #1110 r16/1: THE DEFINITION SCAN COVERED ONLY Logger.h, SO A
+    # REDEFINITION IN Logger.c WAS INVISIBLE. Measured on this head:
+    #
+    #     #undef LOG_MESSAGE_SIZE
+    #     #define LOG_MESSAGE_SIZE 64
+    #
+    # above LogMessageFormatImpl still derived a ceiling of 125 while the
+    # compiled one was 61, and a 100-byte message reported CLEAN. Logger.c is
+    # where the buffer is declared (`char buffer[LOG_MESSAGE_SIZE]`) and where
+    # both reservations are read, so a definition there governs every number
+    # this function returns -- the header's value simply stops being the one
+    # the firmware compiles with.
+    #
+    # Same rule as r10/r11: DETECT WITH A WIDER NET THAN THE PARSER ACCEPTS
+    # WITH. Any `#define` or `#undef` of the name, any `#  define` spacing, any
+    # value, inside a conditional or not. Refused rather than interpreted,
+    # because this tool does not evaluate the preprocessor and so cannot know
+    # which definition wins. Comments are already masked above, so a
+    # commented-out or historical redefinition does not fire this.
+    for macro in CEILING_INPUT_MACROS:
+        shadow = list(re.finditer(
+            r"^[ \t]*#[ \t]*(define|undef)[ \t]+" + re.escape(macro) + r"\b",
+            logger_c_text, re.M))
+        if shadow:
+            kinds = ", ".join("#" + k for k in
+                              sorted({m.group(1) for m in shadow}))
+            raise ToolError(
+                f"Logger.c carries {len(shadow)} {kinds} directive(s) for "
+                f"{macro}, which Logger.h defines as {size}. A definition in "
+                f"Logger.c governs "
+                f"the buffer declared there and both reservations read out of "
+                f"it, so the ceiling this tool derives from the header would "
+                f"not be the compiled one -- measured: a 64-byte redefinition "
+                f"still derived 125 where the real ceiling was 61. Refused "
+                f"rather than interpreted; keep {macro} defined once, in "
+                f"Logger.h.")
+
     # INPUT 2 of 4: the definition of LogMessageFormatImpl. Counted too -- two
     # definitions (an #ifdef'd debug variant, say) would silently hand the
     # reservations of whichever came first.
@@ -731,6 +768,81 @@ def read_ceiling(logger_h_text, logger_c_text):
                                   "the min() clamp",
                                   "LogMessageFormatImpl no longer clamps with "
                                   "min((LOG_MESSAGE_SIZE - N), ...)")
+
+    # ⛔ #1110 r16/2: THE CLAMP'S *SECOND* ARGUMENT IS ALSO THE CEILING.
+    # reserve_after() reads min()'s FIRST argument and nothing else, so
+    #
+    #     size = min((LOG_MESSAGE_SIZE - 3), 60);
+    #
+    # still derived 125 while the firmware capped every message at 60 --
+    # measured on this head, a 100-byte message reported CLEAN. min() yields
+    # the SMALLER of its two arguments, so whichever stands in the second
+    # position bounds the message exactly as much as the first does; reading
+    # one and assuming the other is the r11 defect one argument over.
+    #
+    # The accepted contract is the shipped statement and nothing else:
+    #
+    #     <v> = min((LOG_MESSAGE_SIZE - N), <v>);        <v> from vsnprintf
+    #
+    # With the second argument being the formatted length itself, the clamp is
+    # a pure cap at LOG_MESSAGE_SIZE - N, which is what the arithmetic below
+    # assumes. A constant, a different identifier, an expression, or a third
+    # argument each cap at something this tool would have to EVALUATE to know,
+    # so all of them are refused rather than guessed at.
+    vsn_assign = re.search(r"(\w+)\s*=\s*vsnprintf\s*\(", impl)
+    if vsn_assign is None:
+        raise ToolError(
+            "LogMessageFormatImpl's vsnprintf() result is not assigned to a "
+            "variable, so the min() clamp's second argument cannot be checked "
+            "against it -- re-derive the ceiling by hand and update "
+            "read_ceiling().")
+    formatted = vsn_assign.group(1)
+    clamp_assign = re.search(r"(\w+)\s*=\s*min\s*\(", impl)
+    if clamp_assign is None:
+        raise ToolError(
+            "LogMessageFormatImpl's min() clamp is not of the form "
+            "`<var> = min(...)`, so what it caps cannot be read -- re-derive "
+            "the ceiling by hand and update read_ceiling().")
+    if clamp_assign.group(1) != formatted:
+        raise ToolError(
+            f"LogMessageFormatImpl assigns vsnprintf's result to {formatted!r} "
+            f"but the min() clamp to {clamp_assign.group(1)!r}. The ceiling "
+            f"arithmetic holds only when the clamp caps the formatted length "
+            f"itself; two different variables mean it may not, so this is "
+            f"refused rather than assumed.")
+    # Walk to the ')' that closes `min(`, then split at depth 0.
+    open_idx = clamp_assign.end() - 1
+    i, depth = open_idx, 0
+    while i < len(impl):
+        if impl[i] == "(":
+            depth += 1
+        elif impl[i] == ")":
+            depth -= 1
+            if depth == 0:
+                break
+        i += 1
+    else:
+        raise ToolError(
+            "could not match the parentheses of LogMessageFormatImpl's min() "
+            "clamp -- the ceiling is read from that statement and must not be "
+            "assumed")
+    clamp_args = split_args(impl[open_idx + 1:i])
+    if len(clamp_args) != 2:
+        raise ToolError(
+            f"LogMessageFormatImpl's min() clamp takes {len(clamp_args)} "
+            f"argument(s), not 2 -- refused rather than guessing which of them "
+            f"bounds the message.")
+    second = clamp_args[1].strip()
+    if second != formatted:
+        raise ToolError(
+            f"LogMessageFormatImpl clamps with min(..., {second!r}). The "
+            f"ceiling arithmetic holds only when the second argument is the "
+            f"formatted length itself ({formatted!r}): min() takes the smaller "
+            f"of the two, so anything else caps every message at a value this "
+            f"tool would have to evaluate. Measured: `min((LOG_MESSAGE_SIZE - "
+            f"3), 60)` derived 125 while the firmware capped at 60. Refused "
+            f"rather than interpreted.")
+
     ceiling = min(size - vsn_reserve - 1, size - clamp_reserve)
     if ceiling <= 0:
         raise ToolError(
@@ -1221,6 +1333,7 @@ def split_code_comments(src_lines):
     for raw in src_lines:
         code = []
         cmt = []
+        spans = []
         i = 0
         n = len(raw)
         while i < n:
@@ -1228,13 +1341,20 @@ def split_code_comments(src_lines):
                 j = raw.find("*/", i)
                 if j < 0:
                     cmt.append(raw[i:])
+                    # The block is still OPEN at end of line, so this comment's
+                    # text can continue onto the next one.
+                    spans.append((raw[i:], False))
                     break                      # rest of the line is comment
                 cmt.append(raw[i:j])
+                spans.append((raw[i:j], True))     # this `*/` closes it
                 in_block = False
                 i = j + 2
                 continue
             if raw.startswith("//", i):
                 cmt.append(raw[i + 2:])
+                # A // comment always ends at the newline; nothing it contains
+                # can continue onto the next line.
+                spans.append((raw[i + 2:], True))
                 break                          # rest of the line is comment
             if raw.startswith("/*", i):
                 in_block = True
@@ -1255,7 +1375,14 @@ def split_code_comments(src_lines):
                 continue
             code.append(ch)
             i += 1
-        out.append(("".join(code), " ".join(cmt)))
+        # ⛔ #1110 r16/3: the THIRD element is the per-span lexical state the
+        # walk already knew and used to throw away. find_annotation() needs to
+        # ask "did the comment CONTAINING this annotation close on its own
+        # line?", and it was answering that by searching the raw line for `*/`
+        # and `//` -- which a URL inside a block comment satisfies. The walk is
+        # the only thing here that knows what is a comment, so it is the only
+        # thing that should be answering.
+        out.append(("".join(code), " ".join(cmt), spans))
     return out
 
 
@@ -1263,7 +1390,7 @@ def comment_only_map(src_lines, split=None):
     """Per line: True iff it carries comment text and NO code."""
     if split is None:
         split = split_code_comments(src_lines)
-    return [not code.strip() for code, _cmt in split]
+    return [not code.strip() for code, _cmt, _spans in split]
 
 
 def comment_text(src_lines, idx, split=None):
@@ -1344,28 +1471,44 @@ def find_annotation(src_lines, line, split=None):
     # bound check itself; it delegates here now, so the check lives here.
     if not (0 <= idx < len(split)):
         return None
-    # (line index, comment text) -- the INDEX is needed because comment_text()
-    # strips the comment markers, so `*/` is invisible in the text and the
-    # "is this value terminated?" test below has to look at the RAW line.
-    texts = [(idx, comment_text(src_lines, idx, split))]
+    # (line index, ONE comment span's text, did that span close on its line).
+    # ⛔ #1110 r16/3: PER SPAN, not per joined line. Termination is a property
+    # of the comment that CONTAINS the annotation, and a line can hold more
+    # than one comment with different answers -- `/* a */ /* b` closes the
+    # first and leaves the second open. Joining them first threw that away.
+    spans = [(idx, t, cl) for t, cl in split[idx][2]]
     k = idx - 1
     while k >= 0 and cmap[k]:
-        texts.append((k, comment_text(src_lines, k, split)))
+        spans.extend((k, t, cl) for t, cl in split[k][2])
         k -= 1
-    for t_idx, text in texts:
+    for t_idx, text, closed in spans:
         m = ANNOTATION_RE.search(text)
         if m:
             raw = m.group(1).strip()
             mv = ANNOTATION_LIST_RE.fullmatch(raw)
-            raw_line = src_lines[t_idx] if 0 <= t_idx < len(src_lines) else ""
-            # Terminated if the RAW line closes the block comment after the
-            # annotation, carries a // comment (which cannot continue), is followed
-            # by ` -- prose`, or -- r12 REVIEW -- has nothing on the next line for
-            # the value to continue INTO.
-            after = raw_line.split("log_budget:", 1)[-1]
             prose_after_value = bool(mv) and raw != mv.group(1)
-            terminated = (("*/" in after)
-                          or ("//" in raw_line.split("log_budget:")[0])
+            # ⛔ #1110 r16/3: TERMINATION IS A LEXICAL FACT, NOT A TEXT SEARCH.
+            #
+            # This used to ask two questions of the RAW line: is there a `*/`
+            # after the annotation, and is there a `//` before it. The second
+            # was meant to recognise "this is a // comment, which cannot
+            # continue" -- but it matched ANY `//` anywhere earlier on the
+            # line, and a URL has one:
+            #
+            #     /* see http://example.com log_budget: max=1
+            #        +200 */
+            #
+            # MEASURED on the previous head: that silently bound max=1 and
+            # reported 0 findings, while the SAME comment with the URL deleted
+            # was correctly refused. A refusal defeated by mentioning a link.
+            #
+            # `closed` comes from the comment walk itself, which knows whether
+            # the span holding this annotation ended on its own line -- true
+            # for a `//` comment by definition, true for a block closed by its
+            # own `*/`, false for a block still open. It subsumes BOTH old
+            # arms and cannot be fooled by comment TEXT, because it is not
+            # reading the text.
+            terminated = (closed
                           or prose_after_value
                           or not annotation_value_can_continue(src_lines, t_idx))
             if mv and not terminated:
