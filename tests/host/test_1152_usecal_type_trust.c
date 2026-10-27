@@ -940,16 +940,37 @@ static UseCalRun model_usecal_set(UseCalShape shape, int param1,
                     run.committedReadableOnMismatch =
                             model_TopLevelCommittedReadable(nvm);
                 } else if (shape == USECAL_R10) {
+                    ModelSettings recheck;
+
                     if (nvm->recheckRevealsLandedSelector) {
                         /* Simulate a writer of this exact record landing in
                          * the gap between the two independent reads -- see
                          * the fixture field's own comment on ModelNvm. */
                         model_simulate_landed_write(nvm, &tmp);
                     }
+                    /* ONE snapshot, both facts derived from it -- mirrors
+                     * production's single daqifi_settings_LoadFromNvm into
+                     * committedSettings, from which BOTH committedReadable
+                     * and committedMatchesIntended are computed
+                     * (SCPIADC.c, the mismatch branch's own re-read). Calling
+                     * model_TopLevelCommittedReadable and
+                     * model_TopLevelMatchesCommitted here as two SEPARATE
+                     * reads -- each doing its own model_LoadFromNvm -- would
+                     * admit a combination production cannot reach: readable
+                     * on this read, a DIFFERENT record seen on a second one.
+                     * This is the inner, selector-aware re-read ADDED by
+                     * round 10; the outer model_TopLevelMatchesCommitted call
+                     * (the `if` that opens this whole mismatch branch) is a
+                     * genuinely separate, earlier read in production too, and
+                     * is untouched. */
+                    memset(&recheck, 0, sizeof(recheck));
                     run.committedReadableOnMismatch =
-                            model_TopLevelCommittedReadable(nvm);
-                    recoveredViaRecheck =
-                            model_TopLevelMatchesCommitted(nvm, &tmp);
+                            model_LoadFromNvm(nvm, MODEL_TYPE_TOP_LEVEL,
+                                              &recheck) &&
+                            recheck.type == MODEL_TYPE_TOP_LEVEL;
+                    recoveredViaRecheck = run.committedReadableOnMismatch &&
+                            (recheck.settings.topLevelSettings.calVals ==
+                             tmp.settings.topLevelSettings.calVals);
                 }
                 if (!recoveredViaRecheck) {
                     run.result = RES_ERR;
