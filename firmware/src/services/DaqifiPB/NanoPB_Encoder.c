@@ -866,7 +866,8 @@ size_t Nanopb_Encode(tBoardData* state,
                 /**
                  * @brief Encodes the resolution of private analog input channels.
                  *
-                 * This tag stores the resolution (in bits) of private analog input channels,
+                 * This tag stores the resolution as a CODE COUNT, not a bit width (the MC12b
+                 * emits 4096 for its 12-bit converter), for private analog input channels,
                  * based on the ADC configuration for the MC12b module.
                  */
 

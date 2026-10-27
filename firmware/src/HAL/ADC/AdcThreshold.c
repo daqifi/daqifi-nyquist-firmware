@@ -313,8 +313,13 @@ void AdcThreshold_RevalidateForStream(void) {
         uint8_t an = gUnits[u].an;   /* < 32 by construction */
         bool scanned = ((ADCCSS1 >> an) & 1u) != 0u;
         if (!scanned) {
-            LOG_E("ADC threshold ch %u inactive this stream: channel not in the "
-                  "session scan (still monitors at idle; config/latch preserved)",
+            /* #1039: was 130 bytes against Logger's 125-byte ceiling, which
+             * truncates the TAIL -- so the reassurance that config and idle
+             * monitoring survive, the clause that stops this reading as data
+             * loss, was the part being cut. 98 now.
+             */
+            LOG_E("ADC threshold ch %u inactive: not in the session scan "
+                  "(still monitors at idle, config kept)",
                   (unsigned)gUnits[u].chId);
         }
     }

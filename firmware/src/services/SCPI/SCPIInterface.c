@@ -4242,13 +4242,35 @@ static scpi_result_t SCPI_ClearStreamStats(scpi_t * context) {
         pTcp->client.wifiTcpSendErrors = 0;
         pTcp->client.wifiTcpPartialSends = 0;
         pTcp->client.wifiPartialBytesMissing = 0;
+        pTcp->client.wifiTcpOverBytesExtra = 0;     // #956: same epoch as the line above
+        pTcp->client.wifiTcpInflightOverflow = 0;   // #956
         pTcp->client.wifiWriteBufferRejectedCalls = 0;
         pTcp->client.wifiWriteBufferRejectedBytes = 0;
-        for (uint8_t i = 0; i < WIFI_TCP_MAX_IN_FLIGHT; i++) {
-            pTcp->client.inflightSizes[i] = 0;
-        }
-        pTcp->client.inflightHead = 0;
-        pTcp->client.inflightTail = 0;
+        // #956: this site DELIBERATELY DOES NOT TOUCH THE IN-FLIGHT RING.
+        //
+        // It used to hand-roll a ring-ONLY reset (zeroing inflightHead/Tail and
+        // inflightSizes while leaving tcpInFlight at its outstanding-send
+        // count) -- the half-reset that ResetInflightRing()'s contract comment
+        // warns desyncs head/tail for the session.  The first fix for that
+        // zeroed BOTH halves.  That is worse, and a pre-merge review caught it:
+        // the ring is LIVE TRANSPORT STATE owned by the send/completion pair,
+        // not a statistic.  Zeroing tcpInFlight while the WINC still owes
+        // completions admits sends past the physical cap, and a later old
+        // completion pops a NEW send's slot or accrues false over-byte stats
+        // against a zero size -- a fresh instance of the very mis-pairing #956
+        // exists to remove.
+        //
+        // Resetting NEITHER half is correct and removes the original defect by
+        // construction: there is no partial reset if there is no reset.  The
+        // ring is reset only where a reset is safe -- the three socket-teardown
+        // sites, after which no completion can arrive for a stale slot.
+        //
+        // Residual, pre-existing and NOT fixed by this change: clearing
+        // wifiTcpBytesSent while a send is outstanding still lets that send's
+        // completion add to Confirmed with its Sent contribution erased, a
+        // permanent per-session offset docs/STREAMING_AND_ADC.md already
+        // documents.  Draining
+        // before clearing is the only real answer and is out of scope here.
         // #560/#475 Opt 0 — listener-health counters. Reset only on this
         // operator-initiated clear (NOT at stream start) so the slow PATH-1
         // listen-slot leak stays visible across streaming sessions.
@@ -4546,6 +4568,7 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
     {
         uint64_t bytesSent = 0, bytesConfirmed = 0;
         uint32_t sendErrors = 0, partialSends = 0, partialMissing = 0;
+        uint32_t overBytesExtra = 0, inflightOverflow = 0;  // #956
         uint32_t rejectedCalls = 0, rejectedBytes = 0;
         uint32_t cirbufProduced = 0, cirbufConsumed = 0, cirbufBufSize = 0;
         // #560/#475 Opt 0 — listener-health observability
@@ -4561,6 +4584,8 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
             sendErrors = pTcp->client.wifiTcpSendErrors;
             partialSends = pTcp->client.wifiTcpPartialSends;
             partialMissing = pTcp->client.wifiPartialBytesMissing;
+            overBytesExtra = pTcp->client.wifiTcpOverBytesExtra;      // #956
+            inflightOverflow = pTcp->client.wifiTcpInflightOverflow;  // #956
             rejectedCalls = pTcp->client.wifiWriteBufferRejectedCalls;
             rejectedBytes = pTcp->client.wifiWriteBufferRejectedBytes;
             cirbufProduced = pTcp->client.wCirbuf.producedBytes;
@@ -4586,6 +4611,26 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
         scpi_printf(context, "WifiTcpPartialSends=%u\r\n", (unsigned)partialSends);
         // #367 diag: cumulative byte shortfall across all partial sends
         scpi_printf(context, "WifiPartialBytesMissing=%u\r\n", (unsigned)partialMissing);
+        // #956 diag: the opposite direction of the line above (completion
+        // confirmed MORE than the popped slot claimed).  Non-zero = ring
+        // mis-pairing, not stream damage.  With both directions counted,
+        // WifiTcpBytesSent - WifiTcpBytesConfirmed ==
+        // WifiPartialBytesMissing - WifiTcpOverBytesExtra, bounded in-flight
+        // residual aside -- but ONLY when WifiTcpSendErrors (printed above, from
+        // the same snapshot) is 0 and no client teardown fell inside the epoch.
+        // An errored completion leaves its whole send, at most WIFI_WBUFFER_SIZE,
+        // on the left with nothing on the right, and a teardown strands every
+        // outstanding send the same way.  An earlier revision stated the identity
+        // unconditionally, which was false.  The full statement, and the bound
+        // that holds with errors: wifiTcpOverBytesExtra in wifi_tcp_server.h.
+        scpi_printf(context, "WifiTcpOverBytesExtra=%u\r\n", (unsigned)overBytesExtra);
+        // #956 diag: flush attempts refused by TcpServerFlush's authoritative
+        // in-flight cap check — a count of ring overruns PREVENTED, each one an
+        // attempt the pre-fix unlocked cap check would have let through.  The
+        // bytes are retried, so this is not loss.  Non-zero under WiFi streaming
+        // load is expected (producer contention at the cap); 0 on an idle or
+        // control-only channel.
+        scpi_printf(context, "WifiTcpInflightOverflow=%u\r\n", (unsigned)inflightOverflow);
         // #371 diag: WriteBuffer-side rejection counters (should match wifiDroppedBytes)
         scpi_printf(context, "WifiWriteBufferRejectedCalls=%u\r\n", (unsigned)rejectedCalls);
         scpi_printf(context, "WifiWriteBufferRejectedBytes=%u\r\n", (unsigned)rejectedBytes);
@@ -5319,9 +5364,15 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                   * only legal abbreviation SYST:STR:BENCH, so an operator who
                   * followed the printed remedy got -113. The max was also
                   * interpolated twice; once is enough. */
-                LOG_E("STR:START refused (#524): %d Hz > max %u Hz "
-                      "(%u ch, %u T1) - use <= that or SYST:STR:BENCHmark",
-                      (int)freq, (unsigned)maxFreq,
+                /* #1039: was 127 bytes against the 125-byte ceiling, and Logger
+                 * truncates the TAIL -- which is exactly where the REMEDY sat, so
+                 * the one actionable clause was what the operator lost. The remedy
+                 * now leads and the redundant "> max" is gone; 115 bytes. Keep the
+                 * remedy FIRST if this is ever reworded.
+                 */
+                LOG_E("STR:START refused (#524): use <= %u Hz or "
+                      "SYST:STR:BENCHmark (%d Hz, %u ch, %u T1)",
+                      (unsigned)maxFreq, (int)freq,
                       (unsigned)totalEnabledPublicChannels,
                       (unsigned)activeType1ChannelCount);
                 SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
@@ -5503,11 +5554,13 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
             pTcp->client.wifiTcpSendErrors = 0;
             pTcp->client.wifiTcpPartialSends = 0;
             pTcp->client.wifiPartialBytesMissing = 0;
-            for (uint8_t i = 0; i < WIFI_TCP_MAX_IN_FLIGHT; i++) {
-                pTcp->client.inflightSizes[i] = 0;
-            }
-            pTcp->client.inflightHead = 0;
-            pTcp->client.inflightTail = 0;
+            pTcp->client.wifiTcpOverBytesExtra = 0;     // #956: same epoch as the line above
+            pTcp->client.wifiTcpInflightOverflow = 0;   // #956
+            // #956: like SCPI_ClearStreamStats, this site DELIBERATELY leaves
+            // the in-flight ring alone.  The identical hand-rolled ring-only
+            // reset lived here too; see that function for why resetting BOTH
+            // halves is worse than resetting neither, and why only the
+            // socket-teardown sites may reset a live ring.
             taskEXIT_CRITICAL();
         }
     }
@@ -8907,9 +8960,108 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
         cfg->boardHardwareRev);
 
     scpi_printf(context,
-        "\"usb\":{\"vid\":%u,\"pid\":%u,\"class\":\"CDC\"}},",
+        "\"usb\":{\"vid\":%u,\"pid\":%u,\"class\":\"CDC\"},",
         (unsigned)0x04D8,   /* Microchip VID (matches usb_device_init_data) */
         (unsigned)0xF794);  /* DAQiFi Nyquist PID */
+
+    /* #908: factory-cal provenance. TWO KEYS ANSWERING TWO DIFFERENT
+     * QUESTIONS -- they were both derived from one boolean, which is the
+     * defect Qodo reported as item 3 ("failed saves report identity
+     * defaults").
+     *
+     *   factory_present : is the factory NVM SLOT populated? True from boot's
+     *                     factory-cal load, or as soon as a CONF:ADC:SAVEFcal
+     *                     succeeds (CalSaveCommon clears the flag
+     *                     immediately, so this need not wait for a reboot).
+     *                     Unchanged -- the flag answers this correctly.
+     *
+     *   source          : which coefficients are IN EFFECT. The flag does not
+     *                     answer this, and using it to do so reported NO
+     *                     CALIBRATION after a FAILED SAVEFcal while the
+     *                     unchanged non-identity coefficients were still
+     *                     being applied to every reading.
+     *
+     * ⭐ source is now derived from the live runtime array plus the bank the
+     * last successful load came from, and it has FOUR values. Two cannot
+     * cover the reachable states -- enumerating {slot populated?, bank
+     * selected, live coefficients identity?} gives 8 reachable combinations,
+     * of which the old flag-only scheme misreported 5 and a two-valued
+     * factory|none pair still misreported 2: with USECal 1 and real user
+     * coefficients, "factory" is false and "none" is false, so a two-valued
+     * key has no legal value for the state and must collapse it into a wrong
+     * one. Verified on hardware rather than argued: with the factory bank at
+     * CalM 1.25 and the user bank at 2.5, USECal 0 reports "factory" and
+     * USECal 1 reports "user" -- the row a two-valued key cannot express.
+     *
+     * Operator ruling, 2026-10-25 (item 3), verbatim: "the three values are
+     * fine, but perhaps identity should be \"none\" instead." Hence "none"
+     * rather than "identity" on the wire. The internal helper keeps the name
+     * daqifi_settings_CalIsIdentity: it describes the arithmetic, not the
+     * reported value. The rename costs no compatibility -- origin/main emits
+     * no source key at all, so this PR introduces it, and no client checkout
+     * here reads it.
+     *
+     * Operator ruling, 2026-10-27: a FOURTH value, "unknown", for the
+     * unstable-read path ONLY. The first three are all positive claims about
+     * the coefficients; "unknown" is the absence of a claim, and mixing it in
+     * with them is the one thing a reader of this list must not do.
+     *
+     *   "none"     : live CalM==1/CalB==0 on every channel, whatever the
+     *                selection -- readings are unscaled. Note this is the
+     *                honest answer for a factory bank that loaded fine and
+     *                CONTAINS identity, which is the state of both bench
+     *                boards on this station.
+     *   "user"     : non-identity coefficients from the USER bank (USECal 1).
+     *   "factory"  : non-identity coefficients from the FACTORY bank.
+     *   "unknown"  : the seqlock reader could not obtain a coherent view in 3
+     *                attempts, so NOTHING was established about the
+     *                coefficients. ⛔ NOT a synonym for "none" and NOT an
+     *                error: a client seeing it should re-query, never
+     *                substitute a value. Reachable only while a bank load is
+     *                in flight -- which is exactly when real coefficients are
+     *                being installed, so reporting "none" here (what this did
+     *                before r10) told a client the device was uncalibrated at
+     *                the precise moment it was becoming calibrated.
+     *
+     * ⚠ chanCALM/chanCALB can still overlay individual channels after a load;
+     * source then names the bank the overlay was applied on top of, which is
+     * the closest true statement a single key can make about provenance.
+     * The second closing brace closes identity{}. */
+    const bool factoryCalMissing = daqifi_settings_FactoryCalIsMissing();
+    /* ONE coherent read, not two. Pairing CalIsIdentity() with
+     * GetActiveCalBank() here let a higher-priority LOADcal/LOADFcal land
+     * between them and produce a source the device never had -- codex-r6
+     * findings 2+3. daqifi_settings_GetCalSource does both coherently. */
+    /* ⚠ EVERY value spelled out, and `default` answers "unknown" -- NOT
+     * "none". Both halves of that matter, and the previous form got both
+     * wrong:
+     *
+     *   switch (...) { case FACTORY: ...; case USER: ...; default: "none"; }
+     *
+     * Adding DAQIFI_CAL_SOURCE_UNKNOWN to the enum would have been absorbed
+     * SILENTLY by that `default` and reported as "none" -- the exact collapse
+     * the new value exists to prevent -- and -Wswitch cannot warn, because a
+     * `default` arm makes the switch exhaustive by definition. A reviewer
+     * reading the enum would see four values and a switch that handles them
+     * all.
+     *
+     * So: all four named, and the unreachable fallthrough reports "unknown"
+     * because that is the fail-safe direction. An enum value this code has
+     * never heard of is a thing we know nothing about, which is what "unknown"
+     * says; "none" would assert the coefficients are identity on the strength
+     * of a value we could not interpret. */
+    const char * calSource;
+    switch (daqifi_settings_GetCalSource(&rt->AInChannels)) {
+        case DAQIFI_CAL_SOURCE_FACTORY: calSource = "factory"; break;
+        case DAQIFI_CAL_SOURCE_USER:    calSource = "user";    break;
+        case DAQIFI_CAL_SOURCE_NONE:    calSource = "none";    break;
+        case DAQIFI_CAL_SOURCE_UNKNOWN: calSource = "unknown"; break;
+        default:                        calSource = "unknown"; break;
+    }
+    scpi_printf(context,
+        "\"cal\":{\"factory_present\":%s,\"source\":\"%s\"}},",
+        factoryCalMissing ? "false" : "true",
+        calSource);
 
     /* ---- channels[] array (flat, kind-grouped) ----
      * Order: all analog-input first (sorted by DaqifiAdcChannelId
@@ -10158,4 +10310,103 @@ scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context,
 
     // Return it to the app
     return daqifiScpiContext;
+}
+
+/* #914: the SD manager's deferred error codes are plain ints (sd_card_manager.h
+ * has no SCPI dependency); pin each against the real libscpi value so the two
+ * headers cannot drift apart silently. */
+_Static_assert(SD_ASYNC_ERR_FILE_NOT_FOUND == SCPI_ERROR_FILE_NAME_NOT_FOUND,
+               "#914: the SD manager's deferred code must match the libscpi one");
+_Static_assert(SD_ASYNC_ERR_FILE_NAME_ERROR == SCPI_ERROR_FILE_NAME_ERROR,
+               "#914: the SD manager's deferred code must match the libscpi one");
+_Static_assert(SD_ASYNC_ERR_MASS_STORAGE == SCPI_ERROR_MASS_STORAGE_ERROR,
+               "#914: the SD manager's deferred code must match the libscpi one");
+
+/* #914: drain the SD task's deferred failure (see sd_card_manager_LatchAsyncError)
+ * into THIS transport's own queue.
+ *
+ * Called at the command boundary, BEFORE SCPI_Input, and that placement is
+ * load-bearing: processCommand() clears context->cmd_error on entry
+ * (libscpi/src/parser.c), so a push made here cannot make the FOLLOWING
+ * command's own SCPI_RES_OK read as a failure. Pushed from inside a callback
+ * instead it would (a set cmd_error turns SCPI_Input's result FALSE even on
+ * SCPI_RES_OK, and that FALSE is what gates USB's immediate-flush path) — so
+ * this must run once per command, ahead of dispatch, never inside one. */
+void SCPI_DrainDeferredSdError(scpi_t *context) {
+    if (context == NULL) {
+        return;
+    }
+    const bool isTcp = wifi_tcp_server_ContextIsTcp(context);
+    const sd_card_manager_reply_target_t target =
+            isTcp ? SD_CARD_REPLY_WIFI_TCP : SD_CARD_REPLY_USB;
+    /* #599's connection generation, asked of the transport at DRAIN time. The
+     * failure was latched against the connection that ARMED the GET; if that
+     * client is gone and this context now serves its successor on the single
+     * TCP slot, the two will not match and TakeAsyncError discards instead of
+     * handing over someone else's error. USB has no such identity, so it
+     * latches 0 and takes 0 and the comparison is a no-op there -- one code
+     * path, no special case. Mirrors the check sd_card_manager_DataReadyCB
+     * already makes on the streamed reply (app_freertos.c). */
+    const uint32_t generation = isTcp ? wifi_tcp_server_GetConnGeneration() : 0u;
+    const int32_t err = sd_card_manager_TakeAsyncError(target, generation);
+    if (err != 0) {
+        /* ⛔ QUEUE-ONLY. A bare SCPI_ErrorPush here CORRUPTED THE NEXT
+         * SUCCESSFUL DOWNLOAD (codex audit on #1106, HIGH, both legs).
+         *
+         * SCPI_ErrorPush is not queue-only in this firmware: SCPI_ErrorPushEx
+         * calls SCPI_ErrorEmit (error.c:193 -> :78-84), which synchronously
+         * calls context->interface->error(context, err) whenever that callback
+         * is non-NULL -- and BOTH transports register one (UsbCdc.c
+         * .error = SCPI_USB_Error, wifi_tcp_server.c .error = SCPI_TCP_Error)
+         * that formats "**ERROR: %d, \"%s\"\r\n" and writes it straight to the
+         * wire. Because this runs at the command boundary, that write lands
+         * immediately BEFORE the next command's response:
+         *
+         *   SYST:STOR:SD:GET "missing.bin"   -> __END_OF_FILE__   (error latched)
+         *   SYST:STOR:SD:GET "good.bin"      -> **ERROR: -256, "File name not
+         *                                       found"\r\nABC__END_OF_FILE__
+         *
+         * A marker-delimited binary receiver then stores the error line as the
+         * leading bytes of good.bin, or rejects a valid download on a size/CRC
+         * mismatch. No pipelining and no race required, and it falsified this
+         * PR's own claim that deferring to a command boundary keeps errors out
+         * of the data stream: it moved the corruption from THIS download to
+         * the NEXT one.
+         *
+         * ⭐ The remedy is this file's own established pattern, not a new one:
+         * #965 hit exactly this (SCPIInterface.c:3927 documents it, naming the
+         * same two callbacks and the same format string) and fixed it by
+         * swapping context->interface for a stack-local copy with .error
+         * nulled. SCPI_ErrorPushEx still updates the error queue, the ESR bits
+         * and cmd_error unconditionally (error.c:179-199) -- none of which
+         * reads context->interface -- so SYSTem:ERR? still reports -256
+         * exactly as before, with no transport write.
+         *
+         * .control is deliberately left pointing at the real callback, for the
+         * reason #965 records: SCPI_ErrorEmit also sets STB_QMA, and
+         * SCPI_RegSet's STB/SRE handling can reach interface->control(...)
+         * (ieee488.c:170-186). Both registered .control callbacks are no-ops
+         * in this firmware -- SCPI_TCP_Control and SCPI_USB_Control each
+         * return SCPI_RES_OK with every write commented out, re-verified here
+         * -- so nulling .error alone covers every transport-writing path we
+         * actually have. ⚠ If either .control is ever made to write, this swap
+         * must null it too, or move to a fully-NULL local interface.
+         *
+         * Bounded under one critical section: info is NULL, so
+         * SCPI_ErrorAddInternal never calls SCPIDEFINE_strndup -- one fifo_add
+         * plus a few register writes, no allocation.
+         *
+         * cmd_error needs no save/restore: processCommand() clears it on entry
+         * (parser.c:137) and this runs BEFORE SCPI_Input, which is the same
+         * placement argument the comment above already rests on. */
+        scpi_interface_t * const realInterface = context->interface;
+        scpi_interface_t queueOnlyInterface;
+        taskENTER_CRITICAL();
+        queueOnlyInterface = *realInterface;
+        queueOnlyInterface.error = NULL;
+        context->interface = &queueOnlyInterface;
+        SCPI_ErrorPush(context, (int16_t)err);
+        context->interface = realInterface;
+        taskEXIT_CRITICAL();
+    }
 }
