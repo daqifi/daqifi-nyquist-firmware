@@ -235,32 +235,82 @@ else
 fi
 restore
 
-echo "== R21 (#1124 r17): drop the manifest invalidation entirely. Nothing     =="
-echo "==        else notices: the counts are unchanged and the manifest still  =="
-echo "==        opens fine. Only PIN A sees that a reused data file is now      =="
-echo "==        truncated with the previous session's record left beside it.    =="
-if sub "$F" '                if (isSessionFirstOpen) {
-                    sd_InvalidateSessionManifest();
-                }' ''; then
+echo "== R21 (#1124 r18): drop the invalidation call, keeping the open. Counts  =="
+echo "==        are unchanged and the manifest still opens fine; only PIN A sees =="
+echo "==        that a truncated data file keeps a previous session's record.    =="
+if sub "$F" '                if (!sd_InvalidateManifestForTarget(gSDCardData.filePath)) {
+                    gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
+                } else {
+                    // Use WRITE_PLUS to create/truncate file (overwrite mode)
+                    gSDCardData.fileHandle = SYS_FS_FileOpen(gSDCardData.filePath,
+                            (SYS_FS_FILE_OPEN_WRITE_PLUS));
+                }' '                    gSDCardData.fileHandle = SYS_FS_FileOpen(gSDCardData.filePath,
+                            (SYS_FS_FILE_OPEN_WRITE_PLUS));'; then
     expect "R21 invalidation present" "is not invalidated BEFORE the data file"
 else
     echo "  FAIL R21 anchor absent -- source drifted from this harness."; fail=$((fail+1))
 fi
 restore
 
-echo "== R22: MOVE the invalidation to AFTER the truncating open. The call is   =="
-echo "==      still there, still gated, still reached -- a presence check reads =="
-echo "==      this as healthy. It deletes the record of data this session just  =="
-echo "==      wrote, so only the ORDER arm of PIN A can see it.                 =="
-if sub "$F" '                if (isSessionFirstOpen) {
-                    sd_InvalidateSessionManifest();
-                }' '' \
-   && sub "$F" '                        (SYS_FS_FILE_OPEN_WRITE_PLUS));' \
-                '                        (SYS_FS_FILE_OPEN_WRITE_PLUS));
-                if (isSessionFirstOpen) { sd_InvalidateSessionManifest(); }'; then
+echo "== R22: MOVE the invalidation AFTER the truncating open. Still present,    =="
+echo "==      still reached, still keyed on the target -- a presence check reads =="
+echo "==      it as healthy. It would delete the record of data just written, so =="
+echo "==      only the ORDER arm of PIN A can see it.                            =="
+if sub "$F" '                if (!sd_InvalidateManifestForTarget(gSDCardData.filePath)) {
+                    gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
+                } else {
+                    // Use WRITE_PLUS to create/truncate file (overwrite mode)
+                    gSDCardData.fileHandle = SYS_FS_FileOpen(gSDCardData.filePath,
+                            (SYS_FS_FILE_OPEN_WRITE_PLUS));
+                }' '                    gSDCardData.fileHandle = SYS_FS_FileOpen(gSDCardData.filePath,
+                            (SYS_FS_FILE_OPEN_WRITE_PLUS));
+                if (!sd_InvalidateManifestForTarget(gSDCardData.filePath)) {
+                    gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
+                }'; then
     expect "R22 invalidation ORDER" "is not invalidated BEFORE the data file"
 else
     echo "  FAIL R22 anchors absent -- source drifted from this harness."; fail=$((fail+1))
+fi
+restore
+
+echo "== R26: keep the invalidation but DROP THE REFUSAL -- the r17 fail-OPEN.   =="
+echo "==      A .mfst that cannot be removed is logged and the data truncated    =="
+echo "==      anyway. The call is present and correctly ordered, so PIN A and    =="
+echo "==      PIN A2 both pass; only PIN F sees it.                              =="
+if sub "$F" '                if (!sd_InvalidateManifestForTarget(gSDCardData.filePath)) {
+                    gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
+                } else {' '                if (!sd_InvalidateManifestForTarget(gSDCardData.filePath)) {
+                    /* mutant: refusal removed */
+                }
+                {'; then
+    expect "R26 refusal on failure" "no longer refuses the"
+else
+    echo "  FAIL R26 anchor absent -- source drifted from this harness."; fail=$((fail+1))
+fi
+restore
+
+echo "== R24: put a FIRST-OPEN GATE back on the invalidation. That is exactly    =="
+echo "==      r17's defect: rotation reaches the same open, and its target can    =="
+echo "==      be a previous session's first file with a manifest of its own.      =="
+echo "==      Order and presence both still pass; only PIN A2 sees the gate.      =="
+if sub "$F" '                if (!sd_InvalidateManifestForTarget(gSDCardData.filePath)) {' \
+            '                if (isSessionFirstOpen)
+                if (!sd_InvalidateManifestForTarget(gSDCardData.filePath)) {'; then
+    expect "R24 no first-open gate" "a first-open gate came back"
+else
+    echo "  FAIL R24 anchor absent -- source drifted from this harness."; fail=$((fail+1))
+fi
+restore
+
+echo "== R27: drop the FatFs-normalisation rejection from the setter. 'exp.csv.'  =="
+echo "==      then truncates exp.csv while the manifest name keeps the dot, so    =="
+echo "==      exp.csv's real record is never invalidated. Only PIN G sees it.     =="
+if sub "$S" "            if (segLen > 0u && (p[i - 1u] == '.' || p[i - 1u] == ' ')) {
+                return false;       /* FatFs would normalise this away */
+            }" ''; then
+    expect "R27 FatFs-normalised names" "no longer rejects a path segment"
+else
+    echo "  FAIL R27 anchor absent -- source drifted from this harness."; fail=$((fail+1))
 fi
 restore
 

@@ -81,10 +81,19 @@ extern "C" {
  * payload extension the device writes (.csv / .pb / .json) on purpose -- host
  * tooling that globs for stream files (download_sd_files.py,
  * analyze_split_files.py) must not pick it up, and its own name must not be
- * mistakable for a split part. The base name is the SESSION's base name, so
- * `experiment.csv` logs to `experiment.mfst` alongside `experiment.csv`,
- * `experiment-1.csv`, ... -- and a session logging under a different base
- * gets its own manifest rather than overwriting this one. */
+ * mistakable for a split part.
+ *
+ * ⛔ #1124 r17/r18: THE NAME IS THE FULL DATA FILENAME PLUS THIS EXTENSION, so
+ * `experiment.csv` logs to `experiment.csv.mfst`. It is NOT the session's base
+ * name: `<base>.mfst` was ambiguous across data files, because stripping the
+ * last extension makes `alpha.csv` and `alpha.csv.json` claim overlapping
+ * names. Deriving from the COMPLETE filename makes "is this the manifest for
+ * that file?" decidable from the name alone, which is what the companion
+ * parser keys on -- so this paragraph is a wire contract, not a note.
+ *
+ * One manifest per SESSION, holding one line per stream file; a rolled part
+ * `experiment-1.csv` does not get its own. A session logging under a different
+ * SD:FILE gets its own manifest rather than overwriting this one. */
 #define SD_MANIFEST_EXT                    ".mfst"
 
 #define SD_MANIFEST_PREFIX_MARK  ",PARTIAL"

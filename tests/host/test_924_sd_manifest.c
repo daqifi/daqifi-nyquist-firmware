@@ -517,7 +517,7 @@ TEST(first_line_check_accepts_a_rendered_PARTIAL_line)
 /* #924 round-5 audit: THE OPERAND-LIMIT BOUNDARY, asserted AT the boundary.
  *
  * The defect was an off-by-one in reasoning: a 40-char FILE ending ".csv" gives
- * a 36-char base, so `<base>.mfst` is 41 and SD:GET/SD:CRC?/SD:DELete validate
+ * a 40-char FILE, so `<file>.mfst` is 45 and SD:GET/SD:CRC?/SD:DELete validate
  * their operand at <= 40. The manifest the feature writes could not be fetched
  * by the command that exists to fetch it.
  *
@@ -659,7 +659,7 @@ TEST(first_line_check_accepts_empty_content)
  * manifest) sitting at this exact path -- e.g. because ITS configured stream
  * name collided with ITS OWN manifest and the fallback in
  * sd_OpenSessionManifest() renamed the manifest out of the way, leaving the
- * data file at the plain <base>.mfst path a LATER session's manifest now
+ * data file at the `<file>.mfst` path a LATER session's manifest now
  * computes. Ordinary logged data does not look like `name,digits,0xHEX\n`. */
 TEST(first_line_check_rejects_unrelated_data)
 {

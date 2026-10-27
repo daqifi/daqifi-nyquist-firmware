@@ -921,24 +921,27 @@ $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h
 	@#     continuation lines, so it is what this keys on.
 	@# `-fpreprocessed` is here only to strip COMMENTS (verified: an operand
 	@# inside a comment contributes 0), so prose quoting a format cannot count.
-	@# ⛔ #1124 r17: 9 -> 8. The FALLBACK name construction is gone with the
-	@# two-candidate scheme, which removes one join and one accessor call. The
-	@# invalidation helper's own join (added at r16 as sd_DiscardStaleManifests,
-	@# now sd_InvalidateSessionManifest) stays, so the net is -1 rather than -2.
-	@# Both counts move together because that site joins through the same
-	@# accessor and the same "%.*s/" format; a new site moving only ONE of them
-	@# is the defect this pin exists to catch.
+	@# ⛔ #1124: 9 -> 8 -> 9 across r17 and r18, both movements kept because the
+	@# totals coincide and the sites do not:
+	@#   -1 r17  the FALLBACK name construction went with the two-candidate
+	@#           scheme.
+	@#   +1 r18  sd_InvalidateManifestForTarget() builds TWO names, not one: the
+	@#           TARGET's manifest and this session's LIVE manifest, so it can
+	@#           tell them apart and never delete its own.
+	@# Both join through the same accessor and the same "%.*s/" format, which is
+	@# why the two counts move together; a new site moving only ONE of them is
+	@# the defect this pin exists to catch.
 	@$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null > /tmp/.sd1124_pp.$$$$; \
 	 raw=`grep -c '"%s/' /tmp/.sd1124_pp.$$$$`; \
 	 canon=`grep -cF '"%.*s/' /tmp/.sd1124_pp.$$$$`; \
 	 acc=`grep -c 'SdManifest_CanonicalDirLen(' /tmp/.sd1124_pp.$$$$`; \
 	 rm -f /tmp/.sd1124_pp.$$$$; \
-test "$$raw" -eq 0 && test "$$canon" -eq 8 && test "$$acc" -eq 8 \
+test "$$raw" -eq 0 && test "$$canon" -eq 9 && test "$$acc" -eq 9 \
 	  || { echo "ERROR: $(SD_MANAGER_SRC)'s path construction is no longer"; \
 	       echo "       uniformly canonical (#1124)."; \
 	       echo "         raw \"%s/ joins:        $$raw (must be 0)"; \
-	       echo "         canonical \"%.*s/ joins: $$canon (expected 8)"; \
-	       echo "         accessor calls:        $$acc (expected 8)"; \
+	       echo "         canonical \"%.*s/ joins: $$canon (expected 9)"; \
+	       echo "         accessor calls:        $$acc (expected 9)"; \
 	       echo "       A raw \"%s/ join emits 'dir//file' whenever the configured"; \
 	       echo "       directory ends in '/', which is reachable from config alone."; \
 	       echo "       Route the new site through SdManifest_CanonicalDirLen() and"; \
@@ -1077,25 +1080,23 @@ test "$$raw" -eq 0 && test "$$canon" -eq 8 && test "$$acc" -eq 8 \
 	@# a new class: a doubled '/' here would name a file the create path never
 	@# created, so the removal would silently miss the stale manifest it exists
 	@# to delete, and the defect would present as the fix simply not working.
-	@# 24 -> 22 -> 20 across #1124 r16 and r17, and every movement stays listed
-	@# because the totals hide them:
-	@#   +2 r16  sd_DiscardStaleManifests()'s join.
+	@# 24 -> 22 -> 20 -> 22 across #1124 r16/r17/r18. Every movement stays
+	@# listed; the totals repeat and the sites never do:
+	@#   +2 r16  the stale-manifest sweep's join.
 	@#   -2 r16  two LOG_E messages stopped printing the directory, after the
-	@#           #1110 gate measured them at 128 and 144 bytes against a
-	@#           125-byte ceiling -- each truncated its own remedy.
-	@#   -2 r17  the FALLBACK name construction is deleted with the
-	@#           two-candidate scheme. Its two reads were the accessor argument
-	@#           and the "%.*s" operand of a join that no longer exists.
-	@# CLASSIFICATION of what remains: every surviving read is the ordinary
-	@# canonicalisation-DEPENDENT join shape, already routed through
-	@# SdManifest_CanonicalDirLen(). Recording the NET would let a future edit
-	@# add one read and remove an unrelated one invisibly, which is the one
-	@# thing a count ledger exists to notice.
+	@#           #1110 gate measured them at 128 and 144 bytes against 125.
+	@#   -2 r17  the FALLBACK name construction was deleted.
+	@#   +2 r18  the LIVE-manifest name is built alongside the TARGET's, so the
+	@#           invalidation can refuse to delete this session's own record.
+	@# CLASSIFICATION: all of them are the ordinary canonicalisation-DEPENDENT
+	@# join shape, already routed through SdManifest_CanonicalDirLen(). A NET
+	@# would let a future edit add one read and drop an unrelated one unseen,
+	@# which is the one thing a count ledger exists to notice.
 	@n=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null \
 	    | grep -oE '(gpSDCardSettings|cfg)->(directory|opDirectory)' | wc -l`; \
-	 test "$$n" -eq 20 \
+	 test "$$n" -eq 22 \
 	  || { echo "ERROR: $(SD_MANAGER_SRC) now has $$n raw reads of ->directory /"; \
-	       echo "       ->opDirectory, not the 20 classified in this recipe (#1124)."; \
+	       echo "       ->opDirectory, not the 22 classified in this recipe (#1124)."; \
 	       echo "       The canonicalisation invariant is about every USE, not just"; \
 	       echo "       every join: a read can reach a callee that neither joins nor"; \
 	       echo "       canonicalises, and no join-keyed check sees it. (Until r13 the"; \
@@ -1718,7 +1719,7 @@ test "$$raw" -eq 0 && test "$$canon" -eq 8 && test "$$acc" -eq 8 \
 	@# PIN A -- the invalidation is called, and BEFORE the truncating open. A
 	@# position pin, because calling it afterwards would delete the record of data
 	@# this session just wrote. Scoped to the OPEN_FILE write arm.
-	@awk '/Use WRITE_PLUS to create\/truncate/{print NR": MARK_OPEN"} /sd_InvalidateSessionManifest\(\)/{print NR": MARK_INV"}' \
+	@awk '/\(SYS_FS_FILE_OPEN_WRITE_PLUS\)\)/{print NR": MARK_OPEN"} /sd_InvalidateManifestForTarget\(gSDCardData.filePath\)/{print NR": MARK_INV"}' \
 	     $(SD_MANAGER_SRC) > /tmp/.sd1124_ord.$$$$; \
 	 inv=`grep -m1 MARK_INV /tmp/.sd1124_ord.$$$$ | cut -d: -f1`; \
 	 opn=`grep -m1 MARK_OPEN /tmp/.sd1124_ord.$$$$ | cut -d: -f1`; \
@@ -1726,7 +1727,7 @@ test "$$raw" -eq 0 && test "$$canon" -eq 8 && test "$$acc" -eq 8 \
 	 test -n "$$inv" && test -n "$$opn" && test "$$inv" -lt "$$opn" \
 	  || { echo "ERROR: the session manifest is not invalidated BEFORE the data file"; \
 	       echo "       is truncated (#1124 r17 PIN A)."; \
-	       echo "         sd_InvalidateSessionManifest() at line $$inv"; \
+	       echo "         sd_InvalidateManifestForTarget() at line $$inv"; \
 	       echo "         the WRITE_PLUS open at line        $$opn"; \
 	       echo "       The open is FA_CREATE_ALWAYS, so from that instant any"; \
 	       echo "       manifest describing this name is wrong. Invalidating after it"; \
@@ -1734,28 +1735,69 @@ test "$$raw" -eq 0 && test "$$canon" -eq 8 && test "$$acc" -eq 8 \
 	       echo "       describes bytes that are gone, which is worse than none."; \
 	       echo "       An empty line number means the call or the open was renamed."; \
 	       exit 1; }
-	@# PIN A2 -- and it is gated on the SESSION'S FIRST open, not on fileCounter.
-	@# The unique-target probe increments fileCounter while searching for a free
-	@# name, so `fileCounter == 0` is already false at the open for the session's
-	@# first file -- the exact case the invalidation exists for. Rotation must
-	@# never reach the call, or it would delete the LIVE manifest.
-	@grep -q 'if (isSessionFirstOpen) {' $(SD_MANAGER_SRC) \
-	  && grep -q 'const bool isSessionFirstOpen = (gSDCardData.fileCounter == 0);' \
-	          $(SD_MANAGER_SRC) \
-	  || { echo "ERROR: the invalidation is no longer gated on isSessionFirstOpen"; \
-	       echo "       (#1124 r17 PIN A2), or that flag is no longer captured where"; \
-	       echo "       fileCounter still means 'the session's first open'."; \
-	       echo "       Re-read the probe loop: it bumps fileCounter, so a test at"; \
-	       echo "       the open would skip invalidation when a name is REUSED."; \
+	@# ⛔ PIN A2 -- INVERTED AT r18, and the inversion is the finding. r17 pinned
+	@# that the invalidation was gated on isSessionFirstOpen. That gate was a PROXY
+	@# for "do not delete our own live manifest", and the proxy failed where the
+	@# two come apart: rotation reaches the SAME truncating open, and its
+	@# existing-target search can land on a previous session's first file, which
+	@# has a manifest of its own. So the gate is GONE and this pin now asserts its
+	@# ABSENCE plus the real discriminator -- IDENTITY, keyed on the target path.
+	@n=`grep -c 'sd_InvalidateManifestForTarget(gSDCardData.filePath)' $(SD_MANAGER_SRC)`; \
+	 g=`grep -B6 'sd_InvalidateManifestForTarget(gSDCardData.filePath)' $(SD_MANAGER_SRC) \
+	    | grep -c 'if (isSessionFirstOpen)'`; \
+	 test "$$n" -eq 1 && test "$$g" -eq 0 \
+	  || { echo "ERROR: the manifest invalidation is not keyed on the TARGET path, or"; \
+	       echo "       a first-open gate came back (#1124 r18 PIN A2)."; \
+	       echo "         calls keyed on gSDCardData.filePath: $$n (must be 1)"; \
+	       echo "         isSessionFirstOpen gates above it:   $$g (must be 0)"; \
+	       echo "       EVERY truncating open must invalidate ITS OWN target's"; \
+	       echo "       manifest. A first-open gate skips rotation, whose target can"; \
+	       echo "       be a previous session's first file -- the r17 defect."; \
 	       exit 1; }
+	@# PIN F -- A FAILED INVALIDATION REFUSES THE TRUNCATION. r17 logged the failure
+	@# and truncated anyway, which is fail-OPEN on the one step that exists to stop
+	@# a stale record. The refusal works by leaving the handle INVALID so the
+	@# existing failed-open arm runs, so what is pinned is that the INVALID
+	@# assignment sits between the check and the open.
+	@awk '/if \(!sd_InvalidateManifestForTarget/{a=NR} \
+	      /gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;/{if(a&&!b)b=NR} \
+	      /\(SYS_FS_FILE_OPEN_WRITE_PLUS\)\)/{if(a&&!c)c=NR} \
+	      END{print a" "b" "c}' $(SD_MANAGER_SRC) > /tmp/.sd1124_ref.$$$$; \
+	 read a b c < /tmp/.sd1124_ref.$$$$; rm -f /tmp/.sd1124_ref.$$$$; \
+	 test -n "$$a" && test -n "$$b" && test -n "$$c" \
+	   && test "$$a" -lt "$$b" && test "$$b" -lt "$$c" \
+	  || { echo "ERROR: a failed manifest invalidation no longer refuses the"; \
+	       echo "       truncation (#1124 r18 PIN F)."; \
+	       echo "         check at $$a, handle-INVALID at $$b, WRITE_PLUS open at $$c"; \
+	       echo "       All three must be present in that order. If the refusal is"; \
+	       echo "       gone, a .mfst that cannot be removed (read-only, FR_DENIED)"; \
+	       echo "       is logged and the data is truncated beside it anyway."; \
+	       exit 1; }
+	@# PIN G -- the SETTER rejects a name FatFs would normalise. "exp.csv." opens and
+	@# truncates exp.csv while every derived name keeps the dot, so the manifest
+	@# goes to exp.csv..mfst and exp.csv's own record is neither invalidated nor
+	@# written. Pinned in the VALIDATOR, which is the narrowest place that closes it.
+	@awk '/^static bool SD_ValidatePathParam/{f=1} f{print} f&&/^\}/{exit}' \
+	     $(SD_BENCH_SRC) > /tmp/.sd1124_val.$$$$; \
+	 test -s /tmp/.sd1124_val.$$$$ \
+	   && grep -q "p\[i - 1u\] == '\.' || p\[i - 1u\] == ' '" /tmp/.sd1124_val.$$$$ \
+	  || { echo "ERROR: SD_ValidatePathParam no longer rejects a path segment that"; \
+	       echo "       FatFs would normalise (#1124 r18 PIN G) -- a trailing '.' or"; \
+	       echo "       ' '. Without it, 'exp.csv.' truncates exp.csv while the"; \
+	       echo "       manifest name keeps the dot, so the data file's real record"; \
+	       echo "       is left stale and the new one lands at a name nothing reads."; \
+	       echo "       An empty extraction means the function was renamed."; \
+	       rm -f /tmp/.sd1124_val.$$$$; exit 1; }; \
+	 rm -f /tmp/.sd1124_val.$$$$
 	@# PIN C -- the unlink stays gated on the create path's own predicate, and the
 	@# predicate stays able to say no. Unchanged from r16; still the check that
 	@# keeps this from deleting a user file that occupies the manifest name.
-	@awk '/^static void sd_RemoveStaleManifestAt\(const char \*path\) \{/{f=1} f{print} f&&/^\}/{exit}' \
+	@awk '/^static bool sd_RemoveStaleManifestAt\(const char \*path\) \{/{f=1} f{print} f&&/^\}/{exit}' \
 	     $(SD_MANAGER_SRC) > /tmp/.sd1124_rm.$$$$; \
 	 test -s /tmp/.sd1124_rm.$$$$ \
 	   && grep -q 'sd_ManifestPathSafeToOverwrite(path)' /tmp/.sd1124_rm.$$$$ \
 	   && grep -q 'SYS_FS_FileDirectoryRemove(path)' /tmp/.sd1124_rm.$$$$ \
+   && grep -q 'return false;' /tmp/.sd1124_rm.$$$$ \
 	  || { echo "ERROR: sd_RemoveStaleManifestAt() no longer gates its unlink on the"; \
 	       echo "       create path's predicate (#1124 r17 PIN C)."; \
 	       rm -f /tmp/.sd1124_rm.$$$$; exit 1; }; \

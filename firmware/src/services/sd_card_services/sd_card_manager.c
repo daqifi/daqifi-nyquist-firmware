@@ -2218,60 +2218,103 @@ static bool sd_ManifestPathSafeToOverwrite(const char *path) {
  * file would push the line over and truncate the TAIL -- which is the part
  * that says what went wrong.
  */
-static void sd_RemoveStaleManifestAt(const char *path) {
+/* Remove the manifest at `path`, and say whether the data file it describes is
+ * now SAFE TO TRUNCATE. #1124 r18.
+ *
+ * ⛔ r18 finding 2: this used to return void, so a failed removal was logged
+ * and the caller truncated the data anyway -- a fail-OPEN on the one step that
+ * exists to stop a stale record. The caller now refuses the truncation, so the
+ * worst case is a session that does not log rather than a record that
+ * confidently describes bytes that are gone.
+ *
+ * Only ever removes what sd_ManifestPathSafeToOverwrite() already considers
+ * ours to destroy -- the SAME predicate the create path uses, so the two
+ * cannot disagree about what is ours.
+ *
+ * ⚠ A NON-MANIFEST file at this name returns TRUE, deliberately. It is not a
+ * manifest, so it cannot be mistaken for a correct record of the new data; a
+ * reader gets garbage, which is detectable, rather than a validating lie. The
+ * alternative is deleting a user file, which is strictly worse.
+ *
+ * ⚠ No path in any message, by this file's convention: the buffer reaches 87
+ * characters against Logger's 125-byte content ceiling, so naming the file
+ * would truncate the tail -- the part that says what went wrong.
+ */
+static bool sd_RemoveStaleManifestAt(const char *path) {
     SYS_FS_FSTAT st;
     memset(&st, 0, sizeof(st));
     if (SYS_FS_FileStat(path, &st) != SYS_FS_RES_SUCCESS) {
-        return;                         /* nothing there -- nothing stale */
+        return true;                    /* nothing there -- nothing stale */
     }
     if (!sd_ManifestPathSafeToOverwrite(path)) {
         LOG_E("[SD] #1124 manifest path holds a non-manifest file - left as is");
-        return;
+        return true;
     }
     if (SYS_FS_FileDirectoryRemove(path) != SYS_FS_RES_SUCCESS) {
-        LOG_E("[SD] #1124 stale manifest not removed (err=%d) - it may still "
-              "describe older data", (int)SYS_FS_Error());
-        return;
+        LOG_E("[SD] #1124 stale manifest not removed (err=%d) - refusing to "
+              "truncate its data file", (int)SYS_FS_Error());
+        return false;
     }
-    LOG_I("[SD] #1124 removed a prior session's manifest - this session has none");
+    LOG_I("[SD] #1124 removed a prior session's manifest for this name");
+    return true;
 }
 
-/* ⛔ #1124 r17: INVALIDATE BEFORE TRUNCATE. Remove this session's manifest
- * BEFORE the data file is opened WRITE_PLUS, so no later abort or refusal can
- * leave an old record beside new data. This replaces r16's clean-up-on-refusal
- * wrapper, which could not cover two windows the r16 audit found:
- *   - a STOP landing between the truncating open and the manifest call means
- *     the manifest function never runs, so nothing cleans up;
- *   - a session that SUCCEEDED still left the OTHER candidate name standing.
- * Removing the window beats cleaning up after it, and it is the same principle
- * the rest of this file follows: make the invalidation CO-OCCUR with the event
- * that makes the record stale, which is the truncation itself.
+/* ⛔ #1124 r18: EVERY TRUNCATING OPEN OF FILE F INVALIDATES F's MANIFEST,
+ * UNLESS THAT MANIFEST IS THIS SESSION'S LIVE ONE. Returns false when the data
+ * file must NOT be truncated.
  *
- * ⚠ ACCEPTED TRADE, named rather than hidden: if the data-file open then
- * FAILS, we have deleted a manifest whose data file is still intact, losing a
- * valid record. That is deliberate. A record that validates and describes the
- * wrong bytes is worse than no record, which is this feature's whole premise;
- * and the losing case is a failed open, which already costs the session.
+ * r17 gated this on "the session's first open", and that was a PROXY for the
+ * real rule rather than the rule. The proxy failed where the two come apart
+ * (r18 finding 1): rotation's existing-target search can land on `exp-1.csv`,
+ * which may be a PREVIOUS session's FIRST file and therefore have its own
+ * `exp-1.csv.mfst`. WRITE_PLUS truncates it, and with a first-open-only gate
+ * nothing invalidated that record -- the same defect r17 fixed, one open over.
  *
- * ONE name, derived from the COMPLETE data filename, so it is unique exactly
- * as far as that filename is -- see the no-retry note in
- * sd_OpenSessionManifest for why the two-candidate scheme had to go.
+ * ⭐ The discriminator is IDENTITY, not ordinality: "is this manifest the one
+ * this session has open?", never "is this the first time round?". There is
+ * exactly ONE truncating data-file open in this module and BOTH the first open
+ * and every rotation reach it, which is why keying on ordinality could not
+ * work -- the two cases are the same line of code.
+ *
+ * The manifest for a data file is `<SD:DIR>/<basename of the file>.mfst`: the
+ * basename, because a rotated part lives in a bucket while manifests live in
+ * the parent, and that is the name a session whose SD:FILE was that part would
+ * itself have created. So the name this computes for `exp-1.csv` is exactly the
+ * name that collides.
  */
-static void sd_InvalidateSessionManifest(void) {
-    char path[SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX
-              + SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX
-              + sizeof(SD_MANIFEST_EXT) + 2u];
-    const int written = snprintf(
-        path, sizeof(path), "%.*s/%s" SD_MANIFEST_EXT,
+static bool sd_InvalidateManifestForTarget(const char *dataPath) {
+    char target[SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX
+                + SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX
+                + sizeof(SD_MANIFEST_EXT) + 2u];
+    char live[sizeof(target)];
+    const char *slash = strrchr(dataPath, '/');
+    const char *base = (slash != NULL) ? (slash + 1) : dataPath;
+    const int w = snprintf(
+        target, sizeof(target), "%.*s/%s" SD_MANIFEST_EXT,
         (int)SdManifest_CanonicalDirLen(gpSDCardSettings->directory),
-        gpSDCardSettings->directory, gpSDCardSettings->file);
+        gpSDCardSettings->directory, base);
 
-    if (written < 0 || (size_t)written >= sizeof(path)) {
-        /* A name that will not fit here would not have fitted when it was
-         * created either, so nothing can exist at it. */
-        return;
+    if (w < 0 || (size_t)w >= sizeof(target)) {
+        /* Cannot name it, so no session could have created it either: there is
+         * nothing at that name to go stale. Truncating is safe. */
+        return true;
     }
-    sd_RemoveStaleManifestAt(path);
+
+    /* THIS SESSION'S LIVE MANIFEST IS OFF LIMITS. Removing it mid-session would
+     * destroy the records of every file already logged -- the opposite of the
+     * protection this function provides. Compared the way the filesystem does,
+     * because FatFs's duplicate-open lock is case-insensitive. */
+    if (gSDCardData.manifestHandle != SYS_FS_HANDLE_INVALID) {
+        const int lw = snprintf(
+            live, sizeof(live), "%.*s/%s" SD_MANIFEST_EXT,
+            (int)SdManifest_CanonicalDirLen(gpSDCardSettings->directory),
+            gpSDCardSettings->directory, gpSDCardSettings->file);
+        if (lw > 0 && (size_t)lw < sizeof(live)
+            && SdManifest_PathsEqualCaseInsensitive(target, live)) {
+            return true;                /* ours, and open: leave it alone */
+        }
+    }
+    return sd_RemoveStaleManifestAt(target);
 }
 
 static void sd_OpenSessionManifest(void) {
@@ -2443,7 +2486,8 @@ static void sd_OpenSessionManifest(void) {
 
     /* #924 (round-5 audit): REFUSE A MANIFEST NOBODY COULD FETCH.
      *
-     * The manifest's own basename is `<base>.mfst`, and every command that
+     * The manifest's own basename is `<file>.mfst` -- the FULL configured name
+     * plus the extension (#1124 r17) -- and every command that
      * retrieves a file -- SD:GET, SD:CRC?, SD:DELete -- validates its operand
      * against SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX (the `fileValid` check in
      * sd_card_manager_ProcessState). `base` is the configured FILE with its
@@ -2487,7 +2531,7 @@ static void sd_OpenSessionManifest(void) {
         }
     }
 
-    /* #924 (Qodo round 1): a stream named '<base>.mfst' resolves to the SAME
+    /* #924 (Qodo round 1): a stream file could resolve to the SAME
      * path as its own manifest. FatFs would refuse the duplicate write-open
      * (FF_FS_LOCK is 10), so the session would silently run with no integrity
      * records at all -- the failure mode this feature exists to remove,
@@ -2533,9 +2577,13 @@ static void sd_OpenSessionManifest(void) {
      * CONFIGURED stream name collided with ITS OWN manifest took the fallback
      * branch below and renamed its manifest out of the way, which means ITS
      * DATA FILE -- not a manifest at all -- is what still sits at the plain
-     * `<base>.mfst` path this session just computed. Silently opening that
+     * `<file>.mfst` path this session just computed. Silently opening that
      * for WRITE would truncate real logged data with no warning, reachable
      * by configured filenames alone, no race required.
+     *
+     * ⛔ #1124 r17: the FALLBACK this paragraph used to name is GONE. There
+     * is one manifest name now, so the remedy is to REFUSE rather than to
+     * rename the manifest out of the way.
      *
      * Skipped when a self-collision already forces the fallback: the primary
      * path is not going to be used regardless of what sits in it, so
@@ -4193,26 +4241,26 @@ void sd_card_manager_ProcessState() {
                 gSDCardData.writeBufferLength = 0;
                 gSDCardData.sdCardWriteBufferOffset = 0;
 
-                /* ⛔ #1124 r17: INVALIDATE BEFORE TRUNCATE. The open below is
-                 * FA_CREATE_ALWAYS, so it destroys whatever this name held -- and from
-                 * that instant any manifest describing it is wrong. Removing the record
-                 * FIRST means no later abort, teardown or manifest refusal can leave a
-                 * validating-but-wrong record beside the new data. See
-                 * sd_InvalidateSessionManifest for the accepted trade when the open then
-                 * fails.
+                /* ⛔ #1124 r18: EVERY truncating open invalidates ITS OWN target's
+                 * manifest -- no first-open gate. The open below is FA_CREATE_ALWAYS,
+                 * so it destroys whatever this name held, and from that instant any
+                 * manifest describing it is wrong. Rotation reaches this same line,
+                 * and its existing-target search can land on a previous session's
+                 * first file, which has a manifest of its own; r17's "first open
+                 * only" gate was a proxy that missed exactly that case.
                  *
-                 * NOT gated on openIsStreamingLog, deliberately: a non-streaming write
-                 * (a benchmark, say) truncates the data file just the same, so a manifest
-                 * left from an earlier streaming session would describe bytes that are
-                 * gone. Gating on the session's first open is the whole condition --
-                 * rotation must never reach here, or it would delete the LIVE manifest. */
-                if (isSessionFirstOpen) {
-                    sd_InvalidateSessionManifest();
+                 * ⛔ AND A FAILED INVALIDATION REFUSES THE TRUNCATION. Leaving the
+                 * handle INVALID routes this into the existing failed-open arm below,
+                 * which also abandons the rotation window (#757) -- one refusal path
+                 * rather than a second one written here. The generic "Failed to open"
+                 * line fires too, and that is accurate: we did not open the file. */
+                if (!sd_InvalidateManifestForTarget(gSDCardData.filePath)) {
+                    gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
+                } else {
+                    // Use WRITE_PLUS to create/truncate file (overwrite mode)
+                    gSDCardData.fileHandle = SYS_FS_FileOpen(gSDCardData.filePath,
+                            (SYS_FS_FILE_OPEN_WRITE_PLUS));
                 }
-                
-                // Use WRITE_PLUS to create/truncate file (overwrite mode)
-                gSDCardData.fileHandle = SYS_FS_FileOpen(gSDCardData.filePath,
-                        (SYS_FS_FILE_OPEN_WRITE_PLUS));
 
                 /* #782: a teardown may have landed while this open was in
                  * flight. SCPI (pri 7) preempts this task (pri 5), and

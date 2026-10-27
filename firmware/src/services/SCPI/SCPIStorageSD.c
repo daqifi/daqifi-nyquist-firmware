@@ -519,6 +519,26 @@ static bool SD_ValidatePathParam(const char *p, size_t len, bool isFileName)
             if (segLen == 2u && p[segStart] == '.' && p[segStart + 1u] == '.') {
                 return false;       /* ".." traversal segment */
             }
+            /* ⛔ #1124 r18 finding 3: REJECT A SEGMENT THAT FatFs WOULD NORMALISE.
+             * FatFs strips a trailing '.' or ' ' from each path component, so
+             * "exp.csv." names the SAME FILE as "exp.csv" -- it is opened and
+             * TRUNCATED as exp.csv, while every name this firmware derives from the
+             * configured string keeps the dot. The manifest then goes to
+             * "exp.csv..mfst" and exp.csv's real manifest is neither invalidated nor
+             * written: a truncated data file beside a stale record, reachable from a
+             * configured name alone with no race.
+             *
+             * Refused at the SETTER, which is the narrowest place that closes it: one
+             * check instead of teaching every derived name about normalisation. The
+             * check sits inside the SEGMENT loop and the loop synthesises a virtual
+             * '/' at i == len, so this covers the final component AND every interior
+             * one -- a directory "d./" has the same hazard for the dir half.
+             *
+             * A name ending in '.' or ' ' has no legitimate use here and the remedy is
+             * to drop the character, so refusing costs nothing a caller wants. */
+            if (segLen > 0u && (p[i - 1u] == '.' || p[i - 1u] == ' ')) {
+                return false;       /* FatFs would normalise this away */
+            }
             segStart = i + 1u;
         }
     }

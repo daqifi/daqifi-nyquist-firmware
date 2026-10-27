@@ -132,7 +132,9 @@ absent.
 
 ### Per-session integrity manifest (#924)
 
-Every SD **streaming** session writes one extra file, `<base>.mfst`, in the
+Every SD **streaming** session writes one extra file, `<datafile>.mfst` -- the
+FULL stream filename plus the extension, so `exp.csv` gets `exp.csv.mfst` (#1124
+r17; it was `<base>.mfst` until that round made the name unambiguous) -- in the
 configured directory beside its stream files. It holds one line per stream
 file, appended as that file is closed:
 
@@ -262,7 +264,8 @@ would be the r11 defect with its guard removed.
   companion test treat an unparsable line as a defect rather than a
   possibility.
 There is one more collision case, and it is handled by **renaming, not
-refusing**: a stream whose extension is already `.mfst` makes `<base>.mfst` the
+refusing** -- and #1124 r17 turned it into a REFUSAL, there being one name now:
+a stream already named `<x>.mfst` can make the manifest name the
 same path as the stream file itself, so FatFs would refuse the duplicate
 write-open (`FF_FS_LOCK` is 10) and the session would run with no integrity
 records at all. Detected by comparing the two paths (so it holds for a rolled
