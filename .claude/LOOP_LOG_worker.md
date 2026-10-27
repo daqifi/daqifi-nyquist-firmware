@@ -11515,3 +11515,31 @@ all on my own records; nothing in another lane's tree touched, nothing deleted.
   exists. Now carries the (a)/(b)/(c) classification, 9=A as an independent result, the #1153 residual
   citing the **10-25 disposition**, and an explicit note that ts#458's raw-mode check is stale against 9=A
   — so a cold reader meeting the red check finds the explanation.
+
+- ✅ **ITEM 14b DONE — fw#1024 bench re-test at `e9274e4f5`: 5 PASS, 0 FAIL.** Board `7E2873046200E891`,
+  PICkit5 via `-TPPK5`. Attribution closed: `hexcrc.py` (taken from **main**, since this head predates the
+  commit that adds it) predicted **783DB78D** and the board reports **783DB78D**. Registry updated at flash
+  time; WiFi restored and SAVEd.
+  > `Sent == Confirmed` and `PartialMissing == OverExtra` on **all 5 cycles**, ~1.03 MB each at 2250 Hz.
+  > ⭐⭐ **And the run was not vacuous — the test carries its own proof:** `InflightOverflow` non-zero every
+  > cycle (2229/2034/1947/2156/2166, mean 2106, spread 13.4%), so the ring cap was genuinely reached and
+  > pushes refused. **No monotonic trend → proportionate, not runaway**; the test defers that judgement to
+  > the reader and I stated mine.
+  ⭐ Its self-test is 14/14 with canaries that confirm it FAILS on a truncated reply, a malformed primary,
+  a `STATS:CLEar` that left counters non-zero, and a transport still confirming bytes — **a test that
+  proves its own assertions can fail**, which is what I have been demanding of everything else all session.
+- ⭐ **SETTLED fw#1024's `UNKNOWN` MERGEABILITY WITH merge-tree, AND CORRECTED MY OWN OVERSTATEMENT.** It
+  CONFLICTS (`docs/MEMORY_ARCHITECTURE.md`, `StreamingBufferPool.c`) and is **9 behind**. I first said "the
+  conflict is on the file that determines the pool size" — ⚠ **the file conflicts, the DEFINE does not**:
+  `STATIC_POOL_SIZE` is byte-identical six-term on both sides. Checked three ways that the staleness is a
+  **mergeability** problem and not a **measurement-validity** one: identical define; **0 send-ring mentions
+  across all 9 missing commits**; and `wifi_tcp_server.c` auto-merges despite both sides touching it.
+- ⛔ **I POSTED A MANGLED COMMENT: an UNQUOTED heredoc expanded every backtick and `$`, swallowing all four
+  code blocks** — 2,504 bytes of prose where 4,365 bytes of prose+evidence belonged. I used `<<'MD'`
+  correctly a dozen times today and switched to the unquoted form **because I wanted one `$(cat ...)`
+  interpolation**, without thinking that it enables expansion of *everything*.
+  > ⭐ **The prose survived and the evidence did not** — which is the worse half to lose, and it reads as a
+  > complete comment. Fixed by PATCHing the comment with a quoted heredoc and the numbers written in
+  > literally. **If a heredoc needs one interpolation, splice it afterwards; never unquote the delimiter.**
+- ⏸ **Worktree removals HELD** at the router's request — `orca-ide worktree rm` also deletes the local
+  branch, and branch deletion is not operator-approved. Measuring only.
