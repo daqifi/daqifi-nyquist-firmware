@@ -1779,26 +1779,6 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
      * critical section and would shift it. Nothing here depends on that
      * hunk, and that hunk does not touch this early return.)
      *
-     * Residual, accepted and deliberately NOT rolled back: if the reload
-     * succeeds and the SaveToNvm below then fails, the runtime array holds
-     * the new, validated coefficients while the persisted selector is left
-     * CRC-invalid -- NOT still naming the old set. SaveToNvm erases the
-     * TOP_LEVEL page unconditionally (daqifi_settings.c:290, ClearNvm ->
-     * nvm_ErasePage at :331) before the row write whose readback can fail
-     * (:298-307, nvm_WriteRowtoAddr), so a failed persist destroys the old
-     * record rather than preserving it. That is a flash fault in
-     * nvm_ErasePage/nvm_WriteRowtoAddr -- and ONLY that, now that
-     * tmpTopLevelSettings.type is normalized below right after the load (see
-     * the #1152 comment there): a corrupted stored `type` used to be a
-     * second, non-hardware way for this same SaveToNvm call to fail, and that
-     * one WAS reachable from no caller argument at all, on a record no
-     * different from any other valid save -- which is why it was outside this
-     * residual's scope rather than covered by it. With the type normalized,
-     * this residual is reachable from no argument the caller can send -- unlike
-     * the reload failure, which any board with an unwritten User bank
-     * reproduces on every `USECal 1`. The command answers -200 and the LOG_E
-     * below makes the fault retrievable through SYST:LOG?.
-     *
      * ⛔ THIS PARAGRAPH PREVIOUSLY CLAIMED A PROTECTION THAT DOES NOT EXIST,
      * and the claim is recorded here because it is the reason the save now
      * happens BEFORE the install rather than after. It said a failed save
@@ -1932,17 +1912,23 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
          * nvm_WriteRowtoAddr's success test is a READBACK COMPARISON against
          * that same buffer (nvm.c:132), so a concurrent settings writer on
          * another transport -- SCPI_LANSettingsSave takes no config claim --
-         * can corrupt the comparison over a write that LANDED. So verify
-         * against the medium instead of trusting the return value.
+         * can corrupt the comparison over a write that LANDED. So when
+         * SaveToNvm reports FAILURE, verify against the medium rather than
+         * trusting that return value -- this re-read runs ONLY on this
+         * (false) branch; nothing re-checks a reported TRUE.
          *
          * ⚠ SCOPE, and do not let this comment grow past it: this closes the
          * ONE demonstrated interleaving. It is NOT transaction safety. Another
          * top-level writer can overwrite after the check; a save prepared
          * elsewhere can land after this command returns; the install below
-         * still re-reads the cal bank; and a save that HANGS never reaches
-         * here at all. The settings-layer transaction, an NVM HAL that can
-         * report an erase failure, and a claim discipline over every settings
-         * writer are tracked separately -- see the row. */
+         * still re-reads the cal bank; a save that HANGS never reaches here
+         * at all; AND a save that reports TRUE is trusted OUTRIGHT, with NO
+         * re-read at all -- including a TRUE returned over the WRONG record
+         * (an unclaimed CONFigure:VOLTage:SAVE swapping this same staging
+         * buffer in between), which is #1153, not this fix. The
+         * settings-layer transaction, an NVM HAL that can report an erase
+         * failure, and a claim discipline over every settings writer are
+         * tracked separately -- see the row. */
         if (!daqifi_settings_TopLevelMatchesCommitted(&tmpTopLevelSettings)) {
             /* #1152 round 9: round 8 installed the just-validated bank on
              * EVERY mismatch here, on the premise that "the erase above has
@@ -2025,7 +2011,16 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
                 } else {
                     /* No valid record survives at all -- the erase genuinely ran
                      * and the replacement never landed (or landed corrupt), so
-                     * the selector is unreadable rather than merely stale. There
+                     * the selector is unreadable rather than merely stale. This is
+                     * WHY that is reachable at all: daqifi_settings_SaveToNvm
+                     * always calls daqifi_settings_ClearNvm (daqifi_settings.c:
+                     * 293), which erases the TOP_LEVEL page UNCONDITIONALLY via
+                     * nvm_ErasePage (daqifi_settings.c:334; nvm.c:45-54 returns
+                     * true whether or not the erase actually took) BEFORE the row
+                     * write (daqifi_settings.c:310, nvm_WriteRowtoAddr) whose own
+                     * readback comparison (nvm.c:132) is what can then fail -- so
+                     * a failed persist can destroy the old record outright, not
+                     * merely leave it stale. There
                      * is no previous selection left here to protect, but neither
                      * is there any proof the NEW one landed, so this still does
                      * not install. The same unreadable record makes app_freertos

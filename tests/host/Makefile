@@ -3289,6 +3289,41 @@ $(USECALTYPE_BIN): test_1152_usecal_type_trust.c test_framework.h \
 	   echo "       r5 defect this function exists to avoid."; \
 	   exit 1; \
 	 fi
+# #1152 round 11: committedMatchesIntended (added in round 10, fixing round
+# 9's own unchecked premise) is pinned only by the ordering guard's call
+# sites above (reread, continuing) -- neither touches this LOCAL variable's
+# own derivation, or what it gates. Round 9's actual regression was
+# classifying this exact branch by readability ALONE; pin the three facts
+# that regression would undo: the variable exists, it is derived from
+# comparing calVals on BOTH sides (committed vs. intended) rather than
+# readability alone, and that derivation -- not some other condition --
+# gates the branch deciding whether to fall through to the shared
+# "continuing" install.
+	@body=`sed -n '/^static scpi_result_t ADCUseCalSetClaimed(scpi_t \* context) {/,/^}/p' $(SCPIADC_SRC) | tr -d '\r' | grep -v '^[[:space:]]*[*/]'`; \
+	 test -n "$$body" \
+	   || { echo "ERROR: ADCUseCalSetClaimed() was not found in $(SCPIADC_SRC) for"; \
+	        echo "       the committedMatchesIntended guard -- it can see nothing."; \
+	        exit 1; }; \
+	 cmidecl=`printf '%s\n' "$$body" | grep -n 'bool committedMatchesIntended = committedReadable &&' | cut -d: -f1`; \
+	 cmicommitted=`printf '%s\n' "$$body" | grep -n 'committedSettings\.settings\.topLevelSettings\.calVals ==' | cut -d: -f1`; \
+	 cmiintended=`printf '%s\n' "$$body" | grep -n 'tmpTopLevelSettings\.settings\.topLevelSettings\.calVals;' | cut -d: -f1`; \
+	 cmigate=`printf '%s\n' "$$body" | grep -n 'if (!committedMatchesIntended)' | cut -d: -f1`; \
+	 test -n "$$cmidecl" && test -n "$$cmicommitted" && test -n "$$cmiintended" && test -n "$$cmigate" \
+	   && test "$$cmicommitted" -eq "$$((cmidecl+1))" \
+	   && test "$$cmiintended" -eq "$$((cmidecl+2))" \
+	   && test "$$cmigate" -gt "$$cmidecl" \
+	   || { echo "ERROR: ADCUseCalSetClaimed() in $(SCPIADC_SRC) no longer derives"; \
+	        echo "       committedMatchesIntended from a two-sided calVals comparison"; \
+	        echo "       (committedSettings...calVals == tmpTopLevelSettings...calVals)"; \
+	        echo "       directly below its own declaration, with that declaration"; \
+	        echo "       gating the 'if (!committedMatchesIntended)' branch below it"; \
+	        echo "       (decl='$$cmidecl' committedSide='$$cmicommitted'"; \
+	        echo "        intendedSide='$$cmiintended' gate='$$cmigate')."; \
+	        echo "       Round 9's own regression classified this branch by"; \
+	        echo "       committedReadable ALONE -- i.e. exactly this calVals"; \
+	        echo "       derivation removed -- so a guard that cannot see it cannot"; \
+	        echo "       see round 9's bug coming back either."; \
+	        exit 1; }
 # #1152 round 9: every LOG_E in ADCUseCalSetClaimed() must render at or under
 # the 125-byte usable payload (LOG_MESSAGE_SIZE 128, Logger.h:361, clamped to
 # LOG_MESSAGE_SIZE-3 in LogMessageFormatImpl, Logger.c:398,405 -- the tail past

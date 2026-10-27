@@ -298,15 +298,21 @@ typedef struct {
      * CONF:VOLT:SAVE / SCPI_SaveDataPrecision (SCPIInterface.c:7201) writes
      * this exact TopLevelSettings record and takes none -- so the two reads
      * are not guaranteed to see the same thing. When true,
-     * model_usecal_set's round-10 arm mutates the TOP_LEVEL page to hold the
-     * CALLER's own intended record (valid checksum, calVals == param1)
-     * immediately before its second read, so that read -- and ONLY that
+     * model_usecal_set's round-9 AND round-10 arms (via the shared
+     * model_simulate_landed_write helper -- round 11: both must receive the
+     * identical mutation, or a round9-vs-round10 comparison would measure
+     * which arm got the stimulus instead of which arm's classification
+     * logic is right) mutate the TOP_LEVEL page to hold the CALLER's own
+     * intended record (valid checksum, calVals == param1) immediately
+     * before each arm's own second read, so that read -- and ONLY that
      * read -- sees the landed selector even though the FIRST read (used to
      * decide whether the mismatch branch is entered at all) saw whatever
      * the surrounding fixture set up instead. This is a deliberate model
      * simplification: it does not claim to show HOW the race resolves this
      * way, only that two independent reads an instant apart need not agree,
-     * which is the defect round 10 fixes. */
+     * which is the defect round 10 fixes -- round 9 receives the same
+     * landed record but has no code that classifies by selector, only by
+     * readability, so it still refuses. */
     bool     recheckRevealsLandedSelector;
 } ModelNvm;
 
@@ -769,6 +775,27 @@ typedef struct {
     bool             committedReadableOnMismatch;
 } UseCalRun;
 
+/* #1152 round 11: the stimulus a competing writer landing THIS EXACT record
+ * applies to NVM, factored out so every model arm that consults
+ * recheckRevealsLandedSelector applies the IDENTICAL mutation. Before this,
+ * only the round-10 arm below ever read that fixture field -- round 9's arm
+ * ignored it outright -- so a differential test that set the field on both
+ * an R9 and an R10 run was exercising round 9 with the write never applied
+ * at all. That showed round 9 refusing a mismatch it was never shown, not
+ * round 9 refusing a landed write its classification can't see past "valid
+ * record, differs from the first read" (see round10_differs_from_round9...
+ * below). */
+static void model_simulate_landed_write(ModelNvm *nvm,
+                                         const ModelSettings *intended)
+{
+    ModelSettings landed = *intended;
+    uint32_t crc2 = CRC32_Compute(&landed.settings,
+            model_data_size(landed.type));
+    memset(landed.checksum, 0, sizeof(landed.checksum));
+    memcpy(landed.checksum, &crc2, sizeof(crc2));
+    nvm_store_page(nvm, MODEL_TYPE_TOP_LEVEL, &landed);
+}
+
 static UseCalRun model_usecal_set(UseCalShape shape, int param1,
                                   ModelNvm *nvm, ModelRuntimeArray *rt,
                                   bool rawModeIn)
@@ -900,6 +927,16 @@ static UseCalRun model_usecal_set(UseCalShape shape, int param1,
                     run.installAttempted = true;
                     (void)model_LoadADCCalSettings(nvm, calType, rt);
                 } else if (shape == USECAL_R9) {
+                    /* Apply the SAME stimulus the round-10 arm below
+                     * receives, so a caller comparing the two shapes on one
+                     * fixture is comparing classification logic, not
+                     * whether the write landed. Round 9 has no second,
+                     * selector-aware read -- committedReadableOnMismatch
+                     * only reports readability -- so even with the correct
+                     * record now sitting in NVM, round 9 still refuses. */
+                    if (nvm->recheckRevealsLandedSelector) {
+                        model_simulate_landed_write(nvm, &tmp);
+                    }
                     run.committedReadableOnMismatch =
                             model_TopLevelCommittedReadable(nvm);
                 } else if (shape == USECAL_R10) {
@@ -907,12 +944,7 @@ static UseCalRun model_usecal_set(UseCalShape shape, int param1,
                         /* Simulate a writer of this exact record landing in
                          * the gap between the two independent reads -- see
                          * the fixture field's own comment on ModelNvm. */
-                        ModelSettings landed = tmp;
-                        uint32_t crc2 = CRC32_Compute(&landed.settings,
-                                model_data_size(landed.type));
-                        memset(landed.checksum, 0, sizeof(landed.checksum));
-                        memcpy(landed.checksum, &crc2, sizeof(crc2));
-                        nvm_store_page(nvm, MODEL_TYPE_TOP_LEVEL, &landed);
+                        model_simulate_landed_write(nvm, &tmp);
                     }
                     run.committedReadableOnMismatch =
                             model_TopLevelCommittedReadable(nvm);
@@ -2356,14 +2388,18 @@ TEST(round10_case_b_recheck_reveals_landed_selector_installs)
 
 /* THE DIRECT REGRESSION/FIX PROOF, round 9 vs round 10: identical fixture,
  * identical param1, identical failure injection AND identical
- * recheckRevealsLandedSelector, run through r9 and r10 side by side. Round 9
- * has no mechanism to even LOOK at this fixture flag -- its mismatch branch
- * never re-checks by selector -- so it stops at the first mismatch and
- * refuses, leaving the live coefficients on the surviving OLD selector while
- * the NEW one is, by the fixture's own construction, already the one
- * genuinely committed. Round 10 re-checks and installs. This is round 10's
- * entire fix, shown as a diff rather than asserted against each shape in
- * isolation -- same technique as round9_differs_from_round8 above. */
+ * recheckRevealsLandedSelector, run through r9 and r10 side by side. Round
+ * 11: BOTH arms now physically receive the landed write (via the shared
+ * model_simulate_landed_write helper) -- the two arms differ only in their
+ * classification logic from here on, not in what is sitting in NVM when
+ * each one checks. Round 9's second read reports only readability, not
+ * selector match, so even with the correct record now committed it still
+ * treats "valid but found after a mismatch" as case (a) and refuses,
+ * leaving the live coefficients on the surviving OLD selector. Round 10's
+ * second read also checks the selector, finds it matches, and installs.
+ * This is round 10's entire fix, shown as a diff rather than asserted
+ * against each shape in isolation -- same technique as
+ * round9_differs_from_round8 above. */
 TEST(round10_differs_from_round9_only_by_installing_on_a_recheck_confirmed_landed_write)
 {
     ModelNvm nvmR9, nvmR10;
@@ -2375,11 +2411,14 @@ TEST(round10_differs_from_round9_only_by_installing_on_a_recheck_confirmed_lande
     runtime_init(&rtR9, USER_M, USER_B);
     nvmR9.eraseRefused = true;
     nvmR9.writeFails   = true;
-    nvmR9.recheckRevealsLandedSelector = true;   /* r9 has no code path that
-                                                    * reads this -- included
-                                                    * to prove the fixture
-                                                    * alone does not change
-                                                    * r9's outcome. */
+    nvmR9.recheckRevealsLandedSelector = true;   /* round 11: r9's arm now
+                                                    * DOES act on this --
+                                                    * physically landing the
+                                                    * record -- same as r10's
+                                                    * arm below. r9 still
+                                                    * refuses, because its
+                                                    * classification checks
+                                                    * readability only. */
 
     fixture_board(&nvmR10, &rtR10, MODEL_TYPE_TOP_LEVEL, true);
     fixture_top_level(&nvmR10, MODEL_TYPE_TOP_LEVEL, 1u);
