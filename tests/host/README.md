@@ -31,10 +31,21 @@ correct when it runs, and it simply stops running after an edit. ⛔ `make -np`'
 is parsed, so it shows a perfectly good path for a rule that has no such
 dependency. Only the expanded **rule** line is evidence.
 
+It does this by ASKING MAKE, not by reading the Makefile:
+`make -n --warn-undefined-variables` warns at read time, with file:line, and
+cannot be evaded by syntax because it *is* make. (The checker's first
+implementation parsed the file and was defeated by continuation lines, `${VAR}`
+references and tab-indented shell assignments — 220 recipe lines in this file
+match `name=`, so shell temporaries registered as defined make variables. Its
+docstring records all four.) It runs under `env -i`, because a variable present
+in the **environment** is defined as far as make is concerned and would
+suppress the warning for exactly this defect.
+
 That gate runs its own `--self-test` first, as a separate step, because the
 checker's original positive control (fw#904's real gap) has since been fixed —
 so a zero from the audit is unfalsifiable unless the instrument has just been
-shown to fire.
+shown to fire. The fixture carries the three evasions above and every arm
+decides the exit code.
 
 ⚠ It does **not** check whether a rule declares `$(RECIPES)` (this Makefile
 itself). That is the separate "is this guard ever *re-evaluated*?" question,

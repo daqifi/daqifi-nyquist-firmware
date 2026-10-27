@@ -12,8 +12,16 @@ name: make-prereq
 # ⛔ And the obvious check is a clean-bill generator: `make -np`'s VARIABLE DUMP
 # runs after the whole file is parsed, so it prints the variable as a perfectly
 # good path while the rule it feeds has no such dependency. Measured on fw#904
-# before its fix. Only the expanded RULE line is evidence, which is what the
-# checker reads.
+# before its fix.
+#
+# So the gate ASKS MAKE rather than reading the Makefile:
+# `make -n --warn-undefined-variables` warns at READ time, with file:line, and
+# cannot be evaded by syntax because it IS make. The checker's first
+# implementation parsed the file and was defeated by continuation lines, ${VAR}
+# references and tab-indented shell assignments -- see its docstring. It runs
+# under `env -i` because a variable present in the ENVIRONMENT is defined as far
+# as make is concerned, which would suppress the warning for exactly this
+# defect.
 #
 # Trigger scope mirrors log-budget.yml and cppcheck.yml: the file that is
 # measured, the tool itself, and this workflow. Nothing else can change a
@@ -45,21 +53,25 @@ jobs:
 
       # ⛔ THIS STEP IS NOT OPTIONAL, and it runs FIRST on purpose.
       #
-      # The checker's original positive control was fw#904's real gap, and that
-      # gap is fixed — so the live tree contains no known positive, and a zero
-      # from the audit below is unfalsifiable on its own. The self-test carries
-      # its own two-arm control (a rule it MUST flag and a correct twin it MUST
-      # NOT), plus a cross-check that `make` itself agrees the modelled defect
-      # is real. Running it as a separate visible step means a broken checker
-      # reports as a broken checker rather than as a clean tree.
+      # The live tree contains no known positive (the checker's original one,
+      # fw#904's real gap, is fixed), so a zero from the audit below is
+      # unfalsifiable on its own. The fixture carries the three evasions that
+      # broke the checker's first implementation — a ${VAR} reference, a
+      # prerequisite on a CONTINUATION line, and a recipe-only reference that
+      # must stay silent — and every arm decides the exit code.
+      #
+      # ⚠ One mutation is undetectable from inside: deleting the line that
+      # turns a failed arm into a non-zero exit cannot be caught by that exit.
+      # Fixture integrity is covered; the reporting mechanism itself is not,
+      # and no self-test can cover it. That is a review-time property.
       - name: Self-test the checker
         run: python3 tools/lint/make_prereq_audit.py --self-test
 
-      # Exit 0 = no rule names a prerequisite variable that is undefined or
-      #          defined after the rule.
-      # Exit 1 = findings, each with the rule line, the variable, and where it
-      #          was defined.
-      # Exit 2 = the tool could not run (no such Makefile). Never silently
+      # Exit 0 = make read every rule with no undefined-variable warning.
+      # Exit 1 = warnings, annotated with ::error file=,line=:: so each one
+      #          points at the rule whose prerequisite list was empty.
+      # Exit 2 = the tool could not run (no such Makefile, or make could not
+      #          read it). Never silently
       #          green: a checker pointed at a file with no guard rules reports
       #          0 findings and looks like a pass, so a missing path is an
       #          error rather than an empty success.
