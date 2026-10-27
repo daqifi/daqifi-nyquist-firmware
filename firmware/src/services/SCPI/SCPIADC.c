@@ -2020,8 +2020,8 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
                      * write (daqifi_settings.c:310, nvm_WriteRowtoAddr) whose own
                      * readback comparison (nvm.c:132) is what can then fail -- so
                      * a failed persist can destroy the old record outright, not
-                     * merely leave it stale. There
-                     * is no previous selection left here to protect, but neither
+                     * merely leave it stale. There is no previous selection left
+                     * here to protect, but neither
                      * is there any proof the NEW one landed, so this still does
                      * not install. The same unreadable record makes app_freertos
                      * .c's own TopLevelSettings load (~:916-919) fail the same
