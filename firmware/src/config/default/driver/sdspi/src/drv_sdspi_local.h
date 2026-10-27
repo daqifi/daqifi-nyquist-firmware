@@ -1521,8 +1521,55 @@ typedef struct
        DRV_SDSPI_DETECT_BACKOFF_AFTER_POLLS misses the poll interval stretches
        to DRV_SDSPI_DETECT_BACKOFF_INTERVAL_MS - an empty slot stops costing
        the shared bus a CMD exchange every second (WiFi shares SPI4). Reset on
-       attach or via DRV_SDSPI_DetectPollKick (SD manager activity). */
+       attach or via DRV_SDSPI_DetectPollKick (SD manager activity).
+
+       Cross-context note (#756): the saturating increment in
+       DRV_SDSPI_TASK_WAIT_POLLING_TIMER_EXPIRE is a read-modify-write on the
+       SD task (priority 5), and DRV_SDSPI_DetectPollKick's `= 0` runs on an
+       SCPI task -- the USB one at priority 7, which preempts the SD task at
+       any instruction. That increment therefore takes a critical section; the
+       plain `= 0` stores do not (an aligned 16-bit store is atomic on
+       PIC32MZ, mcu-hygiene section 3). */
     uint16_t                                        detachedPollCount;
+
+    /* #756: FORCED detect-poll request/acknowledge pair.
+       DRV_SDSPI_DetectPollExpireNow (whichever task dispatched the SCPI
+       command) bumps detectForceReq; the detect FSM copies the value it
+       observed into detectForceAck. "A force is pending" is therefore
+       `req != ack` -- an EDGE that only the consumer retires -- rather than a
+       level any other code path may reset. That distinction is the point: the
+       arm path (DRV_SDSPI_CardDetectPollingTimerStart) legitimately clears
+       cardPollingTimerExpired on every cadence re-arm, so a force published
+       through THAT flag could be, and was, silently swallowed.
+
+       Widths and contexts: both are uint32_t, i.e. a single aligned 32-bit
+       load/store, atomic on PIC32MZ. detectForceReq is written from more than
+       one task (USB SCPI at priority 7, WiFi/TCP SCPI at 2) and its `++` is a
+       read-modify-write, so every write is made under OSAL_CRIT_TYPE_HIGH; it
+       is read by the detect FSM, hence volatile. detectForceAck is read and
+       written ONLY inside lDRV_SDSPI_AttachDetachTasks, whose whole body runs
+       under dObj->transferMutex, so it needs neither a critical section nor
+       volatile (mcu-hygiene section 3: do not add volatile speculatively). */
+    volatile uint32_t                               detectForceReq;
+    uint32_t                                        detectForceAck;
+
+    /* #756 rate limit: the CORETIMER count at which the last forced expiry
+       was published, and whether one has ever been published -- detectForceAt
+       is meaningless until then, because boot-time counts are near zero and
+       an unqualified "now - 0" would suppress the first force of a session.
+
+       64-bit deliberately. SYS_TIME is clocked by the CORETIMER at
+       DAQIFI_CORE_TIMER_HZ = SYSCLK/2 (126 MHz at the 252 MHz build, 100 MHz
+       at 200 -- clock_config.h), so SYS_TIME_CounterGet()'s 32-bit view of
+       the same counter wraps every ~34-43 s. That would alias a
+       several-minute gap into "a few hundred ms ago" and suppress a
+       legitimate force; SYS_TIME_Counter64Get() cannot wrap in any service
+       life and nothing in this firmware calls SYS_TIME_CounterSet, so it is
+       strictly monotonic. A 64-bit access is never atomic on PIC32MZ
+       (mcu-hygiene section 3), so both fields are read and written only
+       inside the same OSAL_CRIT_TYPE_HIGH section as detectForceReq. */
+    uint64_t                                        detectForceAt;
+    bool                                            detectForceEver;
 
     /* Flag indicating the presence of the SD Card */
     SYS_MEDIA_STATUS                                mediaState;

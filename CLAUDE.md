@@ -95,6 +95,45 @@ cppcheck 2.13.0, the CI version.) The suppression file documents the
 DioProbe.c array-bounds false positive and the FreeRTOS portmacro
 FPU-guard `#error` (chip-specific macro that cppcheck doesn't see).
 
+### LOG_E budget (log_budget)
+
+`Util/Logger.c` truncates a formatted message at **125 bytes**
+(`LOG_MESSAGE_SIZE` 128 minus `LogMessageFormatImpl`'s vsnprintf and
+clamp reservations) with no error and no marker — and since a remedy
+is written last, the remedy is what is lost. `tools/lint/log_budget.py`
+measures every `LOG_E` / `LOG_E_ONCE` / `LOG_E_SESSION` format string
+in `firmware/src/` (same third-party exclusions as cppcheck) against
+that ceiling, reading the ceiling **from Logger.h/Logger.c** rather
+than hardcoding it. A site is a finding when its worst case is over,
+**or when the worst case cannot be bounded** — an unannotated `%s`, a
+`*` width, a specifier with no safe width (`%p`, `%f`), or a
+non-literal format argument. Bound a `%s` with `/* log_budget: max=N */`
+on or above the call, or with a precision (`%.40s`).
+
+⚠️ **Scope is `.c` only — a `LOG_E` in a HEADER is not measured** (`SCANNED_SUFFIXES` in the checker, and the gate prints this on every run), so a format string that lives in a `.h` is outside this gate and has to be bounded by hand.
+
+```bash
+python3 tools/lint/log_budget.py --self-test      # prove the checker works
+python3 tools/lint/log_budget.py                  # the gate
+python3 tools/lint/log_budget.py --list           # every current finding
+python3 tools/lint/log_budget.py --write-baseline # after fixing one
+```
+
+Same baseline/suppress pattern as cppcheck, **including that drift fails
+in both directions**: `tools/lint/log_budget-baseline.txt` is generated,
+and CI fails on findings **not** in it *and* on entries in it that are
+no longer reported. A record is matched by text, so one left behind
+after its finding was fixed silently re-blesses that exact message if it
+comes back — fixing a site and regenerating the baseline are one commit,
+not two. `tools/lint/log_budget-suppress.txt` holds permanent waivers
+and **requires a reason comment above each entry**, enforced per entry
+(one comment authorizes exactly one waiver). Unlike the cppcheck
+baseline, records are keyed on file + reason + message text, **not line
+number**, so editing anything above a `LOG_E` does not turn the gate
+red. CI gate: `.github/workflows/log-budget.yml` (job **LOG_E message
+budget**), same trigger scoping as cppcheck. Baseline at introduction:
+105 findings, 96 of them unannotated `%s`.
+
 ### Programming with PICkit 4 (ipecmd)
 
 Preferred wrapper on this dev station: `bash ~/.claude/skills/flash/flash.sh [--build]` (user-local helper, not repo-tracked) — builds (optional), flashes, reattaches usbipd, verifies a `/dev/ttyACM*` node appears (node presence only — board *identity* still needs the device verification protocol below). Without the wrapper, use the direct invocation, which works anywhere:
@@ -104,7 +143,7 @@ Preferred wrapper on this dev station: `bash ~/.claude/skills/flash/flash.sh [--
   -F"C:\\Users\\User\\Documents\\GitHub\\daqifi-nyquist-firmware\\firmware\\daqifi.X\\dist\\default\\production\\daqifi.X.production.hex" -OL
 ```
 (Station path shown — works pasted into Windows PowerShell/CMD too. From WSL on another checkout, derive it: `-F"$(wslpath -w firmware/daqifi.X/dist/default/production/daqifi.X.production.hex)"`.)
-Watch for "Program Succeeded". Flags: `-M` = program mode, `-OL` = use loaded memories only. Gotchas: `-P` takes the device **without** the `PIC` prefix (with it: exit 36 / "Unable to locate DFP"); `-F` needs a Windows-style path (`/mnt/c/...` fails silently); `-TS<serial>` selects a specific programmer when several are attached; **`-TP` selects the programmer FAMILY and does not fall back** — `-TPPK4` for a PICkit 4 (USB `PID_9012`), `-TPPK5` for a PICkit 5 (`PID_9036`); point it at the wrong family and ipecmd simply fails to find the tool, so `flash.sh` derives it from the programmer's PID and callers pass only `--ts`; **every flash wipes NVM** (WiFi/calibration settings — restore manually via the scpi skill's `batch.sh`, using the **WiFi config sequence** in "Talking SCPI to the device" below; **no `sta_setup.batch` recipe file exists on this station** — two lanes checked independently and found nothing, see #1145 — so do not go looking for one before restoring by hand); after flashing, reattach to WSL (`usbipd attach --wsl --busid 2-4`); libscpi context is stale after flash — new SCPI patterns return `-113` until `SYST:REBoot`.
+Watch for "Program Succeeded". Flags: `-M` = program mode, `-OL` = use loaded memories only. Gotchas: `-P` takes the device **without** the `PIC` prefix (with it: exit 36 / "Unable to locate DFP"); `-F` needs a Windows-style path (`/mnt/c/...` fails silently); `-TS<serial>` selects a specific programmer when several are attached; **`-TP` selects the programmer FAMILY and does not fall back** — `-TPPK4` for a PICkit 4 (USB `PID_9012`), `-TPPK5` for a PICkit 5 (`PID_9036`); point it at the wrong family and ipecmd simply fails to find the tool, so `flash.sh` derives it from the programmer's PID and callers pass only `--ts`; **every flash wipes NVM** (WiFi/calibration settings — restore manually via the scpi skill's `batch.sh`, using the **WiFi config sequence** in "Talking SCPI to the device" below; **no `sta_setup.batch` recipe file exists on this station** — two lanes checked independently and found nothing, see #1145 — so do not go looking for one before restoring by hand); after flashing, reattach to WSL (`usbipd attach --wsl --busid 2-4`); libscpi context is stale after flash — new SCPI patterns return `-113` until `SYST:REboot`.
 
 ### Bench tool inventory (this dev station)
 | Item | Identifier | Notes |
@@ -205,7 +244,7 @@ Services Layer
    - Modules: SCPIADC, SCPIDIO, SCPILAN, SCPIStorageSD
    - Used for device configuration and control
    - **SCPI Abbreviation Rule**: each node has exactly **two** legal spellings — the **full** node, or the node **truncated at its first lowercase letter**. Nothing in between. Per node, `UPPERCASElowercase` accepts `UPPERCASElowercase` and `UPPERCASE` only:
-     - `SYST:COMM:LAN:NETMode` → `SYST:COMM:LAN:NETM` ✅ (short form)
+     - `SYST:COMM:LAN:NETType` → `SYST:COMM:LAN:NETT` ✅ (short form)
      - `SYSTem:STReam:STOP` → `SYST:STR:STOP` ✅ (`STOP` is all-caps, so it has only ONE spelling — itself)
      - ⚠️ **A node with NO lowercase has exactly one legal spelling.** `SYSTem:COMMunicate:LAN:APPLY` is registered all-caps (`SCPIInterface.c`), so `APPL` is **`-113`**, not a short form. An earlier revision of this file used `APPLy → APPL` as the worked example here, which does not match what the firmware registers — verified on the device 2026-08-21. Check the pattern before abbreviating.
      - `CONFigure:ADC:OBDiag` → `CONF:ADC:OBD`, `CONF:ADC:OBDiag`, `CONFigure:ADC:OBD` … ✅ (each node independently full or short)
@@ -442,11 +481,101 @@ Three sanctioned paths, in order of preference:
    ```
    Never for streaming or multi-step tests: its `-x` timeout is idle-based (a stream never goes idle → hangs forever); killing it mid-stream corrupts WSL serial state (recovery: `pkill -9 picocom; fuser -k /dev/ttyACM0; rm -f /var/lock/LCK..ttyACM0`, else physical replug); rapid open/close toggles DTR/RTS and can crash the device's CDC (Windows Code 43 → reprogram). Never use `2>&1` with picocom. Allow long drain time between large-response commands (`LISt?`, `LOG?`, `SD:GET` — `sleep 5+`) or the next query captures stale data.
 
-For ad-hoc multi-command bench scripts, write to **`/tmp/temp.sh`** (the filename is allowlisted in `.claude/settings.local.json` — the untracked per-machine Claude Code override; add the entry there if your station doesn't have it), `chmod +x`, `dos2unix` if needed.
+For ad-hoc multi-command bench scripts, write to **your session's scratchpad directory** (the
+agent harness names it in the environment preamble; it is keyed by session id, so it is isolated
+by construction and needs no allowlist entry — verified 2026-10-07). `chmod +x`, `dos2unix` if
+needed.
+
+⚠ **Do NOT use a shared fixed path such as `/tmp/temp.sh` — several agents run concurrently and
+it silently feeds one agent another's script or output.** Measured 2026-10-07: one lane's
+eligibility script executed inside another lane's run, and the receiving lane nearly read a
+foreign `head MISMATCH` as a finding about its own PR. The leaked text was plausible,
+same-format and **unmarked**, so it is not detectable by reading the output. At the time
+`/tmp/claude-1000/` held **511 loose files** dating back four weeks, including names any lane
+would pick (`st.out`, `gate.out`, `f.txt`). The parent directory is shared too, so moving to a
+different fixed filename under it does not help.
+
+**Mark every ad-hoc script's output.** A marker is the only cheap detector, and one added
+*after* you see odd output is too late — you cannot retroactively establish which lines were
+yours:
+
+```bash
+# Keyed on the SESSION, not the cwd -- so the value does not change when you
+# cd into a task tree. It is still PATH-DERIVED at bottom (bench_lane_id()
+# prefers $BENCH_AGENT, then $HERDR_WORKSPACE_LABEL, then falls back to the
+# basename of $ORCA_WORKTREE_ID's path), so it resolves nothing against the
+# registry -- which is why the check below is not optional.
+LANE=$(bash ~/.claude/skills/bench/bench.sh whoami | awk '/^lane:/{print $2}')
+[ -n "$LANE" ] || { echo 'FATAL: cannot establish lane identity' >&2; exit 1; }
+grep -qE "^[[:space:]]*$LANE[[:space:]]" ~/.claude/bench/devices.conf \
+  || echo "NOTE: '$LANE' is not a registered lane (fine for the coordinator or" \
+          "the main checkout; suspicious for a bench lane)" >&2
+echo "### MARKER-$LANE BEGIN <what>"   # ... the script ...
+echo "### MARKER-$LANE END <what>"
+```
+
+⚠ **VALIDATE the lane; never TRUST a derivation unchecked.** Three ways to get this wrong, all measured
+on this station:
+
+- `basename $(git rev-parse --show-toplevel)` — the **cwd** — yields a registry lane name in **3 of 81**
+  worktrees. The other 78 are the main checkout, a lane's own *task* trees (`nq-c-fw1013`),
+  purpose-named trees (`audit-965`, `build-1055`) and 49 `agent-*` subagent trees. So lane `nq-c`
+  working in its own task tree would emit `MARKER-nq-c-fw1013` — not another lane's name, so no
+  false attribution, but it does not resolve against the registry either.
+- `bench` is **not on `PATH`**; only `~/.claude/skills/bench/bench.sh` exists.
+- `$ORCA_WORKTREE_ID` is a compound — `<uuid>::C:\path\to\worktree` — so verbatim use yields a
+  60-character marker containing `::` and backslashes.
+
+**Why the `whoami` form is still the primary**, stated without overclaiming: it runs the same
+basename operation, but on the **session root** rather than the cwd — and a session root is far
+more often a registered lane than an arbitrary working directory, and the value **does not
+change** when you `cd` into a task tree. That cwd-stability is the real advantage. It is *not* a
+registry lookup, so a session rooted at `nq-c-fw1013` or `audit-965` reports exactly that, and
+the NOTE in the snippet is what catches it.
+
+⛔ **And prefer the loud failure.** `bench: not found` was impossible to miss; `basename` never
+fails and always returns a *plausible* string. Swapping one for the other trades a self-announcing
+error for a silent wrong value — in the one convention whose entire purpose is catching silent
+wrong values. The `[ -n ... ] || exit` and the registry check above exist to keep it loud. The
+registry check is a NOTE rather than a hard failure on purpose: not every session is a registered
+lane (this file's own coordinator session is not), so absence means "unregistered", while a name
+that is present but *wrong* is the case the marker cannot detect and you must not create.
+
+**A wrong lane name is worse than no marker:** it stamps a name on output, and a wrong one
+falsely authenticates one lane's text as another's — the exact confusion the marker prevents.
+An `agent-*` subagent tree cannot name its lane from the path at all (git records no owner), so a
+subagent should **inherit `$LANE` from the session that spawned it** rather than derive it.
+
+⭐ **What the marker buys, in both directions.** It is an **authenticator you give others** and a
+**detector you keep for yourself**:
+
+| | mechanism | effect |
+|---|---|---|
+| protects **you** | session scratchpad | isolation — unilateral, immediate, works alone |
+| protects **you** | marking *everything* you emit | foreign text arrives **unmarked**, and the gap is a structural check |
+| protects **others** | `MARKER-$LANE` on your output | lets them attribute your lines — needs *them* to be marking too |
+
+The second row is the one that is easy to miss: consistent self-marking protects you **by
+absence**. In the incident this section exists for, the receiving lane *was saved by noticing* and
+the foreign text was "plausible, same-format and **unmarked**" — so marking your own output is
+precisely what converts that lucky noticing into a test that cannot be missed. What it does **not**
+do is make your own output trustworthy to you; and *attributing* someone else's leak still needs
+them to have marked it.
+
+⚠ **The station hook currently argues the other way, and it is stale.**
+`~/.claude/hooks/tmp-script-guard.sh` recommends `/tmp/temp.sh` (`:71`) and exempts it from its own
+nag (`:53`) — so the shared path is frictionless while the path this section prescribes is the noisy
+one. Ignore the recommendation; the scratchpad is correct. It also **misfires**: its match pattern
+(`:42`) has no end anchor, so `foo.json` matches as `foo.js`, `bar.csv` as `bar.c` and `x.html` as
+`x.h` — all three extensions are on the hook's own exempt list, so it nags about data files it is
+documented not to care about. Both are outside this repo and tracked separately.
+
+(Older `/tmp/temp.sh` entries remain in `.claude/settings.local.json` for compatibility; nothing
+needs to be added there for the scratchpad.)
 
 **Device state basics:** power states `0`=STANDBY, `1`=POWERED_UP (full power — required for WiFi and the DAC's 10 V rail), `2`=POWERED_UP_EXT_DOWN (low-battery). Before tests: known state (`SYST:POW:STAT 0/1` cycle if needed), drain the error queue (`SYST:ERR?` until `0,"No error"`), `ABOR` any pending operation. Don't guess SCPI syntax — see the verification protocol above (e.g. it's `SSIDSTR?`, `NETTYPE?`, `ADDR?` — not `SSID:STR`/`MODE`/`IP`).
 
-**WiFi config sequence** (`NETType`: **1 = STA, 4 = AP** — `wifi_manager.h`; 0 is invalid and the setter rejects it, silently leaving the previous mode. `SECurity`: 0 = open, **3 = WPA with passphrase**)**:** `ENAbled 0` → set `NETType`/`SECurity`/`SSID`/`PASs` → `ENAbled 1` → `APPLY` (all-caps; `APPL` is `-113`) → wait ~20 s → verify `ADDR?` → `SAVE` (persists to NVM — without it a reboot reverts; **every flash wipes NVM regardless**). The WiFi module itself takes ~2–3 s to initialize after power-up. AP-mode defaults: open AP `DAQiFi-XXXX` (MAC suffix auto-applied to the bare default name; user names preserved), hostname = SSID (used for DHCP Option 12 network discovery), needs POWERED_UP.
+**WiFi config sequence** (`NETType`: **1 = STA, 4 = AP** — `wifi_manager.h`; 0 is invalid and the setter rejects it, silently leaving the previous mode. `SECurity`: 0 = open, **3 = WPA with passphrase**)**:** **`SYST:POW:STAT 1` first, and confirm `SYST:POW:STAT?` → `1`** — after a flash the board boots to STANDBY (`0`) with the WiFi module unpowered, and every later step then answers `-200`; the power state is **not** restored from NVM on reboot even though the WiFi config is (only `SYST:POW:AUTOOn 1` then `SYST:POW:AUTOOn:SAVE` would change that, which is a boot-policy decision, not part of a restore — measured on lane nq-c's board 2026-10-25) → `ENAbled 0` → set `NETType`/`SECurity`/`SSID`/`PASs` → `ENAbled 1` → `APPLY` (all-caps; `APPL` is `-113`) → wait ~20 s → verify `ADDR?` → `SAVE` (persists to NVM — without it a reboot reverts; **every flash wipes NVM regardless**). The WiFi module itself takes ~2–3 s to initialize after power-up. AP-mode defaults: open AP `DAQiFi-XXXX` (MAC suffix auto-applied to the bare default name; user names preserved), hostname = SSID (used for DHCP Option 12 network discovery), needs POWERED_UP.
 
 ### USB CDC behavior every test must respect
 
@@ -501,7 +630,7 @@ All **durable regression tests** — firmware regression, MCP integration, clien
 4. **Every run logs its complete recipe + version triplet** to a sidecar `<script>_<timestamp>.meta.json`: firmware `*IDN?` + firmware version + test-suite git SHA (`test_harness.collect_run_metadata`). Two runs with the same triplet should produce comparable CSVs; that's the **repeatability key**.
 5. **Every benchmark emits the canonical CSV shape** documented in [`docs/CSV_SCHEMA.md`](https://github.com/daqifi/daqifi-python-test-suite/blob/main/docs/CSV_SCHEMA.md). New `SYST:STR:STATS?` firmware fields flow through automatically — no script changes needed.
 
-**Carve-out for ad-hoc bench exploration.** Quick interactive commands — `picocom` one-liners, single SCPI queries, a throwaway `/tmp/temp.sh` to validate a hunch before writing the real test — are fine and have their own conventions documented in the "Bench Testing & Device Access" section above. The policy here applies when the question is "will this break if I change X next month?" — that answer lives in a versioned script in `daqifi-python-test-suite`, not in your shell history.
+**Carve-out for ad-hoc bench exploration.** Quick interactive commands — `picocom` one-liners, single SCPI queries, a throwaway script in your session scratchpad to validate a hunch before writing the real test — are fine and have their own conventions documented in the "Bench Testing & Device Access" section above. The policy here applies when the question is "will this break if I change X next month?" — that answer lives in a versioned script in `daqifi-python-test-suite`, not in your shell history.
 
 When you're touching the firmware in a way that needs a regression check, your first move is to find or write a script in `daqifi-python-test-suite` that exercises it. Don't put **regression** bench-validation logic in the firmware repo (the carve-out above is for one-off exploration only, not for tests that should keep running). Don't reproduce harness primitives.
 
@@ -564,3 +693,4 @@ Companion repos at https://github.com/daqifi:
 - Don't generate analysis docs or the like unless asked.
 - All errors go through the error logging function and are never sent out in the stream. On error, the SCPI command returns the error through its own handling; the user calls `SYSTem:LOG?` to learn what the error was.
 - SCPI data visibility principle: prevent users from operating with improper settings (return SCPI errors for config problems like reading disabled channels), but maximize visibility into device health. When data is stale (e.g., monitoring channels frozen during OBDiag=0 streaming), show last-known values with age indicators rather than hiding them. Error on config problems, inform on stale data.
+- **Boot never writes the factory ADC-calibration slot (#908).** When the factory-cal load in `app_SystemInit` (`app_freertos.c:945`) fails — a blank page (every flash wipes NVM) or a bad checksum — the runtime keeps its identity defaults (`CalM = 1`, `CalB = 0`), boot emits one `LOG_E`, and `CONF:CAP:JSON?` reports `identity.cal.factory_present: false`, `source: "identity"` (`SCPI_CapabilitiesJsonGet`). Boot used to save those identity values into the factory slot, after which every boot loaded them as a genuine calibration and "never calibrated" could no longer be told apart from "calibrated". The flag is not persisted but re-derived from a real NVM operation -- boot's load result, or a successful `CONF:ADC:SAVEFcal`, which clears it immediately (`SCPIADC.c`'s `CalSaveCommon`) rather than waiting for the next reboot to catch up.
