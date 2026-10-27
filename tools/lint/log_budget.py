@@ -74,6 +74,36 @@ Exit codes:
     2 = the tool could not run (missing file, unreadable Logger.c, bad
         suppression file) -- never confused with "clean"
 
+THE SUPPORTED SUBSET, AND WHAT IS REFUSED (#1110 r9)
+
+Nine parser edge cases over rounds 7 and 8 shared ONE cause: this tool
+INTERPRETED a construct it cannot fully model and guessed PERMISSIVELY, which
+in a truncation gate always means silencing a message. Patching the sites was
+losing to the generator. So the subset is now declared, and OUTSIDE it the tool
+raises ToolError (exit 2, "could not produce a verdict") rather than guessing:
+
+  * ONE LINE MODEL. Lines are split on newline ONLY, everywhere
+    (split_lines_1model), because every line NUMBER here comes from
+    count(chr(10)). splitlines() is not used by any code in this module and the
+    self-test pins that with ast.
+  * THE CEILING MUST BE DEFINED EXACTLY ONCE. A conditional or duplicated
+    `#define LOG_MESSAGE_SIZE` is REFUSED: this tool does not evaluate the
+    preprocessor, so there is no single right answer to read.
+  * C INTEGER NOTATION is honoured where the firmware writes it (hex, octal,
+    binary) and malformed constants are refused. Integer suffixes (128u) are
+    refused, not parsed.
+  * ANNOTATION VALUES MUST BE DECIMAL. `max=0x80` is refused, never read as the
+    0 its leading digit used to match.
+  * AN ANNOTATION MAY NOT SHARE ITS LINE WITH ANY PART OF ANOTHER LOG CALL --
+    including a multi-line call that merely ENDS there. Refused, because an
+    annotation whose subject is ambiguous cannot be read at all, and a guess
+    silences.
+  * AN UNBALANCED ARGUMENT LIST (a preprocessor conditional opening a paren on
+    one arm) is a reported finding, never a skipped call.
+  * THE BASELINE IS A SERIALISATION BOUNDARY: every non-printable byte is
+    escaped on write and the loader splits on newline only, so no message can
+    split its own record.
+
 Only the gate run compares against the baseline, so only it can drift: --list
 just prints what it sees, and --write-baseline IS the remedy for drift. Neither
 reads the baseline to reach a verdict, so neither has anything analogous to
@@ -205,7 +235,13 @@ SPEC_RE = re.compile(
     r"(?P<conv>[diouxXeEfgGaAcspn%])"
 )
 
-ANNOTATION_RE = re.compile(r"log_budget:\s*max\s*=\s*([0-9]+(?:\s*,\s*[0-9]+)*)")
+# The value list is captured LOOSELY (any run of value-ish characters) so a
+# non-decimal spelling is REFUSED by the parse below rather than silently
+# half-matched. #1110 r9: the previous `([0-9]+...)` matched the leading 0 of
+# `max=0x80` and budgeted that %s at ZERO -- a silencing annotation nobody
+# wrote. See annotation_values().
+ANNOTATION_RE = re.compile(r"log_budget:\s*max\s*=\s*([0-9A-Za-z_]+(?:\s*,\s*[0-9A-Za-z_]+)*)")
+ANNOTATION_DECIMAL_RE = re.compile(r"^[0-9]+$")
 
 SEP = " :: "
 
@@ -376,13 +412,26 @@ def read_ceiling(logger_h_text, logger_c_text):
     logger_h_text = mask_comments(splice_continuations(logger_h_text)[0])
     logger_c_text = mask_comments(splice_continuations(logger_c_text)[0])
 
-    m = re.search(r"^\s*#define\s+LOG_MESSAGE_SIZE\s+([0-9][0-9a-fA-FxXbB]*)\s*$",
-                  logger_h_text, re.M)
-    if not m:
+    # ⛔ #1110 r9: EXACTLY ONE definition, or refuse. re.search took the FIRST
+    # match, so an #ifdef DEBUG_BUILD / #define 256 / #else / #define 128 /
+    # #endif silently gated the whole tree against whichever arm appeared
+    # first, regardless of which one the firmware compiles with. This tool does
+    # not evaluate the preprocessor and must not pretend to: with more than one
+    # definition there is no single right answer to read.
+    defs = re.findall(
+        r"^\s*#define\s+LOG_MESSAGE_SIZE\s+([0-9][0-9a-fA-FxXbB]*)\s*$",
+        logger_h_text, re.M)
+    if not defs:
         raise ToolError(
             "could not find '#define LOG_MESSAGE_SIZE <n>' in Logger.h -- the "
             "ceiling is read from source and must not be assumed")
-    size = c_int_literal(m.group(1), "LOG_MESSAGE_SIZE in Logger.h")
+    if len(defs) > 1:
+        raise ToolError(
+            f"Logger.h defines LOG_MESSAGE_SIZE {len(defs)} times "
+            f"({', '.join(defs)}) -- a conditional or duplicated ceiling is "
+            f"refused, not resolved. Picking one would gate every message in "
+            f"the tree against a ceiling the firmware may not have.")
+    size = c_int_literal(defs[0], "LOG_MESSAGE_SIZE in Logger.h")
 
     body = re.search(
         r"LogMessageFormatImpl\s*\([^)]*\)\s*\{(.*?)\n\}", logger_c_text, re.S)
@@ -943,7 +992,20 @@ def find_annotation(src_lines, line, split=None):
     for text in texts:
         m = ANNOTATION_RE.search(text)
         if m:
-            return [int(x) for x in m.group(1).split(",")]
+            vals = [x.strip() for x in m.group(1).split(",")]
+            for v in vals:
+                if not ANNOTATION_DECIMAL_RE.match(v):
+                    # ⛔ #1110 r9: REFUSED, not interpreted. `max=0x80` used to
+                    # match the leading `0` alone and budget that %s at ZERO --
+                    # a silencing annotation the author never wrote. There is
+                    # no safe guess: 0x80 could mean 128 or be a typo, and
+                    # either reading sets a real message's budget.
+                    raise ToolError(
+                        f"line {line}: /* log_budget: max={m.group(1)} */ has a "
+                        f"value that is not a decimal integer ({v!r}). Hex, "
+                        f"octal, suffixes and identifiers are refused rather "
+                        f"than interpreted -- write the width in decimal.")
+            return [int(v) for v in vals]
     return None
 
 
@@ -1057,8 +1119,16 @@ def measure(fmt, annotation):
             # precision -- which is larger than the whole LOG_MESSAGE_SIZE
             # buffer. Anyone following the old text would add a small number
             # that LOOKS conservative and is not, in the under-reporting
-            # direction. %e/%g are bounded (~14 chars) and %p is 8 hex digits
-            # on this target, so for those the original advice is right.
+            # direction.
+            #
+            # ⛔ #1110 r9 review LOW: and the r8 version of this advice said
+            # "use %e/%g, which are bounded". MEASURED: e, E, g, G, a, A and p
+            # are ALL absent from WIDTHS, so switching to %e reports the
+            # identical "no conservative width" finding. Advice that cannot
+            # work is worse than none -- it sends the reader round a loop. For
+            # a float the only sound remedy is annotating the site. %p is
+            # genuinely derivable (8 hex digits on this target) and keeps the
+            # add-to-WIDTHS advice, which is why the two messages differ.
             #
             # ⚠ The word "maximum", not "worst case", is deliberate. The
             # over-limit finding's reason reads "worst case N bytes > ceiling
@@ -1074,7 +1144,10 @@ def measure(fmt, annotation):
                     f"maximum is ~310 characters (DBL_MAX is ~1.8e308, so "
                     f"%{conv} prints ~309 integer digits plus the precision), "
                     f"which is larger than the whole buffer. Annotate the site "
-                    f"with its real bound, or use %e/%g, which are bounded")
+                    f"with its real bound -- annotation is the only sound "
+                    f"remedy here, because NO floating conversion has a WIDTHS "
+                    f"entry: %e/%g/%a are absent too, so switching between them "
+                    f"reports the identical finding")
             return None, (f"no conservative width for '{m.group(0)}' "
                           f"(conversion '%{conv}') -- add it to WIDTHS in "
                           f"tools/lint/log_budget.py or annotate the site")
@@ -1104,10 +1177,50 @@ def measure(fmt, annotation):
     return fixed + total, None
 
 
+def split_lines_1model(text):
+    r"""Split into lines on '\n' ONLY, dropping one trailing '\r' per line.
+
+    ⛔ #1110 r9, and the reason it is a module-level rule rather than a local
+    choice: str.splitlines() also splits on \v, \f, \x1c, \x1d, \x1e, \x85,
+    U+2028 and U+2029, while EVERY line number in this tool comes from
+    count("\n"). The two models therefore disagree the moment a message
+    contains one of those bytes -- the line LIST gains an element the line
+    NUMBERING does not -- and an annotation then binds to a call it was never
+    written for, in the silencing direction. Nothing in this module may split
+    lines any other way; the self-test pins that structurally.
+
+    The trailing '\r' strip keeps CRLF sources (which this firmware uses)
+    yielding clean line text without reintroducing a second line model: the
+    NUMBERING is still '\n'-only, which is what has to agree.
+    """
+    return [ln[:-1] if ln.endswith("\r") else ln for ln in text.split("\n")]
+
+
 def escape_for_record(text):
-    """One-line, round-trippable rendering of a format string for the baseline."""
-    return (text.replace("\\", "\\\\").replace("\r", "\\r")
-                .replace("\n", "\\n").replace("\t", "\\t"))
+    r"""One-line, round-trippable rendering of a format string for the baseline.
+
+    ⛔ #1110 r9: EVERY non-printable byte is escaped, not just \r \n \t. A
+    message containing \v or \f went into the baseline raw, and the loader then
+    SPLIT one record into two -- the file silently gained a malformed entry and
+    lost a real one. A record format is a serialisation boundary: anything that
+    can appear in the data and also means something to the reader must be
+    escaped at the boundary, not hoped about.
+    """
+    out = []
+    for ch in text:
+        if ch == "\\":
+            out.append("\\\\")
+        elif ch == "\r":
+            out.append("\\r")
+        elif ch == "\n":
+            out.append("\\n")
+        elif ch == "\t":
+            out.append("\\t")
+        elif ord(ch) < 0x20 or ord(ch) == 0x7F:
+            out.append("\\x%02x" % ord(ch))
+        else:
+            out.append(ch)
+    return "".join(out)
 
 
 def ambiguous_annotation(src_lines, line, n_calls, split=None):
@@ -1140,7 +1253,7 @@ def ambiguous_annotation(src_lines, line, n_calls, split=None):
 
 def scan_file(path, rel, macros, ceiling):
     src = path.read_text(encoding="utf-8", errors="surrogateescape")
-    src_lines = src.splitlines()
+    src_lines = split_lines_1model(src)
     spliced, orig_pos = splice_continuations(src)
     masked = mask_comments(spliced)
     found = []
@@ -1158,7 +1271,7 @@ def scan_file(path, rel, macros, ceiling):
     # LOG_E, silencing a message that truncates. ⭐ Sharing a parser is not
     # enough when each side PREPARES ITS OWN INPUT -- that is where this
     # round's divergence moved after the readers were unified.
-    spliced_lines = spliced.splitlines()
+    spliced_lines = split_lines_1model(spliced)
     # Computed ONCE per file: split_code_comments() is a forward scan from the top
     # (block state cannot be recovered from a line in isolation), so letting
     # find_annotation() derive it per call site would be quadratic in a file
@@ -1186,22 +1299,33 @@ def scan_file(path, rel, macros, ceiling):
     def spliced_line(p):
         return spliced.count("\n", 0, p) + 1
 
-    calls_on_sline = collections.Counter(
-        spliced_line(p) for _m, p, _a, _c in find_calls(masked, all_families))
+    # ⛔ #1110 r9: count every line a call TOUCHES, not the line it starts on.
+    # r8/4 widened this to every family but still keyed on the START line, so a
+    # MULTI-LINE call whose last line is another call's line was not counted
+    # there -- and its annotation leaked onto that other call. Overlap, not
+    # start, is the question an annotation's subject depends on.
+    calls_touching = collections.Counter()
+    for _m, _p, _a, _raw in find_calls(masked, all_families):
+        first = spliced_line(_p)
+        last = spliced_line(_p + max(len(_raw) - 1, 0)) if _raw else first
+        for _ln in range(first, last + 1):
+            calls_touching[_ln] += 1
     for macro, pos, args, _call in calls:
         line = pos_to_line(src, orig_pos, pos)   # for REPORTING: physical line
         sline = spliced_line(pos)                # for LOOKUP: logical line
-        if ambiguous_annotation(spliced_lines, sline, calls_on_sline[sline],
+        if ambiguous_annotation(spliced_lines, sline, calls_touching[sline],
                                 split):
-            found.append(Finding(
-                rel, line,
-                f"ambiguous annotation: {calls_on_sline[sline]} log calls "
-                f"share this logical line and one /* log_budget: max=N */ is "
-                f"in scope for it (on the line, or in the comment block above) "
-                f"-- it cannot say which call it bounds. Put each call on its "
-                f"own line",
-                ""))
-            continue
+            # ⛔ #1110 r9: REFUSED, not reported as a finding. An annotation
+            # whose subject is ambiguous cannot be read at all -- and the
+            # failure mode of guessing is SILENCING a message that truncates,
+            # which a baselined finding would then bless. Outside the declared
+            # subset the tool stops rather than picks.
+            raise ToolError(
+                f"{rel}:{line}: a /* log_budget: max=N */ annotation is in "
+                f"scope here and {calls_touching[sline]} log calls share this "
+                f"line (any part of a call counts, including a multi-line call "
+                f"ENDING here), so it cannot say which call it bounds. Put each "
+                f"call on its own line.")
         if args is None:
             # #1110 r8/3: find_calls could not balance this call's parentheses.
             found.append(Finding(
@@ -1326,7 +1450,7 @@ def load_baseline(path):
     if not path.exists():
         return collections.Counter()
     lines = [ln.rstrip("\r\n") for ln in
-             path.read_text(encoding="utf-8").splitlines()]
+             split_lines_1model(path.read_text(encoding="utf-8"))]
     return collections.Counter(
         ln for ln in lines if ln.strip() and not ln.lstrip().startswith("#"))
 
@@ -1353,7 +1477,7 @@ def load_suppressions(path):
         return collections.Counter()
     entries, had_comment = collections.Counter(), False
     for lineno, raw in enumerate(
-            path.read_text(encoding="utf-8").splitlines(), 1):
+            split_lines_1model(path.read_text(encoding="utf-8")), 1):
         line = raw.rstrip()
         if not line.strip():
             had_comment = False
@@ -1419,6 +1543,43 @@ SELF_TEST_CEILING = 125
 # from its codepoint (see the byte-counting cases below).
 MICRO_SIGN = chr(0xB5)
 
+# ⛔ #1110 r9: THE DECLARED SUBSET'S REJECTIONS, one self-test each.
+#
+# Nine parser edge cases over r7 and r8 shared one shape: the tool INTERPRETED
+# something it cannot fully model and guessed PERMISSIVELY. r9 converges that as
+# a class -- outside the subset stated in this module's header the tool REFUSES
+# rather than guesses. Each refusal is pinned here, because a refusal that stops
+# firing is indistinguishable from a tool that started guessing again.
+#
+# (name, source body, substring the ToolError must contain, why)
+SELF_TEST_REJECTION_CASES = [
+    (
+        "r9: max= must be decimal",
+        '/* log_budget: max=0x80 */ LOG_E("%s", s);',
+        "not a decimal",
+        "ANNOTATION_RE captured [0-9]+, so 0x80 matched the leading 0 and the "
+        "%s was budgeted at ZERO -- a silencing annotation the author never "
+        "wrote. Hex is refused, not interpreted",
+    ),
+    (
+        "r8/4 (now a refusal): a LOG_I annotation on a LOG_E's line",
+        'LOG_I("x"); /* log_budget: max=1 */ LOG_E("%s", s);',
+        "share this line",
+        "r8 made this a FINDING once the count spanned every family; r9 "
+        "converts the whole class to a refusal, because a baselined finding "
+        "would BLESS an annotation that silences a truncating message. The "
+        "behaviour change is deliberate and this case records it",
+    ),
+    (
+        "r9: an annotation may not share a line with another call's span",
+        'LOG_I("a"\n      "b"); /* log_budget: max=1 */ LOG_E("%s", s);',
+        "share this line",
+        "r8/4 counted calls by their START line, so a MULTI-LINE call ending on "
+        "the LOG_E's line was not counted and its annotation leaked onto the "
+        "LOG_E. Overlap, not start, is the question",
+    ),
+]
+
 SELF_TEST_CASES = [
     (
         "r8/3: a preprocessor conditional unbalances the argument list",
@@ -1428,14 +1589,6 @@ SELF_TEST_CASES = [
         1,
         "the paren walk reaches EOF and used to `continue`, so the call was "
         "SILENTLY SKIPPED -- 'could not evaluate' must never read as 'clean'",
-    ),
-    (
-        "r8/4: a LOG_I annotation must not bind to a LOG_E on the same line",
-        'LOG_I("x"); /* log_budget: max=1 */ LOG_E("%s", s);',
-        1,
-        "the ambiguity count saw only the SCANNED family, so one call was "
-        "counted, the bound was treated as unambiguous and it silenced the "
-        "LOG_E's unresolvable %s",
     ),
     (
         "under budget",
@@ -2232,6 +2385,82 @@ def self_test():
         # Makefile. Incremented BEFORE each attempt, so the cases that expect a
         # ToolError are counted too.
         ceiling_checks = 0
+        # ⛔ #1110 r9: THE ONE LINE MODEL, PINNED STRUCTURALLY.
+        #
+        # A behavioural case for this proved inert -- I could not construct a
+        # source where the splitlines()/count(chr(10)) disagreement changed a
+        # reported finding, so I am not claiming one. The CLASS rule is what
+        # matters and it is checkable directly: no code in this module may call
+        # splitlines(), because its line LIST would then disagree with the line
+        # NUMBERING every other part derives from count(chr(10)).
+        #
+        # Via ast, not grep: this file's own prose says "str.splitlines()" in
+        # several places, and a text search cannot tell a comment from a call.
+        try:
+            import ast as _ast
+            _tree = _ast.parse(Path(__file__).read_text(encoding="utf-8"))
+            _bad = [n.lineno for n in _ast.walk(_tree)
+                    if isinstance(n, _ast.Attribute) and n.attr == "splitlines"]
+            if _bad:
+                failures += 1
+                print(f"  FAIL [r9: one line model]: splitlines() is CALLED at "
+                      f"line(s) {_bad} -- it splits on \\v, \\f, \\x1c-\\x1e and "
+                      f"U+2028 as well as newline, so the line list stops "
+                      f"agreeing with the count(chr(10)) numbering every line "
+                      f"number here comes from. Use split_lines_1model().")
+        except OSError:
+            pass          # running from a zip/frozen build: skip, do not fail
+
+        # ⛔ #1110 r9: every REJECTION in the declared subset, one case each.
+        for name, body, want, why in SELF_TEST_REJECTION_CASES:
+            rp = Path(d) / f"rej{abs(hash(name)) % 100000}.c"
+            rp.write_text("void f(void) {\n" + body + "\n}\n", encoding="utf-8")
+            try:
+                scan_file(rp, rp.name, DEFAULT_MACROS, SELF_TEST_CEILING)
+            except ToolError as e:
+                if want not in str(e):
+                    failures += 1
+                    print(f"  FAIL [{name}]: refused, but not for the stated "
+                          f"reason -- wanted {want!r}, got {str(e)!r}")
+            except Exception as e:                       # noqa: BLE001
+                failures += 1
+                print(f"  FAIL [{name}]: raised {e!r}, expected a ToolError "
+                      f"containing {want!r} -- {why}")
+            else:
+                failures += 1
+                print(f"  FAIL [{name}]: did NOT refuse -- {why}")
+
+        # ⛔ #1110 r9: ONE LINE MODEL. splitlines() splits on \v, \f, \x1c-\x1e
+        # and U+2028 as well as \n, while every line NUMBER in this tool comes
+        # from count("\n"). The two therefore disagree the moment a message
+        # contains one of those bytes, and an annotation binds to the wrong
+        # call. Nothing may split lines any other way.
+        ff_src = ('void f(void) {\n'
+                  'LOG_E("a\x0bb");  /* log_budget: max=1 */\n'
+                  'LOG_E("%s", s);\n'
+                  '}\n')
+        fp = Path(d) / "formfeed.c"
+        fp.write_text(ff_src, encoding="utf-8")
+        ff = scan_file(fp, "formfeed.c", DEFAULT_MACROS, SELF_TEST_CEILING)
+        ff_lines = sorted(x.line for x in ff)
+        if ff_lines != [3]:
+            failures += 1
+            print(f"  FAIL [r9: one line model]: findings on lines {ff_lines}, "
+                  f"expected exactly [3] -- a vertical tab in a message made "
+                  f"splitlines() and the count(chr(10)) numbering disagree, so the "
+                  f"annotation bound to the wrong call")
+
+        # ⛔ #1110 r9: a non-printable byte must not be able to SPLIT a baseline
+        # record. The serializer escapes every one of them and the loader splits
+        # on newline only.
+        for bad_byte, lbl in ((chr(11), "VT"), (chr(12), "FF"), (chr(0), "NUL")):
+            rendered = escape_for_record("a" + bad_byte + "b")
+            if "\n" in rendered or bad_byte in rendered:
+                failures += 1
+                print(f"  FAIL [r9: record escaping {lbl}]: rendered {rendered!r} "
+                      f"still carries a raw control byte -- it would split the "
+                      f"baseline record it is written into")
+
         # The ceiling must come from source. Pin both that it is derived
         # correctly from the real reservations and that a shape it cannot read
         # fails loudly instead of falling back to a remembered 125.
@@ -2629,9 +2858,18 @@ def main(argv=None):
             "#\n"
             "# Regenerate after fixing or annotating a site:\n"
             "#     python3 tools/lint/log_budget.py --write-baseline\n"
-            "# and commit the result. CI fails only on findings NOT listed\n"
-            "# here, so this file stops the count growing; it does not bless\n"
-            "# what is in it. Shrinking it is the point.\n"
+            "# and commit the result.\n"
+            "#\n"
+            "# CI FAILS IN BOTH DIRECTIONS (#1110 r9 review LOW -- this header\n"
+            "# used to say 'only on findings NOT listed here', which is half the\n"
+            "# rule and the more dangerous half to omit):\n"
+            "#   * a finding NOT listed here  -> new problem, fix or annotate it\n"
+            "#   * an entry here NOT reported -> STALE, and it still matches by\n"
+            "#     TEXT, so leaving it re-blesses that exact message in that file\n"
+            "#     if anyone ever reintroduces it. Regenerate.\n"
+            "#\n"
+            "# So this file stops the count growing AND must shrink as findings\n"
+            "# are fixed; it does not bless what is in it. Shrinking is the point.\n"
             "#\n"
             "# Format: <file> :: <reason> :: <format string, one line>\n"
             "# No line number: a LOG_E's line moves whenever anything above it\n"

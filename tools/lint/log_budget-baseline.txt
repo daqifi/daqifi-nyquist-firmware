@@ -2,9 +2,18 @@
 #
 # Regenerate after fixing or annotating a site:
 #     python3 tools/lint/log_budget.py --write-baseline
-# and commit the result. CI fails only on findings NOT listed
-# here, so this file stops the count growing; it does not bless
-# what is in it. Shrinking it is the point.
+# and commit the result.
+#
+# CI FAILS IN BOTH DIRECTIONS (#1110 r9 review LOW -- this header
+# used to say 'only on findings NOT listed here', which is half the
+# rule and the more dangerous half to omit):
+#   * a finding NOT listed here  -> new problem, fix or annotate it
+#   * an entry here NOT reported -> STALE, and it still matches by
+#     TEXT, so leaving it re-blesses that exact message in that file
+#     if anyone ever reintroduces it. Regenerate.
+#
+# So this file stops the count growing AND must shrink as findings
+# are fixed; it does not bless what is in it. Shrinking is the point.
 #
 # Format: <file> :: <reason> :: <format string, one line>
 # No line number: a LOG_E's line moves whenever anything above it
@@ -21,7 +30,7 @@ firmware/src/Util/SpiBusHealth.c :: unresolvable: %s with no /* log_budget: max=
 firmware/src/app_freertos.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD reply] %s timeout: sent %u/%u bytes after %u retries
 firmware/src/app_freertos.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] Graceful shutdown timeout after %u ms: %s
 firmware/src/services/SCPI/SCPIADC.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: %s: channel %d out of range (max 255)
-firmware/src/services/SCPI/SCPIDAC.c :: no conservative width for '%.2f' (conversion '%f') -- and do NOT add one to WIDTHS: a double's maximum is ~310 characters (DBL_MAX is ~1.8e308, so %f prints ~309 integer digits plus the precision), which is larger than the whole buffer. Annotate the site with its real bound, or use %e/%g, which are bounded :: DAC_VoltageToCounts: Invalid hardwareFullScale (%.2f), returning 0
+firmware/src/services/SCPI/SCPIDAC.c :: no conservative width for '%.2f' (conversion '%f') -- and do NOT add one to WIDTHS: a double's maximum is ~310 characters (DBL_MAX is ~1.8e308, so %f prints ~309 integer digits plus the precision), which is larger than the whole buffer. Annotate the site with its real bound -- annotation is the only sound remedy here, because NO floating conversion has a WIDTHS entry: %e/%g/%a are absent too, so switching between them reports the identical finding :: DAC_VoltageToCounts: Invalid hardwareFullScale (%.2f), returning 0
 firmware/src/services/SCPI/SCPIInterface.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: %s refused (#850/#977): another session start or config change is in flight. Retry.
 firmware/src/services/SCPI/SCPIInterface.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: SCPI: '%s' is registered but not implemented
 firmware/src/services/SCPI/SCPIInterface.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: SD log arm refused (#942): %s\r\n
