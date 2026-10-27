@@ -69,8 +69,47 @@ if [ -n "$(git -C "$W" status --porcelain -- "$F" "$G" "$M" "$S" "$H" 2>/dev/nul
     exit 2
 fi
 
-BF=$(mktemp); BG=$(mktemp); BS=$(mktemp); BH=$(mktemp)
-cp "$F" "$BF"; cp "$G" "$BG"; cp "$S" "$BS"; cp "$H" "$BH"
+# ⛔ #1124 r16 MEDIUM: EVERY mktemp AND EVERY cp IS CHECKED, **BEFORE** THE
+# EXIT TRAP IS INSTALLED, AND EACH BACKUP IS VERIFIED BYTE-IDENTICAL.
+#
+# The previous shape was `BF=$(mktemp); ...` then `cp "$F" "$BF"; ...` with no
+# status checked, and `trap cleanup EXIT` installed AFTERWARDS. That ordering
+# turns a failed backup into source destruction rather than an aborted run: a
+# full /tmp, a quota, or a cp that writes partially leaves BF empty or
+# truncated, the trap is then installed over it, and the first `restore` --
+# which runs on EVERY exit path including the clean one -- copies that
+# truncated file OVER the real firmware source. The harness exists to protect
+# these files from its own mutants; losing them to its own BACKUP step is the
+# one failure it must not have.
+#
+# cmp is not belt-and-braces: cp can exit 0 having written short on some
+# filesystems, and a silently short backup is exactly the case that survives
+# until restore. Nothing is trapped until all four are proven good, so an
+# abort here leaves the tree untouched by definition.
+BF=""; BG=""; BS=""; BH=""
+backup_failed() {
+    echo "FATAL: $1"
+    echo "       Nothing has been mutated and no trap is installed, so the"
+    echo "       worktree is untouched. Fix the backup location and re-run."
+    rm -f "$BF" "$BG" "$BS" "$BH"
+    exit 2
+}
+for v in BF BG BS BH; do
+    tmp=$(mktemp 2>/dev/null) \
+      || backup_failed "mktemp failed while creating backup $v"
+    [ -n "$tmp" ] && [ -f "$tmp" ] \
+      || backup_failed "mktemp returned no usable path for backup $v"
+    eval "$v=\$tmp"
+done
+back_up_one() {  # back_up_one <source> <destination>
+    cp "$1" "$2" || backup_failed "cp of $1 failed"
+    cmp -s "$1" "$2" \
+      || backup_failed "backup of $1 differs from it -- a short or partial copy"
+}
+back_up_one "$F" "$BF"
+back_up_one "$G" "$BG"
+back_up_one "$S" "$BS"
+back_up_one "$H" "$BH"
 restore() { cp "$BF" "$F"; cp "$BG" "$G"; cp "$BS" "$S"; cp "$BH" "$H"; }
 cleanup() { restore; rm -f "$BF" "$BG" "$BS" "$BH"; }
 # ⛔ #1124 r12 finding 3. `trap '...' EXIT INT TERM` was NOT equivalent to
@@ -195,6 +234,53 @@ else
     echo "  FAIL M5 anchors absent -- source or #1029's generator drifted."; fail=$((fail+1))
 fi
 restore
+
+echo "== R16-A: drop the stale-manifest discard from the wrapper. Every count =="
+echo "==        arm stays satisfied; only PIN A sees that refusal now leaves   =="
+echo "==        a previous session's record beside truncated data.             =="
+if sub "$F" '    sd_DiscardStaleManifests();
+}' '}'; then
+    expect "R16-A wrapper discard arm" "no longer discards a stale manifest"
+else
+    echo "  FAIL R16-A anchor absent -- source drifted from this harness."; fail=$((fail+1))
+fi
+restore
+
+echo "== R16-B: turn ONE refusal's 'return false;' back into a bare 'return;'. =="
+echo "==        This is the shape an eleventh refusal arm would have, and it   =="
+echo "==        skips the discard entirely while the function still compiles.  =="
+if sub "$F" 'gpSDCardSettings->directory, (unsigned)parentFiles);
+              return false;' 'gpSDCardSettings->directory, (unsigned)parentFiles);
+              return;'; then
+    expect "R16-B total-verdict arm" "verdict is not total"
+else
+    echo "  FAIL R16-B anchor absent -- source drifted from this harness."; fail=$((fail+1))
+fi
+restore
+
+echo "== R16-C: unlink WITHOUT the create path's own predicate. Count-safe:    =="
+echo "==        sd_ManifestPathSafeToOverwrite drops 4 -> 3 and its own '>= 3' =="
+echo "==        pin still passes, so only PIN C can see this.                  =="
+if sub "$F" 'if (!sd_ManifestPathSafeToOverwrite(path)) {' 'if (0) {'; then
+    expect "R16-C unlink-predicate arm" "no longer gates its unlink"
+else
+    echo "  FAIL R16-C anchor absent -- source drifted from this harness."; fail=$((fail+1))
+fi
+restore
+
+echo "== R16-D: sweep only the PRIMARY name, not the fallback. The fallback is =="
+echo "==        the one that survives in exactly the collision case it exists  =="
+echo "==        for, so this is the subtlest of the four.                      =="
+if sub "$F" '    const char *const bases[2] = { gSDCardData.baseFilename,
+                                   gpSDCardSettings->file };' \
+           '    const char *const bases[2] = { gSDCardData.baseFilename,
+                                   gSDCardData.baseFilename };'; then
+    expect "R16-D both-names arm" "no longer sweeps BOTH candidate"
+else
+    echo "  FAIL R16-D anchor absent -- source drifted from this harness."; fail=$((fail+1))
+fi
+restore
+
 
 echo "== M3: NEGATIVE CONTROL. A raw \"%s/ join inside a COMMENT must NOT fire =="
 echo "==     -- a pin that trips on prose is as useless as one that is blind. =="

@@ -791,12 +791,19 @@ $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h
 	       echo "       SdManifest_FormatLine, so the line format pinned by"; \
 	       echo "       test_924_sd_manifest.c is not the one written to the card."; \
 	       exit 1; }
-	@grep -q 'SdManifest_RelativeName' $(SD_MANAGER_SRC) \
-	  || { echo "ERROR: $(SD_MANAGER_SRC) no longer derives the recorded name through"; \
-	       echo "       SdManifest_RelativeName. The manifest's names must stay"; \
-	       echo "       relative to the configured directory -- that is the spelling"; \
-	       echo "       SYST:STOR:SD:CRC? and :GET take as their operand."; \
-	       exit 1; }
+	@# ⛔ #1124 r16: THE `SdManifest_RelativeName` POSITIVE GUARD IS DELETED,
+	@# because it had become a pin satisfied ENTIRELY BY PROSE. r13 retired the
+	@# helper (operator item 8 = B: record the FULL path, so retrieval strips
+	@# once instead of twice). The only remaining occurrence of the name in
+	@# this file is the sentence in the block comment that says it is gone --
+	@# MEASURED: 1 raw grep hit, 0 occurrences in `cc -fpreprocessed -E`
+	@# output. So the guard passed over a call that no longer exists, which is
+	@# the exact failure mode a positive pin has.
+	@#
+	@# It also CONTRADICTED the negative pin further down, which asserts on the
+	@# preprocessed text that SdManifest_RelativeName( is never called again.
+	@# Two pins demanding opposite things both passed, one of them on a
+	@# comment. The negative one encodes the ruling and stays; this one goes.
 	@grep -q 'SdManifest_PathsEqualCaseInsensitive' $(SD_MANAGER_SRC) \
 	  || { echo "ERROR: $(SD_MANAGER_SRC) no longer compares the manifest path against"; \
 	       echo "       the session's own stream file through"; \
@@ -821,17 +828,23 @@ $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h
 	@#     continuation lines, so it is what this keys on.
 	@# `-fpreprocessed` is here only to strip COMMENTS (verified: an operand
 	@# inside a comment contributes 0), so prose quoting a format cannot count.
+	@# ⛔ #1124 r16: 8 -> 9. sd_DiscardStaleManifests() builds the manifest
+	@# name a NINTH time, to remove a previous session's record when this
+	@# session refuses to create its own. It joins through the same
+	@# accessor and the same "%.*s/" format as the other eight, which is
+	@# why both counts move together; a new site that moved only ONE of
+	@# them would be the defect this pin exists to catch.
 	@$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null > /tmp/.sd1124_pp.$$$$; \
 	 raw=`grep -c '"%s/' /tmp/.sd1124_pp.$$$$`; \
 	 canon=`grep -cF '"%.*s/' /tmp/.sd1124_pp.$$$$`; \
 	 acc=`grep -c 'SdManifest_CanonicalDirLen(' /tmp/.sd1124_pp.$$$$`; \
 	 rm -f /tmp/.sd1124_pp.$$$$; \
-	 test "$$raw" -eq 0 && test "$$canon" -eq 8 && test "$$acc" -eq 8 \
+test "$$raw" -eq 0 && test "$$canon" -eq 9 && test "$$acc" -eq 9 \
 	  || { echo "ERROR: $(SD_MANAGER_SRC)'s path construction is no longer"; \
 	       echo "       uniformly canonical (#1124)."; \
 	       echo "         raw \"%s/ joins:        $$raw (must be 0)"; \
-	       echo "         canonical \"%.*s/ joins: $$canon (expected 8)"; \
-	       echo "         accessor calls:        $$acc (expected 8)"; \
+	       echo "         canonical \"%.*s/ joins: $$canon (expected 9)"; \
+	       echo "         accessor calls:        $$acc (expected 9)"; \
 	       echo "       A raw \"%s/ join emits 'dir//file' whenever the configured"; \
 	       echo "       directory ends in '/', which is reachable from config alone."; \
 	       echo "       Route the new site through SdManifest_CanonicalDirLen() and"; \
@@ -960,11 +973,21 @@ $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h
 	@# separator cannot change that answer. So SdManifest_CanonicalDirLen() would
 	@# add nothing here. (Contrast the join sites, where a doubled '/' changes
 	@# the constructed path and the accessor is load-bearing.)
+	@# 22 -> 24 at #1124 r16: both in sd_DiscardStaleManifests(), which builds
+	@# the manifest name to REMOVE a previous session's record when this session
+	@# refuses to create its own. The two reads are the accessor argument and
+	@# the "%.*s" operand of one join.
+	@# CLASSIFICATION: canonicalisation-DEPENDENT, and already routed through
+	@# SdManifest_CanonicalDirLen() -- which is why the join and accessor counts
+	@# above moved 8 -> 9 in the same edit. This is the ordinary join shape, not
+	@# a new class: a doubled '/' here would name a file the create path never
+	@# created, so the removal would silently miss the stale manifest it exists
+	@# to delete, and the defect would present as the fix simply not working.
 	@n=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null \
 	    | grep -oE '(gpSDCardSettings|cfg)->(directory|opDirectory)' | wc -l`; \
-	 test "$$n" -eq 22 \
+	 test "$$n" -eq 24 \
 	  || { echo "ERROR: $(SD_MANAGER_SRC) now has $$n raw reads of ->directory /"; \
-	       echo "       ->opDirectory, not the 22 classified in this recipe (#1124)."; \
+	       echo "       ->opDirectory, not the 24 classified in this recipe (#1124)."; \
 	       echo "       The canonicalisation invariant is about every USE, not just"; \
 	       echo "       every join: a read can reach a callee that neither joins nor"; \
 	       echo "       canonicalises, and no join-keyed check sees it. (Until r13 the"; \
@@ -1146,8 +1169,42 @@ $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h
 	       echo "       both layers; clearing the handle discards the only reference"; \
 	       echo "       and burns one of SYS_FS_MAX_FILES (10) slots permanently."; \
 	       exit 1; }
-	@g=`$(CC) -fpreprocessed -dD -E $(SD_MANAGER_SRC) 2>/dev/null | grep -c 'SdManifest_NameFitsOperand'`; \
-	 n=`$(CC) -fpreprocessed -dD -E $(SD_MANAGER_SRC) 2>/dev/null | grep -c 'SD_MANIFEST_EXT,'`; \
+	@# ⛔ #1124 r16: SCOPED TO THE CREATE FUNCTION, and TIGHTENED rather than
+	@# relaxed. The invariant is 'every manifest name this session will OPEN is
+	@# length-checked', because the operand cap is about RETRIEVAL -- SD:GET,
+	@# SD:CRC? and SD:DELete naming the file later. sd_DiscardStaleManifests()
+	@# builds a name to REMOVE one, and must NOT be length-checked: refusing to
+	@# delete a stale manifest because its name is too long to retrieve would
+	@# leave the mismatched record on the card in exactly the case hardest to
+	@# notice, which is the defect r16 exists to close.
+	@# So the count equality now spans sd_OpenSessionManifestAttempt's body
+	@# only. It still catches the original defect -- a THIRD creating path
+	@# appearing unguarded -- because any such path is inside that function.
+	@# THREE non-vacuity assertions, because a scoped count is exactly the
+	@# shape that silently measures an EMPTY region (this file has lost a round
+	@# to a pin whose awk range extracted nothing):
+	@#   - the extracted body must be non-empty;
+	@#   - it must build at least 2 names (primary and fallback), so a range
+	@#     that clipped early cannot read as a pass;
+	@#   - the WHOLE-FILE count must EXCEED the body count, which is what
+	@#     proves the removal site is genuinely outside the scope and the
+	@#     scoping is doing something.
+	@pp=`$(CC) -fpreprocessed -dD -E $(SD_MANAGER_SRC) 2>/dev/null`; \
+	 body=`printf '%s\n' "$$pp" | awk '/static bool sd_OpenSessionManifestAttempt/{f=1} f{print} f && /^static void sd_OpenSessionManifest\(void\)/{exit}'`; \
+	 all=`printf '%s\n' "$$pp" | grep -c 'SD_MANIFEST_EXT,'`; \
+	 g=`printf '%s\n' "$$body" | grep -c 'SdManifest_NameFitsOperand'`; \
+	 n=`printf '%s\n' "$$body" | grep -c 'SD_MANIFEST_EXT,'`; \
+	 test -n "$$body" && test "$$n" -ge 2 && test "$$all" -gt "$$n" \
+	  || { echo "ERROR: the scoped manifest-name count is not measuring what it"; \
+	       echo "       claims (#1124 r16 non-vacuity)."; \
+	       echo "         extracted body lines: `printf '%s\n' "$$body" | wc -l`"; \
+	       echo "         names built in body:  $$n (must be >= 2)"; \
+	       echo "         names built in file:  $$all (must exceed the body's)"; \
+	       echo "       Either sd_OpenSessionManifestAttempt was renamed, or the"; \
+	       echo "       awk range no longer spans it, or the removal site that"; \
+	       echo "       justifies the scoping is gone. Re-derive before trusting"; \
+	       echo "       the equality below -- an empty range makes it vacuous."; \
+	       exit 1; }; \
 	 test "$$g" = "$$n" \
 	  || { echo "ERROR: $(SD_MANAGER_SRC) builds $$n manifest name(s) but length-"; \
 	       echo "       checks $$g of them (#924 round-6 finding 2)."; \
@@ -1211,8 +1268,22 @@ $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h
 	       echo "       manifest for every later session. Bounded leak -> permanent"; \
 	       echo "       feature loss, which is worse than the defect the retention fixed."; \
 	       exit 1; }
-	@awk '/^static void sd_OpenSessionManifest\(void\) \{/{f=1} f{print} f&&/^\}/{exit}' \
+	@# ⛔ #1124 r16: RETARGETED. The body moved to
+	@# sd_OpenSessionManifestAttempt(); sd_OpenSessionManifest() is now a thin
+	@# wrapper holding neither a close nor an open, so the old anchor extracted
+	@# an EMPTY region and this pin reported 'first close at line , first open
+	@# at line ' -- it failed, but only because `test -n` happened to be there.
+	@# The emptiness check below says so outright instead of leaving the next
+	@# reader to decode two blank numbers.
+	@awk '/^static bool sd_OpenSessionManifestAttempt\(void\) \{/{f=1} f{print} f&&/^\}/{exit}' \
 	   $(SD_MANAGER_SRC) > /tmp/.sd924_open.$$$$; \
+	 test -s /tmp/.sd924_open.$$$$ \
+	  || { echo "ERROR: the close-before-open pin extracted an EMPTY body from"; \
+	       echo "       $(SD_MANAGER_SRC) (#1124 r16). Its awk anchor names"; \
+	       echo "       sd_OpenSessionManifestAttempt(void); if that is renamed or"; \
+	       echo "       reshaped the pin measures NOTHING, which is the one way a"; \
+	       echo "       position pin passes while blind."; \
+	       rm -f /tmp/.sd924_open.$$$$; exit 1; }; \
 	 cls=`grep -n 'SYS_FS_FileClose(' /tmp/.sd924_open.$$$$ | head -1 | cut -d: -f1`; \
 	 opn=`grep -n 'SYS_FS_FileOpen(' /tmp/.sd924_open.$$$$ | head -1 | cut -d: -f1`; \
 	 rm -f /tmp/.sd924_open.$$$$; \
@@ -1524,6 +1595,87 @@ $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h
 	@# tolerates leading whitespace exactly as that generator's parser does. The
 	@# two disagreeing is what would turn a harmless reformat into a build
 	@# failure blaming the prefix.
+	@# ⛔⛔ #1124 r16: A REUSED DATA FILE MUST NEVER SIT BESIDE THE PREVIOUS
+	@# SESSION'S MANIFEST. Four pins, because the fix is a STRUCTURE and not a
+	@# line: the create path has TEN refusal arms, and on every one of them the
+	@# data file has ALREADY been truncated (the call site fires after the open
+	@# and header write, and the open is WRITE_PLUS = FA_CREATE_ALWAYS). So a
+	@# session reusing `exp.csv` destroyed the old bytes, refused its manifest,
+	@# and left the prior session's count and CRC describing data that no longer
+	@# existed -- a record that VALIDATES and is wrong, which is worse than none.
+	@#
+	@# PIN A -- the cleanup is reached from the wrapper, so it CO-OCCURS with
+	@# refusal. Scoped to the wrapper's own body: a call anywhere else in the
+	@# file would satisfy a whole-file grep while leaving the refusal arms bare.
+	@awk '/^static void sd_OpenSessionManifest\(void\) \{/{f=1} f{print} f&&/^\}/{exit}' \
+	     $(SD_MANAGER_SRC) > /tmp/.sd1124_wrap.$$$$; \
+	 test -s /tmp/.sd1124_wrap.$$$$ \
+	  || { echo "ERROR: #1124 r16 PIN A extracted an EMPTY wrapper body from"; \
+	       echo "       $(SD_MANAGER_SRC) -- it measures nothing. The anchor is"; \
+	       echo "       'static void sd_OpenSessionManifest(void) {'."; \
+	       rm -f /tmp/.sd1124_wrap.$$$$; exit 1; }; \
+	 grep -q 'sd_DiscardStaleManifests()' /tmp/.sd1124_wrap.$$$$ \
+	  || { echo "ERROR: sd_OpenSessionManifest() no longer discards a stale manifest"; \
+	       echo "       when the attempt fails (#1124 r16)."; \
+	       echo "       Every refusal arm leaves the session with no manifest while"; \
+	       echo "       its data file has already been truncated, so whatever was"; \
+	       echo "       at the manifest path now describes bytes that are gone."; \
+	       rm -f /tmp/.sd1124_wrap.$$$$; exit 1; }; \
+	 rm -f /tmp/.sd1124_wrap.$$$$
+	@# PIN B -- THE LOAD-BEARING ONE. Inside the attempt function there must be
+	@# ZERO bare `return;`: the verdict is a bool, so a refusal arm CANNOT return
+	@# without answering, and the wrapper cannot be bypassed. This is what makes
+	@# an ELEVENTH arm added later safe by construction rather than by someone
+	@# remembering this comment. A cleanup pasted at each of the ten returns
+	@# would have had no such property, which is why it is not done that way.
+	@awk '/^static bool sd_OpenSessionManifestAttempt\(void\) \{/{f=1} f{print} f&&/^\}/{exit}' \
+	     $(SD_MANAGER_SRC) > /tmp/.sd1124_att.$$$$; \
+	 bare=`grep -cE '^[[:space:]]*return;[[:space:]]*$$' /tmp/.sd1124_att.$$$$`; \
+	 fals=`grep -cE '^[[:space:]]*return false;[[:space:]]*$$' /tmp/.sd1124_att.$$$$`; \
+	 true_=`grep -cE '^[[:space:]]*return true;[[:space:]]*$$' /tmp/.sd1124_att.$$$$`; \
+	 test -s /tmp/.sd1124_att.$$$$ && test "$$bare" -eq 0 \
+	   && test "$$fals" -ge 10 && test "$$true_" -eq 1 \
+	  || { echo "ERROR: sd_OpenSessionManifestAttempt()'s verdict is not total"; \
+	       echo "       (#1124 r16 PIN B)."; \
+	       echo "         bare 'return;':   $$bare (must be 0)"; \
+	       echo "         'return false;':  $$fals (must be >= 10)"; \
+	       echo "         'return true;':   $$true_ (must be exactly 1)"; \
+	       echo "       A bare return would skip sd_DiscardStaleManifests() and"; \
+	       echo "       silently reintroduce the stale-manifest defect. If you added"; \
+	       echo "       a refusal arm, return false from it; if you removed one,"; \
+	       echo "       lower the bound here and say which."; \
+	       rm -f /tmp/.sd1124_att.$$$$; exit 1; }; \
+	 rm -f /tmp/.sd1124_att.$$$$
+	@# PIN C -- the removal reuses the CREATE path's own "is this ours" predicate
+	@# rather than a second one, and really does unlink. Two predicates for one
+	@# question are free to disagree, and the create path's is the trusted one.
+	@awk '/^static void sd_RemoveStaleManifestAt\(const char \*path\) \{/{f=1} f{print} f&&/^\}/{exit}' \
+	     $(SD_MANAGER_SRC) > /tmp/.sd1124_rm.$$$$; \
+	 test -s /tmp/.sd1124_rm.$$$$ \
+	   && grep -q 'sd_ManifestPathSafeToOverwrite(path)' /tmp/.sd1124_rm.$$$$ \
+	   && grep -q 'SYS_FS_FileDirectoryRemove(path)' /tmp/.sd1124_rm.$$$$ \
+	  || { echo "ERROR: sd_RemoveStaleManifestAt() no longer gates its unlink on the"; \
+	       echo "       create path's predicate (#1124 r16 PIN C)."; \
+	       echo "       Without sd_ManifestPathSafeToOverwrite() this can delete a"; \
+	       echo "       USER file that happens to occupy the manifest name -- the"; \
+	       echo "       fix would then destroy data instead of protecting it."; \
+	       rm -f /tmp/.sd1124_rm.$$$$; exit 1; }; \
+	 rm -f /tmp/.sd1124_rm.$$$$
+	@# PIN D -- BOTH candidate names are swept, because the attempt can refuse
+	@# BEFORE it chooses between the primary `<dir>/<base>.mfst` and the fallback
+	@# `<dir>/<file>.mfst`. Sweeping only the primary would leave the fallback
+	@# standing in exactly the collision case the fallback exists for.
+	@awk '/^static void sd_DiscardStaleManifests\(void\) \{/{f=1} f{print} f&&/^\}/{exit}' \
+	     $(SD_MANAGER_SRC) > /tmp/.sd1124_dsc.$$$$; \
+	 test -s /tmp/.sd1124_dsc.$$$$ \
+	   && grep -q 'gSDCardData.baseFilename' /tmp/.sd1124_dsc.$$$$ \
+	   && grep -q 'gpSDCardSettings->file' /tmp/.sd1124_dsc.$$$$ \
+	  || { echo "ERROR: sd_DiscardStaleManifests() no longer sweeps BOTH candidate"; \
+	       echo "       manifest names (#1124 r16 PIN D). It must name the primary"; \
+	       echo "       (baseFilename) and the fallback (gpSDCardSettings->file),"; \
+	       echo "       because a refusal can happen before either is chosen."; \
+	       rm -f /tmp/.sd1124_dsc.$$$$; exit 1; }; \
+	 rm -f /tmp/.sd1124_dsc.$$$$
 	$(CC) $(CFLAGS) -I$(FW_UTIL) -DFW_SD_BUCKET_PREFIX='$(SD_BUCKET_PREFIX)' -o $(MANIFEST_BIN) test_924_sd_manifest.c $(FW_UTIL)/CRC32.c
 
 $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC) $(RECIPES)
