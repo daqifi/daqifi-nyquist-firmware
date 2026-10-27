@@ -336,6 +336,156 @@ extern "C" {
     bool daqifi_settings_SaveADCCalSettings(DaqifiSettingsType type, AInRuntimeArray* channelRuntimeConfig);
 
     /**
+     * #908: Records that the factory ADC-calibration NVM page does not
+     * hold a valid calibration. Called from boot when the factory-cal
+     * load fails (daqifi_settings_LoadADCCalSettings), leaving the
+     * runtime CalM/CalB at their identity defaults; also called from
+     * SCPIADC.c's CalSaveCommon when a CONF:ADC:SAVEFcal FAILS, since
+     * daqifi_settings_SaveToNvm erases the target page before writing its
+     * replacement record, so a failed write can leave the page erased or
+     * partially written rather than restoring its prior state.
+     */
+    void daqifi_settings_MarkFactoryCalMissing(void);
+
+    /**
+     * #908: Records that the factory ADC-calibration NVM page now holds a
+     * real calibration -- called after a SUCCESSFUL CONF:ADC:SAVEFcal
+     * (SCPIADC.c's CalSaveCommon), so a capability query between the save
+     * and the next reboot reports the slot as present rather than the
+     * stale boot-time reading. Neither this nor
+     * daqifi_settings_MarkFactoryCalMissing persists anything; each is
+     * called only when its own caller has independently confirmed the
+     * state (a failed boot load, or a successful save) from the real NVM
+     * operation, never from each other or from a stored flag.
+     */
+    void daqifi_settings_ClearFactoryCalMissing(void);
+
+    /**
+     * #908: True when the factory ADC calibration is currently missing --
+     * either boot found no valid factory calibration and it has not since
+     * been established by a successful CONF:ADC:SAVEFcal (see
+     * daqifi_settings_MarkFactoryCalMissing /
+     * daqifi_settings_ClearFactoryCalMissing). Reported, inverted, as
+     * identity.cal.factory_present in CONF:CAP:JSON?.
+     * @return true if the factory calibration is missing, false otherwise
+     */
+    bool daqifi_settings_FactoryCalIsMissing(void);
+
+    /**
+     * #908 (Qodo item 3): which calibration bank the live coefficients were
+     * last successfully loaded from.
+     *
+     * ⚠ This answers a DIFFERENT question from
+     * daqifi_settings_FactoryCalIsMissing, which reports whether the factory
+     * NVM slot is populated. Conflating the two is the defect Qodo reported:
+     * a failed SAVEFcal sets the missing flag, and reporting that as
+     * source:"identity" claimed the device was uncalibrated while it carried
+     * on measuring with unchanged non-identity coefficients.
+     *
+     * ⚠ Nor does it imply calibration is in effect -- a bank can load
+     * successfully and contain identity. Pair it with
+     * daqifi_settings_CalIsIdentity to answer that.
+     *
+     * @return DaqifiSettings_FactAInCalParams or
+     *         DaqifiSettings_UserAInCalParams (factory until a load succeeds)
+     */
+    DaqifiSettingsType daqifi_settings_GetActiveCalBank(void);
+
+    /**
+     * #908: bracket a write to the live CalM/CalB so a concurrent
+     * CONF:CAP:JSON? cannot report a composite that never existed.
+     *
+     * EVERY writer of the live coefficients must call Begin before its first
+     * store and End after its last -- the bank load, CONF:ADC:chanCALM and
+     * chanCALB. ⚠ Two independent setters are sufficient to manufacture a
+     * fiction even though one is not: an early-exiting identity scan can read
+     * channel 0 as identity, then one setter clears a later channel while
+     * another sets channel 0, and the scan concludes "all identity" -- a view
+     * that held at no instant.
+     *
+     * The counter itself is private, so a caller can neither forget to pair
+     * these nor set it directly.
+     */
+    void daqifi_settings_BeginCalWrite(void);
+    void daqifi_settings_EndCalWrite(void);
+
+    /**
+     * #908 (Qodo item 3): true when every channel's live coefficients are the
+     * identity pair (CalM == 1.0f, CalB == 0.0f), i.e. no calibration is in
+     * effect and readings are unscaled.
+     *
+     * A question about the RUNTIME ARRAY, not about NVM, and the one the
+     * CONF:CAP:JSON? "source" key is named after. Uses exact float comparison
+     * deliberately: the identity defaults are assigned as 1.0f/0.0f, so an
+     * uncalibrated channel is bit-identical to them, whereas an epsilon would
+     * answer the weaker "is it nearly identity" and misreport a real
+     * coefficient close to unity as no calibration at all.
+     *
+     * @param channelRuntimeConfig the live AIn runtime array; NULL or empty
+     *        reads as identity, since no channel then carries calibration
+     * @return true if no calibration is in effect
+     */
+    bool daqifi_settings_CalIsIdentity(const AInRuntimeArray* channelRuntimeConfig);
+
+    /**
+     * #908: what CONF:CAP:JSON?'s identity.cal.source reports.
+     *
+     * Operator ruling, 2026-10-25 (item 3): the wire values are
+     * {factory, user, none}. NONE means every channel's live coefficients are
+     * CalM = 1 / CalB = 0 -- no correction applied -- whichever bank was
+     * selected.
+     *
+     * Operator ruling, 2026-10-27: a FOURTH value, UNKNOWN -> "unknown", for
+     * the unstable-read path ONLY.
+     *
+     * ⚠ WHY A FOURTH VALUE RATHER THAN REUSING NONE. The three above are all
+     * positive claims about the coefficients: NONE asserts that every channel
+     * is identity and readings are unscaled. The seqlock reader can exhaust
+     * its retries without ever completing a coherent scan, and it then knows
+     * NOTHING about the coefficients -- so answering NONE there states a fact
+     * the device never established, and states the one a client is most likely
+     * to act on ("this device is uncalibrated"). UNKNOWN is the absence of an
+     * answer, which is a different kind of thing from any of the three.
+     *
+     * ⛔ UNKNOWN IS NOT A SYNONYM FOR "IDENTITY" OR FOR "BUSY". It means the
+     * read did not complete. A caller that cannot handle it should retry, not
+     * substitute a value -- collapsing it into NONE is exactly the defect it
+     * exists to prevent.
+     *
+     * Appended rather than inserted, so FACTORY and USER keep their numbering
+     * (CLAUDE.md: append new values at the end, never renumber). NONE stays 0,
+     * which means a zero-initialised DaqifiCalSource still reads as NONE
+     * rather than UNKNOWN -- pre-existing, and deliberately not changed here,
+     * because moving it would renumber the other two.
+     */
+    typedef enum eDaqifiCalSource {
+        DAQIFI_CAL_SOURCE_NONE = 0,
+        DAQIFI_CAL_SOURCE_FACTORY,
+        DAQIFI_CAL_SOURCE_USER,
+        DAQIFI_CAL_SOURCE_UNKNOWN,
+    } DaqifiCalSource;
+
+    /**
+     * #908 (codex-r6): the cal source as ONE coherent answer.
+     *
+     * ⚠ Use this rather than pairing daqifi_settings_CalIsIdentity() with
+     * daqifi_settings_GetActiveCalBank() yourself. Those are two reads, and a
+     * higher-priority CONF:ADC:LOADcal / LOADFcal between them -- or part-way
+     * through the identity scan -- produces a pair the device never had:
+     * identity measured against one bank, attributed to the other.
+     *
+     * Detects interference rather than excluding it, so it takes no critical
+     * section: a seqlock read requiring an EVEN generation that is UNCHANGED
+     * across the scan. A bank comparison is NOT sufficient -- the bank is
+     * published last, so it cannot see a load that is still in progress.
+     * Bounded retries; on exhaustion reports NONE, the understating direction.
+     *
+     * @param channelRuntimeConfig the live AIn runtime array
+     * @return the source to report
+     */
+    DaqifiCalSource daqifi_settings_GetCalSource(const AInRuntimeArray* channelRuntimeConfig);
+
+    /**
      * #14: Sets the runtime device friendly name cache. The value is
      * persisted to NVM only on the next TopLevelSettings save (which
      * captures this cache automatically). Truncated to fit

@@ -8960,9 +8960,108 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
         cfg->boardHardwareRev);
 
     scpi_printf(context,
-        "\"usb\":{\"vid\":%u,\"pid\":%u,\"class\":\"CDC\"}},",
+        "\"usb\":{\"vid\":%u,\"pid\":%u,\"class\":\"CDC\"},",
         (unsigned)0x04D8,   /* Microchip VID (matches usb_device_init_data) */
         (unsigned)0xF794);  /* DAQiFi Nyquist PID */
+
+    /* #908: factory-cal provenance. TWO KEYS ANSWERING TWO DIFFERENT
+     * QUESTIONS -- they were both derived from one boolean, which is the
+     * defect Qodo reported as item 3 ("failed saves report identity
+     * defaults").
+     *
+     *   factory_present : is the factory NVM SLOT populated? True from boot's
+     *                     factory-cal load, or as soon as a CONF:ADC:SAVEFcal
+     *                     succeeds (CalSaveCommon clears the flag
+     *                     immediately, so this need not wait for a reboot).
+     *                     Unchanged -- the flag answers this correctly.
+     *
+     *   source          : which coefficients are IN EFFECT. The flag does not
+     *                     answer this, and using it to do so reported NO
+     *                     CALIBRATION after a FAILED SAVEFcal while the
+     *                     unchanged non-identity coefficients were still
+     *                     being applied to every reading.
+     *
+     * ⭐ source is now derived from the live runtime array plus the bank the
+     * last successful load came from, and it has FOUR values. Two cannot
+     * cover the reachable states -- enumerating {slot populated?, bank
+     * selected, live coefficients identity?} gives 8 reachable combinations,
+     * of which the old flag-only scheme misreported 5 and a two-valued
+     * factory|none pair still misreported 2: with USECal 1 and real user
+     * coefficients, "factory" is false and "none" is false, so a two-valued
+     * key has no legal value for the state and must collapse it into a wrong
+     * one. Verified on hardware rather than argued: with the factory bank at
+     * CalM 1.25 and the user bank at 2.5, USECal 0 reports "factory" and
+     * USECal 1 reports "user" -- the row a two-valued key cannot express.
+     *
+     * Operator ruling, 2026-10-25 (item 3), verbatim: "the three values are
+     * fine, but perhaps identity should be \"none\" instead." Hence "none"
+     * rather than "identity" on the wire. The internal helper keeps the name
+     * daqifi_settings_CalIsIdentity: it describes the arithmetic, not the
+     * reported value. The rename costs no compatibility -- origin/main emits
+     * no source key at all, so this PR introduces it, and no client checkout
+     * here reads it.
+     *
+     * Operator ruling, 2026-10-27: a FOURTH value, "unknown", for the
+     * unstable-read path ONLY. The first three are all positive claims about
+     * the coefficients; "unknown" is the absence of a claim, and mixing it in
+     * with them is the one thing a reader of this list must not do.
+     *
+     *   "none"     : live CalM==1/CalB==0 on every channel, whatever the
+     *                selection -- readings are unscaled. Note this is the
+     *                honest answer for a factory bank that loaded fine and
+     *                CONTAINS identity, which is the state of both bench
+     *                boards on this station.
+     *   "user"     : non-identity coefficients from the USER bank (USECal 1).
+     *   "factory"  : non-identity coefficients from the FACTORY bank.
+     *   "unknown"  : the seqlock reader could not obtain a coherent view in 3
+     *                attempts, so NOTHING was established about the
+     *                coefficients. ⛔ NOT a synonym for "none" and NOT an
+     *                error: a client seeing it should re-query, never
+     *                substitute a value. Reachable only while a bank load is
+     *                in flight -- which is exactly when real coefficients are
+     *                being installed, so reporting "none" here (what this did
+     *                before r10) told a client the device was uncalibrated at
+     *                the precise moment it was becoming calibrated.
+     *
+     * ⚠ chanCALM/chanCALB can still overlay individual channels after a load;
+     * source then names the bank the overlay was applied on top of, which is
+     * the closest true statement a single key can make about provenance.
+     * The second closing brace closes identity{}. */
+    const bool factoryCalMissing = daqifi_settings_FactoryCalIsMissing();
+    /* ONE coherent read, not two. Pairing CalIsIdentity() with
+     * GetActiveCalBank() here let a higher-priority LOADcal/LOADFcal land
+     * between them and produce a source the device never had -- codex-r6
+     * findings 2+3. daqifi_settings_GetCalSource does both coherently. */
+    /* ⚠ EVERY value spelled out, and `default` answers "unknown" -- NOT
+     * "none". Both halves of that matter, and the previous form got both
+     * wrong:
+     *
+     *   switch (...) { case FACTORY: ...; case USER: ...; default: "none"; }
+     *
+     * Adding DAQIFI_CAL_SOURCE_UNKNOWN to the enum would have been absorbed
+     * SILENTLY by that `default` and reported as "none" -- the exact collapse
+     * the new value exists to prevent -- and -Wswitch cannot warn, because a
+     * `default` arm makes the switch exhaustive by definition. A reviewer
+     * reading the enum would see four values and a switch that handles them
+     * all.
+     *
+     * So: all four named, and the unreachable fallthrough reports "unknown"
+     * because that is the fail-safe direction. An enum value this code has
+     * never heard of is a thing we know nothing about, which is what "unknown"
+     * says; "none" would assert the coefficients are identity on the strength
+     * of a value we could not interpret. */
+    const char * calSource;
+    switch (daqifi_settings_GetCalSource(&rt->AInChannels)) {
+        case DAQIFI_CAL_SOURCE_FACTORY: calSource = "factory"; break;
+        case DAQIFI_CAL_SOURCE_USER:    calSource = "user";    break;
+        case DAQIFI_CAL_SOURCE_NONE:    calSource = "none";    break;
+        case DAQIFI_CAL_SOURCE_UNKNOWN: calSource = "unknown"; break;
+        default:                        calSource = "unknown"; break;
+    }
+    scpi_printf(context,
+        "\"cal\":{\"factory_present\":%s,\"source\":\"%s\"}},",
+        factoryCalMissing ? "false" : "true",
+        calSource);
 
     /* ---- channels[] array (flat, kind-grouped) ----
      * Order: all analog-input first (sorted by DaqifiAdcChannelId

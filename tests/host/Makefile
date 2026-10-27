@@ -780,6 +780,49 @@ START_BIN := run_998_tests
 START_CLAIMED_SRC := ../../firmware/src/services/SCPI/SCPIInterface.c
 START_CLAIMED_BEGIN := if (!sd_card_manager_TryClaim()) {
 START_CLAIMED_END := while (!sd_card_manager_IsWriteReady() && readyWait < 500) {
+# ⚠ THIS VALUE IS THE **CRLF** SLICE, AND THAT IS NOT INCIDENTAL -- DO NOT
+# "CORRECT" IT TO THE LF ONE. I did exactly that in this branch and broke CI;
+# this comment is here so the next reader does not repeat it.
+#
+# .gitattributes marks this path `text eol=crlf`, so a compliant checkout --
+# including CI's -- writes CRLF, and the recipe below hashes the WORKING TREE.
+# Measured, both representations of the same commit:
+#
+#   CRLF working tree  404e01fdd3b7...  <- this pin, and what CI computes
+#   LF   (same bytes)  80d9cebbee1b...
+#
+# ⛔ THE TRAP: `git ls-files --eol` reports `i/lf w/lf attr/text eol=crlf` in
+# some worktrees here -- the attribute says crlf and the file on disk is LF
+# anyway. In such a tree the guard fails locally while CI passes, and every
+# obvious instinct then makes it worse:
+#
+#   - Hashing the committed blob (`git show <rev>:<path>`) CANNOT reproduce
+#     this pin at ANY revision, because git stores the blob LF-normalised. So
+#     a history sweep over blobs returns "the pin never matched once", which is
+#     consistent, confident, and measuring the wrong artifact. That is the
+#     error I made, and it reads as proof precisely because it is uniform.
+#   - Stripping CR before hashing is the same mistake spelled differently.
+#   - A local `make run` proves nothing in either direction: green means the
+#     tree's endings happen to match the pin's origin, red means they do not.
+#
+# To re-derive this pin, reproduce CI's representation explicitly rather than
+# trusting the checkout:
+#
+#   git show HEAD:firmware/src/services/SCPI/SCPIInterface.c | sed 's/$/\r/' \
+#     | sed -n '/^[[:space:]]*<BEGIN anchor>/,/^[[:space:]]*<END anchor>/p' \
+#     | sha256sum
+#
+# ⚠ The sibling pin SD_ARM_HELPER_SHA is NOT exposed to this, because it goes
+# through hash_function.py instead of `sed | sha256sum`. That asymmetry is the
+# real defect here: a line-ending-sensitive guard in a repo that rewrites line
+# endings on checkout. Routing this pin through the same helper would remove
+# the hazard rather than document it, and is the right follow-up -- deliberately
+# NOT done inside a merge-refresh commit.
+#
+# Independently of the hash, the model's three properties do still hold in the
+# slice (SCPIInterface.c:5816-5935): refusal at 5823 before the poll at 5935,
+# ClearStartupDirFull at 5836 before ReleaseClaim at 5880, and exactly one
+# TryClaim in the file, which the anchor-count check above pins separately.
 START_CLAIMED_SHA := 404e01fdd3b7c9c8eb26cfca959b498ebe9b3e921b77daa0ddd3bca72938d490
 
 $(BIN): test_circularbuffer.c test_framework.h stubs/Logger.h stubs/osal/osal.h $(FW_UTIL)/CircularBuffer.c $(FW_UTIL)/CircularBuffer.h $(RECIPES)
@@ -1894,6 +1937,20 @@ $(STARTARM_BIN): test_1121_start_streaming_arm_cascade.c test_framework.h \
 # `grep -c` could not distinguish. index() is literal, so `()` and `;` in the
 # patterns need no regex escaping.
 #   $(1)=source file   $(2)=function name   $(3)=literal pattern
+# #908 (r9): like CNT_IN_FN but anchored on the DEFINITION, not the first
+# declaration. CNT_IN_FN matches "^(static )?scpi_result_t <fn>[(]" and then
+# exits at the next such line -- so for a function with a FORWARD DECLARATION
+# it starts at the prototype and exits immediately, counting 0. Both
+# ADCChanCalm/CalbSetClaimed are forward-declared, so the generic helper
+# reports 0 for a body that plainly contains the pattern.
+# ⚠ A guard that expects ABSENCE would PASS vacuously on that 0, so this is
+# worth knowing beyond this row.
+CNT_IN_FN_DEF = awk -v fn="$(2)" -v pat='$(3)' \
+	'$$0 ~ "^(static )?scpi_result_t " fn "[(]" && /{[[:space:]]*$$/ { f=1; next } \
+	 f && /^(static )?scpi_result_t .*{[[:space:]]*$$/                { exit } \
+	 f && index($$0, pat)                                             { n++ } \
+	 END { print n+0 }' $(1)
+
 CNT_IN_FN = awk -v fn="$(2)" -v pat='$(3)' \
 	'$$0 ~ "^(static )?scpi_result_t " fn "[(]" { f=1; next } \
 	 f && /^(static )?scpi_result_t /           { exit } \
@@ -3559,6 +3616,33 @@ $(USECALTYPE_BIN): test_1152_usecal_type_trust.c test_framework.h \
 # is the failure this block's own history keeps recording.
 # #1029's names carry the 1029 suffix so they cannot shadow #1000's
 # $(SDLOG_BIN)/$(GEN_1000).
+#
+# SIXTEENTH additive collision, same resolution: each side's target rule kept
+# INTACT, only `run` and `clean` unioned. This branch adds #908's
+# $(SEQ908_BIN) (the cal-source seqlock guard); main added #904's
+# $(TEAR904_BIN) and $(FORCEGATE_BIN).
+#
+# COUNTS, MEASURED ON THE MERGED LISTS -- 31 run prerequisites, 31 `./$(X)`
+# recipe lines, 36 `clean` entries (35 unique). Base had 28/28/33, so main's
+# two and this branch's one account for all three deltas exactly. The
+# parenthetical in the FIFTEENTH paragraph above is superseded: it was bumped
+# by one when main's merge added two, and read 29/29/34 against a tree that
+# measured 30/30/35.
+#
+# ⚠ WHAT THIS PARAGRAPH IS ACTUALLY FOR. My first attempt at this merge
+# unioned the two conflict regions as TEXT and produced 29 prerequisites with
+# ONE `./$(X)` line -- every other test's invocation deleted, while the
+# prerequisite list still named them. That builds all 29 binaries and runs one,
+# so `make run` EXITS 0 having executed a single test: a green suite that tests
+# almost nothing. Nothing in this file would have objected.
+#
+# So the resolution is not complete until prerequisites and invocations are
+# measured and AGREE -- as SETS, both directions, not as totals, since equal
+# totals are reachable from a swapped pair. `clean` additionally holds four
+# generated artifacts that are not run prerequisites ($(UUT), $(GEN_1000),
+# $(GEN_1125), $(SDLOG1029_GEN)), which is why only its number differs; the
+# $(SDLOG1029_GEN) duplicate predates the merge base and is a harmless
+# second `rm -f`, not something this merge introduced.
 # ---------------------------------------------------------------------------
 # PR firmware#1048 (issue #904): the CalM/CalB 64-bit pair, BOTH halves.
 #
@@ -3688,11 +3772,290 @@ $(TEAR904_BIN): test_904_cal_pair_tear.c test_framework.h cal_order_904.awk cal_
 # others) union this branch's 30 (the same 29 plus USECALTYPE_BIN) is 31,
 # verified by cross-check against the `./$(X)` invocation list and `clean:`
 # below, which both already carried the full union untouched by this conflict.
-run: $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) \
+# ---------------------------------------------------------------------------
+# PR firmware#1077 round 8 (issue #908): identity.cal.source composite
+# coherence. The reported source is a pair of facts -- "are the live
+# coefficients identity" and "which bank did they come from" -- and
+# daqifi_settings_LoadADCCalSettings changes them in that order, publishing
+# the bank LAST (round 3's fix, so the bank cannot name a load that did not
+# land). A reader pre-empting between the two therefore sees the OLD bank
+# while scanning the NEW coefficients.
+#
+# Round 6 compared the bank before and after the scan, which catches a
+# COMPLETED load and is blind to one IN PROGRESS. Round 8 brackets the whole
+# composite update with a generation counter and the reader takes a seqlock
+# read. test_908_cal_source_seqlock.c models all three reader shapes and
+# asserts the middle one's blindness, so the file fails if the seqlock is
+# weakened back to a bank comparison.
+#
+# The model cannot see the FIRMWARE, so the guards below pin the real thing:
+# two increments in the writer with the first BEFORE the copy, and both arms
+# of the seqlock in the reader. An order check, not a presence check -- a
+# presence check passes if someone moves the pre-copy increment after the loop,
+# which is precisely the mutation that reopens the defect.
+SETTINGS_SRC := ../../firmware/src/services/daqifi_settings.c
+SEQ908_BIN := run_908_tests
+
+# ⚠ BOTH sources are prerequisites because BOTH are read by the guards below:
+# SETTINGS_SRC for the load-order and reader-yield checks, SCPIADC_SRC for the
+# setter-bracket check. A guard that reads a file it does not depend on does
+# not run when that file changes -- make reuses the binary and the check is
+# silently skipped, which is a guard that cannot fail rather than a guard.
+$(SEQ908_BIN): test_908_cal_source_seqlock.c test_framework.h $(SETTINGS_SRC) $(SCPIADC_SRC) $(SCPI_IFACE_SRC) cal_compose_908.awk check_seq908_order.py seq908_order_fixture.c check_comment_integrity.py $(RECIPES)
+	@sed -n '/^bool daqifi_settings_LoadADCCalSettings/,/^}/p' $(SETTINGS_SRC) \
+	   > /tmp/.fw908_load.$$$$; \
+	 n=`grep -cE 'daqifi_settings_(Begin|End)CalWrite' /tmp/.fw908_load.$$$$`; \
+	 gen1=`grep -n 'daqifi_settings_BeginCalWrite' /tmp/.fw908_load.$$$$ | head -1 | cut -d: -f1`; \
+	 cpy=`grep -n '\.CalM = calArray' /tmp/.fw908_load.$$$$ | head -1 | cut -d: -f1`; \
+	 bank=`grep -n 'gActiveCalBank = type' /tmp/.fw908_load.$$$$ | head -1 | cut -d: -f1`; \
+	 gen2=`grep -n 'daqifi_settings_EndCalWrite' /tmp/.fw908_load.$$$$ | tail -1 | cut -d: -f1`; \
+	 rm -f /tmp/.fw908_load.$$$$; \
+	 test "$$n" = "2" && test -n "$$gen1" && test -n "$$cpy" && test -n "$$bank" \
+	   && test "$$gen1" -lt "$$cpy" && test "$$gen2" -gt "$$bank" \
+	  || { echo "ERROR: daqifi_settings_LoadADCCalSettings in $(SETTINGS_SRC) no"; \
+	       echo "       longer brackets its composite update with exactly one"; \
+	       echo "       daqifi_settings_BeginCalWrite BEFORE the coefficient copy"; \
+	       echo "       and one EndCalWrite AFTER gActiveCalBank is published."; \
+	       echo "       (found n=$$n gen1=$$gen1 copy=$$cpy bank=$$bank gen2=$$gen2)"; \
+	       echo "       Without the PRE-copy increment the generation never goes"; \
+	       echo "       odd, so a reader cannot see an update IN PROGRESS and"; \
+	       echo "       reports the old bank against the new coefficients --"; \
+	       echo "       the SHAPE_BANKCMP row of test_908_cal_source_seqlock.c."; \
+	       exit 1; }
+	@sed -n '/^DaqifiCalSource daqifi_settings_GetCalSource/,/^}/p' $(SETTINGS_SRC) \
+	   > /tmp/.fw908_rd.$$$$; \
+	 ok=1; \
+	 grep -qF '& 1u' /tmp/.fw908_rd.$$$$ || ok=0; \
+	 grep -qF 'gCalGeneration != genBefore' /tmp/.fw908_rd.$$$$ || ok=0; \
+	 rm -f /tmp/.fw908_rd.$$$$; \
+	 test "$$ok" = 1 \
+	  || { echo "ERROR: daqifi_settings_GetCalSource in $(SETTINGS_SRC) is missing"; \
+	       echo "       an arm of its seqlock read: it must REFUSE an odd"; \
+	       echo "       generation (& 1u) AND require the generation unchanged"; \
+	       echo "       across the scan. Either arm alone is insufficient --"; \
+	       echo "       the odd check misses a load that starts and finishes"; \
+	       echo "       during the scan, and the unchanged check misses one"; \
+	       echo "       already in flight when the scan begins."; \
+	       exit 1; }
+	@sed -n '/^DaqifiCalSource daqifi_settings_GetCalSource/,/^}/p' $(SETTINGS_SRC) \
+	   > /tmp/.fw908_yield.$$$$; \
+	 y=`grep -c 'vTaskDelay' /tmp/.fw908_yield.$$$$`; \
+	 rm -f /tmp/.fw908_yield.$$$$; \
+	 test "$$y" -ge 1 \
+	  || { echo "ERROR: daqifi_settings_GetCalSource in $(SETTINGS_SRC) retries"; \
+	       echo "       without yielding. It runs on a SCPI transport task at"; \
+	       echo "       priority 7; a bank load runs at priority 2, so spinning is"; \
+	       echo "       a priority inversion -- the writer it waits for cannot be"; \
+	       echo "       scheduled, every attempt sees the same odd generation, and"; \
+	       echo "       a suspended load turns real calibration into a permanent"; \
+	       echo "       source:\"none\". Yield (bounded) between attempts."; \
+	       exit 1; }
+	@for fn in ADCChanCalmSetClaimed ADCChanCalbSetClaimed; do \
+	   b=`$(call CNT_IN_FN_DEF,$(SCPIADC_SRC),$$fn,daqifi_settings_BeginCalWrite)`; \
+	   e=`$(call CNT_IN_FN_DEF,$(SCPIADC_SRC),$$fn,daqifi_settings_EndCalWrite)`; \
+	   test "$$b" = "1" && test "$$e" = "1" \
+	     || { echo "ERROR: $$fn in $(SCPIADC_SRC) does not bracket its CalM/CalB"; \
+	          echo "       store with daqifi_settings_BeginCalWrite/EndCalWrite"; \
+	          echo "       (found begin=$$b end=$$e, want 1 and 1)."; \
+	          echo "       ONE setter alone yields a genuine before-or-after, so"; \
+	          echo "       this looks exempt and is not: TWO setters let an"; \
+	          echo "       early-exiting identity scan read channel 0 as identity,"; \
+	          echo "       then one clears a later channel while the other sets"; \
+	          echo "       channel 0, and the scan concludes ALL identity -- a view"; \
+	          echo "       that held at no instant. See test_908's two-setter case."; \
+	          exit 1; }; \
+	 done
+	@sed -n '/^DaqifiCalSource daqifi_settings_GetCalSource/,/^}/p' $(SETTINGS_SRC) \
+	   > /tmp/.fw908_unk.$$$$; \
+	 nu=`grep -c 'DAQIFI_CAL_SOURCE_UNKNOWN' /tmp/.fw908_unk.$$$$`; \
+	 lastret=`grep -n 'return ' /tmp/.fw908_unk.$$$$ | tail -1 | cut -d: -f2-`; \
+	 rm -f /tmp/.fw908_unk.$$$$; \
+	 case "$$lastret" in *DAQIFI_CAL_SOURCE_UNKNOWN*) ok=1;; *) ok=0;; esac; \
+	 test "$$ok" = 1 && test "$$nu" = "1" \
+	  || { echo "ERROR: daqifi_settings_GetCalSource in $(SETTINGS_SRC) does not"; \
+	       echo "       end by returning DAQIFI_CAL_SOURCE_UNKNOWN."; \
+	       echo "       (last return was:$$lastret ; UNKNOWN mentions=$$nu, want 1)"; \
+	       echo "       That final return is the RETRIES-EXHAUSTED path: every"; \
+	       echo "       attempt saw a load in flight, so no coherent scan"; \
+	       echo "       completed and nothing is known about the coefficients."; \
+	       echo "       Returning DAQIFI_CAL_SOURCE_NONE there -- which is what"; \
+	       echo "       it did before r10 -- is not a cautious understatement,"; \
+	       echo "       it is the POSITIVE claim \"every channel is identity,"; \
+	       echo "       readings are unscaled\", asserted by a reader that never"; \
+	       echo "       looked. The state is reachable exactly while a bank is"; \
+	       echo "       LOADING, i.e. when real coefficients are most likely"; \
+	       echo "       present, so the worst answer was reachable in the case"; \
+	       echo "       that mattered most."; \
+	       echo "       Exactly ONE mention is required so UNKNOWN stays"; \
+	       echo "       unreachable from the scan-completed paths above: if it"; \
+	       echo "       can also be returned after a successful scan, then"; \
+	       echo "       'unknown' on the wire stops meaning 'the read did not"; \
+	       echo "       complete' and the value is no longer diagnostic."; \
+	       exit 1; }
+	@sed -n '/switch (daqifi_settings_GetCalSource/,/^    }/p' $(SCPI_IFACE_SRC) \
+	   > /tmp/.fw908_sw.$$$$; \
+	 nc=`grep -c 'case DAQIFI_CAL_SOURCE_' /tmp/.fw908_sw.$$$$`; \
+	 dflt=`grep 'default:' /tmp/.fw908_sw.$$$$`; \
+	 rm -f /tmp/.fw908_sw.$$$$; \
+	 case "$$dflt" in *unknown*) dok=1;; *) dok=0;; esac; \
+	 test "$$nc" = "4" && test "$$dok" = 1 \
+	  || { echo "ERROR: the identity.cal.source switch in $(SCPI_IFACE_SRC) must"; \
+	       echo "       name all FOUR DaqifiCalSource values explicitly and its"; \
+	       echo "       default arm must answer \"unknown\"."; \
+	       echo "       (found cases=$$nc want 4; default arm:$$dflt)"; \
+	       echo "       ⚠ THIS GUARD EXISTS BECAUSE -Wswitch CANNOT CATCH IT. A"; \
+	       echo "       switch with a default arm is exhaustive by definition, so"; \
+	       echo "       adding a value to the enum produces no warning -- the new"; \
+	       echo "       value is absorbed SILENTLY by whatever default says. The"; \
+	       echo "       pre-r10 form was exactly that: FACTORY, USER, and"; \
+	       echo "       default->\"none\", which would have reported the new"; \
+	       echo "       UNKNOWN state as \"none\" and reintroduced the very"; \
+	       echo "       collapse the fourth value was added to remove, while a"; \
+	       echo "       reviewer saw a switch that handled every case."; \
+	       echo "       The default must say \"unknown\" and not \"none\" because"; \
+	       echo "       that is the fail-safe direction: an enum value this code"; \
+	       echo "       cannot interpret is something it knows nothing about."; \
+	       exit 1; }
+	@$(CC) -fpreprocessed -E -P -x c - < $(SCPIADC_SRC) > /tmp/.fw908_fp.$$$$ 2>/dev/null; \
+	 tot=`grep -cE 'daqifi_settings_(Clear|Mark)FactoryCalMissing\(' /tmp/.fw908_fp.$$$$`; \
+	 inref=`sed -n '/^static void RefreshFactoryCalPresence/,/^}/p' /tmp/.fw908_fp.$$$$ \
+	        | grep -cE 'daqifi_settings_(Clear|Mark)FactoryCalMissing\('`; \
+	 val=`sed -n '/^static void RefreshFactoryCalPresence/,/^}/p' /tmp/.fw908_fp.$$$$ \
+	      | grep -c 'daqifi_settings_ValidateADCCalBank('`; \
+	 sav=`sed -n '/^static scpi_result_t CalSaveCommon/,/^}/p' /tmp/.fw908_fp.$$$$ \
+	      | grep -c 'RefreshFactoryCalPresence()'`; \
+	 lod=`sed -n '/^static scpi_result_t CalLoadCommon/,/^}/p' /tmp/.fw908_fp.$$$$ \
+	      | grep -c 'RefreshFactoryCalPresence()'`; \
+	 rm -f /tmp/.fw908_fp.$$$$; \
+	 test "$$tot" = "2" && test "$$inref" = "2" && test "$$val" = "1" \
+	   && test "$$sav" = "1" && test "$$lod" = "1" \
+	  || { echo "ERROR: factory_present is no longer derived from the PAGE by a"; \
+	       echo "       single writer in $(SCPIADC_SRC)."; \
+	       echo "       (Clear/Mark calls: $$tot in the file, $$inref inside"; \
+	       echo "        RefreshFactoryCalPresence; ValidateADCCalBank in it:"; \
+	       echo "        $$val; RefreshFactoryCalPresence calls -- save: $$sav"; \
+	       echo "        load: $$lod. Want 2 / 2 / 1 / 1 / 1.)"; \
+	       echo "       ⛔ EQUAL COUNTS ARE THE POINT: every Clear/Mark in the"; \
+	       echo "       file must be INSIDE the one helper. factory_present is a"; \
+	       echo "       claim about what is ON THE PAGE, and any other call site"; \
+	       echo "       would be deriving it from something else -- which is the"; \
+	       echo "       r13 defect: it came from SaveADCCalSettings's RETURN"; \
+	       echo "       VALUE, a claim about the WRITE. #1153's race (LAN:SAVE"; \
+	       echo "       takes no claim and shares gTempFflashBuffer) makes that"; \
+	       echo "       return true over a corrupt slot or false over an intact"; \
+	       echo "       one, and the flag then stays wrong in BOTH directions."; \
+	       echo "       The LOAD call site is pinned too: before r13 that path"; \
+	       echo "       touched the flag at all, so a stale 'missing' survived a"; \
+	       echo "       successful LOADFcal -- the one operation that proves the"; \
+	       echo "       page is valid."; \
+	       exit 1; }
+	@$(CC) -fpreprocessed -E -P -x c - < $(SCPIADC_SRC) > /tmp/.fw908_cmp.$$$$ 2>/dev/null; \
+	 bad=; \
+	 for fn in ADCChanCalmSetClaimed ADCChanCalbSetClaimed; do \
+	   seq=`awk -v fn=$$fn -f cal_compose_908.awk /tmp/.fw908_cmp.$$$$`; \
+	   test "$$seq" = "GEVXH" || bad="$$bad $$fn=[$$seq]"; \
+	 done; \
+	 rm -f /tmp/.fw908_cmp.$$$$; \
+	 test -z "$$bad" \
+	  || { echo "ERROR: a calibration setter in $(SCPIADC_SRC) does not COMPOSE"; \
+	       echo "       the generation bracket with the critical section as"; \
+	       echo "       G E V X H (begin / enter / store / exit / end)."; \
+	       echo "       Offending:$$bad"; \
+	       echo "       Read as: G=BeginCalWrite E=taskENTER_CRITICAL"; \
+	       echo "       V=the .CalM/.CalB store X=taskEXIT_CRITICAL"; \
+	       echo "       H=EndCalWrite, in SOURCE order, adjacent repeats"; \
+	       echo "       collapsed. An EMPTY sequence means the function"; \
+	       echo "       DEFINITION was not found, not that it is clean."; \
+	       echo "       ⚠ NEITHER EXISTING GUARD SET CAN SEE THIS, and the gap"; \
+	       echo "       was authored by the #1048 merge rather than by an edit,"; \
+	       echo "       so no diff line reveals it: cal_order_904.awk emits no"; \
+	       echo "       token for BeginCalWrite, so EVX scores the same whether"; \
+	       echo "       the bracket is outside the section, inside it, or gone;"; \
+	       echo "       and the 908 bracket check above counts begin/end without"; \
+	       echo "       regard to position. Each set is satisfied by the"; \
+	       echo "       arrangement the other was meant to exclude."; \
+	       echo "       Both orderings are load-bearing: the generation must"; \
+	       echo "       span the WHOLE write, or a reader samples an even"; \
+	       echo "       generation mid-write and believes it; and the critical"; \
+	       echo "       section must be INNERMOST around the store, or the"; \
+	       echo "       64-bit CalM/CalB pair can tear (#904)."; \
+	       exit 1; }
+	@$(PYTHON) check_comment_integrity.py $(SETTINGS_SRC) $(SCPIADC_SRC) $(SCPI_IFACE_SRC) \
+	  || { echo "ERROR: a firmware file this target's guards READ no longer has"; \
+	       echo "       intact comment structure, so it almost certainly does not"; \
+	       echo "       compile. See the line(s) above."; \
+	       echo "       ⚠ WHY THIS GUARD EXISTS: every other #908 source check"; \
+	       echo "       below reads these files with sed/grep/awk, and NOTHING in"; \
+	       echo "       tests/host COMPILES them. On 2026-10-27 a #define inserted"; \
+	       echo "       into the middle of a block comment closed it early and"; \
+	       echo "       stranded 13 lines at file scope; the firmware did not"; \
+	       echo "       build, and this suite reported 31 binaries / 318 tests /"; \
+	       echo "       0 failed with every position pin PASSING, because a pin"; \
+	       echo "       over grep line numbers is happy with invalid C."; \
+	       echo "       ⛔ A pass here is NOT a compile. Only a build is."; \
+	       exit 1; }
+	@$(PYTHON) check_seq908_order.py $(CC) seq908_order_fixture.c \
+	  || { echo "ERROR: the cal-source seqlock's ORDERING property failed."; \
+	       echo "       See the two lines above: the guard is differential, and"; \
+	       echo "       WHICH line failed decides what is wrong. A failure on"; \
+	       echo "       reader_barriered means the firmware property is broken;"; \
+	       echo "       a failure on reader_unbarriered means this compiler did"; \
+	       echo "       not reorder, so the other line proves nothing."; \
+	       exit 1; }
+	@sed -n '/^DaqifiCalSource daqifi_settings_GetCalSource/,/^}/p' $(SETTINGS_SRC) \
+	   > /tmp/.fw908_bar.$$$$; \
+	 g1=`grep -n 'genBefore = gCalGeneration' /tmp/.fw908_bar.$$$$ | head -1 | cut -d: -f1`; \
+	 b1=`grep -n 'CAL_BARRIER' /tmp/.fw908_bar.$$$$ | head -1 | cut -d: -f1`; \
+	 sc=`grep -n 'daqifi_settings_CalIsIdentity' /tmp/.fw908_bar.$$$$ | head -1 | cut -d: -f1`; \
+	 bk=`grep -n 'bank = gActiveCalBank' /tmp/.fw908_bar.$$$$ | head -1 | cut -d: -f1`; \
+	 b2=`grep -n 'CAL_BARRIER' /tmp/.fw908_bar.$$$$ | tail -1 | cut -d: -f1`; \
+	 g2=`grep -n 'gCalGeneration != genBefore' /tmp/.fw908_bar.$$$$ | head -1 | cut -d: -f1`; \
+	 nb=`grep -c 'CAL_BARRIER' /tmp/.fw908_bar.$$$$`; \
+	 rm -f /tmp/.fw908_bar.$$$$; \
+	 test "$$nb" = "2" && test -n "$$g1" && test -n "$$bk" && test -n "$$g2" \
+	   && test "$$g1" -lt "$$b1" && test "$$b1" -lt "$$sc" \
+	   && test "$$sc" -lt "$$bk" && test "$$bk" -lt "$$b2" \
+	   && test "$$b2" -lt "$$g2" \
+	  || { echo "ERROR: daqifi_settings_GetCalSource in $(SETTINGS_SRC) no longer"; \
+	       echo "       brackets its snapshot with exactly two CAL_BARRIER()s in"; \
+	       echo "       the required POSITIONS."; \
+	       echo "       (barriers=$$nb want 2; order read=$$g1 bar=$$b1 scan=$$sc"; \
+	       echo "        bank=$$bk bar=$$b2 check=$$g2, each must increase)"; \
+	       echo "       ⚠ THE FIXTURE GUARD ABOVE CANNOT CATCH THIS. It compiles"; \
+	       echo "       seq908_order_fixture.c, which is a MODEL -- it would keep"; \
+	       echo "       passing with the firmware's barriers deleted. Position is"; \
+	       echo "       pinned rather than presence because two barriers in the"; \
+	       echo "       wrong places constrain nothing: the second one is what"; \
+	       echo "       keeps the bank load above the closing generation read,"; \
+	       echo "       and a barrier after that read is free of charge."; \
+	       exit 1; }
+	@bb=`sed -n '/^void daqifi_settings_BeginCalWrite/,/^}/p' $(SETTINGS_SRC) \
+	      | grep -n 'gCalGeneration++\|CAL_BARRIER' | head -2 | cut -d: -f2- | tr -d ' \t' | paste -sd,`; \
+	 ee=`sed -n '/^void daqifi_settings_EndCalWrite/,/^}/p' $(SETTINGS_SRC) \
+	      | grep -n 'gCalGeneration++\|CAL_BARRIER' | head -2 | cut -d: -f2- | tr -d ' \t' | paste -sd,`; \
+	 case "$$bb" in gCalGeneration++*,CAL_BARRIER*) ok=1;; *) ok=0;; esac; \
+	 case "$$ee" in CAL_BARRIER*,gCalGeneration++*) ;; *) ok=0;; esac; \
+	 test "$$ok" = 1 \
+	  || { echo "ERROR: the generation bracket's own barriers are missing or"; \
+	       echo "       mis-ordered in $(SETTINGS_SRC)."; \
+	       echo "       BeginCalWrite must be increment-then-barrier (saw: $$bb)"; \
+	       echo "       EndCalWrite   must be barrier-then-increment (saw: $$ee)"; \
+	       echo "       They are MIRROR IMAGES, and swapping either one makes the"; \
+	       echo "       mark useless without making it absent: nothing may sink"; \
+	       echo "       below the ODD increment and nothing may rise above the"; \
+	       echo "       EVEN one, or a reader that correctly observes an even"; \
+	       echo "       generation can still see a partially-applied write."; \
+	       echo "       Marking an update does not help if the optimiser may"; \
+	       echo "       move the update out of the marks."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -o $(SEQ908_BIN) test_908_cal_source_seqlock.c
+
+run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) \
      $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) \
      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) \
      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(USECALTYPE_BIN) $(ARM_BIN) $(NAME_BIN) \
      $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN)
+	./$(SEQ908_BIN)
 	./$(TEAR904_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
@@ -3727,6 +4090,7 @@ run: $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) 
 	./$(SCPIDAC_RAILGATE_BIN)
 
 clean:
+	rm -f $(SEQ908_BIN)
 	rm -f $(TEAR904_BIN)
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
 	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) \

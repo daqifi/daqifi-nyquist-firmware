@@ -371,10 +371,13 @@ on:
       # wifi_manager.c and the whole SCPI/ subtree, none of which this test
       # reads, and the guards fail the build BY NAME if a site moves.
       #
-      # NOTE: PR #1077 (#908) adds this identical entry in its own hunk, for
-      # its own test's guards over the same file. Whichever merges second
-      # should keep ONE copy -- same situation, and same resolution, as the
-      # #1017/#1000 note further down this file.
+      # #908 (PR #1077) READS THE SAME FILE, and this is the one copy. Its
+      # test_908_cal_source_seqlock.c greps daqifi_settings.c for the
+      # cal-write bracket ORDER and the seqlock reader's bounded yield, so
+      # both tests depend on this single trigger. The note that used to sit
+      # here said whichever PR merged second should keep ONE copy -- #904
+      # merged first, #1077 is the second, and this is that resolution
+      # carried out rather than restated.
       - 'firmware/src/services/daqifi_settings.c'
       - 'firmware/src/services/sd_card_services/sd_card_manager.h'
       - 'firmware/src/config/default/FreeRTOSConfig.h'
@@ -479,10 +482,13 @@ on:
       # wifi_manager.c and the whole SCPI/ subtree, none of which this test
       # reads, and the guards fail the build BY NAME if a site moves.
       #
-      # NOTE: PR #1077 (#908) adds this identical entry in its own hunk, for
-      # its own test's guards over the same file. Whichever merges second
-      # should keep ONE copy -- same situation, and same resolution, as the
-      # #1017/#1000 note further down this file.
+      # #908 (PR #1077) READS THE SAME FILE, and this is the one copy. Its
+      # test_908_cal_source_seqlock.c greps daqifi_settings.c for the
+      # cal-write bracket ORDER and the seqlock reader's bounded yield, so
+      # both tests depend on this single trigger. The note that used to sit
+      # here said whichever PR merged second should keep ONE copy -- #904
+      # merged first, #1077 is the second, and this is that resolution
+      # carried out rather than restated.
       - 'firmware/src/services/daqifi_settings.c'
       - 'firmware/src/services/sd_card_services/sd_card_manager.h'
       - 'firmware/src/config/default/FreeRTOSConfig.h'
