@@ -296,7 +296,7 @@ echo "==      Order and presence both still pass; only PIN A2 sees the gate.    
 if sub "$F" '                if (!sd_InvalidateManifestForTarget(gSDCardData.filePath)) {' \
             '                if (isSessionFirstOpen)
                 if (!sd_InvalidateManifestForTarget(gSDCardData.filePath)) {'; then
-    expect "R24 no first-open gate" "a first-open gate came back"
+    expect "R24 no first-open gate" "is not keyed on the TARGET path"
 else
     echo "  FAIL R24 anchor absent -- source drifted from this harness."; fail=$((fail+1))
 fi
@@ -325,18 +325,6 @@ if sub "$F" '    if (!sd_ManifestPathSafeToOverwrite(path)) {
     expect "R23 unlink-predicate arm" "no longer gates its unlink"
 else
     echo "  FAIL R23 anchor absent -- source drifted from this harness."; fail=$((fail+1))
-fi
-restore
-
-echo "== R24: drop the isSessionFirstOpen CAPTURE, so the gate reads fileCounter =="
-echo "==      at the open -- where the unique-target probe has already bumped    =="
-echo "==      it. Invalidation would then be skipped exactly when a name is      =="
-echo "==      REUSED, which is the only case it exists for.                      =="
-if sub "$F" '                const bool isSessionFirstOpen = (gSDCardData.fileCounter == 0);' \
-            '                /* capture removed by the mutant */'; then
-    expect "R24 first-open capture" "no longer gated on isSessionFirstOpen"
-else
-    echo "  FAIL R24 anchor absent -- source drifted from this harness."; fail=$((fail+1))
 fi
 restore
 
