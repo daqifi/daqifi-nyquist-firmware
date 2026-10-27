@@ -124,9 +124,30 @@ void Button_Tasks( void )
                     // writes a CONSTANT, like every other one (PowerApi.c,
                     // SCPIInterface.c): a stale cache can now delay the
                     // suppression, never undo it.
-                    if (gpPowerData->BQ24297Data.status.pgStat) {
-                        gpPowerData->autoPromotedThisVbusSession = true;
-                    }
+                    /* ⛔ #1092 r3: SET UNCONDITIONALLY. This was gated on
+                     * the cached pgStat, which left the r2 residual: a
+                     * stale-FALSE reading at press time means the latch is not
+                     * set, Power_Tasks then refreshes pgStat to true, and the
+                     * next STANDBY pass auto-promotes the board back up --
+                     * #1084's own symptom, reached through the cache rather
+                     * than through a missing fix.
+                     *
+                     * r2 framed that as unfixable from here ("you cannot set a
+                     * latch you do not know you need"). You can: set it
+                     * ALWAYS, because the two errors are not symmetric.
+                     * Setting it when it was not needed costs NOTHING --
+                     * Power_HandleStandbyState owns this latch's lifecycle and
+                     * re-arms it on any STANDBY pass without VBUS ("VBUS gone
+                     * -- re-arm auto-promote for next plug-in"), so a
+                     * battery-only press self-corrects on the very next pass
+                     * and a later plug-in still auto-promotes. FAILING to set
+                     * it costs the shutdown.
+                     *
+                     * So this stays the SET-ONLY, NEVER-CLEAR writer described
+                     * above, and it now writes a constant unconditionally: a
+                     * stale cache can no longer even delay the suppression,
+                     * let alone undo it. */
+                    gpPowerData->autoPromotedThisVbusSession = true;
                     oneShot = true;
                 }
                 break;

@@ -978,8 +978,33 @@ static void Power_UpdateState(void) {
     /* Common handler: Power-down request (works in any state) */
     if (pData->requestedPowerState == DO_POWER_DOWN) {
         pData->powerState = STANDBY;
-        pData->requestedPowerState = NO_CHANGE;
-        /* Note: Actual power-down executed by STANDBY handler */
+        /* ⛔ #1092 r3: THE REQUEST IS **NOT** CLEARED HERE. It used to be, and
+         * that single line made the STANDBY handler power the board UP instead
+         * of executing the power-down it was delegated.
+         *
+         * NO_CHANGE conflated two states -- "nothing was requested" and "a
+         * request was just consumed" -- and only one consumer reads the field
+         * that way: Power_HandleStandbyState's auto-promote gate
+         * (`autoPowerOnUsb && requestedPowerState == NO_CHANGE`). Clearing here
+         * handed that gate the first meaning while the second was true, so with
+         * AUTOOn on and VBUS present the same pass took the auto-promote arm,
+         * called Power_Up() and `return`ed -- jumping clean over the
+         * `shutdownNotified` block that calls Power_Down(). The delegation in
+         * the old comment below never happened.
+         *
+         * Leaving DO_POWER_DOWN pending makes that gate correct again by
+         * construction: the request still says what was asked for, so the
+         * auto-promote cannot fire in this pass, and Power_Down() clears it at
+         * the point it is actually serviced. No new enum value and no new flag
+         * -- the third state simply stops existing.
+         *
+         * This is the pattern the file already states for the power-UP side:
+         * "Don't reset requestedPowerState here - let the state machine handle
+         * it" (Power_Up). Power_ConsumeRebootRestore's `pending == NO_CHANGE`
+         * fallback to powerState is a second place already shaped around this
+         * conflation. */
+        /* Actual power-down is executed by the STANDBY handler, which clears
+         * the request inside Power_Down(). */
     }
     
     /* Delegate to state-specific handlers */
