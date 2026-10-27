@@ -11419,3 +11419,26 @@ all on my own records; nothing in another lane's tree touched, nothing deleted.
   **displayed output that had my own 2-space prefix added**; and the `make`-does-not-run mistake above.
   ⭐ **Asserting the mutation applied is necessary but NOT sufficient — the INTERPRETATION step must be
   gated on the assert too.**
+
+- ✅ **fw#1152 ROUND 12 PUSHED AND VERIFIED — `6305da85788779d230c209fac6141022acfb9123`**, fast-forward,
+  0 behind main. Suite **29 / 341 / 0 / 44,767**; the 1152 binary **33 / 0 / 825 built AND EXECUTED**;
+  cppcheck 0 via the CI form, baseline untouched; comments balanced 30/30 and 284/284. `SCPIInterface.c`
+  and `tests/host/Makefile` untouched vs base. ⭐ **Round 11's audit: 0 introduced findings, second round
+  running** — only the accepted #1153 residual remains.
+- ⭐⭐ **TWO MUTATIONS OF ONE LINE ARE TWO DIFFERENT DEFECTS, CAUGHT BY DIFFERENT ARMS — and my prediction
+  was wrong for an instructive reason.** `recoveredViaRecheck = false` (never recover) reds
+  `round10_case_b`; `= committedReadable` (recover whenever readable) reds `round10_case_a`. Neither reds
+  both. **It is a property of the FIXTURES:** case_b plants a record both readable AND matching, so the two
+  classifications coincide there; case_a's is readable with the OLD selector, so readability-only wrongly
+  installs. I verified the crude mutation in r11 and then generalised to "the test catches this class" —
+  which is how I predicted the wrong arm in r12. **A single mutation proves a test against THAT defect
+  only**, and a fixture satisfying both sides of a predicate cannot discriminate it.
+- ⚠ **AND MY OWN VERIFICATION OF ITEM (1) WAS WRONG IN METHOD: I grepped for the phrase to DISAPPEAR when
+  my own brief said "narrow it."** The phrase should survive — the sentence was true; the overstatement was
+  its SUBJECT (`no other writer` → `no other CLAIMED writer`, plus a new sentence naming all three
+  unclaimed savers and pointing at #1153). **A grep-for-absence check presumes the fix is a deletion and
+  silently fails any fix that is a qualification.** I nearly reported the fire as having skipped the item.
+- ⚠ **Sixth consecutive brief of mine with a factual error, caught by the fire not by me** — this time a
+  prediction about which test would fire. ⭐ Note the shift though: the first five were claims about CODE
+  (premises, mechanisms, line numbers); this one was a claim about TEST BEHAVIOUR, which is cheaper to be
+  wrong about and which the fire is better placed to check than I am.
