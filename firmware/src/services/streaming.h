@@ -1230,16 +1230,33 @@ void Streaming_ReportSdDiscard(size_t bytes);
  * streaming.c for why this is split out of Streaming_Stop() and the full
  * list of call sites.
  *
- * Callers outside this file, all THREE of them (#1055 r8 -- this note named
- * only the first, which made the other two look like internal details):
- *  - SCPI_PerformStreamingStop() (SCPIInterface.c), after its bounded
- *    SD-idle wait;
- *  - SCPI_StartFailedAfterStop() (SCPIInterface.c), the named exit for the
- *    post-teardown error returns;
- *  - app_SDCardTask() (app_freertos.c), which POLLS this every loop
- *    iteration and is what emits most sessions' summary. Different file and
- *    a different task from the SCPI callers, so it is the one a reader is
- *    least likely to expect and most needs told about. */
+ * ⛔ SEVEN call sites in SIX functions tree-wide; SIX sites in FIVE functions
+ * outside this file. Both numbers stated, because quoting one as the other is
+ * how this note went wrong before. ENUMERATE THIS
+ * MECHANICALLY -- `grep -rn Streaming_EmitSessionSummary firmware/src/` and then
+ * resolve each hit's enclosing function by its BRACES -- never from memory. This
+ * note has been wrong in three consecutive rounds (r7 named one caller, r8 named
+ * three, and both were written while a complete list sat in
+ * docs/STREAMING_AND_ADC.md). Derived mechanically 2026-10-26:
+ *  - app_SDCardTask()                  app_freertos.c   -- the per-iteration
+ *      poll, and the caller that actually emits most sessions' summary;
+ *  - SCPI_PerformStreamingStop()       SCPIInterface.c  -- after its bounded
+ *      SD-idle wait;
+ *  - SCPI_StartFailedAfterStop()       SCPIInterface.c  -- the named exit for
+ *      the post-teardown error returns;
+ *  - SCPI_RunThroughputBenchClaimed()  SCPIInterface.c  -- the
+ *      SYST:STR:THRoughput teardown;
+ *  - FindMeasureStep()                 SCPIInterface.c  -- the
+ *      SYST:STR:WIFI:FINd? step teardown, TWO call sites in the one function.
+ *
+ * The last two never arm SD logging (verified: neither function mentions
+ * sdLoggingRequested or UpdateSettingsForStreamingLog), so gSdExpectedThisSession
+ * is false for them and they raise no hold OF THEIR OWN -- which is why they
+ * need no special case. That is NOT the same as "they never wait": `hold` is
+ * read from whatever record is currently PENDING, so a THRoughput or FINd?
+ * teardown issued while an earlier USB+SD session's record is still held will
+ * defer to the drain, correctly. Streaming_Start()'s backstop is a SIXTH caller but is internal to
+ * streaming.c and calls the Impl directly. */
 void Streaming_EmitSessionSummary(void);
 
 /* #1055 r6: Streaming_FlushOwedSessionSummary() was REMOVED. The forced

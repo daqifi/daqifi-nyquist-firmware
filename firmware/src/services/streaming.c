@@ -2757,6 +2757,19 @@ static void Streaming_Stop(void) {
  *    tears the previous session down. Un-forced since r6. Absent from this
  *    list since r2/r3 introduced it, which is its own small lesson about
  *    hand-maintained contracts.
+ *  - SCPI_RunThroughputBenchClaimed() (SCPIInterface.c), the
+ *    SYSTem:STReam:THRoughput teardown, and FindMeasureStep()
+ *    (SCPIInterface.c) for SYSTem:STReam:WIFI:FINd?, which calls it from TWO
+ *    places in the one function. Both were missing from this list until r10,
+ *    and the count in streaming.h was wrong in three consecutive rounds while
+ *    docs/STREAMING_AND_ADC.md already listed them -- so derive this list
+ *    MECHANICALLY (grep the tree, resolve each hit's enclosing function by its
+ *    braces), never from memory or from the other two places that state it.
+ *    Neither arms SD logging, so gSdExpectedThisSession is false and neither
+ *    raises a hold OF ITS OWN. Not "it never waits": `hold` is read from
+ *    whatever record is PENDING, so one of these teardowns arriving while an
+ *    earlier USB+SD session's record is still held defers to the drain like
+ *    any other caller.
  *  - The #397 all-transports-dead auto-stop (streaming_Task) does NOT call
  *    this, as of r6. It used to, forced, and the comment at that site went
  *    on claiming immediate emission for a round after the call was deleted.
