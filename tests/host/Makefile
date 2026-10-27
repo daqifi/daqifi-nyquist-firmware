@@ -2200,6 +2200,66 @@ $(START_BIN): test_998_start_streaming_claimed_order.c test_framework.h $(START_
 	       echo "       release, claim once before the arm), update START_CLAIMED_SHA;"; \
 	       echo "       if it does not, fix the model."; \
 	       exit 1; }
+	@# ⛔⛔ #969 / PR #1020: BOTH #861 STOP PINS UNDER **ONE** CRITICAL SECTION.
+	@# This is the companion the operator ruled for this row (item M = A, 2026-10-27:
+	@# "A for 1020 seems right") -- a SOURCE-LEVEL host check, because a black-box
+	@# SCPI test cannot reach a preemption between two adjacent instructions and
+	@# would pass on both the old and the new firmware.
+	@#
+	@# WHAT IS BEING PROTECTED. SCPI_StartStreaming pins the stop generation and the
+	@# stops-active count, and the arm later re-reads them to decide whether a stop
+	@# was in flight. Each load is individually atomic (aligned 32-bit on PIC32MZ),
+	@# so the section is NOT there to make a load atomic -- it is there to make the
+	@# PAIR describe ONE INSTANT. As two separate loads, a stop that bumped the
+	@# generation before the first load and finished between the two made BOTH
+	@# signals miss it, and the arm published IsEnabled over a running stop.
+	@#
+	@# ⭐ WHY THIS IS ONE SEQUENCE CHECK AND NOT THREE GREPS. The property is an
+	@# ORDER, so it is pinned as an order: the four markers must appear as the
+	@# CONSECUTIVE token run `ENTER GEN ACTIVE EXIT`. That single assertion refuses
+	@# all three ways the fix can be lost, which three presence greps would not:
+	@#   - REVERTED to bare loads   -> no ENTER/EXIT at all, run absent.
+	@#   - ONE READ MOVED OUT       -> `GEN ENTER ACTIVE EXIT`, not consecutive.
+	@#   - SPLIT INTO TWO SECTIONS  -> `ENTER GEN EXIT ENTER ACTIVE EXIT`. Both
+	@#     reads are still inside a critical section, so a per-read "is it guarded"
+	@#     check PASSES while the pair no longer describes one instant. This is the
+	@#     mutant a naive guard misses, and it is the whole point of the ordering.
+	@#
+	@# Comment-STRIPPED via $(CC) -fpreprocessed -E (which strips comments without
+	@# expanding includes), because the paragraphs above this fix in the source name
+	@# every one of these four tokens -- a raw grep would be satisfied by the prose
+	@# that explains the fix. MEASURED on the fixed source: 0 comment lines survive
+	@# inside the extracted body. Token-based rather than line-anchored, so it is
+	@# indifferent to CRLF and to reformatting.
+	@$(CC) -fpreprocessed -E $(START_CLAIMED_SRC) 2>/dev/null \
+	   | awk '/static scpi_result_t SCPI_StartStreaming\(scpi_t \* context\)/{f=1} \
+	          f{print} f&&/^\}/{exit}' > /tmp/.sd969_fn.$$$$; \
+	 test -s /tmp/.sd969_fn.$$$$ \
+	  || { echo "ERROR: could not extract SCPI_StartStreaming's body from"; \
+	       echo "       $(START_CLAIMED_SRC) (#969). The awk anchor is its"; \
+	       echo "       signature; if that changed this check measures NOTHING,"; \
+	       echo "       which is the one way an ordering pin passes while blind."; \
+	       rm -f /tmp/.sd969_fn.$$$$; exit 1; }; \
+	 seq=`awk '/taskENTER_CRITICAL\(\)/{printf "ENTER "} \
+	           /gStreamStopGen/{printf "GEN "} \
+	           /gStreamStopsActive/{printf "ACTIVE "} \
+	           /taskEXIT_CRITICAL\(\)/{printf "EXIT "}' /tmp/.sd969_fn.$$$$`; \
+	 rm -f /tmp/.sd969_fn.$$$$; \
+	 echo " $$seq" | grep -q ' ENTER GEN ACTIVE EXIT ' \
+	  || { echo "ERROR: #861's two stop pins are no longer taken under ONE critical"; \
+	       echo "       section in SCPI_StartStreaming (#969, PR #1020)."; \
+	       echo "         marker run: $$seq"; \
+	       echo "         required  : ... ENTER GEN ACTIVE EXIT ..."; \
+	       echo "       Each load is atomic by itself; the section exists so the"; \
+	       echo "       PAIR describes one instant. Without it a stop that bumps"; \
+	       echo "       the generation before the first load and completes between"; \
+	       echo "       the two is invisible to BOTH signals, and the arm publishes"; \
+	       echo "       IsEnabled over a stop that was still running -- silently,"; \
+	       echo "       which is the shape #861 exists to eliminate."; \
+	       echo "       NOTE two sections are NOT equivalent to one: a run reading"; \
+	       echo "       ENTER GEN EXIT ENTER ACTIVE EXIT has each read guarded and"; \
+	       echo "       the pair still torn."; \
+	       exit 1; }
 	$(CC) $(CFLAGS) -o $(START_BIN) test_998_start_streaming_claimed_order.c
 
 # #1141 (fix/909-bootloader-lower-panel-erase): APP_ProgramHexRecord's
