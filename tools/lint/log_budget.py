@@ -217,6 +217,41 @@ class ToolError(Exception):
     """The tool cannot produce a trustworthy verdict. Always exit 2, never 0."""
 
 
+def c_int_literal(text, where):
+    r"""Value of a C integer constant. Python's int() is NOT this function.
+
+    #1124 r8/2 (codex audit on #1110): `int("0200")` is 200 in Python and
+    0200 is 128 in C -- a decimal-only read makes LOG_MESSAGE_SIZE, and so the
+    ceiling every message is measured against, too GENEROUS. Too generous
+    UNDER-reports, which is the direction this gate must never fail in.
+    `int("0x80")` raises where C reads 128, which fails closed but noisily.
+
+    Integer SUFFIXES (u/U/l/L) are deliberately not accepted: the callers'
+    regexes do not capture them, so `128u` reaches neither site and raises a
+    loud ToolError instead. Fail-closed, and out of scope for this finding --
+    recorded so the omission reads as a decision, not an oversight.
+    """
+    s = text.strip()
+    try:
+        low = s[:2].lower()
+        if low == "0x":
+            if len(s) == 2:
+                raise ValueError(s)
+            return int(s[2:], 16)
+        if low == "0b":
+            if len(s) == 2:
+                raise ValueError(s)
+            return int(s[2:], 2)
+        if len(s) > 1 and s[0] == "0":
+            return int(s[1:], 8)          # C octal: 0200 == 128
+        return int(s, 10)
+    except ValueError:
+        raise ToolError(
+            f"{where}: {s!r} is not an integer constant this tool can read. "
+            f"The ceiling is derived from it, so guessing would mis-set every "
+            f"other check -- read it by hand and update read_ceiling().")
+
+
 def reserve_after(impl, prefix_re, where, gone_msg):
     r"""Total subtracted from LOG_MESSAGE_SIZE in the argument after `prefix_re`.
 
@@ -278,7 +313,7 @@ def reserve_after(impl, prefix_re, where, gone_msg):
                 f"AFTER a subtraction. `A - (b - c)` is not `A - b - c`, so "
                 f"this cannot be flattened safely -- re-derive the ceiling by "
                 f"hand and update read_ceiling().")
-        mm = re.compile(r"-\s*(\d+)").match(rest, k)
+        mm = re.compile(r"-\s*([0-9][0-9a-fA-FxXbB]*)").match(rest, k)
         if not mm:
             raise ToolError(
                 f"cannot account for {rest[k:].strip()!r} in {where} "
@@ -287,7 +322,7 @@ def reserve_after(impl, prefix_re, where, gone_msg):
                 f"anything else must be read by a human, because guessing here "
                 f"mis-sets the ceiling every other check is measured against.")
         seen_minus = True
-        terms.append(int(mm.group(1)))
+        terms.append(c_int_literal(mm.group(1), where))
         k = mm.end()
     if not terms:
         raise ToolError(
@@ -321,16 +356,33 @@ def read_ceiling(logger_h_text, logger_c_text):
     # of the codex audit on #1110. `mask_comments` preserves offsets and
     # newlines, so every regex below is unaffected except for no longer being
     # able to match comment text.
-    logger_h_text = mask_comments(logger_h_text)
-    logger_c_text = mask_comments(logger_c_text)
+    # ⛔ #1110 r8/1: SPLICE FIRST, THEN MASK. C deletes a line-ending
+    # backslash and the newline after it in translation phase 2, STRICTLY
+    # before comments are recognised in phase 3 -- so
+    #
+    #     // historical, superseded: \
+    #     size = min((LOG_MESSAGE_SIZE - 13), size);
+    #
+    # is ONE comment and that clamp is NOT live code. Masking raw text saw the
+    # comment end at its own newline and read the continuation line as live,
+    # setting the ceiling from a commented-out clamp: measured 115 where the
+    # firmware's is 125.
+    #
+    # splice_continuations()' own docstring already states this ordering and
+    # says every later stage must read its output. read_ceiling() was the one
+    # caller that did not -- the rule was written down and not run here.
+    # Splicing shifts offsets, which is harmless in this function because it
+    # extracts NUMBERS and never reports a position.
+    logger_h_text = mask_comments(splice_continuations(logger_h_text)[0])
+    logger_c_text = mask_comments(splice_continuations(logger_c_text)[0])
 
-    m = re.search(r"^\s*#define\s+LOG_MESSAGE_SIZE\s+(\d+)\s*$",
+    m = re.search(r"^\s*#define\s+LOG_MESSAGE_SIZE\s+([0-9][0-9a-fA-FxXbB]*)\s*$",
                   logger_h_text, re.M)
     if not m:
         raise ToolError(
             "could not find '#define LOG_MESSAGE_SIZE <n>' in Logger.h -- the "
             "ceiling is read from source and must not be assumed")
-    size = int(m.group(1))
+    size = c_int_literal(m.group(1), "LOG_MESSAGE_SIZE in Logger.h")
 
     body = re.search(
         r"LogMessageFormatImpl\s*\([^)]*\)\s*\{(.*?)\n\}", logger_c_text, re.S)
@@ -588,7 +640,14 @@ def find_calls(masked, macros):
                     break
             i += 1
         if i >= n:
-            continue                      # unbalanced: nothing trustworthy here
+            # ⛔ #1110 r8/3: NOT a skip. The walk ran off the end without
+            # balancing -- e.g. a #if/#else inside the argument list opening
+            # parens on one arm -- and `continue` here made the call INVISIBLE,
+            # so a message that truncates was reported clean. "Could not
+            # evaluate" must never read as "clean"; args=None tells the caller
+            # to report it.
+            yield m.group(1), m.start(), None, None
+            continue
         inner = masked[open_paren + 1:i]
         yield m.group(1), m.start(), split_args(inner), masked[m.start():i + 1]
 
@@ -991,6 +1050,31 @@ def measure(fmt, annotation):
             continue
         key = length + conv
         if key not in WIDTHS:
+            # #1110 r8 review LOW: the remedy is CONVERSION-SPECIFIC, because
+            # "add it to WIDTHS" is actively bad advice for %f. A conservative
+            # constant for a double is about 310 characters -- DBL_MAX is
+            # ~1.8e308, so %f prints 309 integer digits plus '.' plus the
+            # precision -- which is larger than the whole LOG_MESSAGE_SIZE
+            # buffer. Anyone following the old text would add a small number
+            # that LOOKS conservative and is not, in the under-reporting
+            # direction. %e/%g are bounded (~14 chars) and %p is 8 hex digits
+            # on this target, so for those the original advice is right.
+            #
+            # ⚠ The word "maximum", not "worst case", is deliberate. The
+            # over-limit finding's reason reads "worst case N bytes > ceiling
+            # N", and this tool's output IS consumed by greps -- its own
+            # baseline is keyed on this text. Using the same phrase here made a
+            # plain `grep 'worst case'` count this finding as an over-limit
+            # one, which is exactly how a measurement acquires a false
+            # positive. Keep the two classes textually distinguishable.
+            if conv in "fF":
+                return None, (
+                    f"no conservative width for '{m.group(0)}' (conversion "
+                    f"'%{conv}') -- and do NOT add one to WIDTHS: a double's "
+                    f"maximum is ~310 characters (DBL_MAX is ~1.8e308, so "
+                    f"%{conv} prints ~309 integer digits plus the precision), "
+                    f"which is larger than the whole buffer. Annotate the site "
+                    f"with its real bound, or use %e/%g, which are bounded")
             return None, (f"no conservative width for '{m.group(0)}' "
                           f"(conversion '%{conv}') -- add it to WIDTHS in "
                           f"tools/lint/log_budget.py or annotate the site")
@@ -1081,6 +1165,14 @@ def scan_file(path, rel, macros, ceiling):
     # with many LOG_E sites.
     split = split_code_comments(spliced_lines)
     calls = list(find_calls(masked, macros))
+    # ⛔ #1110 r8/4: the ambiguity count must see EVERY log family, not only
+    # the scanned one. With `LOG_I("x"); /* log_budget: max=1 */ LOG_E("%s", s);`
+    # the count saw ONE call (the LOG_E), judged the bound unambiguous, and let
+    # an annotation written for the LOG_I silence the LOG_E's unresolvable %s.
+    # Measured. The MEASURED set stays `macros`; only the count widens.
+    all_families = dict(DEFAULT_MACROS)
+    all_families.update(OPTIONAL_MACROS)
+    all_families.update(macros)
     # How many log-macro calls share each line. An annotation on a line holding
     # MORE THAN ONE call cannot say which call it bounds, and the old behaviour
     # was to apply it to every one of them -- so a single `max=1` silenced a
@@ -1095,7 +1187,7 @@ def scan_file(path, rel, macros, ceiling):
         return spliced.count("\n", 0, p) + 1
 
     calls_on_sline = collections.Counter(
-        spliced_line(p) for _m, p, _a, _c in calls)
+        spliced_line(p) for _m, p, _a, _c in find_calls(masked, all_families))
     for macro, pos, args, _call in calls:
         line = pos_to_line(src, orig_pos, pos)   # for REPORTING: physical line
         sline = spliced_line(pos)                # for LOOKUP: logical line
@@ -1108,6 +1200,16 @@ def scan_file(path, rel, macros, ceiling):
                 f"in scope for it (on the line, or in the comment block above) "
                 f"-- it cannot say which call it bounds. Put each call on its "
                 f"own line",
+                ""))
+            continue
+        if args is None:
+            # #1110 r8/3: find_calls could not balance this call's parentheses.
+            found.append(Finding(
+                rel, line,
+                f"unresolvable: {macro}'s argument list is not balanced -- the "
+                f"parenthesis walk reached end-of-file. A preprocessor "
+                f"conditional inside the arguments does this. Reported rather "
+                f"than skipped: an unmeasured call used to read as a clean one",
                 ""))
             continue
         fmt_index = macros[macro]
@@ -1318,6 +1420,23 @@ SELF_TEST_CEILING = 125
 MICRO_SIGN = chr(0xB5)
 
 SELF_TEST_CASES = [
+    (
+        "r8/3: a preprocessor conditional unbalances the argument list",
+        'LOG_E("a message long enough to truncate once it is measured at all, '
+        'padded out past the ceiling so a SKIP is visibly wrong", x\n#if A\n'
+        '      , f(1\n#else\n      , g(2\n#endif\n',
+        1,
+        "the paren walk reaches EOF and used to `continue`, so the call was "
+        "SILENTLY SKIPPED -- 'could not evaluate' must never read as 'clean'",
+    ),
+    (
+        "r8/4: a LOG_I annotation must not bind to a LOG_E on the same line",
+        'LOG_I("x"); /* log_budget: max=1 */ LOG_E("%s", s);',
+        1,
+        "the ambiguity count saw only the SCANNED family, so one call was "
+        "counted, the bound was treated as unambiguous and it silenced the "
+        "LOG_E's unresolvable %s",
+    ),
     (
         "under budget",
         'LOG_E("PrepareStreamingBuffers: partition failed USB=%u WiFi=%u '
@@ -2107,6 +2226,12 @@ def self_test():
                 for f in got:
                     print(f"        got: {f.line}: {f.reason}")
 
+        # #1110 r8 review LOW: this count is DERIVED, not carried. It was a
+        # hardcoded '11/11' that the two cases added this round silently
+        # invalidated -- the same stale-ordinal defect the audit flagged in the
+        # Makefile. Incremented BEFORE each attempt, so the cases that expect a
+        # ToolError are counted too.
+        ceiling_checks = 0
         # The ceiling must come from source. Pin both that it is derived
         # correctly from the real reservations and that a shape it cannot read
         # fails loudly instead of falling back to a remembered 125.
@@ -2114,6 +2239,39 @@ def self_test():
         c = ("static int LogMessageFormatImpl(const char* format, va_list args)"
              "\n{\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, format, "
              "args);\n    size = min((LOG_MESSAGE_SIZE - 3), size);\n}\n")
+        # ⛔ r8/1: A COMMENT CONTINUED BY A BACKSLASH STILL COMMENTS THE NEXT
+        # LINE. C splices backslash-newline in phase 2, STRICTLY BEFORE
+        # comments are recognised in phase 3 -- splice_continuations()' own
+        # docstring says so and says every later stage must read its output.
+        # read_ceiling() was the one caller that masked RAW text, so the
+        # continuation line read as live code and its clamp set the ceiling.
+        cont_c = ("static int LogMessageFormatImpl(const char* f, va_list a)\n"
+                  "{\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, f, a);"
+                  "\n    // historical, superseded: \\\n"
+                  "    size = min((LOG_MESSAGE_SIZE - 13), size);\n"
+                  "    size = min((LOG_MESSAGE_SIZE - 3), size);\n}\n")
+        ceiling_checks += 1
+        got, _, _, r_cl = read_ceiling(h, cont_c)
+        if (got, r_cl) != (125, 3):
+            failures += 1
+            print(f"  FAIL [ceiling: continued comment]: derived {got} with "
+                  f"clamp reserve {r_cl}, expected 125 with 3 -- a COMMENTED "
+                  f"OUT clamp set the ceiling every message is measured "
+                  f"against")
+
+        # ⛔ r8/2: C INTEGER NOTATION. int('0200') is 200 in Python and 128 in
+        # C, and 0x80 is 128 -- a decimal-only read makes the ceiling too
+        # GENEROUS, which under-reports.
+        for lit, want in (("0200", 125), ("0x80", 125), ("128", 125)):
+            ceiling_checks += 1
+            got, sz, _, _ = read_ceiling(f"#define LOG_MESSAGE_SIZE {lit}\n", c)
+            if (got, sz) != (want, 128):
+                failures += 1
+                print(f"  FAIL [ceiling: C integer {lit}]: derived ceiling "
+                      f"{got} from size {sz}, expected {want} from 128 -- C "
+                      f"integer notation was not honoured")
+
+        ceiling_checks += 1
         ceiling, _, _, _ = read_ceiling(h, c)
         if ceiling != 125:
             failures += 1
@@ -2130,6 +2288,7 @@ def self_test():
                  ")\n{\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, f, a"
                  ");\n}\n")):
             try:
+                ceiling_checks += 1
                 read_ceiling(bad_h, bad_c)
             except ToolError:
                 continue
@@ -2148,6 +2307,7 @@ def self_test():
                    "t args)\n{\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE "
                    "- 2 - 10, format, args);\n    size = min((LOG_MESSAGE_SIZE"
                    " - 3 - 10), size);\n}\n")
+        ceiling_checks += 1
         got, _, r_vsn, r_clamp = read_ceiling(h, multi_c)
         if (got, r_vsn, r_clamp) != (115, 12, 13):
             failures += 1
@@ -2167,6 +2327,7 @@ def self_test():
                    "\n{\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, f,"
                    " a);\n    size = min((LOG_MESSAGE_SIZE - 3) - 10, size);"
                    "\n}\n")
+        ceiling_checks += 1
         got, _, r_v, r_c = read_ceiling(h, paren_c)
         if (got, r_v, r_c) != (115, 2, 13):
             failures += 1
@@ -2181,6 +2342,7 @@ def self_test():
                  "{\n    /* was vsnprintf(buffer, LOG_MESSAGE_SIZE - 99, f, a)"
                  "; */\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, f, "
                  "a);\n    size = min((LOG_MESSAGE_SIZE - 3), size);\n}\n")
+        ceiling_checks += 1
         got, _, r_v, _ = read_ceiling(h, cmt_c)
         if (got, r_v) != (125, 2):
             failures += 1
@@ -2196,6 +2358,7 @@ def self_test():
                  "{\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - (3 - 10),"
                  " f, a);\n    size = min((LOG_MESSAGE_SIZE - 3), size);\n}\n")
         try:
+            ceiling_checks += 1
             read_ceiling(h, neg_c)
             failures += 1
             print("  FAIL [ceiling: paren after a minus]: did not raise -- "
@@ -2219,6 +2382,7 @@ def self_test():
             bad = ("static int LogMessageFormatImpl(const char* f, va_list a)"
                    "\n{\n" + expr_c + "}\n")
             try:
+                ceiling_checks += 1
                 read_ceiling(h, bad)
             except ToolError:
                 continue
@@ -2345,7 +2509,8 @@ def self_test():
         print(f"\n::error::log_budget: {failures} self-test(s) failed")
         return 1
     print(f"log_budget self-test: {len(SELF_TEST_CASES)}/"
-          f"{len(SELF_TEST_CASES)} extraction cases + 11/11 ceiling cases + "
+          f"{len(SELF_TEST_CASES)} extraction cases + "
+          f"{ceiling_checks}/{ceiling_checks} ceiling cases + "
           f"{len(SELF_TEST_SUPPRESSION_CASES)}/"
           f"{len(SELF_TEST_SUPPRESSION_CASES)} suppression cases + "
           f"{len(SELF_TEST_WAIVER_CASES)}/{len(SELF_TEST_WAIVER_CASES)} "

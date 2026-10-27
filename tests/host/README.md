@@ -552,10 +552,24 @@ refusing a literal run not followed by `,` or `)` (a fragment would understate
 a message's length and pass everything), and pinning each site's conversion
 signature so a changed substitution count re-derives the worst case instead of
 being measured with stale arguments. It **fails the build** with a named
-diagnostic on any of it. It deliberately does not reuse
-`tools/lint/log_budget.py`'s parser: that tool is the static gate, and it
-*models* this truncation — the value of this test is that it does not share
-the model.
+diagnostic on any of it. It shares exactly one thing with
+`tools/lint/log_budget.py`, and the split is load-bearing in both directions
+(the unqualified “shares nothing with the gate” claim this paragraph used to
+make was refuted by the #1110 r4 audit, and the generator's own header records
+what it cost):
+
+* **The measurement is NOT shared, and must never be.** The gate *models*
+  truncation — fixed bytes plus a conservative per-specifier width. This
+  test's whole value is that it runs the real strings through the real
+  `vsnprintf` and the real clamp instead. Two independent models of one thing
+  is the point.
+* **The ceiling IS shared, and must be.** `LOG_MESSAGE_SIZE - 2` and
+  `min((LOG_MESSAGE_SIZE - 3), …)` are not a model of anything — they are two
+  integers transcribed out of `Logger.c`, so two readers can only agree or be
+  wrong. When the reader existed twice they disagreed by 10 bytes on
+  `min((LOG_MESSAGE_SIZE - 3) - 10, size)` with nothing comparing them, so the
+  independence bought divergence and no detection. `gen_1039_log_budget.py`
+  now imports it, and there is one of it.
 
 `test_1112_scan_list_snapshot_race.c` covers `MC12b_ComputeScanList()`
 (`HAL/ADC/MC12bADC.c`) and the mask form of `ADCChanEnableSetClaimed()`

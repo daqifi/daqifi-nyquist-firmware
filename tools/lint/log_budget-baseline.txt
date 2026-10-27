@@ -21,7 +21,7 @@ firmware/src/Util/SpiBusHealth.c :: unresolvable: %s with no /* log_budget: max=
 firmware/src/app_freertos.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD reply] %s timeout: sent %u/%u bytes after %u retries
 firmware/src/app_freertos.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] Graceful shutdown timeout after %u ms: %s
 firmware/src/services/SCPI/SCPIADC.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: %s: channel %d out of range (max 255)
-firmware/src/services/SCPI/SCPIDAC.c :: no conservative width for '%.2f' (conversion '%f') -- add it to WIDTHS in tools/lint/log_budget.py or annotate the site :: DAC_VoltageToCounts: Invalid hardwareFullScale (%.2f), returning 0
+firmware/src/services/SCPI/SCPIDAC.c :: no conservative width for '%.2f' (conversion '%f') -- and do NOT add one to WIDTHS: a double's maximum is ~310 characters (DBL_MAX is ~1.8e308, so %f prints ~309 integer digits plus the precision), which is larger than the whole buffer. Annotate the site with its real bound, or use %e/%g, which are bounded :: DAC_VoltageToCounts: Invalid hardwareFullScale (%.2f), returning 0
 firmware/src/services/SCPI/SCPIInterface.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: %s refused (#850/#977): another session start or config change is in flight. Retry.
 firmware/src/services/SCPI/SCPIInterface.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: SCPI: '%s' is registered but not implemented
 firmware/src/services/SCPI/SCPIInterface.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: SD log arm refused (#942): %s\r\n

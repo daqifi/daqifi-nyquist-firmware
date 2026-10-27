@@ -3287,6 +3287,21 @@ $(TEAR904_BIN): test_904_cal_pair_tear.c test_framework.h cal_order_904.awk cal_
 # ABSENCE passes VACUOUSLY on that false 0 -- is kept in cal_order_904.awk's
 # header, where the definition-vs-prototype rule is actually implemented.
 
+# ⛔ #1110 r8 review LOW: THE SPELLED-OUT COUNTS ABOVE ARE HISTORICAL, AND
+# NONE OF THEM IS A CLAIM ABOUT THIS LIST. Each belongs to one past merge and
+# was true at that merge -- TWENTY-FOUR, TWENTY-FIVE, TWENTY-SIX, TWENTY-SEVEN
+# are a lineage, not a running total, and the block already records twice that
+# both sides' counts were stale for the result. Read as a current total the
+# most recent one is simply false: `make -n run` expands to 31 today.
+#
+# So the live number is DERIVED ON DEMAND and deliberately written nowhere:
+#
+#     make -n run | grep -c '^\./run_'
+#
+# and the ordinals are superseded for the reason this block gives further up --
+# each branch numbered its own collisions, so two merges claimed the same
+# ordinal and whichever landed second was wrong. The LIST is the record.
+# Do not add another count here; it is stale the next time anyone merges.
 run: $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(ARM_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) \
      $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) $(NAME_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) \
      $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
