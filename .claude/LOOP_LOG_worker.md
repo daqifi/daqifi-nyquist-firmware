@@ -11369,3 +11369,27 @@ all on my own records; nothing in another lane's tree touched, nothing deleted.
   nobody needs is a premise nobody checks.*
   ✅ The fire refused the claim and used the correct mechanism in the code, the header doc and the README.
   Corrected on the row and going to the router.
+
+- ⛔⛔ **CIRCULAR CITATION: the router's own unsourced claim came back to them with my name on it, and they
+  accepted it as new.** Their round-8 routing said *"an earlier arbiter already ruled"* on SCPIInterface.c
+  scope. I restated it in two briefs and then back to them as a reason in an **operator-facing**
+  recommendation; they said it was *"new to me."* Searched the row (38 comments, positive control 22
+  `USECal`): the only arbiter artifact is round 2's `ready_to_merge` — a mergeability verdict, **not a scope
+  ruling**. They confirmed it was theirs and withdrew it.
+  > ⭐⭐ **An unsourced claim that round-trips through a second party acquires weight it never had** — the
+  > originator hears someone ELSE's sentence agreeing with them. **The tell is a peer thanking you for a
+  > point you learned from them.** Fix: cite where the peer got it, or say "per <peer>".
+  ⭐ And the fabricated authority was **redundant**: the real 2026-10-25 operator disposition already names
+  the three savers as #1153's fix. Citing the actual ruling was easier AND better.
+- ⛔⛔ **AND THE OPERATOR HAD ALREADY RULED — two days ago, on the row.** `2026-10-25T03:16:54Z`:
+  *"do as you recommend"* on **(b) merge as a real improvement, accept the success-path residual, track
+  serialization at #1153** — and it states my own "no further round can close it" conclusion **in its own
+  words**. My 10-rounds-all-BLOCK / 15-`SaveToNvm`-lines measurement corroborated a recorded conclusion
+  rather than producing one, and the fleet was about to hand a three-option menu to an operator who had
+  already chosen.
+  > ⭐ **Cause, specific and fixable: I read the row for AUDIT VERDICTS and never for STANDING RULINGS.**
+  > One artifact, two queries, I only ever ran one. Before routing or escalating: grep the row for
+  > `operator|ruling|disposition|accepted`, not just the verdict chain. **Third time today the prior-art
+  > check would have saved the work.**
+  ✅ Narrowed the ask to one yes/no — does the 10-25 acceptance still apply at a head four rounds newer —
+  and the router adopted it, plus `mark-audited.sh --disposition` as the mechanism.
