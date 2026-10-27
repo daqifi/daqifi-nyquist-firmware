@@ -249,6 +249,85 @@ extern "C" {
     bool daqifi_settings_LoadADCCalSettings(DaqifiSettingsType type, AInRuntimeArray* channelRuntimeConfig);
 
     /**
+     * Answers whether an ADC calibration bank is loadable, WITHOUT installing
+     * it into any runtime array.
+     *
+     * This is the first half of daqifi_settings_LoadADCCalSettings: that
+     * function validates the stored record (daqifi_settings_LoadFromNvm) and
+     * resolves the bank, then copies CalM/CalB into the caller's array in a
+     * loop that cannot fail. Splitting the validation out lets a caller prove
+     * a bank is good BEFORE it mutates anything, so the runtime install is
+     * never attempted unless the bank was already proven loadable -- THIS
+     * COMMAND'S OWN failure path cannot leave a half-applied install.
+     *
+     * NOT a guarantee that the runtime array and NVM stay in agreement in
+     * general: it proves only that the bank was loadable at the moment it
+     * looked. An unclaimed saver, or a save that reports success when it did
+     * not land, can still make them disagree afterwards -- that is the
+     * accepted #1153 residual, which this function does not close.
+     *
+     * Deliberately a separate function rather than a NULL `channelRuntimeConfig`
+     * overload on LoadADCCalSettings: a NULL passed by accident would silently
+     * skip the install and still return true, which is the silent-permissive
+     * shape this file should not grow.
+     *
+     * Its DaqifiSettings scratch lives in this function's own frame, so a
+     * caller that validates and then installs pays max(), not sum(), of the two
+     * frames -- unlike a scratch buffer held in the caller across both steps,
+     * which costs MAX_AIN_RUNTIME_CHANNEL*2 doubles (768 B) for the whole call
+     * including every successful one.
+     *
+     * @param type The calibration bank to check (FactAInCalParams or
+     *             UserAInCalParams; any other type answers false)
+     * @return True if the bank's stored record validates and the type names a
+     *         calibration bank, false otherwise
+     */
+    bool daqifi_settings_ValidateADCCalBank(DaqifiSettingsType type);
+
+    /**
+     * Answers whether the COMMITTED top-level record in NVM already equals the
+     * record a caller intended to persist.
+     *
+     * Exists because daqifi_settings_SaveToNvm can report failure over a write
+     * that LANDED: it stages into the shared global gTempFflashBuffer and
+     * nvm_WriteRowtoAddr's success test is a readback comparison against that
+     * same buffer, so any concurrent settings writer on another transport can
+     * make the comparison fail without touching the flash. This function reads
+     * the medium independently -- LoadFromNvm into this function's own local,
+     * never through the staging buffer -- and requires checksum validation, the
+     * expected top-level type (which rides out of LoadFromNvm uncovered by the
+     * checksum), and equality of the SELECTOR FIELD `calVals`.
+     *
+     * ⛔ Deliberately NOT whole-payload equality. Other fields of this record
+     * have other legitimate owners, and SaveToNvm auto-captures
+     * voltagePrecision and friendlyDeviceName on every save, so a payload
+     * comparison answers a strictly stronger question than the caller asks and
+     * is false whenever anyone else writes.
+     *
+     * ⛔ THIS IS NOT TRANSACTION SAFETY, and a caller must not claim it is.
+     * Another top-level writer can overwrite the record after this returns; a
+     * save prepared earlier elsewhere can land after the caller has returned;
+     * the caller's own subsequent work may still re-read other pages; and a
+     * save that HANGS never reaches this check at all. What it closes is the
+     * specific demonstrated interleaving: a readback comparison corrupted by a
+     * concurrent writer, over a write that succeeded.
+     *
+     * @param expected The record the caller handed to SaveToNvm. Only its
+     *                 `settings.topLevelSettings.calVals` field is the
+     *                 comparand -- see above (and
+     *                 daqifi_settings.c:424-437, the implementation) for why
+     *                 a whole-payload compare is deliberately NOT used.
+     * @return True only if a valid top-level record is committed, its
+     *         stored type is DaqifiSettings_TopLevelSettings, and its
+     *         `calVals` equals `expected`'s. False on NULL, on no valid
+     *         record, on an unexpected stored type, or on a DIFFERENT
+     *         `calVals`. Every OTHER payload field (voltagePrecision,
+     *         friendlyDeviceName, ...) is NOT compared, by design, so a
+     *         difference there does not make this return false.
+     */
+    bool daqifi_settings_TopLevelMatchesCommitted(const DaqifiSettings* expected);
+
+    /**
      * Saves the ADC calibration settings
      * @param type The type of settings to save
      * @param channelRuntimeConfig Channel config from which to save the settings

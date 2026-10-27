@@ -394,6 +394,67 @@ bool daqifi_settings_LoadADCCalSettings(DaqifiSettingsType type, AInRuntimeArray
     return status;
 }
 
+bool daqifi_settings_TopLevelMatchesCommitted(const DaqifiSettings* expected)
+{
+    DaqifiSettings committed;
+
+    if (expected == NULL) {
+        return false;
+    }
+
+    /* Read the medium independently. LoadFromNvm copies flash into its OWN
+     * local and validates that copy, so nothing here goes through
+     * gTempFflashBuffer -- which is the shared buffer whose corruption makes
+     * SaveToNvm report a failure over a write that landed. `committed` lives in
+     * THIS frame and expires on return, so no snapshot is held across the
+     * caller's subsequent work. */
+    memset(&committed, 0, sizeof(DaqifiSettings));
+    if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings,
+                                     &committed)) {
+        return false;                   /* no valid record at that address */
+    }
+
+    /* The stored `type` rides out of LoadFromNvm UNCOVERED by the checksum --
+     * that is #1152's whole premise -- so it is checked explicitly here rather
+     * than trusted because the payload validated. */
+    if (committed.type != DaqifiSettings_TopLevelSettings) {
+        return false;
+    }
+
+    /* ⛔ THE SELECTOR FIELD ALONE, not the payload. Round 5 compared
+     * sizeof(TopLevelSettings) -- all seven fields -- and the r5 audit showed
+     * that makes every other legitimate writer a false negative: a concurrent
+     * SYST:DEVICE:NAME:SAVE or CONF:VOLT:SAVE changes friendlyDeviceName or
+     * voltagePrecision (SaveToNvm AUTO-CAPTURES both on every TopLevelSettings
+     * save), the comparison fails over a record whose calVals is exactly what
+     * was intended, and the caller gives up without installing -- reinstating
+     * the very divergence this recovery exists to prevent.
+     *
+     * The recovery's question is "did the selector I intended actually land?".
+     * "Is the entire payload unchanged?" is a strictly stronger question, it is
+     * not the one being asked, and it is FALSE whenever anyone else writes. */
+    return (committed.settings.topLevelSettings.calVals ==
+            expected->settings.topLevelSettings.calVals);
+}
+
+bool daqifi_settings_ValidateADCCalBank(DaqifiSettingsType type)
+{
+    DaqifiSettings tmpSettings;
+    memset(&tmpSettings,0,sizeof(DaqifiSettings));
+    if(!daqifi_settings_LoadFromNvm(type, &tmpSettings)) return false;
+
+    /* Admissibility mirrors daqifi_settings_LoadADCCalSettings's switch above:
+     * only these two types name a calibration bank it can resolve. Stated as a
+     * predicate rather than sharing that switch because the switch's job there
+     * is to pick a pointer, which this function has no use for. If a third
+     * cal bank is ever added, LoadADCCalSettings gains a case and this does
+     * not -- so this answers false for a bank that function would accept, and
+     * the caller fails CLOSED. That is the safe direction for a drift, but it
+     * is a drift: add the type here too. */
+    return (type == DaqifiSettings_FactAInCalParams ||
+            type == DaqifiSettings_UserAInCalParams);
+}
+
 bool daqifi_settings_SaveADCCalSettings(DaqifiSettingsType type, AInRuntimeArray* channelRuntimeConfig)
 {
     bool status = true;
