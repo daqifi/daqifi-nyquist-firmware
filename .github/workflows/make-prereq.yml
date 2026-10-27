@@ -1,0 +1,67 @@
+name: make-prereq
+
+# #1170: a guard whose PREREQUISITE expanded to nothing still looks healthy.
+#
+# make expands a prerequisite list when it READS the rule, so a variable
+# defined LATER in the file is empty at that point and the dependency silently
+# disappears. The recipe is unaffected — recipe lines expand at execution time
+# — so every grep shows the right path and the guard, when it does run, is
+# correct. What breaks is that an edit to the guarded source reuses the stale
+# binary and the guard never runs at all.
+#
+# ⛔ And the obvious check is a clean-bill generator: `make -np`'s VARIABLE DUMP
+# runs after the whole file is parsed, so it prints the variable as a perfectly
+# good path while the rule it feeds has no such dependency. Measured on fw#904
+# before its fix. Only the expanded RULE line is evidence, which is what the
+# checker reads.
+#
+# Trigger scope mirrors log-budget.yml and cppcheck.yml: the file that is
+# measured, the tool itself, and this workflow. Nothing else can change a
+# verdict here.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tests/host/Makefile'
+      - 'tools/lint/make_prereq_audit.py'
+      - '.github/workflows/make-prereq.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tests/host/Makefile'
+      - 'tools/lint/make_prereq_audit.py'
+      - '.github/workflows/make-prereq.yml'
+
+permissions:
+  contents: read   # checkout + a local Python tool, no writes
+
+jobs:
+  make-prereq:
+    name: Makefile guard prerequisites
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ⛔ THIS STEP IS NOT OPTIONAL, and it runs FIRST on purpose.
+      #
+      # The checker's original positive control was fw#904's real gap, and that
+      # gap is fixed — so the live tree contains no known positive, and a zero
+      # from the audit below is unfalsifiable on its own. The self-test carries
+      # its own two-arm control (a rule it MUST flag and a correct twin it MUST
+      # NOT), plus a cross-check that `make` itself agrees the modelled defect
+      # is real. Running it as a separate visible step means a broken checker
+      # reports as a broken checker rather than as a clean tree.
+      - name: Self-test the checker
+        run: python3 tools/lint/make_prereq_audit.py --self-test
+
+      # Exit 0 = no rule names a prerequisite variable that is undefined or
+      #          defined after the rule.
+      # Exit 1 = findings, each with the rule line, the variable, and where it
+      #          was defined.
+      # Exit 2 = the tool could not run (no such Makefile). Never silently
+      #          green: a checker pointed at a file with no guard rules reports
+      #          0 findings and looks like a pass, so a missing path is an
+      #          error rather than an empty success.
+      - name: Audit guard prerequisites
+        run: python3 tools/lint/make_prereq_audit.py

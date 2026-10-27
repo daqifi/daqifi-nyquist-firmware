@@ -20,6 +20,27 @@ list). Before #946 this sentence described the exit-code *contract* only —
 no workflow anywhere in the repo actually invoked `make run`, for any of the
 three tests here, not just the one #946 added.
 
+**A second gate on this Makefile, as of #1170's tooling PR**:
+`.github/workflows/make-prereq.yml` runs `tools/lint/make_prereq_audit.py`,
+which asks whether each guard rule's prerequisites actually *name* the source
+it guards. A prerequisite list is expanded when make **reads** the rule, so a
+variable defined later in this file is empty at that point and the dependency
+silently disappears — the recipe still greps the right path, the guard is still
+correct when it runs, and it simply stops running after an edit. ⛔ `make -np`'s
+*variable dump* is not evidence either way: it is printed after the whole file
+is parsed, so it shows a perfectly good path for a rule that has no such
+dependency. Only the expanded **rule** line is evidence.
+
+That gate runs its own `--self-test` first, as a separate step, because the
+checker's original positive control (fw#904's real gap) has since been fixed —
+so a zero from the audit is unfalsifiable unless the instrument has just been
+shown to fire.
+
+⚠ It does **not** check whether a rule declares `$(RECIPES)` (this Makefile
+itself). That is the separate "is this guard ever *re-evaluated*?" question,
+and `run_947_tests` is currently the only one of the `run_*` rules omitting it
+— see issue #1170 item (a), a deliberate follow-up rather than part of that PR.
+
 ## What's covered
 
 `test_circularbuffer.c` exercises `firmware/src/Util/CircularBuffer.c`:
