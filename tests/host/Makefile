@@ -3450,6 +3450,52 @@ $(SUMBUDGET_BIN): test_1055_stream_end_summary_budget.c test_framework.h \
 	       echo "       its emit and a restart drops the owed summary; more than"; \
 	       echo "       1 means a new path skips the wait (#1055 r6)."; \
 	       exit 1; }
+	@# ⛔ #1055 r7 PIN E: THE HOLD PREDICATE IS THE SESSION LATCH.
+	@# r6 keyed it on `ActiveInterface == SD || UsbAndSd`, which misses
+	@# `STR:INT 0` (USB) with SD enabled and a filename -- a session that DOES
+	@# log to SD, got no hold, and lost a stop-time discard. Both arms: the
+	@# derivation must read gSdExpectedThisSession AND must not mention
+	@# ActiveInterface, because a predicate that ORs the two back together
+	@# reintroduces r6's other error (iface == SD with the interface disabled
+	@# writes nothing, so there is nothing to wait for).
+	@grep -qE '^[ \t]*const bool sessionWasSdLogging = gSdExpectedThisSession;' $(STREAMING_SRC) \
+	  || { echo "ERROR: $(STREAMING_SRC): the SD hold predicate is no longer"; \
+	       echo "       gSdExpectedThisSession (#1055 r7). An ActiveInterface"; \
+	       echo "       test cannot see USB streaming that also logs to SD."; \
+	       exit 1; }
+	@awk '/const bool sessionWasSdLogging/ && /ActiveInterface/{n++} \
+	      END{exit (n+0)==0 ? 0 : 1}' $(STREAMING_SRC) \
+	  || { echo "ERROR: $(STREAMING_SRC): the SD hold derivation mentions"; \
+	       echo "       ActiveInterface again (#1055 r7). The latch already"; \
+	       echo "       folds in `iface != WiFi`; re-adding an interface test"; \
+	       echo "       can only make the predicate wrong again."; \
+	       exit 1; }
+	@# ⛔ #1055 r7 PIN F: THE LATCH FORMULA IS THE ONE THE TEST MODELS.
+	@# test_1055 copies `enable && mode == WRITE && iface != WiFi` because
+	@# streaming.c is not host-compilable. All three terms are checked
+	@# INDEPENDENTLY -- mutating any one flips exactly its own digit (verified
+	@# 2026-10-26), so a term silently dropped cannot hide behind the others.
+	@# ⚠ `[\r\n \t]`, NOT `[\n \t]`: the iface term wraps onto the next line
+	@# and these sources are CRLF, so the joined buffer carries a bare \r at the
+	@# wrap. Without \r in the class this pin read 110 on CLEAN source. Caught
+	@# only by running it against the real tree -- the version developed outside
+	@# the Makefile had been fed `sed 's/\r$$//'` output, so it passed there.
+	@f=`awk '/gSdExpectedThisSession[ \t]*=/{inasg=1} \
+	         inasg{buf = buf " " $$0} \
+	         inasg && /;/{inasg=0} \
+	         END{ e=(buf ~ /sdCfg->enable/); \
+	              w=(buf ~ /sdCfg->mode[ \t]*==[ \t]*SD_CARD_MANAGER_MODE_WRITE/); \
+	              i=(buf ~ /ActiveInterface[ \t]*!=[\r\n \t]*StreamingInterface_WiFi/); \
+	              printf "%d%d%d\n", e, w, i }' $(STREAMING_SRC)`; \
+	 test "$$f" = "111" \
+	  || { echo "ERROR: $(STREAMING_SRC): gSdExpectedThisSession's formula changed"; \
+	       echo "       (enable/mode-WRITE/iface-not-WiFi = $$f, expected 111)."; \
+	       echo "       test_1055_stream_end_summary_budget.c carries a COPY of it"; \
+	       echo "       as sd_hold_expected() and asserts both the SD-only and the"; \
+	       echo "       USB-plus-SD-logging cases against it. A formula change here"; \
+	       echo "       leaves that test modelling a predicate the firmware no"; \
+	       echo "       longer uses -- re-derive both together."; \
+	       exit 1; }
 	$(CC) $(CFLAGS) -DFW_LOG_MESSAGE_SIZE=$(LOG_MSG_SIZE) -o $(SUMBUDGET_BIN) test_1055_stream_end_summary_budget.c
 
 clean:

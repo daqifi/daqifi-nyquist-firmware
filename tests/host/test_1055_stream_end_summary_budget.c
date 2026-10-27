@@ -65,6 +65,37 @@
     "Stream end (post-grace) bytes lost: USB=%u WiFi=%u SD=%u"
 #define FMT_SAMPLES \
     "Stream end (post-grace) samples lost: encFail=%u encDrop=%u dioDrop=%u"
+/* ------------------------------------------------------------------ *
+ * #1055 r7: the SD-hold predicate, modelled.
+ *
+ * streaming.c cannot be host-compiled (FreeRTOS, Harmony, the board graph),
+ * so the latch formula is COPIED here and the Makefile pins the real one --
+ * the same drift-guard arrangement the formats above use. The formula is
+ * gSdExpectedThisSession's, computed once per session at START:
+ *
+ *     enable && mode == SD_CARD_MANAGER_MODE_WRITE && iface != WiFi
+ *
+ * r6 instead keyed the hold on `iface == SD || iface == UsbAndSd`, which is
+ * the whole finding: it misses USB streaming that ALSO logs to SD, and it
+ * wrongly INCLUDES iface == SD when the interface is disabled. Both arms are
+ * asserted below, because either alone passes a wrong predicate.
+ * ------------------------------------------------------------------ */
+enum { IFACE_USB = 0, IFACE_WIFI = 1, IFACE_SD = 2, IFACE_USB_AND_SD = 3 };
+enum { SD_MODE_NONE = 0, SD_MODE_WRITE = 1 };
+
+static bool sd_hold_expected(int iface, bool enable, int mode)
+{
+    return enable && (mode == SD_MODE_WRITE) && (iface != IFACE_WIFI);
+}
+
+/* What r6 shipped, kept ONLY as the negative control: the test must show the
+ * two predicates DISAGREE on the reported case, or it is not testing the fix. */
+static bool sd_hold_r6(int iface, bool enable, int mode)
+{
+    (void)enable; (void)mode;
+    return (iface == IFACE_SD) || (iface == IFACE_USB_AND_SD);
+}
+
 /* #1055 r6: the fourth line. Printed when the bounded SD hold expires with the
  * manager still off-idle, OUTSIDE the hadDrops gate -- an unfinished teardown
  * means "no drops" is unobserved rather than established, so this one must be
@@ -308,6 +339,37 @@ TEST(every_line_says_post_grace_on_its_own)
     ASSERT_TRUE(strstr(FMT_SD_INCOMPLETE, "Stream end") != NULL);
 }
 
+/* ⛔ #1055 r7: BOTH CASES THE AUDIT ASKED FOR, plus the disagreement that
+ * shows this test could have failed. */
+TEST(the_sd_hold_covers_usb_plus_sd_logging_not_just_the_sd_interface)
+{
+    /* (1) SD-only streaming that logs: holds. r6 got this one right, which is
+     * exactly why r6 looked fine. */
+    ASSERT_TRUE(sd_hold_expected(IFACE_SD, true, SD_MODE_WRITE));
+
+    /* (2) THE REPORTED CASE -- `STR:INT 0` (USB) with the SD interface enabled
+     * and a filename set. This session writes to SD, so its teardown can
+     * report a discard, so it MUST hold. */
+    ASSERT_TRUE(sd_hold_expected(IFACE_USB, true, SD_MODE_WRITE));
+    /* ...and the r6 predicate does NOT, which is the defect. If this ever
+     * stops being a disagreement, the control is dead and so is case (2). */
+    ASSERT_TRUE(sd_hold_r6(IFACE_USB, true, SD_MODE_WRITE) == false);
+
+    /* (3) USB+SD concurrent: holds under both. */
+    ASSERT_TRUE(sd_hold_expected(IFACE_USB_AND_SD, true, SD_MODE_WRITE));
+
+    /* (4) The other direction r6 got wrong: ActiveInterface SD with the
+     * interface DISABLED writes nothing, so there is nothing to wait for. The
+     * new predicate declines; r6's would have held for 5 s pointlessly. */
+    ASSERT_TRUE(sd_hold_expected(IFACE_SD, false, SD_MODE_WRITE) == false);
+    ASSERT_TRUE(sd_hold_r6(IFACE_SD, false, SD_MODE_WRITE) == true);
+
+    /* (5) Negatives: WiFi never logs to SD (SPI bus conflict), and a session
+     * whose SD mode is not WRITE produces no teardown report. */
+    ASSERT_TRUE(sd_hold_expected(IFACE_WIFI, true, SD_MODE_WRITE) == false);
+    ASSERT_TRUE(sd_hold_expected(IFACE_USB, true, SD_MODE_NONE) == false);
+}
+
 int main(void)
 {
     printf("=== #1055: session-end loss summary vs Logger's content ceiling ===\n");
@@ -318,5 +380,6 @@ int main(void)
     RUN(eos_is_not_reported_as_a_lost_sample);
     RUN(every_line_says_post_grace_on_its_own);
     RUN(the_incomplete_teardown_line_reports_only_the_wait);
+    RUN(the_sd_hold_covers_usb_plus_sd_logging_not_just_the_sd_interface);
     return TEST_SUMMARY();
 }

@@ -280,12 +280,20 @@ static volatile bool gSessionRecordPending = false;
  * Two independent corrections, because either alone still fails:
  *   - SET IT ONLY FOR AN SD-LOGGING SESSION. A session that never wrote to SD
  *     has no teardown report to wait for, so the hold is pure risk there.
- *   - BOUND IT ANYWAY. ActiveInterface can say SD while the SD interface is
- *     disabled, and a genuinely SD-logging session can still park its manager
- *     off-idle. After STREAMING_SD_HOLD_MAX_MS the record is emitted with the
- *     teardown labelled incomplete -- a summary that states what it is missing
- *     beats both a short one that lies by omission and no summary at all.
- * The condition removes the common case; the bound removes "forever". */
+ *     #1055 r7: the predicate is gSdExpectedThisSession, the latch START
+ *     computes -- NOT an ActiveInterface test, which is what r6 used and which
+ *     missed USB streaming that ALSO logs to SD. See the read site in
+ *     Streaming_Stop() for why the latch is right in both directions.
+ *   - BOUND IT ANYWAY. The predicate decides whether to wait at all; it cannot
+ *     promise the wait ENDS. A genuinely SD-logging session can still park its
+ *     manager off-idle. After STREAMING_SD_HOLD_MAX_MS the record is emitted
+ *     with the teardown labelled incomplete -- a summary that states what it is
+ *     missing beats both a short one that lies by omission and no summary at
+ *     all.
+ * The condition removes the common case; the bound removes "forever". r7
+ * narrowed the condition and left the bound untouched, which is the point of
+ * having both: a wrong predicate is then a LATENCY bug rather than a lost
+ * summary, and r6's own defect would have been bounded by it. */
 static volatile bool gSessionRecordSdHold = false;
 /* When the hold was raised, for the bound above. Wrap-safe: compared only as
  * an unsigned difference, like Streaming_GraceExpiredAt(). */
@@ -2674,14 +2682,36 @@ static void Streaming_Stop(void) {
          * been cleared or advanced. Streaming_GetStats() takes its own
          * critical section and FreeRTOS nests them, so this is one short
          * region: a struct copy plus three counters. */
-        /* #1055 r6: the hold applies only to a session that could have an SD
-         * teardown report coming. Same predicate shape the #397 transport
-         * liveness check uses, so the two cannot disagree about what "an SD
-         * session" is. Read before the critical section: a config load, not
-         * shared mutable state this region protects. */
-        const bool sessionWasSdLogging =
-                (gpRuntimeConfigStream->ActiveInterface == StreamingInterface_SD ||
-                 gpRuntimeConfigStream->ActiveInterface == StreamingInterface_UsbAndSd);
+        /* ⛔ #1055 r7: THE PREDICATE IS THE SESSION LATCH, NOT ActiveInterface.
+         *
+         * r6 derived this from ActiveInterface == SD || UsbAndSd, which MISSES
+         * the case gSdExpectedThisSession exists for: `STR:INT 0` (USB) with
+         * the SD interface enabled and a filename set ALSO logs to SD --
+         * SCPI_StartStreaming's own arm computes sdLoggingRequested as
+         * `iface != WiFi && enable && file[0] != 0`. Such a session got NO
+         * hold, so the SD task emitted before the teardown reported, and a
+         * stop-time discard was lost. The flag's own declaration says exactly
+         * this: "Only the USB+SD override path needs it -- an ActiveInterface
+         * of SD or UsbAndSd is already an unconditional expectation." I read
+         * the half that was already covered and missed the half it was for.
+         *
+         * The latch is strictly more accurate in BOTH directions, which is why
+         * no ActiveInterface term survives here:
+         *   - broader where it matters: USB + SD logging now holds;
+         *   - NARROWER where r6 was wrong the other way: ActiveInterface == SD
+         *     with the interface disabled wrote nothing, so there is no
+         *     teardown report to wait for and the latch correctly says false.
+         *
+         * Valid at stop, which is the property this use needs: it is assigned
+         * on every real start (inside `if (IsEnabled)`) and deliberately never
+         * cleared -- "a session latch that stays true after the stream ends"
+         * (sd_card_manager.c). If SD is disabled mid-session the latch stays
+         * true, which is the conservative answer here: SD was written, so a
+         * teardown may still have discards to report.
+         *
+         * Read before the critical section: a volatile bool load, not shared
+         * mutable state this region protects. */
+        const bool sessionWasSdLogging = gSdExpectedThisSession;
         /* Task context at every caller (USB SCPI pri 7, WifiTask pri 2,
          * streaming_Task pri 6), so the plain tick read is the correct one --
          * see the FromISR note on the grace-window helpers. */
@@ -2689,8 +2719,9 @@ static void Streaming_Stop(void) {
         taskENTER_CRITICAL();
         Streaming_GetStats(&gSessionRecord);
         gSessionRecordPending = true;
-        gSessionRecordSdHold = sessionWasSdLogging;  /* #1055 r6: NOT uncondi-
-                                                      * tional -- see decl */
+        gSessionRecordSdHold = sessionWasSdLogging;  /* r6: not uncondi-
+                                                      * tional; r7: from
+                                                      * the latch */
         gSessionRecordHoldSince = stoppedAt;
         taskEXIT_CRITICAL();
     }
@@ -3644,27 +3675,27 @@ void streaming_Task(void) {
                   (unsigned)gTransportGraceSec);
             pRunTimeStreamConf->IsEnabled = false;
             Streaming_Stop();
-            /* #982/Qodo: do NOT leave this to Streaming_Start()'s backstop.
-             * That backstop only fires at the NEXT session's start -- if the
-             * operator never restarts streaming after an auto-stop (a
-             * realistic outcome: auto-stop means every transport looked
-             * dead, so nobody may be watching to restart it), the summary
-             * would be withheld indefinitely instead of one stop-time SD
-             * wait late. Emit immediately here instead, same as the
-             * pre-#982 behavior for this path -- this path does not go
-             * through SCPI_PerformStreamingStop's bounded SD-idle wait, so
-             * (like before this PR) it can still miss stop-time SD-drain
-             * loss for an SD-active session; that is unchanged from
-             * pre-#982 for THIS path and is not a new regression. What
-             * would be new, and is what this call prevents, is indefinite
-             * silence. */
-            /* #1055 r6: the forced call here is GONE. This path has no
-             * SD-idle wait, which is why r4 forced it -- but app_SDCardTask
-             * now polls the unforced emitter every iteration, and the hold is
-             * bounded, so the summary arrives here without a forced consume
-             * that could discard a draining teardown's reports. The
-             * "indefinite silence" this once prevented is prevented by the
-             * bound instead. */
+            /* ⛔ #1055 r6/r7: THERE IS NO EMIT CALL ON THIS PATH ANY MORE, and the
+             * paragraph that used to be here described one.
+             *
+             * It read "Emit immediately here instead ... what this call prevents is
+             * indefinite silence" -- written when #982 added a forced emit at this
+             * point, because the auto-stop has no SD-idle wait and
+             * Streaming_Start()'s backstop only fires at the NEXT session's start,
+             * which may never come (auto-stop means every transport looked dead, so
+             * nobody may be watching to restart it).
+             *
+             * r6 removed that call, and the concern is now handled where it belongs
+             * rather than here: app_SDCardTask polls the unforced emitter every
+             * iteration and the hold is bounded, so this session's summary is emitted
+             * by the POLL -- after the teardown drains, or after
+             * STREAMING_SD_HOLD_MAX_MS with the teardown labelled incomplete.
+             *
+             * Nothing is emitted at this line, and nothing here should be read as
+             * immediate: Streaming_Stop() above leaves the record pending and the
+             * poll is what consumes it. That also retires this path's old accepted
+             * cost -- it used to be allowed to miss stop-time SD-drain loss, and now
+             * it waits for that loss like every other path. */
             goto iter_done;
         }
 
