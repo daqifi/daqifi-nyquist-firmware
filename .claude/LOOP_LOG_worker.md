@@ -11442,3 +11442,23 @@ all on my own records; nothing in another lane's tree touched, nothing deleted.
   prediction about which test would fire. ⭐ Note the shift though: the first five were claims about CODE
   (premises, mechanisms, line numbers); this one was a claim about TEST BEHAVIOUR, which is cheaper to be
   wrong about and which the fire is better placed to check than I am.
+
+- ⭐⭐ **RAN THE REPO-WIDE SWEEP AND IT FOUND A THIRD COPY THAT IS *TRUE* — the router's instruction as
+  given would have produced a wrong edit.** `test_1152:632` carries "a bank that fails validation touches
+  nothing at all", the same words round 12 corrected as FALSE in `SCPIADC.c`. But `:632` describes the
+  **`USECAL_R2` historical shape**, and the model clears raw mode early only for R8/R9/R10 — so under R2 a
+  validation failure really did touch nothing. The production copy was false *precisely because* it
+  described production.
+  > ⭐⭐ **A PHRASE MATCH IS NOT A DEFECT MATCH.** Grepping a corrected phrase finds **candidates**; only
+  > reading each in context finds **defects**. A sweep that edits every hit converts true comments into
+  > false ones — the inverse of the exercise, done with its own tooling. Told the fire explicitly to leave
+  > `:632` and `:1980` (the latter a deliberate *quoted* record of r9's wrong assumption).
+  ⭐ **First of these seven I caught BEFORE it shipped**, and the reason is diagnostic: the instruction's
+  object was something I could cheaply resolve with a command rather than something I had to recall.
+  **I am reliable when the check is a command and unreliable when it is a memory** — so convert every claim
+  into a command before restating it.
+- ⚠ **A BIASED-SAMPLE CAVEAT from the same sweep, flagged not acted on:** `#847` is cited as protection in
+  **12 places in `SCPIADC.c`** and **19 in `SCPIInterface.c`**, and BOTH overstatements found so far were in
+  code this PR already rewrote. **We found them because we were editing there, not because anything looked
+  for them** — so two instances say nothing about the rate elsewhere. Filing a claim-scope sweep as its own
+  issue AFTER fw#1152 lands; converge-only and the round cap both argue against opening it now.
