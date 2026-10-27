@@ -11646,3 +11646,50 @@ in the FIRMWARE checkout and refuted every finding as unfindable. That returns P
 findings: a FALSE CLEAN, the one outcome the gate cannot catch, since its pass condition IS an
 empty findings array. Stopped and relaunched FRESH (never resumeFromRunId -- the cached agents are
 the mispinned ones).
+
+## ts#458 round 7 — BLOCK 5/0/0, and the cycle is NOT converging (2026-10-27)
+
+Head `12da7e1700b11388a75fd6a180cdc8fcce00ef65`. Artifact `~/.claude/audits/audit-ts458-codex-r7.json`
+sha256 `5d318eb4...b1e7faac`. Comment:
+https://github.com/daqifi/daqifi-python-test-suite/pull/458#issuecomment-6456149608
+
+⛔⛔ **THE TREND IS THE FINDING.** 7, 7, 3, 2, 3 (rounds 1-5, converging on test_1148) -> **6, 5**
+(rounds 6-7). Rounds 6+7 put **11 of 11** findings in the file I cherry-picked at round 6; round 7
+put **5 of 5** there. Plus defect C is the SAME CLASS as round 6's finding 0, which I had fixed in
+that file's sibling IN THE SAME ROUND I imported this one. Same finding twice + non-converging =
+a blocked shape even with 20 rounds granted. A count per round is a weak instrument; the count's
+DERIVATIVE plus WHICH FILE they land in is the strong one, and I only looked at it after two rounds.
+
+**All three defects are MY design, not the fire's implementation:**
+
+⭐⭐ **A (:283) -- I VERIFIED THE NAMING AND INFERRED THE ISOLATION.** I checked which `rec()` calls
+amplitude feeds, saw only `_streaming`-named ones, and concluded it could not decide a verdict.
+`main()` folds EVERY recorded FAIL into the exit code, so it still blocks the gate. The docstring
+claim "can no longer decide either verdict" was false, and it was MY sentence. This is the SAME
+error shape I wrote up one round earlier (validated reportability, inferred correctness) -- the
+write-up did not stop the repeat, which is the ⛔ "writing a rule down feels like running it"
+pattern, instance N+1.
+
+⭐⭐ **B (:305) -- three-state input behind a two-valued test, unknown collapsed into PERMISSIVE.**
+`readback != '2'` means an empty/timed-out query ('') reads as "left raw mode" -> false PASS on
+exactly the firmware the file exists to catch, with a clean 5-PASS exit-0 gate-PASS run. Arbiter
+HIGH. My brief said "the exact USECal? readback" and never said FAIL-CLOSED ON UNREADABLE -- while
+the same file already does it right twice and the sibling has VALID_SELECTORS + classify_err().
+My own MEMORY.md carries this as a ⛔⛔⭐⭐ entry. Having the rule indexed did not apply it.
+
+⭐ **C (:288) -- fixed where reported, not swept for.** Mirror image of round 6 finding 0. Round 8's
+brief therefore REQUIRES a sweep of that file for every possibly-unreadable value feeding a
+two-valued test and every prose claim the code does not enforce, and requires reporting the sites
+judged ALREADY CORRECT -- so a sweep that finds nothing is still a result.
+
+Design call for A, recorded because a blanket demotion would destroy evidence: corroboration is
+DIRECTION-AWARE. Amplitude may add a failure only where it reports MORE raw than the primary (the
+encoder-still-raw case, the reason streaming was kept at all) and never where it reports LESS (the
+near-0V blind spot, since AD7609 codes are signed).
+
+⭐ The blind leg again supplied the duplicate reproductions (steeringSuppressed = findings 3 and 4),
+so defects A and B each have TWO independent fixtures. Second round running where the blind leg
+carried real weight.
+
+**DECISION POINT SET:** if round 8's audit surfaces another new layer in that one file, revert the
+cherry-pick and let it converge on its own row. fw#1152 is merged, so nothing waits on it being here.
