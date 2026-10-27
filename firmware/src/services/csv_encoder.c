@@ -752,15 +752,49 @@ size_t csv_Encode(
                  * means nothing was evicted, which is benign -- the row was
                  * never written either, so the sample stays queued for a
                  * normal retry rather than being mis-reported as gone. */
+                bool evictedAny = false;
                 if (hadAIN) {
                     AInPublicSampleList_t *evicted = NULL;
                     if (AInSampleList_PopFront(&evicted)) {
                         AInSampleList_FreeToPool(evicted);
+                        evictedAny = true;
                     }
                 }
                 if (hadDIO) {
                     DIOSample evictedDio;
-                    (void) DIOSampleList_PopFront(&state->DIOSamples, &evictedDio);
+                    if (DIOSampleList_PopFront(&state->DIOSamples,
+                                               &evictedDio)) {
+                        evictedAny = true;
+                    }
+                }
+                /* #970 / PR #991 (audit round 1, both legs): BOOK THE LOSS
+                 * HERE. This is the call the comment above asked for -- it
+                 * said "when that lands, this site must call it", and #991
+                 * removed the caller-side increment in streaming.c on the
+                 * premise that "an encoder that KNOWS it destroyed a sample
+                 * now books it itself". This site destroys one and did not
+                 * book it, so EncoderDroppedSamples and its Steady subset
+                 * read ZERO through repeated real destruction -- a counter
+                 * reading zero while the thing it counts is happening.
+                 *
+                 * ONE per discarded ROW, not per queue head, which is the
+                 * contract the comment above states: "one discarded row books
+                 * one drop here regardless of how many queue heads composed
+                 * it". tryWriteRow() peeks both queues and writes both heads
+                 * into ONE row, so a row carrying AIN+DIO is still one lost
+                 * row.
+                 *
+                 * GATED ON evictedAny, so a failed pop books nothing. The
+                 * comment above is explicit that a pop failing (queue torn
+                 * down concurrently) means nothing was evicted and the sample
+                 * stays queued for a normal retry -- reporting there would
+                 * over-count, which is the error class that comment spent
+                 * its length warning about. The DIO pop's return was
+                 * previously discarded with `(void)`; it is now read for
+                 * exactly this decision, which is the same intent the
+                 * discard had. */
+                if (evictedAny) {
+                    Streaming_ReportEncoderSampleLoss(1u);
                 }
                 LOG_E_SESSION(LOG_SESSION_CSV_SAMPLE_TOO_LARGE,
                         "CSV: row (%u ch) does not fit a %u B encoder "
@@ -771,15 +805,30 @@ size_t csv_Encode(
             break;  // no data left, row won't fit, or was just evicted
         }
 
-        // now that it?s safely written, consume the queues:
+        // now that it's safely written, consume the queues:
         if (hadAIN) {
             AInPublicSampleList_t *tmp = NULL;
-            AInSampleList_PopFront(&tmp);
+            /* #970: fallible -- see JSON_Encoder.c's DIO loop for the reachable
+             * path (a cross-task session drain on the pri-7 SCPI task). Nothing
+             * has been committed yet at this point, so break: the row's bytes
+             * stay unreferenced past `p`, `total` does not advance, and the row
+             * is re-encoded next call. */
+            if (!AInSampleList_PopFront(&tmp)) {
+                break;
+            }
             AInSampleList_FreeToPool(tmp);  // Use object pool instead of vPortFree
         }
         if (hadDIO) {
             DIOSample tmpD;
-            DIOSampleList_PopFront(&state->DIOSamples, &tmpD);
+            /* #970: deliberately NOT a rollback, and the asymmetry with the AIN
+             * pop above is the reason. By here the AIN sample has already been
+             * consumed and cannot be put back, so discarding the row would
+             * destroy it -- a worse outcome than the one this guards. A false
+             * return from the 0-tick receive means the DIO element is already
+             * gone from the queue, so committing the row ships it once and
+             * loses nothing. Cast to (void) so this reads as the decision it is
+             * rather than the oversight it used to be. */
+            (void)DIOSampleList_PopFront(&state->DIOSamples, &tmpD);
         }
 
     
