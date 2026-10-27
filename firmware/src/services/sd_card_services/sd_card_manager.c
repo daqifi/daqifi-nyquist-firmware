@@ -3805,9 +3805,14 @@ void sd_card_manager_ProcessState() {
                         sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
                                 (uint8_t*)eofMarker, sizeof(eofMarker) - 1);
                     } else {
-                        LOG_E("[SD] aborted after %u bytes - no terminator sent "
-                              "(a plain EOF would look like a complete file; "
-                              "#725 tracks a distinguishable one)",
+                        /* #1039: was 137 bytes against the 125-byte ceiling, so the whole
+                         * parenthetical -- why a missing terminator matters at all -- was
+                         * truncated away. 105 now; #725 still tracks the distinguishable
+                         * terminator.
+                         */
+                        LOG_E("[SD] aborted after %u bytes - no terminator "
+                              "sent; a plain EOF looks like a complete "
+                              "file (#725)",
                               (unsigned)totalBytesRead);
                     }
                     if (gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {

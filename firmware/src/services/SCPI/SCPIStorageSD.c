@@ -2242,8 +2242,13 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
              * differ. This one means a peer SCPI callback held the shared
              * response buffer, NOT that the card is slow -- so it must not
              * point at the SD-card-compatibility page. */
-            LOG_E("SD:BENCH - shared SCPI response buffer not free within %u ms "
-                  "at %u/%u bytes (a concurrent SCPI command held it)\r\n",
+            /* #1039: was 137 bytes against the 125-byte ceiling. The CAUSE --
+             * that another SCPI command held the buffer, which is what stops
+             * this being read as a slow card -- sat in the truncated tail, so
+             * it leads now. 120 bytes.
+             */
+            LOG_E("SD:BENCH - a concurrent SCPI command held the response "
+                  "buffer; not free in %u ms at %u/%u bytes\r\n",
                   (unsigned int)SCPI_SD_BENCH_STALL_TIMEOUT_MS,
                   bytesWritten, bytesToWrite);
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
