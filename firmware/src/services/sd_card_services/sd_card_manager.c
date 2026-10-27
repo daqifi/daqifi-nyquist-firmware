@@ -2170,7 +2170,77 @@ static bool sd_ManifestPathSafeToOverwrite(const char *path) {
  * manifestOpenAttempted. A failure is logged and the session continues
  * without a manifest: integrity bookkeeping must never be able to stop a
  * logging session. */
-static void sd_OpenSessionManifest(void) {
+/* Remove one stale manifest, or explain why it was left. #1124 r16.
+ *
+ * Only ever removes something sd_ManifestPathSafeToOverwrite() already
+ * considers ours to destroy -- the SAME predicate the create path uses -- so
+ * this can never delete a user file that happens to occupy the manifest name.
+ * Reusing that predicate rather than writing a second one is deliberate: two
+ * predicates for "is this ours" would be free to disagree, and the create path
+ * is the one whose judgement is already trusted.
+ *
+ * Absence is the common case and is NOT an error: the stat is what separates it
+ * from a removal failure, so a session whose predecessor left no manifest logs
+ * nothing at all.
+ *
+ * ⚠ No path in any message here, by this file's own convention: this buffer
+ * reaches 87 characters and Logger's content ceiling is 125, so naming the
+ * file would push the line over and truncate the TAIL -- which is the part
+ * that says what went wrong.
+ */
+static void sd_RemoveStaleManifestAt(const char *path) {
+    SYS_FS_FSTAT st;
+    memset(&st, 0, sizeof(st));
+    if (SYS_FS_FileStat(path, &st) != SYS_FS_RES_SUCCESS) {
+        return;                         /* nothing there -- nothing stale */
+    }
+    if (!sd_ManifestPathSafeToOverwrite(path)) {
+        LOG_E("[SD] #1124 manifest path holds a non-manifest file - left as is");
+        return;
+    }
+    if (SYS_FS_FileDirectoryRemove(path) != SYS_FS_RES_SUCCESS) {
+        LOG_E("[SD] #1124 stale manifest not removed (err=%d) - it may still "
+              "describe older data", (int)SYS_FS_Error());
+        return;
+    }
+    LOG_I("[SD] #1124 removed a prior session's manifest - this session has none");
+}
+
+/* Both names this session could have used, because it may have refused BEFORE
+ * choosing between them. #1124 r16.
+ *
+ * The primary is `<dir>/<base>.mfst` and the fallback `<dir>/<file>.mfst`; both
+ * are derived from THIS session's own SD:DIR and SD:FILE, so anything found at
+ * either belongs to this session's namespace and predates it. When SD:FILE has
+ * no extension the two spellings coincide, and the second pass simply finds
+ * nothing.
+ *
+ * A name that will not fit the buffer is skipped rather than reported: no
+ * previous session could have created a file it could not name either, and the
+ * hazard needs the SAME dir and file to have been reused, which is the same
+ * length.
+ */
+static void sd_DiscardStaleManifests(void) {
+    const char *const bases[2] = { gSDCardData.baseFilename,
+                                   gpSDCardSettings->file };
+    char path[SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX
+              + SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX
+              + sizeof(SD_MANIFEST_EXT) + 2u];
+    unsigned i;
+
+    for (i = 0u; i < 2u; i++) {
+        const int written = snprintf(
+            path, sizeof(path), "%.*s/%s" SD_MANIFEST_EXT,
+            (int)SdManifest_CanonicalDirLen(gpSDCardSettings->directory),
+            gpSDCardSettings->directory, bases[i]);
+        if (written < 0 || (size_t)written >= sizeof(path)) {
+            continue;
+        }
+        sd_RemoveStaleManifestAt(path);
+    }
+}
+
+static bool sd_OpenSessionManifestAttempt(void) {
     /* ⛔ #1124 r13 / OPERATOR ITEM 8 = B: NO BUCKET-NAME REFUSAL HERE EITHER.
      *
      * r11 finding 4 withheld the manifest for a session whose configured
@@ -2231,7 +2301,7 @@ static void sd_OpenSessionManifest(void) {
             || parentFiles >= SD_CARD_MANAGER_MAX_DIR_FILES) {
             LOG_E("[SD] #924 prune '%s' or set a new SD:DIR: %u files, no manifest",
                   gpSDCardSettings->directory, (unsigned)parentFiles);
-            return;
+            return false;
         }
     }
     /* ⛔ #1124 r10 finding 2: NO TRAILING-SEPARATOR CHECK BELONGS HERE, and
@@ -2274,7 +2344,7 @@ static void sd_OpenSessionManifest(void) {
     if (written < 0 || (size_t)written >= sizeof(path)) {
         LOG_E("[SD] #924 manifest path too long: dir='%s' base='%s'",
               gpSDCardSettings->directory, gSDCardData.baseFilename);
-        return;
+        return false;
     }
 
     /* #924 (Qodo round 1): REFUSE A NAME THE FORMAT CANNOT REPRESENT, once,
@@ -2333,7 +2403,7 @@ static void sd_OpenSessionManifest(void) {
     if (badField != NULL) {
         LOG_E("[SD] #924 rename %s - a ',' CR or LF cannot appear in a "
               "manifest name, so this session gets no sidecar", badField);
-        return;
+        return false;
     }
 
     /* #924 (round-5 audit): REFUSE A MANIFEST NOBODY COULD FETCH.
@@ -2378,7 +2448,7 @@ static void sd_OpenSessionManifest(void) {
                   "%u - shorten FILE",
                   (unsigned)(baseLen + sizeof(SD_MANIFEST_EXT) - 1u),
                   (unsigned)SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX);
-            return;
+            return false;
         }
     }
 
@@ -2505,7 +2575,7 @@ static void sd_OpenSessionManifest(void) {
                       (unsigned)(strlen(gpSDCardSettings->file)
                                  + sizeof(SD_MANIFEST_EXT) - 1u),
                       (unsigned)SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX);
-                return;
+                return false;
             }
 
             written = snprintf(path, sizeof(path), "%.*s/%s" SD_MANIFEST_EXT,
@@ -2516,7 +2586,7 @@ static void sd_OpenSessionManifest(void) {
                 LOG_E("[SD] #924 no manifest: fallback path too long for "
                       "dir='%s' file='%s'", gpSDCardSettings->directory,
                       gpSDCardSettings->file);
-                return;
+                return false;
             }
 
             /* #924 (post-merge audit, defect 1, round 2): the fallback name gets
@@ -2536,7 +2606,7 @@ static void sd_OpenSessionManifest(void) {
                 LOG_E("[SD] #924 no manifest: fallback path '%s' also exists and "
                       "does not look like a manifest - giving up for this "
                       "session", path);
-                return;
+                return false;
             }
             LOG_I("[SD] #924 manifest goes to '%s'", path);
         }
@@ -2560,7 +2630,7 @@ static void sd_OpenSessionManifest(void) {
             if (SYS_FS_FileClose(gSDCardData.manifestHandle) == SYS_FS_RES_FAILURE) {
                 LOG_E("[SD] #924 no manifest: prior handle still will not close "
                       "(err=%d)", (int)SYS_FS_Error());
-                return;
+                return false;
             }
             gSDCardData.manifestHandle = SYS_FS_HANDLE_INVALID;
             LOG_I("[SD] #924 recovered a manifest handle from a failed close");
@@ -2583,7 +2653,7 @@ static void sd_OpenSessionManifest(void) {
             }
             LOG_E("[SD] #924 could not open manifest '%s' (err=%d) - session "
                   "continues without one", path, (int)openErr);
-            return;
+            return false;
         }
         /* fell through to here only on the retry-eligible error above */
     }
@@ -2595,7 +2665,7 @@ static void sd_OpenSessionManifest(void) {
      * success bookkeeping below with an INVALID handle. Stated as dead today
      * so nobody reads it as a live branch and reasons from it. */
     if (gSDCardData.manifestHandle == SYS_FS_HANDLE_INVALID) {
-        return;
+        return false;
     }
     gSDCardData.manifestLines = 0;
     /* #1124 r11 finding 1: the fragment latch is a property of the OPEN FILE,
@@ -2606,6 +2676,44 @@ static void sd_OpenSessionManifest(void) {
      * open can happen later than a session start. */
     gSDCardData.manifestFragmentPending = false;
     LOG_D("[SD] #924 manifest '%s' open\r\n", path);
+    return true;
+}
+
+/* ⛔ #1124 r16: A REUSED DATA FILE MUST NEVER SIT BESIDE THE PREVIOUS
+ * SESSION'S MANIFEST.
+ *
+ * sd_OpenSessionManifestAttempt() has TEN refusal paths -- a parent directory
+ * at #689's entry cap, a path that will not fit its buffer, a `,`/CR/LF in a
+ * name, two operand-length caps, a non-manifest file squatting the fallback
+ * name, a prior handle that will not close, and the open itself failing. Every
+ * one of them returns with no manifest for this session, and NONE of them
+ * touched whatever was already at the manifest path.
+ *
+ * That is a silent data-integrity defect, not a cosmetic one, because by the
+ * time this runs the data file has ALREADY been truncated: the call site is
+ * gated to fire "AFTER the data file is open and its header written", and the
+ * open is SYS_FS_FILE_OPEN_WRITE_PLUS (FA_CREATE_ALWAYS), which truncates a
+ * pre-existing name unconditionally. So a session reusing `exp.csv` destroys
+ * the old contents, refuses its manifest, and leaves the PRIOR session's
+ * `exp.mfst` -- its sample count and its CRC -- sitting beside the new data,
+ * with nothing marking it stale. A reader validates that record and gets a
+ * confident wrong answer, which is worse than having no record at all.
+ *
+ * ⭐ WHY THIS IS A WRAPPER AND NOT A CLEANUP AT EACH `return`. Ten returns
+ * today; the fix would be ten edits and an eleventh refusal added later would
+ * silently reintroduce the defect -- the failure mode would be a NEW guard
+ * written by someone who never read this comment. Here the cleanup CO-OCCURS
+ * with refusal by construction: the only way to skip it is to return true,
+ * which means a manifest really was created. The verdict is a bool rather than
+ * an inspection of manifestHandle because one refusal path (the prior handle
+ * that will not close) deliberately returns with a non-INVALID handle it does
+ * not own, so the handle does not answer the question being asked.
+ */
+static void sd_OpenSessionManifest(void) {
+    if (sd_OpenSessionManifestAttempt()) {
+        return;                 /* a fresh manifest describes THIS session */
+    }
+    sd_DiscardStaleManifests();
 }
 
 /* Append the line describing the file that has JUST been closed.
