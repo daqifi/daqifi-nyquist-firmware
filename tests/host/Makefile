@@ -478,6 +478,56 @@ SDLOG1029_GEN := gen_1029_log_budget.h
 SD_MGR_SRC    := ../../firmware/src/services/sd_card_services/sd_card_manager.c
 SD_MGR_HDR    := ../../firmware/src/services/sd_card_services/sd_card_manager.h
 PYTHON        ?= python3
+# #1039: four more LOG_E messages cut by the SAME Util/Logger.c message frame
+# $(SDLOG_BIN) above measures #1000's site against -- in app_freertos.c,
+# SCPIADC.c and wifi_manager.c. Same host-testability situation (none of those
+# three is includable here, and neither is Logger.c, which pulls in FreeRTOS),
+# so this test also mirrors LogMessageFormatImpl and runs the REAL texts
+# through it. Independent of $(SDLOG_BIN)/$(GEN_1000): different sites,
+# separate extraction, its own mirror -- a mistake in one does not become the
+# other's baseline.
+#
+# The extraction is a Python generator rather than the sed/grep pipeline
+# $(SDLOG_BIN) uses, because three of these four format strings are
+# concatenated across physical lines and a shell one-liner cannot reassemble
+# one without risking a FRAGMENT -- and a fragment understates a message's
+# length, which passes every assertion in the test while checking nothing.
+# gen_1039_log_budget.py anchors each site on the CODE that gates it (never on
+# the message text: a re-word must re-MEASURE, not fail the build), requires
+# the anchor to be unique, refuses a literal run that is not followed by ','
+# or ')', and pins each site's conversion signature so a changed substitution
+# count re-derives the worst case instead of being measured with stale
+# arguments. It exits non-zero with a named diagnostic on any of that.
+#
+# WHAT IT SHARES WITH tools/lint/log_budget.py, AND WHAT IT MUST NOT.
+#
+# ⛔ An earlier revision of this comment said it "deliberately does NOT reuse
+# tools/lint/log_budget.py's parser". That stopped being true, on purpose, and
+# the comment outlived the decision -- so read the split precisely:
+#
+#   * the MEASUREMENT is not shared, and must never be. That tool is the
+#     static gate, and it MODELS truncation; this test's value is running the
+#     real strings through real vsnprintf. The model must not sit on both
+#     sides of the check.
+#   * the CEILING READER is shared, and must be. `LOG_MESSAGE_SIZE - 2` and
+#     the min() clamp are two integers transcribed out of Logger.c, with one
+#     right answer, so two readers can only agree or be wrong -- and they
+#     silently disagreed twice (codex audit on #1110 r4 and r5).
+#
+# $(LOG_BUDGET_GATE) is therefore a REAL BUILD INPUT of $(LOG1039_GEN), not a
+# neighbouring tool. It is listed as a prerequisite below and in
+# host-tests.yml's path filters; `gen_1039_log_budget.py --self-test` asserts
+# both of those registrations still exist, so the edge cannot be dropped
+# silently the way it was when the seam was first added (r5 finding 4).
+LOG1039_BIN := run_1039_tests
+LOG1039_GEN := gen_1039_log_budget.h
+FW_APP_SRC  := ../../firmware/src/app_freertos.c
+FW_ADC_SCPI := ../../firmware/src/services/SCPI/SCPIADC.c
+FW_WIFI_SRC := ../../firmware/src/services/wifi_services/wifi_manager.c
+# Imported by gen_1039_log_budget.py at run time (see _gate()). Same shape as
+# $(CDEF) below: a tools/lint module a host-test target genuinely reads.
+LOG_BUDGET_GATE := ../../tools/lint/log_budget.py
+PYTHON      ?= python3
 
 # #1039 (PR #1116, split from the parked #1110): the four LOG_E messages
 # #1039 shortened, measured against the SAME ceiling $(SDLOG_BIN) measures --
@@ -983,11 +1033,23 @@ test "$$raw" -eq 0 && test "$$canon" -eq 9 && test "$$acc" -eq 9 \
 	@# a new class: a doubled '/' here would name a file the create path never
 	@# created, so the removal would silently miss the stale manifest it exists
 	@# to delete, and the defect would present as the fix simply not working.
+	@# 24 -> 22 at #1124 r16, SAME ROUND as the 22 -> 24 entry above, and both
+	@# stay recorded because the net zero hides two unrelated movements:
+	@#   +2  sd_DiscardStaleManifests()'s join (classified above).
+	@#   -2  two LOG_E messages stopped printing the directory. The #1110 gate
+	@#       landed on main mid-round and measured them at 128 and 144 bytes
+	@#       against a 125-byte ceiling, so each truncated its own remedy
+	@#       exactly when the path was long. They now name 'dir+base' and
+	@#       'dir+file' instead of interpolating either, which drops one read
+	@#       apiece. The path is recoverable from SD:DIR? / SD:FILE?.
+	@# Recording the net would have let a future edit add a read and remove an
+	@# unrelated one with the total unchanged -- which is the one thing a count
+	@# ledger exists to notice.
 	@n=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null \
 	    | grep -oE '(gpSDCardSettings|cfg)->(directory|opDirectory)' | wc -l`; \
-	 test "$$n" -eq 24 \
+	 test "$$n" -eq 22 \
 	  || { echo "ERROR: $(SD_MANAGER_SRC) now has $$n raw reads of ->directory /"; \
-	       echo "       ->opDirectory, not the 24 classified in this recipe (#1124)."; \
+	       echo "       ->opDirectory, not the 22 classified in this recipe (#1124)."; \
 	       echo "       The canonicalisation invariant is about every USE, not just"; \
 	       echo "       every join: a read can reach a callee that neither joins nor"; \
 	       echo "       canonicalises, and no join-keyed check sees it. (Until r13 the"; \
@@ -3542,6 +3604,21 @@ $(SDLOG_BIN): test_1000_sd_log_arm_budget.c test_framework.h $(SCPI_IFACE_SRC) $
 	 printf '#endif\n' >> $(GEN_1000)
 	$(CC) $(CFLAGS) -o $(SDLOG_BIN) test_1000_sd_log_arm_budget.c
 
+$(LOG1039_GEN): gen_1039_log_budget.py $(LOG_BUDGET_GATE) $(FW_APP_SRC) \
+                $(FW_ADC_SCPI) $(FW_WIFI_SRC) $(FW_LOG_H) $(FW_LOG_C) \
+                $(RECIPES)
+	# The generator's own invariants run FIRST, so a defect in the
+	# extractor fails the build rather than producing a fixture that
+	# measures a different string than the firmware ships (codex audit on
+	# #1110: UTF-8 shrank the literal; a prefix match mis-read the ceiling;
+	# backslash-newline was spliced after escapes instead of before).
+	$(PYTHON) gen_1039_log_budget.py --self-test
+	$(PYTHON) gen_1039_log_budget.py --out $(LOG1039_GEN)
+
+$(LOG1039_BIN): test_1039_log_message_budget.c test_framework.h \
+                $(LOG1039_GEN) $(RECIPES)
+	$(CC) $(CFLAGS) -o $(LOG1039_BIN) test_1039_log_message_budget.c
+
 # #1039: see the LOGCEIL_BIN comment block above for what this proves and
 # why it is deliberately independent of the parked #1110 tooling.
 $(LOGCEIL_BIN): test_1039_log_message_ceiling.c test_framework.h \
@@ -4020,6 +4097,19 @@ $(HEXWIN_BIN): test_1141_hex_record_upper_panel_error.c test_framework.h \
 	$(CC) $(CFLAGS) -I$(BTL_SYSCFG_DIR) -I$(BTL_SYSCFG_DIR)/framework/bootloader/src \
 	      -o $(HEXWIN_BIN) test_1141_hex_record_upper_panel_error.c
 
+# Every suite, and every one of the binaries named in `run` below. Additive
+# collisions in this block as a LINEAGE rather than an ordinal -- main replaced the
+# ordinal deliberately, because each branch numbered its own collisions, the ordinals
+# disagreed (#971 said EIGHTH, main said NINTH), and three stale copies of this
+# banner with three different counts had accumulated:
+#   fw#961 vs fw#983; fw#913 vs fw#1004/fw#1000/fw#980/fw#985; fw#999 vs
+#   fw#985/fw#1057; fw#971's ARM_BIN vs each of those as it landed; fw#971 vs
+#   fw#947 (SYSINFO_BIN); fw#1039 vs fw#1108 (the first where one side APPENDS while
+#   the other RETIRES from the same line); and now fw#1039 vs fw#958 (fw#1027,
+#   merged 4ecb59e64), which brought $(ARM_BIN) and $(NAME_BIN).
+# Resolved the same way every time: keep each side's target rule INTACT and union
+# only `run` and `clean`. Dropping a rule loses a suite silently; duplicating one
+# silently shadows the other.
 # PR #1152 (the #1148 follow-up): CONF:ADC:USECal must not hand the STORED
 # settings type to daqifi_settings_SaveToNvm.
 #
@@ -4431,21 +4521,31 @@ $(USECALTYPE_BIN): test_1152_usecal_type_trust.c test_framework.h \
 # the same way as every earlier collision: keep each side's target rule INTACT
 # and union only `run` and `clean`.
 #
-# Every suite, and every one of the EIGHTEEN binaries: the seventeen above plus
-# #1098's $(REPLYBUF_BIN) (the Take/Give pairing of the four SCPI reply
-# callbacks moved off the stack onto the shared response buffer). ELEVENTH
-# additive collision in this block -- resolved the same way as every earlier
-# one: keep each side's target rule INTACT and union only `run` and `clean`.
+# Every suite, and every one of the TWENTY-SIX binaries. SIXTEENTH additive
+# collision in this block, resolved the same way as the fifteen before it:
+# each side's target rule kept INTACT and only `run` and `clean` unioned.
+# This refresh unions #1110's $(LOG1039_BIN) (the log-budget lint tool) with
+# #1013's $(FAILNEXT_BIN)/$(FAILNEXT_REAL_BIN), which main gained on
+# 2026-10-12 while this row sat at its reviewed head.
 #
-# Every suite, and every one of the TWENTY-FOUR binaries: the nineteen above
-# plus $(LOGONCE_BIN), $(DACREINIT_BIN), $(CALFINITE_BIN) and $(SDLOG1029_BIN).
+# THE COUNT IS DERIVED, NOT ASSERTED -- 28 binaries in `run`, counted from
+# the resolved prerequisite list below by the resolver rather than written by hand.
+# Both sides' stated counts were stale for this result (ours TWENTY-SIX, main's
+# TWENTY-FOUR, each right about its own side) -- the trap the thirteenth collision
+# recorded and every one since has restated.
 #
-# FOURTEENTH additive collision in this block, resolved the same way as the
-# thirteen before it: each side's target rule kept INTACT and only `run` and
-# `clean` unioned. This branch adds #1029's $(SDLOG1029_BIN) (three
-# sd_card_manager.c LOG_E remedies measured against Logger's 125-byte ceiling)
-# while main added #1125's $(LOGONCE_BIN) via fw#1126, merged 2026-09-29.
+# ALSO FIXED HERE, and NOT a union: the `clean:` recipe's $(SDLOG1029_GEN).tmp
+# line was missing its line-continuation backslash, so make parsed the
+# following tab-indented line as a SECOND recipe command and tried to EXECUTE
+# `run_1039_tests gen_1039_log_budget.h` instead of deleting the two files.
+# `make clean` therefore failed with "No such file or directory" / Error 127 at
+# the reviewed head, and the two 1039 artifacts were never removed. CI runs
+# only `make run`, never `clean`, so no gate on this row could observe it.
 #
+# $(LOG1039_BIN)/$(LOG1039_GEN) carry the 1039 suffix so they cannot shadow
+# #1029's $(SDLOG1029_BIN)/$(SDLOG1029_GEN); #1029's in turn carry 1029 so they
+# cannot shadow #1000's $(SDLOG_BIN)/$(GEN_1000). main's side of THIS collision is
+# $(ARM_BIN) and $(NAME_BIN), from fw#958/fw#1027.
 # BOTH SIDES' COUNTS WERE STALE FOR THE RESULT -- ours said TWENTY-ONE, main's
 # said TWENTY-TWO, and each was right about its own side. The union is
 # TWENTY-SEVEN. Corrected here rather than carried, for the reason the
@@ -4575,6 +4675,22 @@ $(TEAR904_BIN): test_904_cal_pair_tear.c test_framework.h cal_order_904.awk cal_
 # anchors on the prototype and exits at the next match, so a guard expecting
 # ABSENCE passes VACUOUSLY on that false 0 -- is kept in cal_order_904.awk's
 # header, where the definition-vs-prototype rule is actually implemented.
+
+# ⛔ #1110 r8 review LOW: THE SPELLED-OUT COUNTS ABOVE ARE HISTORICAL, AND
+# NONE OF THEM IS A CLAIM ABOUT THIS LIST. Each belongs to one past merge and
+# was true at that merge -- TWENTY-FOUR, TWENTY-FIVE, TWENTY-SIX, TWENTY-SEVEN
+# are a lineage, not a running total, and the block already records twice that
+# both sides' counts were stale for the result. Read as a current total the
+# most recent one is simply false: `make -n run` expands to 31 today.
+#
+# So the live number is DERIVED ON DEMAND and deliberately written nowhere:
+#
+#     make -n run | grep -c '^\./run_'
+#
+# and the ordinals are superseded for the reason this block gives further up --
+# each branch numbered its own collisions, so two merges claimed the same
+# ordinal and whichever landed second was wrong. The LIST is the record.
+# Do not add another count here; it is stale the next time anyone merges.
 #
 # MERGE (fw#1152 round 9 x fw#1048/#904): the two `run:` prerequisite lists
 # are UNIONED rather than picked -- main's 30 (this TEAR904_BIN block plus 29
@@ -4585,7 +4701,7 @@ run: $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) 
      $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) \
      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) \
      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(USECALTYPE_BIN) $(ARM_BIN) $(NAME_BIN) \
-     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(MANIFEST_BIN)
+     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(MANIFEST_BIN)
 	./$(TEAR904_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
@@ -4615,6 +4731,7 @@ run: $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) 
 	./$(DACREINIT_BIN)
 	./$(CALFINITE_BIN)
 	./$(SDLOG1029_BIN)
+	./$(LOG1039_BIN)
 	./$(FAILNEXT_BIN)
 	./$(FAILNEXT_REAL_BIN)
 	./$(SCPIDAC_RAILGATE_BIN)
@@ -4626,6 +4743,6 @@ clean:
 	      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(GEN_1125) \
 	      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(SDLOG1029_GEN).tmp \
 	      $(USECALTYPE_BIN) $(NAME_BIN) $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(ARM_BIN) $(SCPIDAC_RAILGATE_BIN) \
-	      $(FORCEGATE_BIN) $(MANIFEST_BIN)
+	      $(FORCEGATE_BIN) $(LOG1039_BIN) $(LOG1039_GEN) $(MANIFEST_BIN)
 
 .PHONY: run clean
