@@ -159,9 +159,14 @@
  *    flash held. That tail matters in exactly one place -- the wrong-arm save
  *    of case 4 checksums a span that runs into it -- and there the point is
  *    which page is written, not what the bytes are.
- * 6. No concurrency. The real body runs under Streaming_BeginConfigChange()'s
- *    claim (#847), which excludes the other SCPI transport and a session start
- *    across the whole callback, so there is no interleaving to model.
+ * 6. Competing writers are modelled only where the fixtures plant them
+ *    (recheckRevealsLandedSelector / model_simulate_landed_write): an
+ *    unclaimed writer landing a TOP_LEVEL record between this body's two
+ *    reads. The real claim (#847) excludes only OTHER CLAIMED writers;
+ *    SCPI_SaveAutoPowerOnUsb, SCPI_SaveDataPrecision and SCPI_SaveDeviceName
+ *    (SCPIInterface.c) take none and write this same record -- the
+ *    pre-existing #1153 residual, not something this file closes. General
+ *    preemption, timing and task priorities are not modelled.
  * ========================================================================== */
 
 #include <stdbool.h>
