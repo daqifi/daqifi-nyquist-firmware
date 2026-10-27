@@ -3277,7 +3277,7 @@ run: $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(ARM_BIN) $(JS
 
 $(SUMBUDGET_BIN): test_1055_stream_end_summary_budget.c test_framework.h \
                  $(STREAMING_SRC) $(LOGGER_HDR) $(SCPISD_START_SRC) \
-                 $(APP_FREERTOS_SRC) $(RECIPES)
+                 $(APP_FREERTOS_SRC) $(SD_MANAGER_SRC) $(RECIPES)
 	@# The three formats are COPIED into the test (streaming.c is not
 	@# host-compilable: FreeRTOS, Harmony, the board graph). A copy that drifts
 	@# is a test of itself, so each literal must still be present in the real
@@ -3495,6 +3495,42 @@ $(SUMBUDGET_BIN): test_1055_stream_end_summary_budget.c test_framework.h \
 	       echo "       USB-plus-SD-logging cases against it. A formula change here"; \
 	       echo "       leaves that test modelling a predicate the firmware no"; \
 	       echo "       longer uses -- re-derive both together."; \
+	       exit 1; }
+	@# ⛔ #1055 r9 PIN G: NO sd_AbandonRotationWindow() CALL MAY BE PRECEDED BY A
+	@# PUBLISH OF AN IsIdle STATE (IDLE or INIT -- sd_card_manager_IsIdle accepts
+	@# both). That function reports its dropped bytes via
+	@# Streaming_ReportSdDiscard(), and streaming.c holds the session record until
+	@# sd_card_manager_IsIdle(). Publishing idle BEFORE the report opens a window
+	@# where an emitter observes idle, consumes the record, and the discard
+	@# survives only in the live counters -- r8 found exactly that in the
+	@# no-writable-bucket branch.
+	@#
+	@# A SWEEP, not a check of the single site r8 named: a twin added later would
+	@# be invisible, and "fix the named site, leave the sibling" is a mistake this
+	@# row has made twice. Calibrated 2026-10-26 -- a 20-line window gives 0 on
+	@# the fixed file and 1 on the pre-fix file, so it passes clean source and is
+	@# PROVEN able to fire. The presence check first stops the sweep passing
+	@# vacuously if the abandon call is simply deleted.
+	@grep -qF 'sd_AbandonRotationWindow("no writable bucket")' $(SD_MANAGER_SRC) \
+	  || { echo "ERROR: $(SD_MANAGER_SRC): the no-writable-bucket rotation abort"; \
+	       echo "       no longer abandons the rotation window (#757/#1055 r9)."; \
+	       echo "       Its buffered bytes would then never be reported at all,"; \
+	       echo "       and PIN G's sweep below would pass vacuously."; \
+	       exit 1; }
+	@n=`awk '{ hist[NR] = $$0 } \
+	         /sd_AbandonRotationWindow\(/ && !/static void/ && $$0 !~ /^[ \t]*\*/ { \
+	           for (k = NR - 1; k >= NR - 20 && k > 0; k--) { \
+	             if (hist[k] ~ /currentProcessState[ \t]*=[ \t]*SD_CARD_MANAGER_PROCESS_STATE_(IDLE|INIT)[ \t]*;/) { bad++; break } \
+	           } \
+	         } \
+	         END { printf "%d\n", bad+0 }' $(SD_MANAGER_SRC)`; \
+	 test "$$n" -eq 0 \
+	  || { echo "ERROR: $(SD_MANAGER_SRC): $$n sd_AbandonRotationWindow() call(s)"; \
+	       echo "       publish an IsIdle state BEFORE reporting discarded bytes"; \
+	       echo "       (#1055 r9, expected 0). sd_card_manager_IsIdle() is what"; \
+	       echo "       releases streaming.c's session-record hold, so it must mean"; \
+	       echo "       'done reporting'. Publish the state AFTER the abandon call,"; \
+	       echo "       which is what every other site in this file already does."; \
 	       exit 1; }
 	$(CC) $(CFLAGS) -DFW_LOG_MESSAGE_SIZE=$(LOG_MSG_SIZE) -o $(SUMBUDGET_BIN) test_1055_stream_end_summary_budget.c
 

@@ -2932,12 +2932,36 @@ void sd_card_manager_ProcessState() {
                         gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
                     }
                     gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
-                    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
                     /* #757: this exits OPEN_FILE without ever reaching the
                      * open, so the rotation window has to be closed here too --
                      * otherwise the encoder keeps filling a buffer that nothing
                      * will drain. */
                     sd_AbandonRotationWindow("no writable bucket");
+                    /* ⛔ #1055 r9: PUBLISH IDLE *AFTER* THE ABANDON, NOT BEFORE.
+                     *
+                     * sd_AbandonRotationWindow() is what calls Streaming_ReportSdDiscard()
+                     * for the bytes it drops, and streaming.c holds its session record
+                     * until sd_card_manager_IsIdle(). Publishing IDLE first opened a
+                     * window in which an emitter could observe idle, consume the record,
+                     * and leave this discard in the live counters only -- absent from the
+                     * session summary. So IsIdle has to mean "done reporting", and that
+                     * is what this ordering makes true.
+                     *
+                     * This branch was the ONLY outlier. Swept 2026-10-26: every
+                     * sd_AbandonRotationWindow() call site was checked for a preceding
+                     * publish of an IsIdle state (IDLE or INIT). The others publish
+                     * DEINIT, ERROR or OPEN_FILE first, or publish IDLE only AFTER
+                     * abandoning -- e.g. the teardown-during-rotation site abandons and
+                     * then sets DEINIT. So this is the file's own convention, restored
+                     * here, not a new rule imposed on it.
+                     *
+                     * The move is safe in the other direction too: the callee reads
+                     * neither currentProcessState nor gpSDCardSettings->mode (it touches
+                     * only wMutex, gSdRotating, the write ring and the two reports), so
+                     * nothing it does depends on the state having been published first.
+                     * The semaphore give still happens last, so a waiter continues to
+                     * observe IDLE before it is released. */
+                    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
                     xSemaphoreGive(gSDCardData.opCompleteSemaphore);
                     break;
                 }
