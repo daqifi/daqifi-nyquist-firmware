@@ -181,6 +181,67 @@ else
 fi
 restore
 
+echo "== ⛔ THE r3 CLASS: ONE-LINE forms, which probe the MATCHER's granularity. =="
+echo "==    Every arm above is multi-line, and the original matcher was awk --    =="
+echo "==    which evaluates rules ONCE PER LINE in RULE order. So the arms above  =="
+echo "==    could not detect that it collapsed within-line order and dropped      =="
+echo "==    duplicates. A mutant set whose LAYOUT matches the matcher's UNIT      =="
+echo "==    cannot test the matcher. These three are that missing unit.           =="
+
+echo "== M5 ONE-LINE SPLIT: the r3 finding itself. Two sections on a single line. =="
+echo "==    The old awk matcher emitted ENTER GEN ACTIVE EXIT for this and PASSED =="
+echo "==    -- the exact torn snapshot the guard exists to block.                 =="
+if sub "$S" "$PINNED" '    uint32_t stopGenPinned;
+    bool stopActivePinned;
+    taskENTER_CRITICAL(); stopGenPinned = gStreamStopGen; taskEXIT_CRITICAL(); taskENTER_CRITICAL(); stopActivePinned = (gStreamStopsActive != 0u); taskEXIT_CRITICAL();'; then
+    expect "M5 one-line split" "no longer taken under ONE critical"
+else
+    echo "  FAIL M5 anchor absent -- source drifted from this harness."; fail=$((fail+1))
+fi
+restore
+
+echo "== M6 ONE-LINE REORDER: the two reads swapped on a single line. Per-line    =="
+echo "==    rule-order matching reports them in RULE order regardless of SOURCE   =="
+echo "==    order, so this is invisible to the old matcher too.                   =="
+if sub "$S" "$PINNED" '    uint32_t stopGenPinned;
+    bool stopActivePinned;
+    taskENTER_CRITICAL(); stopActivePinned = (gStreamStopsActive != 0u); stopGenPinned = gStreamStopGen; taskEXIT_CRITICAL();'; then
+    expect "M6 one-line reorder" "no longer taken under ONE critical"
+else
+    echo "  FAIL M6 anchor absent -- source drifted from this harness."; fail=$((fail+1))
+fi
+restore
+
+echo "== M7 ONE-LINE CONTROL: the CORRECT shape collapsed onto one line. It must  =="
+echo "==    still PASS -- the guard pins an ORDER, not a layout, so compressing   =="
+echo "==    the fix must not break it. Without this arm, a matcher that simply    =="
+echo "==    rejected multi-token lines would look correct on M5 and M6.           =="
+if sub "$S" "$PINNED" '    uint32_t stopGenPinned;
+    bool stopActivePinned;
+    taskENTER_CRITICAL(); stopGenPinned = gStreamStopGen; stopActivePinned = (gStreamStopsActive != 0u); taskEXIT_CRITICAL();'; then
+    expect "M7 one-line correct shape still passes" CLEAN
+else
+    echo "  FAIL M7 anchor absent -- source drifted from this harness."; fail=$((fail+1))
+fi
+restore
+
+echo "== M8 STRAY SECTION: the fix intact, plus an UNRELATED critical section in   =="
+echo "==    the same function. The match is EXACT, so this fails by design and     =="
+echo "==    the message says to re-scope rather than widen the expected string.    =="
+if sub "$S" "$PINNED" '    uint32_t stopGenPinned;
+    bool stopActivePinned;
+    taskENTER_CRITICAL();
+    stopGenPinned = gStreamStopGen;
+    stopActivePinned = (gStreamStopsActive != 0u);
+    taskEXIT_CRITICAL();
+    taskENTER_CRITICAL();
+    taskEXIT_CRITICAL();'; then
+    expect "M8 stray section fails the exact match" "no longer taken under ONE critical"
+else
+    echo "  FAIL M8 anchor absent -- source drifted from this harness."; fail=$((fail+1))
+fi
+restore
+
 echo "== restored =="
 expect "post-restore baseline" CLEAN
 

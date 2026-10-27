@@ -3092,7 +3092,18 @@ $(START_BIN): test_998_start_streaming_claimed_order.c test_framework.h $(START_
 	@# every one of these four tokens -- a raw grep would be satisfied by the prose
 	@# that explains the fix. MEASURED on the fixed source: 0 comment lines survive
 	@# inside the extracted body. Token-based rather than line-anchored, so it is
-	@# indifferent to CRLF and to reformatting.
+	@# indifferent to CRLF. ⛔ r3 CORRECTION: an earlier revision of this guard
+	@# used awk, and awk evaluates its rules ONCE PER LINE in RULE order -- so it
+	@# collapsed within-line order and dropped duplicates. A ONE-LINE split
+	@# emitted 'ENTER GEN ACTIVE EXIT' and PASSED: the exact torn snapshot this
+	@# guard exists to block. MEASURED both ways on that line. `grep -o` emits
+	@# every match left-to-right with repeats kept, so the stream is true source
+	@# order, and the comparison is EXACT equality rather than a substring --
+	@# which also refuses a stray ENTER/EXIT pair anywhere in the body.
+	@# ⭐ THE LESSON, because it is general: a mutant set whose LAYOUT matches the
+	@# matcher's UNIT cannot test the matcher. Every original mutant here was
+	@# multi-line, so none of them probed per-line granularity. The one-line
+	@# arms added to pin969_mutate.sh exist for exactly that.
 	@$(CC) -fpreprocessed -E $(START_CLAIMED_SRC) 2>/dev/null \
 	   | awk '/static scpi_result_t SCPI_StartStreaming\(scpi_t \* context\)/{f=1} \
 	          f{print} f&&/^\}/{exit}' > /tmp/.sd969_fn.$$$$; \
@@ -3102,25 +3113,30 @@ $(START_BIN): test_998_start_streaming_claimed_order.c test_framework.h $(START_
 	       echo "       signature; if that changed this check measures NOTHING,"; \
 	       echo "       which is the one way an ordering pin passes while blind."; \
 	       rm -f /tmp/.sd969_fn.$$$$; exit 1; }; \
-	 seq=`awk '/taskENTER_CRITICAL\(\)/{printf "ENTER "} \
-	           /gStreamStopGen/{printf "GEN "} \
-	           /gStreamStopsActive/{printf "ACTIVE "} \
-	           /taskEXIT_CRITICAL\(\)/{printf "EXIT "}' /tmp/.sd969_fn.$$$$`; \
+	 stream=`grep -oE 'taskENTER_CRITICAL|taskEXIT_CRITICAL|gStreamStopGen|gStreamStopsActive' \
+	           /tmp/.sd969_fn.$$$$ \
+	         | sed -e 's/^taskENTER_CRITICAL$$/ENTER/' -e 's/^taskEXIT_CRITICAL$$/EXIT/' \
+	               -e 's/^gStreamStopGen$$/GEN/'       -e 's/^gStreamStopsActive$$/ACTIVE/' \
+	         | tr '\n' ' ' | sed 's/ *$$//'`; \
 	 rm -f /tmp/.sd969_fn.$$$$; \
-	 echo " $$seq" | grep -q ' ENTER GEN ACTIVE EXIT ' \
+	 test "$$stream" = "ENTER GEN ACTIVE EXIT" \
 	  || { echo "ERROR: #861's two stop pins are no longer taken under ONE critical"; \
 	       echo "       section in SCPI_StartStreaming (#969, PR #1020)."; \
-	       echo "         marker run: $$seq"; \
-	       echo "         required  : ... ENTER GEN ACTIVE EXIT ..."; \
+	       echo "         marker stream: $$stream"; \
+	       echo "         required     : ENTER GEN ACTIVE EXIT  (exactly)"; \
 	       echo "       Each load is atomic by itself; the section exists so the"; \
 	       echo "       PAIR describes one instant. Without it a stop that bumps"; \
 	       echo "       the generation before the first load and completes between"; \
 	       echo "       the two is invisible to BOTH signals, and the arm publishes"; \
 	       echo "       IsEnabled over a stop that was still running -- silently,"; \
 	       echo "       which is the shape #861 exists to eliminate."; \
-	       echo "       NOTE two sections are NOT equivalent to one: a run reading"; \
-	       echo "       ENTER GEN EXIT ENTER ACTIVE EXIT has each read guarded and"; \
-	       echo "       the pair still torn."; \
+	       echo "       Two sections are NOT one: a stream reading"; \
+	       echo "       'ENTER GEN EXIT ENTER ACTIVE EXIT' has each read guarded"; \
+	       echo "       and the pair still torn."; \
+	       echo "       The match is EXACT, so an extra critical section anywhere"; \
+	       echo "       in this function also fails. If one is added on purpose,"; \
+	       echo "       re-scope this stream to the run containing GEN rather than"; \
+	       echo "       widening the expected string."; \
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(START_BIN) test_998_start_streaming_claimed_order.c
 
