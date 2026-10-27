@@ -94,13 +94,24 @@ expect() {      # expect <label> <PATTERN|CLEAN>
 }
 
 sub() {         # sub <file> <literal-find> <literal-replace>  (exit 9 if absent)
+    # ⛔ NEWLINE-AGNOSTIC ON PURPOSE. This repo's .c files are CRLF in the
+    # working tree, so a literal written with LF newlines matches NOTHING and
+    # every arm reports "anchor absent" -- which is what happened on the first
+    # run of this harness. Normalise for MATCHING, then restore the file's own
+    # endings on write, so the literals below stay readable and the file is
+    # byte-faithful apart from the mutation.
     python3 -c '
 import sys
 p, a, b = sys.argv[1], sys.argv[2], sys.argv[3]
-t = open(p, newline="").read()
+raw = open(p, newline="").read()
+crlf = "\r\n" in raw
+t = raw.replace("\r\n", "\n") if crlf else raw
 if a not in t:
     sys.exit(9)
-open(p, "w", newline="").write(t.replace(a, b, 1))' "$1" "$2" "$3"
+t = t.replace(a, b, 1)
+if crlf:
+    t = t.replace("\n", "\r\n")
+open(p, "w", newline="").write(t)' "$1" "$2" "$3"
 }
 
 PINNED='    uint32_t stopGenPinned;
