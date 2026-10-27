@@ -3326,7 +3326,7 @@ SEQ908_BIN := run_908_tests
 # setter-bracket check. A guard that reads a file it does not depend on does
 # not run when that file changes -- make reuses the binary and the check is
 # silently skipped, which is a guard that cannot fail rather than a guard.
-$(SEQ908_BIN): test_908_cal_source_seqlock.c test_framework.h $(SETTINGS_SRC) $(SCPIADC_SRC) $(SCPI_IFACE_SRC) cal_compose_908.awk $(RECIPES)
+$(SEQ908_BIN): test_908_cal_source_seqlock.c test_framework.h $(SETTINGS_SRC) $(SCPIADC_SRC) $(SCPI_IFACE_SRC) cal_compose_908.awk check_seq908_order.py seq908_order_fixture.c $(RECIPES)
 	@sed -n '/^bool daqifi_settings_LoadADCCalSettings/,/^}/p' $(SETTINGS_SRC) \
 	   > /tmp/.fw908_load.$$$$; \
 	 n=`grep -cE 'daqifi_settings_(Begin|End)CalWrite' /tmp/.fw908_load.$$$$`; \
@@ -3471,6 +3471,60 @@ $(SEQ908_BIN): test_908_cal_source_seqlock.c test_framework.h $(SETTINGS_SRC) $(
 	       echo "       generation mid-write and believes it; and the critical"; \
 	       echo "       section must be INNERMOST around the store, or the"; \
 	       echo "       64-bit CalM/CalB pair can tear (#904)."; \
+	       exit 1; }
+	@$(PYTHON) check_seq908_order.py $(CC) seq908_order_fixture.c \
+	  || { echo "ERROR: the cal-source seqlock's ORDERING property failed."; \
+	       echo "       See the two lines above: the guard is differential, and"; \
+	       echo "       WHICH line failed decides what is wrong. A failure on"; \
+	       echo "       reader_barriered means the firmware property is broken;"; \
+	       echo "       a failure on reader_unbarriered means this compiler did"; \
+	       echo "       not reorder, so the other line proves nothing."; \
+	       exit 1; }
+	@sed -n '/^DaqifiCalSource daqifi_settings_GetCalSource/,/^}/p' $(SETTINGS_SRC) \
+	   > /tmp/.fw908_bar.$$$$; \
+	 g1=`grep -n 'genBefore = gCalGeneration' /tmp/.fw908_bar.$$$$ | head -1 | cut -d: -f1`; \
+	 b1=`grep -n 'CAL_BARRIER' /tmp/.fw908_bar.$$$$ | head -1 | cut -d: -f1`; \
+	 sc=`grep -n 'daqifi_settings_CalIsIdentity' /tmp/.fw908_bar.$$$$ | head -1 | cut -d: -f1`; \
+	 bk=`grep -n 'bank = gActiveCalBank' /tmp/.fw908_bar.$$$$ | head -1 | cut -d: -f1`; \
+	 b2=`grep -n 'CAL_BARRIER' /tmp/.fw908_bar.$$$$ | tail -1 | cut -d: -f1`; \
+	 g2=`grep -n 'gCalGeneration != genBefore' /tmp/.fw908_bar.$$$$ | head -1 | cut -d: -f1`; \
+	 nb=`grep -c 'CAL_BARRIER' /tmp/.fw908_bar.$$$$`; \
+	 rm -f /tmp/.fw908_bar.$$$$; \
+	 test "$$nb" = "2" && test -n "$$g1" && test -n "$$bk" && test -n "$$g2" \
+	   && test "$$g1" -lt "$$b1" && test "$$b1" -lt "$$sc" \
+	   && test "$$sc" -lt "$$bk" && test "$$bk" -lt "$$b2" \
+	   && test "$$b2" -lt "$$g2" \
+	  || { echo "ERROR: daqifi_settings_GetCalSource in $(SETTINGS_SRC) no longer"; \
+	       echo "       brackets its snapshot with exactly two CAL_BARRIER()s in"; \
+	       echo "       the required POSITIONS."; \
+	       echo "       (barriers=$$nb want 2; order read=$$g1 bar=$$b1 scan=$$sc"; \
+	       echo "        bank=$$bk bar=$$b2 check=$$g2, each must increase)"; \
+	       echo "       ⚠ THE FIXTURE GUARD ABOVE CANNOT CATCH THIS. It compiles"; \
+	       echo "       seq908_order_fixture.c, which is a MODEL -- it would keep"; \
+	       echo "       passing with the firmware's barriers deleted. Position is"; \
+	       echo "       pinned rather than presence because two barriers in the"; \
+	       echo "       wrong places constrain nothing: the second one is what"; \
+	       echo "       keeps the bank load above the closing generation read,"; \
+	       echo "       and a barrier after that read is free of charge."; \
+	       exit 1; }
+	@bb=`sed -n '/^void daqifi_settings_BeginCalWrite/,/^}/p' $(SETTINGS_SRC) \
+	      | grep -n 'gCalGeneration++\|CAL_BARRIER' | head -2 | cut -d: -f2- | tr -d ' \t' | paste -sd,`; \
+	 ee=`sed -n '/^void daqifi_settings_EndCalWrite/,/^}/p' $(SETTINGS_SRC) \
+	      | grep -n 'gCalGeneration++\|CAL_BARRIER' | head -2 | cut -d: -f2- | tr -d ' \t' | paste -sd,`; \
+	 case "$$bb" in gCalGeneration++*,CAL_BARRIER*) ok=1;; *) ok=0;; esac; \
+	 case "$$ee" in CAL_BARRIER*,gCalGeneration++*) ;; *) ok=0;; esac; \
+	 test "$$ok" = 1 \
+	  || { echo "ERROR: the generation bracket's own barriers are missing or"; \
+	       echo "       mis-ordered in $(SETTINGS_SRC)."; \
+	       echo "       BeginCalWrite must be increment-then-barrier (saw: $$bb)"; \
+	       echo "       EndCalWrite   must be barrier-then-increment (saw: $$ee)"; \
+	       echo "       They are MIRROR IMAGES, and swapping either one makes the"; \
+	       echo "       mark useless without making it absent: nothing may sink"; \
+	       echo "       below the ODD increment and nothing may rise above the"; \
+	       echo "       EVEN one, or a reader that correctly observes an even"; \
+	       echo "       generation can still see a partially-applied write."; \
+	       echo "       Marking an update does not help if the optimiser may"; \
+	       echo "       move the update out of the marks."; \
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(SEQ908_BIN) test_908_cal_source_seqlock.c
 

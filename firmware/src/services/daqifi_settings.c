@@ -66,9 +66,38 @@ static DaqifiSettingsType gActiveCalBank = DaqifiSettings_FactAInCalParams;
  * name a load that did not land), which is precisely what makes the
  * in-progress window invisible to a bank comparison.
  *
- * volatile because the reader's two loads must not be hoisted, cached or
- * reordered around the scan between them; aligned 32-bit accesses are atomic
- * on PIC32MZ, so the counter itself needs no critical section.
+ * volatile because the reader's two loads of THIS COUNTER must not be hoisted,
+ * cached or merged; aligned 32-bit accesses are atomic on PIC32MZ, so the
+ * counter itself needs no critical section.
+ *
+ * ⛔ AND volatile IS NOT ENOUGH, which an earlier revision of this comment got
+ * wrong by claiming the two loads could not be "reordered around the scan
+ * between them". volatile orders volatile accesses with respect to each other.
+ * It does NOT stop the compiler moving a NON-volatile access across one, and
+ * gActiveCalBank is not volatile -- so the bank load is free to sink below the
+ * closing generation check, outside the window the check validates.
+ *
+ * Measured, not argued (host gcc -O3, with a writer in the same TU so the load
+ * cannot be constant-folded):
+ *
+ *   unbarriered   genBefore / scan / gen2 / BANK / compare   <- bank OUTSIDE
+ *   barriered     genBefore / scan / BANK / gen2 / compare   <- bank INSIDE
+ *
+ * With the bank read after the closing load, a writer landing between the two
+ * installs a new bank that the comparison cannot see: the reader then reports
+ * the NEW bank against coefficients its scan read from the OLD one, which is
+ * neither the before answer nor the after answer. That is the exact failure
+ * the seqlock exists to prevent, reintroduced by the optimiser.
+ *
+ * Hence CAL_BARRIER() below, on both sides. Compiler barriers only -- this is
+ * a single-core MCU, so there is no store buffer or cache-coherence problem to
+ * solve and no need for a hardware fence; the only reorderer that matters is
+ * the compiler, and `__asm__ volatile ("" ::: "memory")` is what constrains
+ * it. Making gActiveCalBank volatile would also work for THIS pair, but it
+ * would pin the wrong thing: the requirement is an ORDER between two
+ * variables, not a property of one, and the next non-volatile value added to
+ * the snapshot would silently escape again. */
+#define CAL_BARRIER() __asm__ volatile ("" ::: "memory")
  *
  * ⚠ Bumped by EVERY writer of the live coefficients -- the bank load and both
  * CONF:ADC:chanCALM / chanCALB setters -- via
@@ -157,11 +186,21 @@ DaqifiSettingsType daqifi_settings_GetActiveCalBank(void) {
  * channel 0; the scan reads channel 5 as identity and concludes ALL identity
  * -- a view that held at no instant, because channel 0 was non-identity by
  * then. An early-exiting scan plus two independent writers is enough. */
+/* ⚠ THE BARRIERS ARE HALF THE BRACKET. Marking the update is useless if the
+ * optimiser is free to move the update out of the marks: without the barrier
+ * below, a coefficient store or `gActiveCalBank = type` may be hoisted above
+ * the ODD increment, so a reader that correctly observes an EVEN generation
+ * can still see a partially-applied write. The reader's barriers constrain the
+ * reader only -- the publication side needs its own, and they are mirror
+ * images: nothing may sink below the opening increment, nothing may rise above
+ * the closing one. */
 void daqifi_settings_BeginCalWrite(void) {
     gCalGeneration++;   /* -> ODD */
+    CAL_BARRIER();      /* the update stays BELOW the odd mark */
 }
 
 void daqifi_settings_EndCalWrite(void) {
+    CAL_BARRIER();      /* the update stays ABOVE the even mark */
     gCalGeneration++;   /* -> EVEN */
 }
 
@@ -254,6 +293,7 @@ DaqifiCalSource daqifi_settings_GetCalSource(const AInRuntimeArray* channelRunti
         }
 
         const uint32_t genBefore = gCalGeneration;
+        CAL_BARRIER();   /* nothing below may be hoisted above this load */
         if ((genBefore & 1u) != 0u) {
             continue;   /* a load is mid-flight; nothing read now is coherent */
         }
@@ -261,6 +301,12 @@ DaqifiCalSource daqifi_settings_GetCalSource(const AInRuntimeArray* channelRunti
         const bool isIdentity = daqifi_settings_CalIsIdentity(channelRuntimeConfig);
         const DaqifiSettingsType bank = gActiveCalBank;
 
+        /* ⛔ This barrier is what keeps the bank load INSIDE the window the
+         * check below validates. gActiveCalBank is not volatile, so without it
+         * gcc -O3 sinks that load past the closing generation read (measured --
+         * see the note at gCalGeneration), and a writer landing in between
+         * installs a bank the comparison cannot detect. */
+        CAL_BARRIER();
         if (gCalGeneration != genBefore) {
             continue;   /* a load started or finished under the scan */
         }
