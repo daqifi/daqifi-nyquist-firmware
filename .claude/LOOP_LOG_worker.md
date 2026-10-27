@@ -11582,3 +11582,28 @@ SCPIInterface.c:9542), finding 1 ("MUST NOT run" still scoped to *unsaved* edits
 send the head" -- the row is at the 5-round cap with 3 findings that survived refutation, and a
 2026-09-28 comment on it warns the labels do NOT mean merge-ready-except-for-a-decision. Reading
 the park before acting on the summary of it is what surfaced that.
+
+## fw#1152 MERGED (2026-10-27)
+
+Squash **`3938083e90ab9408da6f2c809464cb2ae127a7f8`** on main, at audited head `448a0c030`.
+Attestation: https://github.com/daqifi/daqifi-nyquist-firmware/pull/1152#issuecomment-6452742770
+Operator granted both: merge fw#1152 on the committed-not-merged reading of the companion-test
+policy, and a sixth round on ts#458 for findings 0 and 2.
+
+**fw#1024 landing did NOT void the audit -- and that was checked, not assumed.** Three ways:
+zero file overlap with `321dd4c57`; the merge-base is STILL `02d955844` (main advanced on top of
+it, so the merged diff is byte-identical to the audited one -- the artifact's own `base_sha` is
+still live); and no semantic interaction, since fw#1024 touched `SCPIInterface.c` -- the claim
+layer this setter depends on -- but its only `claim`-matching line there is the word "claimed"
+inside a send-ring byte-accounting comment. ⭐ A disjoint file list alone would NOT have settled
+that; grepping for `claim` produced a candidate and only reading it produced the answer.
+
+Verified before merging: the squash's file list is **IDENTICAL** to the audit artifact's 8 files,
+and the artifact's sha256 recomputed to the ledger's `b79839de...` exactly.
+
+⛔ **`delete_branch_on_merge` is TRUE on the firmware repo, so "no --delete-branch" is
+UNENFORCEABLE.** `fix/1148-usecal-selector-ordering` is gone from origin and I passed no such flag.
+The rule describes our invocation; the deletion is the server's. Consequence for the
+worktree-removal check: its `ls-remote` arm now correctly refuses EVERY merged firmware tree, so
+containment against `origin/main` plus a squash-identity proof is the only remaining arm. The rule
+cannot protect the thing it was written to protect, and nothing in the rule's text says so.
