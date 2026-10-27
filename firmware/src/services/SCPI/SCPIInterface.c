@@ -5771,6 +5771,21 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                                      ifaceSetsPinned);
             SCPI_ExecutionError(context, "STR:START: buffer partition failed (USB DMA / tasks not quiescent, or pool error)");
             SCPI_ClearStreamingOperBits(pRunTimeStreamConfig);
+            /* ⛔ #1055 r2 finding 3: A FAILED RESTART STILL OWES A SUMMARY.
+             *
+             * This start already tore the PREVIOUS session down (the
+             * IsEnabled=false + Streaming_UpdateState above), which snapshots
+             * its counters into gSessionRecord and marks it pending. Then the
+             * partition failed and we return here -- Streaming_Start() is never
+             * reached, so its backstop never runs, and that session's summary
+             * waited for a NEXT start that may never come. The operator loses
+             * the loss report for a session that really did lose data, on the
+             * path where they are most likely to want it.
+             *
+             * Emitting here is a no-op when nothing is owed (a bool read under
+             * a short critical section), so it costs the success-adjacent
+             * aborts nothing. */
+            Streaming_EmitSessionSummary();
             return SCPI_RES_ERR;
         }
 
@@ -6884,35 +6899,30 @@ static void SCPI_PerformStreamingStop(void) {
     const bool ownedSdLoggingSession =
             SCPI_SdWriteIsStreamingLog(pSDCardRuntimeConfig);
 
-    /* ⛔ #1055 r1 finding 2: WHICH STOP OWNS THE SUMMARY.
+    /* ⛔ #1055 r2 ADDED AN OWNERSHIP TOKEN HERE AND r2's AUDIT REFUTED IT.
      *
-     * Two stops can run concurrently (USB SCPI at priority 7 preempts the
-     * WifiTask, and gStreamStopsActive exists because of exactly that). The
-     * first one performs the stop, sets the summary-pending flag and then
-     * BLOCKS in the SD-idle wait below. A second stop arriving in that window
-     * finds streaming already stopped, falls straight through to the emit
-     * site, and CONSUMES the flag -- printing a summary that predates the
-     * SD teardown's Streaming_ReportSdDiscard(), which is the whole thing
-     * #982 deferred the emission to capture. The first stop then finds the
-     * flag already clear and prints nothing.
+     * The token was "the stop that observed IsEnabled true owns the summary".
+     * That is not the same thing as owning the SD TEARDOWN: WiFi can take the
+     * IsEnabled token while USB claims the teardown, so WiFi emitted early and
+     * USB -- the one actually waiting for the drain -- owned nothing. Ownership
+     * was the wrong axis, so it is gone rather than refined.
      *
-     * So only the call that actually performed the enabled->stopped
-     * transition may emit. Read-and-clear IsEnabled in ONE critical section
-     * and let the observed value be the token: exactly one concurrent stop
-     * can see `true`, and that is the one whose teardown the summary is
-     * waiting on.
+     * r3 makes it unnecessary: the counters are snapshot into gSessionRecord
+     * at stop and whoever emits consumes that record exactly once, so any
+     * terminating caller may emit and none of them can report wiped or
+     * half-cleared data. The clear stays a read-modify-write under the lock
+     * because two transports can stop concurrently.
      *
-     * This LOSES NOTHING for a stop issued while nothing was streaming: it
-     * used to reach the emit site and no-op on the pending flag anyway, so
-     * gating on ownership changes no observable behaviour there.
-     *
-     * (The clear was previously a bare write; making it a read-modify-write
-     * under the lock is also what lets the two concurrent stops disagree
-     * about who won, rather than both reading `true`.) */
-    bool thisStopOwnsSummary = false;
+     * ⚠ RESIDUAL, STATED RATHER THAN CLOSED: a concurrent stop that reaches
+     * the emit before this one finishes its SD-idle wait consumes the record
+     * first, so discards the teardown reports AFTER that point are not in the
+     * printed summary. The record bounds the damage -- a summary always prints,
+     * with the stop-time data -- but it does not order the two. That ordering
+     * was already documented as best-effort before r2 (see the emit site
+     * below); closing it needs the teardown to signal completion, which is a
+     * larger change than this round. */
     if (pRunTimeStreamConfig) {
         taskENTER_CRITICAL();
-        thisStopOwnsSummary = pRunTimeStreamConfig->IsEnabled;
         pRunTimeStreamConfig->IsEnabled = false;
         taskEXIT_CRITICAL();
     }
@@ -7072,13 +7082,10 @@ static void SCPI_PerformStreamingStop(void) {
      * "[SD] Streaming stop: SD still finalising" LOG_E and OPER bit 11 set
      * just above are the record that it might, so this is a best-effort
      * improvement over "always before", not a guarantee. */
-    /* #1055 r1 finding 2: only the stop that owns the teardown emits -- see
-     * thisStopOwnsSummary above. A concurrent second stop must not consume
-     * the flag before the SD teardown this call is still waiting on has
-     * reported. */
-    if (thisStopOwnsSummary) {
-        Streaming_EmitSessionSummary();
-    }
+    /* #1055 r3: unconditional again. The record makes this exactly-once and
+     * data-correct whoever calls it, so there is no ownership test left to
+     * make -- see the refuted token above. */
+    Streaming_EmitSessionSummary();
 
     /* #870: the encoder resets that used to be here have MOVED to
      * Streaming_Start()'s enabled-session block, next to the test-pattern

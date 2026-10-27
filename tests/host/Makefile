@@ -3274,7 +3274,8 @@ $(SUMBUDGET_BIN): test_1055_stream_end_summary_budget.c test_framework.h \
 	@# against the ceiling, not as a silently stale pass.
 	@for s in 'Stream end (post-grace): lost %u/%llu samples (%u%%); ' \
 	          'Stream end (post-grace) bytes lost: USB=%u WiFi=%u SD=%u' \
-	          'Stream end (post-grace) samples lost: encFail=%u encDrop=%u dioDrop=%u'; do \
+	          'Stream end (post-grace) samples lost: encFail=%u encDrop=%u dioDrop=%u' \
+	          'eos=%u stale not lost'; do \
 	   grep -qF "$$s" $(STREAMING_SRC) \
 	    || { echo "ERROR: $(STREAMING_SRC) no longer contains the session-end"; \
 	         echo "       summary line test_1055_stream_end_summary_budget.c measures:"; \

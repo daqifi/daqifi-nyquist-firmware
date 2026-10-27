@@ -232,7 +232,26 @@ static volatile uint32_t gScanStaleDroppedSteady = 0;
  * (Streaming_Stop / Streaming_Start / SCPI_PerformStreamingStop all run in
  * task context) — the test-and-clear is an RMW and takes a critical section
  * per docs/MCU_REFERENCE.md. */
-static volatile bool gSessionSummaryPending = false;
+/* ⛔ #1055 r3: A PER-SESSION RECORD, not a flag over live counters.
+ *
+ * Rounds 1 and 2 produced six races between them, and they had ONE cause: the
+ * summary read the LIVE counters at EMIT time and inferred who owned the
+ * session from a token someone else might hold. Every site fix moved the
+ * window instead of closing it. So the counters are SNAPSHOT at stop into this
+ * record, the SD teardown ADDS into it, and whoever emits consumes the record
+ * exactly once.
+ *
+ * What that makes impossible, by construction rather than by guard:
+ *   - SYST:STR:STATS:CLEar zeroing the session's data (it touches only the
+ *     live counters now; the record is unreachable from it)
+ *   - a concurrent stop consuming a summary whose data it never owned --
+ *     ownership stops mattering, because there is one record and one consumer
+ *   - a terminating path that only flags, since the flag and the data are the
+ *     same object
+ *
+ * Written under taskENTER_CRITICAL at every site. */
+static StreamingStats gSessionRecord;
+static volatile bool gSessionRecordPending = false;
 
 /* #814: rail detection. `gClipLiveMask` is LIVE -- rewritten every tick, so a
  * consumer reading device_status sees the current frame's state rather than a
@@ -2460,6 +2479,19 @@ static void Streaming_CountSdDrop(size_t packetSize) {
     if (pastGrace) {
         gStreamStats.sdDroppedBytesSteady += packetSize;
     }
+    /* #1055 r3: and into the pending session record, so a stop-time SD
+     * teardown's discards reach the summary that is waiting for them. Done
+     * HERE rather than in Streaming_ReportSdDiscard() because this is the
+     * single funnel every SD-drop accounting path passes through -- patching
+     * the one caller the audit named would have left the others feeding only
+     * the live counters. The grace test is shared with the live counters
+     * above for the same reason: one rule, one place. */
+    if (gSessionRecordPending) {
+        gSessionRecord.sdDroppedBytes += packetSize;
+        if (pastGrace) {
+            gSessionRecord.sdDroppedBytesSteady += packetSize;
+        }
+    }
     gQuesBits |= QUES_BIT_SD_OVERFLOW;
     taskEXIT_CRITICAL();
 }
@@ -2577,13 +2609,22 @@ static void Streaming_Stop(void) {
          * teardown (SD_CARD_MANAGER_PROCESS_STATE_UNMOUNT_DISK,
          * sd_card_manager.c) runs on app_SDCardTask (priority 5) and has
          * typically not even STARTED by this point, let alone reported its
-         * loss via Streaming_ReportSdDiscard() — see gSessionSummaryPending's
+         * loss via Streaming_ReportSdDiscard() — see gSessionRecord's
          * own comment above. Flag that a session ended and may have
          * something to report; Streaming_EmitSessionSummary() (called once
          * the SD subsystem has had its chance — see its callers) computes
          * hadDrops fresh from the THEN-current counters and may still print
          * nothing. */
-        gSessionSummaryPending = true;
+        /* #1055 r3: SNAPSHOT HERE, not at emit. One critical section so the
+         * data and the pending flag are published together -- a reader can
+         * never see "a summary is owed" alongside counters that have since
+         * been cleared or advanced. Streaming_GetStats() takes its own
+         * critical section and FreeRTOS nests them, so this is one short
+         * region: a struct copy plus three counters. */
+        taskENTER_CRITICAL();
+        Streaming_GetStats(&gSessionRecord);
+        gSessionRecordPending = true;
+        taskEXIT_CRITICAL();
     }
 }
 
@@ -2593,7 +2634,7 @@ static void Streaming_Stop(void) {
  * #982: split out of Streaming_Stop() so it can be called AFTER the SD
  * subsystem's stop-time teardown has reported its losses via
  * Streaming_ReportSdDiscard(), rather than before. Test-and-clear on
- * gSessionSummaryPending makes this exactly-once per session: whichever
+ * gSessionRecordPending makes this exactly-once per session: whichever
  * call site reaches it first (see callers) consumes the flag, and a call
  * site that runs with nothing pending is a harmless no-op. This is why a
  * caller that forgets to invoke this degrades to NO summary for that
@@ -2636,13 +2677,18 @@ void Streaming_EmitSessionSummary(void) {
      * which is the same order of work the outer section already does. It is
      * called only when pending, so the common no-op path does not pay for it.
      */
+    /* #1055 r3: consume the RECORD, do not re-read the live counters. The
+     * data was captured at stop (see gSessionRecord), so nothing that happens
+     * between the stop and this call can change what is reported -- which is
+     * what retires the ClearStats race, the ownership question and the
+     * "emitted but empty" outcome in one step. */
     StreamingStats snap;
     bool pending;
     taskENTER_CRITICAL();
-    pending = gSessionSummaryPending;
-    gSessionSummaryPending = false;
+    pending = gSessionRecordPending;
     if (pending) {
-        Streaming_GetStats(&snap);
+        snap = gSessionRecord;
+        gSessionRecordPending = false;
     }
     taskEXIT_CRITICAL();
     if (!pending) {
@@ -2716,7 +2762,9 @@ void Streaming_EmitSessionSummary(void) {
          * could only be made to fit by cutting the labels down to
          * encF/encD/dioD for 3 bytes of headroom. Split by MEANING instead --
          * headline, transport bytes, pipeline samples -- which keeps every
-         * label self-describing and leaves real margin: 83, 80 and 109 bytes
+         * label self-describing and leaves real margin: 114, 80 and 94 bytes
+         * (83/80/109 before r1 moved eos onto the headline -- a stale
+         * number in a comment is simply false to the next reader)
          * worst-case. (The operator's ruling said two; it was given before
          * this was measured. Reported rather than quietly re-decided.)
          *
@@ -2774,7 +2822,10 @@ void Streaming_Init(tStreamingConfig* pStreamingConfigInit,
     gTimerISRCalls = 0;
     gScanStaleDropped = 0;
     gScanStaleDroppedSteady = 0;  // #1018
-    gSessionSummaryPending = false;  // #982 (.bss.* isn't zeroed on MCLR/IPE-flash — #409)
+    /* #982/#1055 r3 (.bss.* isn't zeroed on MCLR/IPE-flash — #409): clear the
+     * pending flag AND the record it guards, so a boot cannot inherit either. */
+    gSessionRecordPending = false;
+    memset(&gSessionRecord, 0, sizeof(gSessionRecord));
     /* #814: the cumulative pair is inside gStreamStats and is already zeroed
      * by the memset above; only the live mask needs its own reset. */
     gClipLiveMask = 0;
@@ -3101,47 +3152,19 @@ void Streaming_ClearStats(void) {
         return;
     }
 
-    /* #982 (Qodo PR #1055): flush an OWED summary before wiping the counters it
-     * would be computed from. This fix deferred the stop-path emit to AFTER
-     * SCPI_PerformStreamingStop's bounded sd_card_manager_IsIdle() wait, which
-     * is the point -- but that wait is `vTaskDelay`, so it YIELDS, with
-     * IsEnabled and Running already false and gSessionSummaryPending already
-     * true. Any transport reaching this function inside that window used to
-     * memset gStreamStats underneath the pending summary, and the stop then
-     * printed a summary of zeros. The window is one this fix created: before
-     * it, Streaming_Stop() computed and printed inline, with nothing owed.
+    /* #1055 r3: THE RESCUE FLUSH THAT USED TO BE HERE IS GONE, and its
+     * absence is the point of the record design.
      *
-     * HERE rather than at the call sites, because the caller set is three SCPI
-     * commands and one internal path, and a per-caller guard would have to be
-     * right in all four and stay right:
-     *   SYSTem:STReam:THRoughput    (SCPI_RunThroughputBenchClaimed)
-     *   SYSTem:STReam:WIFI:FINd?    (its per-cycle measurement helper)
-     *   SYSTem:STReam:STATS:CLEar   (SCPI_ClearStreamStats)
-     *   Streaming_Start()           (already calls the emit explicitly)
-     * Only the first two take Streaming_BeginSessionStart(), and that claim
-     * tests gSessionStartBusy alone -- never Running, IsEnabled or the stop's
-     * own gStreamStopsActive -- so neither is excluded by it. The third takes
-     * no claim at all and is DOCUMENTED as legal mid-session (see the comment
-     * directly below), so refusing it was not available as a fix.
+     * It existed because this function wiped the very counters an owed
+     * summary still had to read -- so it emitted first to save them. With the
+     * data snapshot into gSessionRecord at stop, this function can no longer
+     * reach it: it zeroes the LIVE counters only. Keeping the flush would now
+     * be actively harmful, because it would consume the record BEFORE the
+     * stop-time SD teardown had added its discards to it -- turning a
+     * rescue into the undercount it was written to avoid.
      *
-     * Exactly-once still holds: Streaming_EmitSessionSummary() test-and-clears
-     * gSessionSummaryPending, so with nothing owed -- every mid-session clear,
-     * which is the common case -- this is a bool read and a return. The
-     * explicit call in Streaming_Start() is deliberately KEPT rather than left
-     * to this one: it documents the ordering requirement at the site that has
-     * it, and removing it would make that site's correctness depend on an
-     * invisible side effect here.
-     *
-     * Before the critical section below, not inside it: the emit takes its own
-     * (short) critical section and ends in LOG_E.
-     *
-     * The tradeoff, stated rather than hidden: flushing here can print BEFORE
-     * the SD teardown has reported via Streaming_ReportSdDiscard(), so a
-     * summary rescued this way may undercount SD loss. That is the pre-#982
-     * behaviour and the same bound the Streaming_Start() backstop already
-     * accepts -- strictly better than the zeroed summary it replaces, and the
-     * drop counters it missed are still live for SYST:STR:STATS?. */
-    Streaming_EmitSessionSummary();
+     * It also carried a stated tradeoff ("a summary rescued this way may
+     * undercount SD loss"). That tradeoff is retired rather than accepted. */
 
     // Mid-session clearing is intentionally allowed: callers may want to
     // measure throughput over a sub-window without restarting the stream
