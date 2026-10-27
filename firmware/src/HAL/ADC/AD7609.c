@@ -518,9 +518,13 @@ double AD7609_ConvertToVoltage(
     AInModRuntimeArray* pRuntimeModules = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_MODULES);
     double fullScaleVoltage = 10.0; // Default ±10V range
 
+    // #1086: only the slot is resolved here. Its 64-bit Range is loaded in
+    // the snapshot section below, with CalM/CalB; until then
+    // fullScaleVoltage holds the default above.
+    const AInModuleRuntimeConfig* pModuleRuntime = NULL;
     if (pRuntimeModules != NULL && pRuntimeModules->Size > AIn_AD7609) {
         // AD7609 module index is AIn_AD7609 (1)
-        fullScaleVoltage = pRuntimeModules->Data[AIn_AD7609].Range;
+        pModuleRuntime = &pRuntimeModules->Data[AIn_AD7609];
     }
 
     // AD7609 is 18-bit, 2's complement: range -131072 to +131071.
@@ -550,7 +554,19 @@ double AD7609_ConvertToVoltage(
     // each on PIC32MZ) and #1048's atomic writes do not stop a reader
     // straddling a completed one. Copy the pair under one critical section,
     // scale outside it.
+    //
+    // #1086: the module Range is the same 64-bit shape, so it loads in this
+    // same section rather than a second one: one more load, not another
+    // interrupt-mask round trip per sample. Here it has a live writer.
+    // CONF:ADC:RANGe stores this slot, and although that setter's claim
+    // keeps a stream's conversions out, MEAS:VOLT:DC? on the other SCPI
+    // transport converts through here with no claim. Besides the loads, the
+    // section holds only the NULL test on the slot resolved above; the
+    // scaling stays outside.
     taskENTER_CRITICAL();
+    if (pModuleRuntime != NULL) {
+        fullScaleVoltage = pModuleRuntime->Range;
+    }
     double calM = runtimeConfig->CalM;
     double calB = runtimeConfig->CalB;
     taskEXIT_CRITICAL();

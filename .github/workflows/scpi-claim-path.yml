@@ -34,6 +34,17 @@ name: scpi-claim-path
 # with no control flow -- dropping Begin's `IsEnabled || Running` arm still
 # passes. It separates a test-and-set from a plain set, not a correct guard
 # from an incorrect one. See #896 and the table in CLAUDE.md.
+#
+# #977 widened the subject beyond the config-change claim. streaming.c holds a
+# SECOND claim -- Streaming_BeginSessionStart, taken by SYSTem:STReam:START,
+# SYST:STR:THRoughput and SYST:STR:WIFI:FINd? -- and BOTH families reach
+# PrepareStreamingBuffers, which re-carves the one streaming pool. Neither Begin
+# looked at the other's flag, so the two claims did not exclude each other. The
+# checker now also requires each Begin to READ the other's flag inside its own
+# critical section, and requires the session-start claim to be a test-and-set
+# with a release of its own. Every check that existed before #977 passes on a
+# tree with the interlock removed, which is why it needed an arm rather than a
+# mention.
 
 on:
   pull_request:
@@ -58,7 +69,7 @@ permissions:
 
 jobs:
   claim-path:
-    name: SYSTem:MEMory:* setters take the config-change claim
+    name: SYSTem:MEMory:* setters claim it, and the two claims interlock
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
