@@ -43,3 +43,21 @@ jobs:
           # pruned default-conf entry would pass this job for the wrong reason
           python3 tools/release/selftest_build_config.py
           python3 tools/release/check_build_config.py
+
+      # cut_release.sh's OWN validators, exercised without cutting a release.
+      # Both extract the real block out of cut_release.sh and run it against
+      # synthetic inputs, so they fail if a block is edited into uselessness or
+      # its extraction markers are removed. Neither needs MPLAB X or XC32.
+      #
+      # These matter most for the #909 lower-panel guard: the bootloader now
+      # erases only 0x1D000000-0x1D0FFFFF so that a customer update stops wiping
+      # the device's WiFi credentials and ADC calibration, and that is correct
+      # only while the application stays under 1 MB. Without this job the guard
+      # would first be exercised during the release it exists to block.
+      - name: Release-hex validators (layout #764, lower-panel size #909)
+        run: |
+          set -euo pipefail
+          python3 -m py_compile tools/release/selftest_release_hex_layout.py
+          python3 -m py_compile tools/release/selftest_release_map_size.py
+          python3 tools/release/selftest_release_hex_layout.py
+          python3 tools/release/selftest_release_map_size.py

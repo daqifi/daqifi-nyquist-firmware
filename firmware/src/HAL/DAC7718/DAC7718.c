@@ -10,6 +10,7 @@
 #include "peripheral/gpio/plib_gpio.h"
 #include "peripheral/spi/spi_master/plib_spi2_master.h"
 #include "peripheral/coretimer/plib_coretimer.h"
+#include "HAL/WaitLoop.h"
 #include "Util/Logger.h"
 #include "FreeRTOS.h"
 #include "task.h"
@@ -36,8 +37,56 @@ static void DAC7718_Delay_us(uint32_t microseconds) {
 //! Max number of configuration to DAC7718 module
 #define MAX_DAC7718_CONFIG 1
 
-//! SPI timeout in iterations (approximately 100k iterations = ~10ms at 200MHz)
-#define DAC7718_SPI_TIMEOUT 100000
+/* Fast-spin bound before falling back to a yielding wait (#913's twin,
+ * #1057). A tight register poll covers the legitimate case with no context
+ * switch, mirroring UserSpi.c's spi_WaitStat -- see that function's comment
+ * for the full derivation of why 8000 register reads is the right cutover
+ * point for a command/response SPI HAL. DAC7718's own worst-case byte is far
+ * faster than the case that sizing was chosen for (see
+ * DAC7718_SPI_BYTE_TIMEOUT_MS below), so this spin catches every legitimate
+ * transfer without ever reaching the yielding path below; reusing the same
+ * constant avoids a second unreviewed magic number. */
+#define DAC7718_SPI_FAST_SPIN_COUNT 8000u
+
+/* Per-WAIT wall-clock budget in ms, consulted only after the fast spin above
+ * misses (#913's twin, #1057) -- "per-wait", not "per-byte": each byte pays
+ * TWO of these (TX-buffer-empty, then RX-buffer-not-empty), and each 3-byte
+ * frame pays a third for the trailing shift-register-empty wait, so a single
+ * DAC7718_ReadWriteReg call's worst-case fault hold is 7x this figure
+ * (140 ms) for a plain write (RW=0) and 14x (280 ms) once the RW=1 readback
+ * doubles the frame. Still comfortably inside SCPIDAC.c's outer
+ * SCPIDAC_COMMAND_LOCK_TIMEOUT_MS (2000 ms), including the 8-channel
+ * all-voltage loop -- see the PR description for the exact margin -- but
+ * that margin is a function of THIS constant and would need re-checking
+ * before raising it.
+ *
+ * SPI2's baud is fixed, not user-configurable like UserSpi's: SPI2BRG = 5
+ * (plib_spi2_master.c:85) off PBCLK2 (84 MHz -- Clock Tree table, CLAUDE.md),
+ * so SPI_CLK = 84e6 / (2*(5+1)) = 7 MHz [V, formula per CLAUDE.md's SPI4 BRG
+ * derivation -- same SPIx peripheral family]. (The 100 MHz legacy PBCLK2
+ * branch that predates #487, still present in clock_config.h, would give
+ * 8.33 MHz -- FASTER -- so 84 MHz/7 MHz is the binding, slower worst case
+ * across both, same reasoning UserSpi.c's own sizing comment uses.) SPI2BRG
+ * is not literally unwritable -- `SPI2_TransferSetup` (plib_spi2_master.c:148)
+ * can rewrite it, and a live `DRV_SPI` instance for index 2 exists
+ * (initialization.c) -- it is simply never CALLED: nothing in this tree opens
+ * `DRV_SPI_INDEX_2`, only 0 and 1 have clients. This constant-BRG premise
+ * therefore holds on the absence of a caller, not the absence of a writer; a
+ * future SPI2 client changing the baud at runtime would invalidate it.
+ *
+ * A SPI slave cannot stretch or otherwise gate SCK the way an I2C slave can
+ * clock-stretch SCL -- the master (this driver) generates every edge
+ * regardless of what DAC7718 does with MISO -- so the worst legitimate byte
+ * is a fixed 8 bits / 7 MHz ~= 1.14 us in BOTH directions (this applies to
+ * the RW=1 readback path too, which clocks data OUT of the DAC -- DAC7718 is
+ * not receive-only). 20 ms is ~17,500x that per-wait margin -- expiry here
+ * means SPI2 is not responding at all (peripheral off, PMD-gated, or a
+ * wiring fault), never a slow transfer. Numerically equal to UserSpi.c's
+ * USER_SPI_BYTE_TIMEOUT_MS for an unrelated reason: that one is sized against
+ * a configurable LOW baud floor, this one against this driver's fixed HIGH
+ * baud with enormous margin either way; kept equal only because both are
+ * "obviously enough" and one fewer number needs explaining. */
+#define DAC7718_SPI_BYTE_TIMEOUT_MS 20u
 
 //! Buffer with DAC7718 configurations
 static tDAC7718Config m_DAC7718Config[MAX_DAC7718_CONFIG];
@@ -262,6 +311,98 @@ bool DAC7718_Init(uint8_t id, uint8_t range)
 	return DAC7718_UpdateLatch(id);
 }
 
+/* Wait for a SPI2STAT bit to reach @p want (true = wait for set, false =
+ * wait for clear), YIELDING so a stuck SPI2 peripheral does not busy-spin at
+ * the caller's (SCPI command) task priority for the whole budget (#913's
+ * twin, #1057).
+ *
+ * THE LOOP ITSELF LIVES IN HAL/WaitLoop.h (#1108, finishing what #1056
+ * started), one definition shared with spi_WaitStat, uart_WaitSta and
+ * i2c_WaitMif rather than a fourth copy of the same shape. #913's ordering
+ * guarantee -- the status is read before the budget is ever consulted, and
+ * ONCE MORE, freshly, at expiry, so a bit that set while this task was
+ * preempted still counts as success -- is stated and EXERCISED there:
+ * tests/host/test_1056_wait_loop.c compiles that header for real, which is
+ * what retires the grep guard + modelled copy (test_1057_dac7718_wait_stat.c)
+ * that stood in for it here. What stays below is what is specific to SPI2:
+ * the status read, the tick budget, and the spin bound.
+ *
+ * WHY THIS CALLS WaitLoop_HoistedSpinThenYield, NOT WaitLoop_SpinThenYield.
+ * #1057 deliberately moved the fast spin OUTSIDE the retry loop -- one spin
+ * at entry, then a retry loop doing a SINGLE status read per 1 ms wake --
+ * answering a Qodo /improve finding that re-spinning 8000 times per wake buys
+ * no extra detection for a level-sensitive bit: once the fast path has
+ * missed, SPI2 is genuinely not responding, and a single register read per
+ * tick detects that exactly as reliably as an 8000-iteration re-spin would,
+ * for a fraction of the CPU cost. #1108's first attempt folded this onto the
+ * three OTHER drivers' shape (WaitLoop_SpinThenYield, which spins INSIDE its
+ * retry loop and re-pays the spin on every wake) as though DAC7718 were a
+ * fourth instance of that shape. It is not, and PR #1109 shipped that
+ * regression: measured at +316 B against main versus -35 B for #1056's fold
+ * of the three drivers that really do share a shape (detail on #1109 comment
+ * 5697480428 and the #1108 correction, comment 5697483101). This call site
+ * now names WaitLoop_HoistedSpinThenYield -- see that function's doc comment
+ * in WaitLoop.h for the full derivation -- which keeps the loop shared with
+ * the other three drivers' HEADER while restoring DAC7718's own retry shape,
+ * proven for real by tests/host/test_1056_wait_loop.c the same way
+ * WaitLoop_SpinThenYield is.
+ *
+ * The one shape this collapses that the other three drivers don't have:
+ * DAC7718's "shift register empty" wait was previously expressed via the
+ * PLIB helper SPI2_IsTransmitterBusy(), which is
+ * `(SPI2STAT & _SPI2STAT_SRMT_MASK) == 0` (plib_spi2_master.c:167) --
+ * i.e. NOT busy is the SRMT bit SET. [V, PIC32 Family Reference Manual
+ * Section 23 "Serial Peripheral Interface (SPI)", DS61106G, Register 23-3
+ * (SPIxSTAT), bit 7: "SRMT: Shift Register Empty bit (valid only when
+ * ENHBUF = 1) -- 1 = When SPI module shift register is empty, 0 = When SPI
+ * module shift register is not empty." SRMT's ENHBUF precondition is met
+ * here: SPI2_Initialize sets ENHBUF=1 (plib_spi2_master.c:99).] Testing
+ * that mask/want pair here directly, rather than calling the PLIB function
+ * and inverting the sense, lets all three of this driver's wait shapes
+ * (TX-buffer-empty, RX-buffer-not-empty, shift-register-empty) route
+ * through this one helper instead of two different waiting idioms -- the
+ * design choice #1057 made over routing this one condition through
+ * SPI2_IsTransmitterBusy() and keeping two wait idioms (Qodo /agentic_review,
+ * declined with rationale on the PR). */
+typedef struct {
+    uint32_t   mask;
+    bool       want;
+    TickType_t start;
+    TickType_t timeoutTicks;
+} Dac7718WaitCtx_t;
+
+static bool dac7718_WaitBitMet(void* ctx) {
+    const Dac7718WaitCtx_t* w = (const Dac7718WaitCtx_t*)ctx;
+    return ((SPI2STAT & w->mask) != 0u) == w->want;
+}
+
+static bool dac7718_WaitBudgetSpent(void* ctx) {
+    const Dac7718WaitCtx_t* w = (const Dac7718WaitCtx_t*)ctx;
+    /* Rollover-safe: unsigned (now - start) is the true elapsed count even
+     * across a tick-counter wrap, unlike an absolute-deadline compare. */
+    return (TickType_t)(xTaskGetTickCount() - w->start) >= w->timeoutTicks;
+}
+
+static void dac7718_WaitYield(void* ctx) {
+    (void)ctx;
+    vTaskDelay(1);
+}
+
+static bool dac7718_WaitStat(uint32_t mask, bool want,
+                             TickType_t start, TickType_t timeoutTicks)
+{
+    Dac7718WaitCtx_t w = { mask, want, start, timeoutTicks };
+    /* Named directly, never through a variable, so the optimiser's
+     * inline -> constant-propagate -> devirtualise chain applies and the
+     * spin keeps costing one register read per iteration (WaitLoop.h's
+     * "COST" paragraph). HoistedSpinThenYield, not SpinThenYield: see the
+     * doc comment above this function for why the two are not
+     * interchangeable here (#1109). */
+    return WaitLoop_HoistedSpinThenYield(dac7718_WaitBitMet, dac7718_WaitBudgetSpent,
+                                         dac7718_WaitYield, &w,
+                                         DAC7718_SPI_FAST_SPIN_COUNT);
+}
+
 uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data)
 {
     uint32_t Com;
@@ -313,9 +454,8 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
 
     // Transmit 24-bit command (MSB first) with timeout protection
     for (x = 0U; x < DAC7718_TRANSFER_BYTES; x++) {
-        uint32_t timeout = DAC7718_SPI_TIMEOUT;
-        while (((SPI2STAT & _SPI2STAT_SPITBE_MASK) == 0U) && (--timeout > 0U)) { }
-        if (timeout == 0U) {
+        if (!dac7718_WaitStat(_SPI2STAT_SPITBE_MASK, true, xTaskGetTickCount(),
+                               pdMS_TO_TICKS(DAC7718_SPI_BYTE_TIMEOUT_MS))) {
             LOG_E("DAC7718_ReadWriteReg: TX buffer timeout on byte %u", x);
             rdData = UINT32_MAX;
             goto cleanup;
@@ -323,9 +463,8 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
         SPI2BUF = (uint8_t)((Com & 0x00FF0000UL) >> 16);
         Com <<= 8;
 
-        timeout = DAC7718_SPI_TIMEOUT;
-        while (((SPI2STAT & _SPI2STAT_SPIRBE_MASK) != 0U) && (--timeout > 0U)) { }
-        if (timeout == 0U) {
+        if (!dac7718_WaitStat(_SPI2STAT_SPIRBE_MASK, false, xTaskGetTickCount(),
+                               pdMS_TO_TICKS(DAC7718_SPI_BYTE_TIMEOUT_MS))) {
             LOG_E("DAC7718_ReadWriteReg: RX buffer timeout on byte %u", x);
             rdData = UINT32_MAX;
             goto cleanup;
@@ -334,9 +473,8 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
     }
 
     // Wait for shift register to empty (transmission complete)
-    uint32_t timeout = DAC7718_SPI_TIMEOUT;
-    while (SPI2_IsTransmitterBusy() && (--timeout > 0U)) { }
-    if (timeout == 0U) {
+    if (!dac7718_WaitStat(_SPI2STAT_SRMT_MASK, true, xTaskGetTickCount(),
+                           pdMS_TO_TICKS(DAC7718_SPI_BYTE_TIMEOUT_MS))) {
         LOG_E("DAC7718_ReadWriteReg: Shift register timeout");
         rdData = UINT32_MAX;
         goto cleanup;
@@ -347,13 +485,15 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
 
     // Readback if requested
     if (RW == 1U) {
-        // Inter-frame delay: DAC7718 requires minimum CS high time between transactions
-        // Datasheet specifies minimum 50ns. The CS rising edge latches the read command,
+        // Inter-frame delay: DAC7718 requires minimum CS high time between transactions.
+        // Datasheet (SBAS361A, t8 "CS high time") specifies a minimum of 10/19/28 ns at
+        // IOVDD = 5/3/1.8 V. The CS rising edge latches the read command,
         // and the DAC loads the readback data during this CS high period.
         // Cannot eliminate CS toggle - it's required by the protocol to delimit frames.
-        // Using 100ns (2x minimum) provides adequate margin while minimizing overhead.
-        // Note: At 200MHz core clock, 100ns = 20 ticks, well within timer resolution.
-        DAC7718_Delay_us(1);  // ~1us actual (minimum resolution), datasheet requires 50ns
+        // DAC7718_Delay_us(1) below waits ~1us -- the function's granularity is
+        // whole microseconds, and it converts them to core-timer ticks at the
+        // configured frequency -- far above that minimum at every IOVDD.
+        DAC7718_Delay_us(1);  // ~1us actual (minimum resolution); datasheet t8 min is <=28ns
 
         Com = 0b000000001000000110100000U; // NOP to clock out data
 
@@ -366,18 +506,16 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
         csAsserted = true;
 
         for (uint8_t i = 0U; i < DAC7718_TRANSFER_BYTES; i++) {
-            uint32_t to = DAC7718_SPI_TIMEOUT;
-            while (((SPI2STAT & _SPI2STAT_SPITBE_MASK) == 0U) && (--to > 0U)) { }
-            if (to == 0U) {
+            if (!dac7718_WaitStat(_SPI2STAT_SPITBE_MASK, true, xTaskGetTickCount(),
+                                   pdMS_TO_TICKS(DAC7718_SPI_BYTE_TIMEOUT_MS))) {
                 LOG_E("DAC7718_ReadWriteReg: NOP TX timeout on byte %u", i);
                 rdData = UINT32_MAX;
                 goto cleanup;
             }
             SPI2BUF = spi_txData[i];
 
-            to = DAC7718_SPI_TIMEOUT;
-            while (((SPI2STAT & _SPI2STAT_SPIRBE_MASK) != 0U) && (--to > 0U)) { }
-            if (to == 0U) {
+            if (!dac7718_WaitStat(_SPI2STAT_SPIRBE_MASK, false, xTaskGetTickCount(),
+                                   pdMS_TO_TICKS(DAC7718_SPI_BYTE_TIMEOUT_MS))) {
                 LOG_E("DAC7718_ReadWriteReg: NOP RX timeout on byte %u", i);
                 rdData = UINT32_MAX;
                 goto cleanup;
@@ -386,9 +524,8 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
         }
 
         // Wait for shift register to empty (readback transmission complete)
-        timeout = DAC7718_SPI_TIMEOUT;
-        while (SPI2_IsTransmitterBusy() && (--timeout > 0U)) { }
-        if (timeout == 0U) {
+        if (!dac7718_WaitStat(_SPI2STAT_SRMT_MASK, true, xTaskGetTickCount(),
+                               pdMS_TO_TICKS(DAC7718_SPI_BYTE_TIMEOUT_MS))) {
             LOG_E("DAC7718_ReadWriteReg: NOP shift register timeout");
             rdData = UINT32_MAX;
             goto cleanup;
