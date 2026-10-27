@@ -4232,6 +4232,59 @@ $(BUTTONLATCH_BIN): test_1092_button_poweroff_latch.c test_framework.h \
 	       echo "       suppression latch (#1092). It is the second poster of"; \
 	       echo "       DO_POWER_DOWN, and test_1092's DEFECT A correction"; \
 	       echo "       depends on both posters setting it."; exit 1; }
+	@# PIN 6 -- r4: the re-arm must be OUTSIDE the auto-promote gate, and the
+	@# handler must refresh VBUS before either. ⛔ THIS IS AN ORDER PROPERTY,
+	@# so PIN 3's by-name grep cannot express it: `= false` is present in BOTH
+	@# the r3 shape (re-arm inside the gate, where a pending DO_POWER_DOWN
+	@# makes it unreachable) and the r4 shape, and PIN 3 passes on both. The
+	@# position IS the fix, so the position is what is pinned -- plus an
+	@# exactly-one count, or a re-arm re-added inside the gate would satisfy
+	@# an order check that only looked at the first match.
+	@$(CC) -fpreprocessed -E $(FW_POWER_SRC) 2>/dev/null \
+	   | awk '/^static void Power_HandleStandbyState\(void\)/{f=1} f{print} f&&/^\}/{exit}' \
+	   > /tmp/.p1092f.$$$$; \
+	 test -s /tmp/.p1092f.$$$$ \
+	  || { echo "ERROR: could not extract Power_HandleStandbyState from"; \
+	       echo "       $(FW_POWER_SRC) (#1092 r4) -- this pin measures nothing."; \
+	       rm -f /tmp/.p1092f.$$$$; exit 1; }; \
+	 n=`grep -c 'autoPromotedThisVbusSession = false' /tmp/.p1092f.$$$$`; \
+	 test "$$n" = "1" \
+	  || { echo "ERROR: expected exactly ONE re-arm of the AUTOOn latch in"; \
+	       echo "       Power_HandleStandbyState, found $$n (#1092 r4). Two"; \
+	       echo "       re-arms let one sit inside the auto-promote gate --"; \
+	       echo "       where a pending DO_POWER_DOWN makes it unreachable --"; \
+	       echo "       while the order check below still passes on the other."; \
+	       rm -f /tmp/.p1092f.$$$$; exit 1; }; \
+	 r=`grep -n 'autoPromotedThisVbusSession = false' /tmp/.p1092f.$$$$ | cut -d: -f1`; \
+	 g=`grep -n 'autoPowerOnUsb &&' /tmp/.p1092f.$$$$ | head -1 | cut -d: -f1`; \
+	 v=`grep -n 'Power_UpdateStatusFromGPIO' /tmp/.p1092f.$$$$ | head -1 | cut -d: -f1`; \
+	 test -n "$$g" && test -n "$$v" \
+	  || { echo "ERROR: Power_HandleStandbyState no longer contains the"; \
+	       echo "       auto-promote gate and/or a VBUS refresh (#1092 r4)."; \
+	       rm -f /tmp/.p1092f.$$$$; exit 1; }; \
+	 test "$$r" -lt "$$g" \
+	  || { echo "ERROR: the AUTOOn latch re-arm is INSIDE the auto-promote"; \
+	       echo "       gate again (#1092 r4: line $$r vs gate $$g). That gate"; \
+	       echo "       requires requestedPowerState == NO_CHANGE, so on the"; \
+	       echo "       shutdown pass -- where the request is still pending,"; \
+	       echo "       because PIN 1 forbids the early clear -- the re-arm"; \
+	       echo "       never runs. A battery-only long-press held until USB"; \
+	       echo "       arrives then strands the board in STANDBY for ever."; \
+	       echo "       A latch set by a press must be cleared by the FIRST"; \
+	       echo "       observation of VBUS absent, whichever pass makes it."; \
+	       rm -f /tmp/.p1092f.$$$$; exit 1; }; \
+	 test "$$v" -lt "$$r" \
+	  || { echo "ERROR: Power_HandleStandbyState decides the latch re-arm"; \
+	       echo "       before refreshing VBUS (#1092 r4: refresh $$v vs"; \
+	       echo "       re-arm $$r). The re-arm would then read a CACHED"; \
+	       echo "       pgStat, and a stale FALSE and a truthful FALSE are"; \
+	       echo "       indistinguishable from the cache while demanding"; \
+	       echo "       OPPOSITE actions: the stale one must not clear the"; \
+	       echo "       latch (r2 residual), the truthful one must (r3"; \
+	       echo "       regression). The fresh PHY read is what makes the"; \
+	       echo "       discriminator sound; no predicate over the cache can."; \
+	       rm -f /tmp/.p1092f.$$$$; exit 1; }; \
+	 rm -f /tmp/.p1092f.$$$$
 	$(CC) $(CFLAGS) -o $(BUTTONLATCH_BIN) test_1092_button_poweroff_latch.c
 
 

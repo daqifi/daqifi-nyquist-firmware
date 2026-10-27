@@ -213,6 +213,55 @@ else
 fi
 restore
 
+echo "== M9: put the re-arm back INSIDE the request gate -- the exact r3 shape. =="
+echo "==     ⭐ THIS IS THE ONE PIN 3 COULD NOT SEE: `= false` is still present =="
+echo "==     and still a single occurrence, so only its POSITION differs.       =="
+if sub "$P" '    if (!pData->BQ24297Data.status.pgStat) {
+        pData->autoPromotedThisVbusSession = false;
+    }
+    if (pData->autoPowerOnUsb && pData->requestedPowerState == NO_CHANGE) {
+        bool vbusPresent = pData->BQ24297Data.status.pgStat;
+        if (vbusPresent && !pData->autoPromotedThisVbusSession) {' \
+          '    if (pData->autoPowerOnUsb && pData->requestedPowerState == NO_CHANGE) {
+        bool vbusPresent = pData->BQ24297Data.status.pgStat;
+        if (!vbusPresent) {
+            pData->autoPromotedThisVbusSession = false;
+        } else if (!pData->autoPromotedThisVbusSession) {'; then
+    expect "M9 re-arm hoisted out of the gate" "is INSIDE the auto-promote"
+else
+    echo "  FAIL M9 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== M10: drop the ENTRY VBUS refresh, leaving only the pre-power-up one.   =="
+echo "==      The re-arm then decides on a CACHED pgStat, where a stale FALSE   =="
+echo "==      and a truthful FALSE are indistinguishable.                       =="
+if sub "$P" '    Power_UpdateStatusFromGPIO();
+
+    /* #454: Auto-power-up on VBUS-present.' \
+          '    /* mutant: entry refresh removed */
+
+    /* #454: Auto-power-up on VBUS-present.'; then
+    expect "M10 entry refresh precedes the re-arm" "before refreshing VBUS"
+else
+    echo "  FAIL M10 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== M11: ADD a second re-arm inside the gate, keeping the hoisted one. An  =="
+echo "==      order check reading only the FIRST match would pass this; the     =="
+echo "==      exactly-one count is what catches it.                             =="
+if sub "$P" '        if (vbusPresent && !pData->autoPromotedThisVbusSession) {' \
+          '        if (!vbusPresent) {
+            pData->autoPromotedThisVbusSession = false;
+        }
+        if (vbusPresent && !pData->autoPromotedThisVbusSession) {'; then
+    expect "M11 exactly one re-arm" "expected exactly ONE re-arm"
+else
+    echo "  FAIL M11 anchor absent."; fail=$((fail+1))
+fi
+restore
+
 echo "== restored =="
 expect "post-restore baseline" CLEAN
 
