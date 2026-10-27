@@ -13,6 +13,18 @@
 CC       ?= gcc
 CFLAGS   ?= -std=c11 -Wall -Wextra -O0 -g
 FW_UTIL  := ../../firmware/src/Util
+
+# #1055 (operator ruling 5->A): the session-end loss summary was ONE 212-byte
+# LOG_E against Logger's 125-byte content ceiling, and Logger truncates the
+# TAIL -- so the breakdown AND the "(all post-grace)" qualifier were what an
+# operator lost. Split into three lines; this target measures all three.
+SUMBUDGET_BIN  := run_1055_tests
+STREAMING_SRC  := ../../firmware/src/services/streaming.c
+LOGGER_HDR     := ../../firmware/src/Util/Logger.h
+# Read out of the real Logger.h, never hand-copied: this whole test is an
+# assertion about a budget, and a budget checked against a stale capacity
+# checks nothing. Empty is fatal in the recipe.
+LOG_MSG_SIZE   := $(shell sed -n 's/^[[:space:]]*#define[[:space:]]\{1,\}LOG_MESSAGE_SIZE[[:space:]]\{1,\}\([0-9]\{1,\}\).*/\1/p' ../../firmware/src/Util/Logger.h | head -1)
 FW_ADC   := ../../firmware/src/HAL/ADC
 FW_SVC   := ../../firmware/src/services
 INCLUDES := -Istubs -I$(FW_UTIL)
@@ -348,7 +360,8 @@ $(SDLOG_BIN): test_1000_sd_log_arm_budget.c test_framework.h $(SCPI_IFACE_SRC) $
 # Makefile's shared run/clean lines are a known collision point) resolved by
 # keeping each side's target intact and merging only `run` and `clean` -- a
 # duplicated rule here would silently shadow one of them.
-run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) $(SDLOG_BIN)
+run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) $(SDLOG_BIN) $(SUMBUDGET_BIN)
+	./$(SUMBUDGET_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
@@ -359,7 +372,45 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) 
 	./$(HELP_BIN)
 	./$(SDLOG_BIN)
 
+$(SUMBUDGET_BIN): test_1055_stream_end_summary_budget.c test_framework.h \
+                 $(STREAMING_SRC) $(LOGGER_HDR)
+	@# The three formats are COPIED into the test (streaming.c is not
+	@# host-compilable: FreeRTOS, Harmony, the board graph). A copy that drifts
+	@# is a test of itself, so each literal must still be present in the real
+	@# source -- a reword comes back as a BUILD error that forces re-measurement
+	@# against the ceiling, not as a silently stale pass.
+	@for s in 'Stream end (post-grace): lost %u/%llu samples (%u%%)' \
+	          'Stream end (post-grace) bytes lost: USB=%u WiFi=%u SD=%u' \
+	          'Stream end (post-grace) samples lost: encFail=%u encDrop=%u dioDrop=%u eos=%u'; do \
+	   grep -qF "$$s" $(STREAMING_SRC) \
+	    || { echo "ERROR: $(STREAMING_SRC) no longer contains the session-end"; \
+	         echo "       summary line test_1055_stream_end_summary_budget.c measures:"; \
+	         echo "         $$s"; \
+	         echo "       That test carries a COPY of each format, so a reword here"; \
+	         echo "       leaves it measuring text the firmware no longer emits."; \
+	         echo "       Re-measure the new wording against Logger's 125-byte"; \
+	         echo "       content ceiling and update both."; \
+	         exit 1; }; \
+	 done
+	@# And the defect must not come back as ONE line: the pre-split format is
+	@# the test's negative control, so its presence in the source means the
+	@# split was reverted.
+	@grep -qF 'bytes, encFail=%u encDrop=%u dioDrop=%u eos=%u (all post-grace)' $(STREAMING_SRC) \
+	  && { echo "ERROR: $(STREAMING_SRC) has the PRE-SPLIT 212-byte session-end"; \
+	       echo "       summary back in one LOG_E (#1055). Logger truncates the"; \
+	       echo "       TAIL at 125 bytes, which is where the breakdown and the"; \
+	       echo "       '(all post-grace)' qualifier live."; \
+	       exit 1; } || true
+	@test -n '$(LOG_MSG_SIZE)' \
+	  || { echo "ERROR: could not read LOG_MESSAGE_SIZE out of $(LOGGER_HDR)."; \
+	       echo "       test_1055_stream_end_summary_budget.c measures the summary"; \
+	       echo "       against a ceiling derived from it; a defaulted capacity"; \
+	       echo "       would make that measurement meaningless. The test also"; \
+	       echo "       carries an #error, so neither half can default."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -DFW_LOG_MESSAGE_SIZE=$(LOG_MSG_SIZE) -o $(SUMBUDGET_BIN) test_1055_stream_end_summary_budget.c
+
 clean:
-	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) $(SDLOG_BIN) $(GEN_1000)
+	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) $(SDLOG_BIN) $(GEN_1000) $(SUMBUDGET_BIN)
 
 .PHONY: run clean

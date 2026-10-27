@@ -2593,13 +2593,35 @@ void Streaming_EmitSessionSummary(void) {
         // has had its chance to call Streaming_ReportSdDiscard(), so
         // sdDroppedBytesSteady here already reflects any stop-time drain
         // loss (unlike when this print lived inline in Streaming_Stop()).
-        LOG_E("Stream end: lost %u/%llu samples (%u%%), USB=%u WiFi=%u SD=%u bytes, encFail=%u encDrop=%u dioDrop=%u eos=%u (all post-grace)",
+        /* ⛔ THREE LINES, NOT ONE. As a single message this was 212 bytes
+         * worst-case against Logger's 125-byte content ceiling, and Logger
+         * truncates the TAIL (Logger.c's clamp) -- so the operator lost the
+         * breakdown AND the "(all post-grace)" qualifier that gives the
+         * numbers their meaning. Exactly #1029's defect, in this file.
+         *
+         * Worst case is dominated by the COUNTERS, not the prose: seven
+         * uint32 fields are 70 digits on their own, which is why two lines
+         * could only be made to fit by cutting the labels down to
+         * encF/encD/dioD for 3 bytes of headroom. Split by MEANING instead --
+         * headline, transport bytes, pipeline samples -- which keeps every
+         * label self-describing and leaves real margin: 83, 80 and 109 bytes
+         * worst-case. (The operator's ruling said two; it was given before
+         * this was measured. Reported rather than quietly re-decided.)
+         *
+         * Each line repeats "(post-grace)" rather than stating it once: they
+         * are separate log records, an operator may see any one of them alone,
+         * and a steady-counter number read as a total is a misleading number.
+         * test_1055_stream_end_summary_budget.c measures all three against the
+         * real ceiling and proves the ten quantities all survived the split. */
+        LOG_E("Stream end (post-grace): lost %u/%llu samples (%u%%)",
               (unsigned)totalSampleLoss,
               (unsigned long long)totalAttempted,
-              (unsigned)lossPercent,
+              (unsigned)lossPercent);
+        LOG_E("Stream end (post-grace) bytes lost: USB=%u WiFi=%u SD=%u",
               (unsigned)snap.usbDroppedBytesSteady,
               (unsigned)snap.wifiDroppedBytesSteady,
-              (unsigned)snap.sdDroppedBytesSteady,
+              (unsigned)snap.sdDroppedBytesSteady);
+        LOG_E("Stream end (post-grace) samples lost: encFail=%u encDrop=%u dioDrop=%u eos=%u",
               (unsigned)snap.encoderFailuresSteady,
               (unsigned)snap.encoderDroppedSamplesSteady,
               (unsigned)snap.dioDroppedSamplesSteady,
