@@ -2739,24 +2739,37 @@ static void Streaming_Stop(void) {
  * caller that forgets to invoke this degrades to NO summary for that
  * session — never a wrong or duplicated one.
  *
- * Callers, in the order a session normally reaches them:
+ * Callers, in the order a session normally reaches them. ⛔ #1055 r8: THIS
+ * LIST IS THE CONTRACT, so an omission here is worse than a wrong entry --
+ * two of the five below were missing and one described a call r6 deleted.
  *  - SCPI_PerformStreamingStop() (SCPIInterface.c), after its bounded
- *    sd_card_manager_IsIdle() wait — the primary path, covers
+ *    sd_card_manager_IsIdle() wait -- the primary SCPI path, covers
  *    SYSTem:STReam:STOP and SYSTem:STReam:START 0.
- *  - The #397 all-transports-dead auto-stop (streaming_Task, right after
- *    its own Streaming_Stop() call) — called DIRECTLY rather than left to
- *    the Streaming_Start() backstop below, because that backstop only
- *    fires at the NEXT session's start: an operator is not guaranteed to
- *    ever restart streaming after every transport looked dead, and
- *    leaving it to the backstop would withhold the summary indefinitely
- *    instead of just missing a stop-time SD-drain wait (which this path
- *    already did before #982, for this path only — unchanged, not a new
- *    regression).
- *  - Streaming_Start() (this file), as a backstop for every OTHER path
- *    that ends a session without going through SCPI_PerformStreamingStop
- *    (e.g. a direct Streaming_UpdateState() caller). Placed before
+ *  - app_SDCardTask() (app_freertos.c), which polls this every iteration of
+ *    its while(1) -- 1 ms in APP_SD_STATE_PROCESS. THIS IS THE CALLER THAT
+ *    ACTUALLY EMITS MOST SESSIONS' SUMMARY (#1055 r5), because it is the
+ *    only one that keeps asking after the SD hold has declined: the loop
+ *    whose own progress IS the teardown. A session whose teardown outlives
+ *    every stop caller gets its summary from here, after the drain, or
+ *    after STREAMING_SD_HOLD_MAX_MS with the teardown labelled incomplete.
+ *  - SCPI_StartFailedAfterStop() (SCPIInterface.c), the single named exit
+ *    for the thirteen error returns SCPI_StartStreamingClaimed has after it
+ *    tears the previous session down. Un-forced since r6. Absent from this
+ *    list since r2/r3 introduced it, which is its own small lesson about
+ *    hand-maintained contracts.
+ *  - The #397 all-transports-dead auto-stop (streaming_Task) does NOT call
+ *    this, as of r6. It used to, forced, and the comment at that site went
+ *    on claiming immediate emission for a round after the call was deleted.
+ *    Streaming_Stop() leaves the record pending and app_SDCardTask's poll
+ *    consumes it, which also retired that path's old accepted cost of
+ *    undercounting a stop-time SD drain.
+ *  - Streaming_Start() (this file), as a backstop for every OTHER path that
+ *    ends a session without going through SCPI_PerformStreamingStop (e.g. a
+ *    direct Streaming_UpdateState() caller). Placed before
  *    Streaming_ClearStats() so the previous session's counters are read
- *    before they are wiped.
+ *    before they are wiped. The ONLY caller that does not wait for the SD
+ *    hold -- it is about to wipe the record -- and it still labels an
+ *    unfinished teardown rather than passing a short summary off as whole.
  */
 
 void Streaming_EmitSessionSummary(void) {

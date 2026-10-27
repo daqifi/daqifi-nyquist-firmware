@@ -1228,8 +1228,18 @@ void Streaming_ReportSdDiscard(size_t bytes);
  * summary. Exactly-once per session (test-and-clear on an internal pending
  * flag set by Streaming_Stop()) -- see the function's own doc comment in
  * streaming.c for why this is split out of Streaming_Stop() and the full
- * list of call sites. Callers outside this file: SCPI_PerformStreamingStop()
- * in SCPIInterface.c, after its bounded SD-idle wait. */
+ * list of call sites.
+ *
+ * Callers outside this file, all THREE of them (#1055 r8 -- this note named
+ * only the first, which made the other two look like internal details):
+ *  - SCPI_PerformStreamingStop() (SCPIInterface.c), after its bounded
+ *    SD-idle wait;
+ *  - SCPI_StartFailedAfterStop() (SCPIInterface.c), the named exit for the
+ *    post-teardown error returns;
+ *  - app_SDCardTask() (app_freertos.c), which POLLS this every loop
+ *    iteration and is what emits most sessions' summary. Different file and
+ *    a different task from the SCPI callers, so it is the one a reader is
+ *    least likely to expect and most needs told about. */
 void Streaming_EmitSessionSummary(void);
 
 /* #1055 r6: Streaming_FlushOwedSessionSummary() was REMOVED. The forced
