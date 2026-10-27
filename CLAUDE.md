@@ -110,6 +110,8 @@ than hardcoding it. A site is a finding when its worst case is over,
 non-literal format argument. Bound a `%s` with `/* log_budget: max=N */`
 on or above the call, or with a precision (`%.40s`).
 
+⚠️ **Scope is `.c` only — a `LOG_E` in a HEADER is not measured** (`SCANNED_SUFFIXES` in the checker, and the gate prints this on every run), so a format string that lives in a `.h` is outside this gate and has to be bounded by hand.
+
 ```bash
 python3 tools/lint/log_budget.py --self-test      # prove the checker works
 python3 tools/lint/log_budget.py                  # the gate

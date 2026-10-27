@@ -1945,6 +1945,76 @@ MICRO_SIGN = chr(0xB5)
 # firing is indistinguishable from a tool that started guessing again.
 #
 # (name, source body, substring the ToolError must contain, why)
+# ⛔ #1110 r13 / OPERATOR ITEM 17 = A: THE CEILING IS A FIXED CONTRACT.
+#
+# The ruling (verbatim "17. A", posted by the operator on PR #1110,
+# issuecomment-6450421433): the logger's cut-off is ONE named constant set by a
+# SINGLE PLAIN #define; this checker reads that one form and REFUSES anything
+# else, and the PR body declares every other spelling unsupported.
+#
+# Before r13 the accept/refuse set was real but only implicit -- it fell out of
+# read_ceiling()'s internals and a handful of inline checks that covered the
+# clamp side, not the spelling side. An implicit contract is one a later edit
+# can loosen without any test going red, which is the whole shape this PR
+# exists to prevent elsewhere. So it is a TABLE now, and the table is the
+# contract: anything not listed as accepted must refuse.
+#
+# Each entry is (label, the LOG_MESSAGE_SIZE definition as it appears in
+# Logger.h, expected ceiling or None for "must refuse").
+SELF_TEST_CEILING_SPELLINGS = [
+    # --- the one accepted form, plus the formatting it tolerates ---
+    ("the shipped form: a single plain decimal #define",
+     "#define LOG_MESSAGE_SIZE 128", 125),
+    ("leading whitespace before the hash",
+     "   #define LOG_MESSAGE_SIZE 128", 125),
+    ("whitespace between the hash and `define`",
+     "#  define LOG_MESSAGE_SIZE 128", 125),
+    ("a trailing comment after the value",
+     "#define LOG_MESSAGE_SIZE 128 /* bytes */", 125),
+    # --- everything else refuses. Each is a plausible future edit, not a
+    #     hypothetical: a suffix and parentheses are ordinary C style, and the
+    #     #ifndef form is what someone adds to make the size overridable.
+    ("an integer suffix is refused, not parsed",
+     "#define LOG_MESSAGE_SIZE 128u", None),
+    ("hex is refused, never read as decimal",
+     "#define LOG_MESSAGE_SIZE 0x80", None),
+    ("a leading zero is refused rather than read as octal OR decimal",
+     "#define LOG_MESSAGE_SIZE 0200", None),
+    ("parenthesised is refused",
+     "#define LOG_MESSAGE_SIZE (128)", None),
+    ("an expression is refused",
+     "#define LOG_MESSAGE_SIZE 64+64", None),
+    ("defined via another macro is refused",
+     "#define LOG_BASE 128\n#define LOG_MESSAGE_SIZE LOG_BASE", None),
+    # ⛔ TWO ROWS, because the ONE I first wrote passed for the wrong reason.
+    # preproc_depth() only ever exempts directives[0], so with the LOGGER_H
+    # guard wrapped around it this fixture was refused by the DEPTH rule and
+    # never reached the configurable-default rule at all. Found by mutating the
+    # valueless test and watching the row stay green. The unwrapped row is the
+    # one that exercises the r12 HIGH; the wrapped row keeps the depth path
+    # covered. `wrap=False` means `defn` is the whole header.
+    #
+    # ⭐ MEASURED while validating this row: the configurable-default refusal is
+    # DEFENCE IN DEPTH. preproc_depth()'s guard exemption requires the #define to
+    # be VALUE-LESS *and* the name to be outside CEILING_INPUT_MACROS, and either
+    # condition ALONE already refuses this fixture. So no single-condition
+    # regression can reintroduce the r12 HIGH -- and no single-condition mutant
+    # can make this row fire. It took a mutant removing BOTH guards to prove the
+    # row is live. Worth knowing before concluding the row is blind, which is
+    # what I concluded twice before reaching for the right mutant.
+    ("a CONFIGURABLE DEFAULT as the FIRST directive is refused -- the r12 HIGH:\n"
+     "     # an #ifndef on a name this tool READS is a -D override, not a guard",
+     "#ifndef LOG_MESSAGE_SIZE\n#define LOG_MESSAGE_SIZE 128\n#endif\n", None, False),
+    ("a configurable default nested inside the include guard is refused too",
+     "#ifndef LOG_MESSAGE_SIZE\n#define LOG_MESSAGE_SIZE 128\n#endif", None),
+    ("two definitions are refused rather than taking the first",
+     "#define LOG_MESSAGE_SIZE 128\n#define LOG_MESSAGE_SIZE 64", None),
+    ("inside any other conditional is refused",
+     "#if 1\n#define LOG_MESSAGE_SIZE 128\n#endif", None),
+    ("absent entirely is refused, not defaulted",
+     "/* no definition at all */", None),
+]
+
 SELF_TEST_REJECTION_CASES = [
     (
         "r9: max= must be decimal",
@@ -3005,6 +3075,57 @@ def self_test():
                 failures += 1
                 print(f"  FAIL [ceiling: include guard]: derived {got}, "
                       f"expected 125")
+
+        # ⛔ #1110 r13 (item 17 = A): THE SPELLING CONTRACT, as a table.
+        # One loop, so adding a row is the only way to change the contract and
+        # a loosened read_ceiling() cannot pass silently.
+        for row in SELF_TEST_CEILING_SPELLINGS:
+            lbl, defn, want = row[0], row[1], row[2]
+            wrap = row[3] if len(row) > 3 else True
+            ceiling_checks += 1
+            hdr = (("#ifndef LOGGER_H\n#define LOGGER_H\n" + defn
+                    + "\n#define LOG_MAX_ENTRY_COUNT 64\n#endif\n") if wrap
+                   else defn)
+            try:
+                got = read_ceiling(hdr, c)[0]
+            except ToolError as e:
+                # A clean refusal. Correct for an unsupported spelling; a
+                # failure for the accepted one.
+                if want is not None:
+                    failures += 1
+                    print(f"  FAIL [ceiling spelling: {lbl}]: REFUSED ({e}), "
+                          f"expected the accepted form to derive {want}")
+                continue
+            except Exception as e:                       # noqa: BLE001
+                # ⛔ #1110 r13: A REFUSAL MUST BE CLEAN, NOT A CRASH -- and
+                # catching only ToolError above cost this table its voice.
+                # MEASURED: loosening the value guard to accept `128u` makes
+                # read_ceiling raise ValueError from int() further down, which
+                # escaped the loop as a traceback. The mutant WAS caught (exit
+                # 1) but reported no case name, so the table read as blind when
+                # I grepped for its own FAIL line. Same shape as the r12
+                # ambiguity/annotation runners.
+                #
+                # Reported either way, because both are contract breaches: the
+                # documented behaviour for an unsupported spelling is exit 2
+                # with a verdict, not an unhandled exception.
+                failures += 1
+                print(f"  FAIL [ceiling spelling: {lbl}]: raised "
+                      f"{type(e).__name__}: {e} -- expected "
+                      f"{'a clean ToolError refusal' if want is None else f'{want}'}. "
+                      f"A spelling this tool does not support must be REFUSED, "
+                      f"not crashed on")
+                continue
+            if want is None:
+                failures += 1
+                print(f"  FAIL [ceiling spelling: {lbl}]: ACCEPTED and derived "
+                      f"{got}, expected a refusal -- the ceiling is a fixed "
+                      f"contract (operator item 17 = A) and this spelling is "
+                      f"declared unsupported")
+            elif got != want:
+                failures += 1
+                print(f"  FAIL [ceiling spelling: {lbl}]: derived {got}, "
+                      f"expected {want}")
 
         # ⛔ #1110 r10: A REFUSAL MUST DETECT WITH A WIDER NET THAN THE PARSER
         # ACCEPTS WITH. The definition COUNTER used the parser's own narrow
