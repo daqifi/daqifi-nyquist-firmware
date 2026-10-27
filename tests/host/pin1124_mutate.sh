@@ -235,49 +235,49 @@ else
 fi
 restore
 
-echo "== R16-A: drop the stale-manifest discard from the wrapper. Every count =="
+echo "== R21 (#1124 r16): drop the stale-manifest discard from the wrapper. Every count =="
 echo "==        arm stays satisfied; only PIN A sees that refusal now leaves   =="
 echo "==        a previous session's record beside truncated data.             =="
 if sub "$F" '    sd_DiscardStaleManifests();
 }' '}'; then
-    expect "R16-A wrapper discard arm" "no longer discards a stale manifest"
+    expect "R21 wrapper discard arm" "no longer discards a stale manifest"
 else
-    echo "  FAIL R16-A anchor absent -- source drifted from this harness."; fail=$((fail+1))
+    echo "  FAIL R21 anchor absent -- source drifted from this harness."; fail=$((fail+1))
 fi
 restore
 
-echo "== R16-B: turn ONE refusal's 'return false;' back into a bare 'return;'. =="
+echo "== R22: turn ONE refusal's 'return false;' back into a bare 'return;'. =="
 echo "==        This is the shape an eleventh refusal arm would have, and it   =="
 echo "==        skips the discard entirely while the function still compiles.  =="
-if sub "$F" 'gpSDCardSettings->directory, (unsigned)parentFiles);
-              return false;' 'gpSDCardSettings->directory, (unsigned)parentFiles);
-              return;'; then
-    expect "R16-B total-verdict arm" "verdict is not total"
+if sub "$F" '                  gpSDCardSettings->directory, (unsigned)parentFiles);
+            return false;' '                  gpSDCardSettings->directory, (unsigned)parentFiles);
+            return;'; then
+    expect "R22 total-verdict arm" "verdict is not total"
 else
-    echo "  FAIL R16-B anchor absent -- source drifted from this harness."; fail=$((fail+1))
+    echo "  FAIL R22 anchor absent -- source drifted from this harness."; fail=$((fail+1))
 fi
 restore
 
-echo "== R16-C: unlink WITHOUT the create path's own predicate. Count-safe:    =="
+echo "== R23: unlink WITHOUT the create path's own predicate. Count-safe:    =="
 echo "==        sd_ManifestPathSafeToOverwrite drops 4 -> 3 and its own '>= 3' =="
 echo "==        pin still passes, so only PIN C can see this.                  =="
 if sub "$F" 'if (!sd_ManifestPathSafeToOverwrite(path)) {' 'if (0) {'; then
-    expect "R16-C unlink-predicate arm" "no longer gates its unlink"
+    expect "R23 unlink-predicate arm" "no longer gates its unlink"
 else
-    echo "  FAIL R16-C anchor absent -- source drifted from this harness."; fail=$((fail+1))
+    echo "  FAIL R23 anchor absent -- source drifted from this harness."; fail=$((fail+1))
 fi
 restore
 
-echo "== R16-D: sweep only the PRIMARY name, not the fallback. The fallback is =="
+echo "== R24: sweep only the PRIMARY name, not the fallback. The fallback is =="
 echo "==        the one that survives in exactly the collision case it exists  =="
 echo "==        for, so this is the subtlest of the four.                      =="
 if sub "$F" '    const char *const bases[2] = { gSDCardData.baseFilename,
                                    gpSDCardSettings->file };' \
            '    const char *const bases[2] = { gSDCardData.baseFilename,
                                    gSDCardData.baseFilename };'; then
-    expect "R16-D both-names arm" "no longer sweeps BOTH candidate"
+    expect "R24 both-names arm" "no longer sweeps BOTH candidate"
 else
-    echo "  FAIL R16-D anchor absent -- source drifted from this harness."; fail=$((fail+1))
+    echo "  FAIL R24 anchor absent -- source drifted from this harness."; fail=$((fail+1))
 fi
 restore
 
