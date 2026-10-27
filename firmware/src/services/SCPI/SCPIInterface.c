@@ -5152,16 +5152,22 @@ static void SCPI_UnpublishStartInterface(StreamingRuntimeConfig *cfg,
  * section and a return when nothing is owed, so a start that failed WITHOUT a
  * previous session to tear down pays nothing. */
 static scpi_result_t SCPI_StartFailedAfterStop(void) {
-    /* FORCED (#1055 r4). The forcing criterion across this file is "no bounded
-     * SD-idle wait AND no guaranteed later flush", and this path has neither:
-     * Streaming_Start()'s backstop only runs on a SUCCESSFUL start, so a run of
-     * failing starts would withhold the summary indefinitely. Un-forced here
-     * would trade r2 finding 3's fix straight back.
+    /* ⛔ #1055 r6: UN-FORCED now, and that was r5's second finding. r4 forced
+     * this on the criterion "no bounded SD-idle wait AND no guaranteed later
+     * flush" -- true at the time, because Streaming_Start()'s backstop only
+     * runs on a SUCCESSFUL start, so a run of failing starts would withhold
+     * the summary indefinitely. The cost was invisible and worse: forcing
+     * consumes the record MID-DRAIN, so a teardown still reporting its
+     * discards wrote them into a record nobody was waiting on, and the loss
+     * was never printed or flagged.
      *
-     * For contrast, SCPI_PerformStreamingStop stays UN-forced on purpose --
-     * it HAS the wait, and declining to consume there is exactly what lets a
-     * concurrent stop defer to it so the teardown's discards are included. */
-    Streaming_FlushOwedSessionSummary();
+     * The criterion itself is now obsolete, not merely outweighed:
+     * app_SDCardTask polls the unforced emitter every iteration and the hold
+     * is bounded, so "no guaranteed later flush" is false on every path. The
+     * call stays rather than being deleted -- un-forced it is a cheap read and
+     * an immediate emit in the common case (a start that failed with no SD
+     * session has no hold to wait on) and a correct deferral otherwise. */
+    Streaming_EmitSessionSummary();
     return SCPI_RES_ERR;
 }
 
@@ -6946,13 +6952,22 @@ static void SCPI_PerformStreamingStop(void) {
      * consumed exactly once when the drain finishes after every stop caller
      * has returned.
      *
-     * ⚠ STILL OPEN, narrowed: Streaming_FlushOwedSessionSummary() forces past
-     * the hold by design, for the paths with no bounded wait and no later poll
-     * (the #397 auto-stop, and Streaming_Start()'s backstop). There, a summary
-     * that prints before the drain can still undercount stop-time SD loss --
-     * deliberately, because the alternative on those paths is no summary at
-     * all. Narrowed from "every path, best-effort" to "two named forcing
-     * paths", which is why this is stated here rather than left implied. */
+     * ⚠ r6 CLOSED THE REST, AND THE PARAGRAPH THAT WAS HERE WAS ALREADY STALE
+     * WHEN WRITTEN. It said the residual stayed open for
+     * Streaming_FlushOwedSessionSummary() on "the paths with no bounded wait
+     * and no later poll (the #397 auto-stop, and Streaming_Start()'s
+     * backstop)" -- a count of two that was wrong in both directions: the
+     * failed-START exit SCPI_StartFailedAfterStop() was a third forcing path,
+     * and "no later poll" had stopped being true in the same round, since r5
+     * added the poll that reaches all of them.
+     *
+     * r6 removed that function. The forced paths are gone, except
+     * Streaming_Start()'s backstop, which must not wait because it is about to
+     * wipe the record -- and it no longer hides that: an early consume prints
+     * "SD teardown incomplete". So the ordering is now either correct or
+     * LABELLED, on every path, and the undercount is no longer silent
+     * anywhere. The bound (STREAMING_SD_HOLD_MAX_MS) is what makes that safe:
+     * a manager parked off-idle delays the summary, it cannot withhold it. */
     if (pRunTimeStreamConfig) {
         taskENTER_CRITICAL();
         pRunTimeStreamConfig->IsEnabled = false;
@@ -7122,9 +7137,12 @@ static void SCPI_PerformStreamingStop(void) {
      * record's test-and-clear, so the two cannot both print. The
      * "[SD] Streaming stop: SD still finalising" LOG_E and OPER bit 11 above
      * still record that the WAIT timed out, which is a separate fact from
-     * whether the summary was complete. The remaining exception is
-     * Streaming_FlushOwedSessionSummary(), which bypasses the hold on purpose
-     * for paths that have no bounded wait and no later poll. */
+     * whether the summary was complete.
+     *
+     * #1055 r6: there is no longer a forcing exception to name here. The only
+     * caller that does not wait is Streaming_Start()'s backstop, which is
+     * about to wipe the record, and it labels an incomplete teardown rather
+     * than passing a short summary off as a whole one. */
     /* #1055 r3: unconditional again. The record makes this exactly-once and
      * data-correct whoever calls it, so there is no ownership test left to
      * make -- see the refuted token above. */

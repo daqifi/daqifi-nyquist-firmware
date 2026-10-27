@@ -3286,7 +3286,9 @@ $(SUMBUDGET_BIN): test_1055_stream_end_summary_budget.c test_framework.h \
 	@for s in 'Stream end (post-grace): lost %u/%llu samples (%u%%); ' \
 	          'Stream end (post-grace) bytes lost: USB=%u WiFi=%u SD=%u' \
 	          'Stream end (post-grace) samples lost: encFail=%u encDrop=%u dioDrop=%u' \
-	          'eos=%u stale not lost'; do \
+	          'eos=%u stale not lost' \
+	          'Stream end (post-grace): SD teardown incomplete after %u ms; ' \
+	          'SD discards not included'; do \
 	   grep -qF "$$s" $(STREAMING_SRC) \
 	    || { echo "ERROR: $(STREAMING_SRC) no longer contains the session-end"; \
 	         echo "       summary line test_1055_stream_end_summary_budget.c measures:"; \
@@ -3395,6 +3397,58 @@ $(SUMBUDGET_BIN): test_1055_stream_end_summary_budget.c test_framework.h \
 	       echo "       idle. More than 1 means the loop polls twice per iteration;"; \
 	       echo "       harmless for correctness (the emitter test-and-clears) but"; \
 	       echo "       it means two authors each added one, so re-read both."; \
+	       exit 1; }
+	@# ⛔ #1055 r6 PIN A: THE SD HOLD IS CONDITIONAL, NOT UNCONDITIONAL.
+	@# r4 set it with a literal `true` and justified that by claiming a non-SD
+	@# session would find the manager already idle. False: sd_card_manager_IsIdle()
+	@# is true for IDLE and INIT only, so a manager parked in DEINIT after a
+	@# power-down plus SD:ENA 0 held the summary FOREVER -- the failure the hold
+	@# was added to prevent. Both arms are pinned, because either alone passes the
+	@# wrong tree: the assignment must be from the predicate AND the literal form
+	@# must be absent.
+	@grep -qE '^[ \t]*gSessionRecordSdHold = sessionWasSdLogging;' $(STREAMING_SRC) \
+	  || { echo "ERROR: $(STREAMING_SRC): the SD hold is no longer set from the"; \
+	       echo "       sessionWasSdLogging predicate (#1055 r6). A hold on a"; \
+	       echo "       non-SD session can never be released by observing the SD"; \
+	       echo "       manager, because that manager may be parked off-idle."; \
+	       exit 1; }
+	@grep -qE '^[ \t]*gSessionRecordSdHold = true;' $(STREAMING_SRC) \
+	  && { echo "ERROR: $(STREAMING_SRC): the SD hold is set UNCONDITIONALLY"; \
+	       echo "       again (#1055 r6 regression). See PIN A's comment."; \
+	       exit 1; } || true
+	@# ⛔ #1055 r6 PIN B: THE HOLD IS BOUNDED. Without the bound, PIN A still
+	@# leaves "forever" reachable -- ActiveInterface can say SD while the SD
+	@# interface is disabled, and a real SD session can park its manager off-idle.
+	@# The bound must be COMPARED, not merely defined: a #define nothing reads is
+	@# the shape this row has already shipped once.
+	@grep -qE '^[ \t]*#define[ \t]+STREAMING_SD_HOLD_MAX_MS' $(STREAMING_SRC) \
+	  && grep -qE 'waited < pdMS_TO_TICKS\(STREAMING_SD_HOLD_MAX_MS\)' $(STREAMING_SRC) \
+	   || { echo "ERROR: $(STREAMING_SRC): the SD hold is unbounded (#1055 r6)."; \
+	        echo "       STREAMING_SD_HOLD_MAX_MS must be defined AND compared"; \
+	        echo "       against the elapsed hold, or a manager parked off-idle"; \
+	        echo "       withholds the summary indefinitely."; \
+	        exit 1; }
+	@# ⛔ #1055 r6 PIN C: NO FORCED FLUSH. A forced consume takes the record
+	@# MID-DRAIN, so a teardown still calling Streaming_ReportSdDiscard() writes
+	@# into a record nobody is waiting on and the loss is never printed OR
+	@# flagged. Keyed on the CALL at statement position, so the historical
+	@# mentions in comments (which begin ` * `) do not trip it -- a negative pin
+	@# keyed on a bare literal would fail on clean source here.
+	@grep -qE '^[ \t]*Streaming_FlushOwedSessionSummary\(\);' \
+	     $(STREAMING_SRC) $(SCPISD_START_SRC) \
+	  && { echo "ERROR: the forced session-summary flush is back (#1055 r6)."; \
+	       echo "       It consumes the record while the SD teardown may still"; \
+	       echo "       be reporting discards, and loses them silently. The"; \
+	       echo "       bounded hold plus app_SDCardTask's poll replace it."; \
+	       exit 1; } || true
+	@n=`grep -cE 'Streaming_EmitSessionSummaryImpl\(true\)' $(STREAMING_SRC)`; \
+	 test "$$n" -eq 1 \
+	  || { echo "ERROR: $(STREAMING_SRC) has $$n EmitSessionSummaryImpl(true)"; \
+	       echo "       call(s), expected exactly 1 -- Streaming_Start()'s"; \
+	       echo "       backstop, the only caller that must not wait because it"; \
+	       echo "       is about to wipe the record. 0 means that backstop lost"; \
+	       echo "       its emit and a restart drops the owed summary; more than"; \
+	       echo "       1 means a new path skips the wait (#1055 r6)."; \
 	       exit 1; }
 	$(CC) $(CFLAGS) -DFW_LOG_MESSAGE_SIZE=$(LOG_MSG_SIZE) -o $(SUMBUDGET_BIN) test_1055_stream_end_summary_budget.c
 

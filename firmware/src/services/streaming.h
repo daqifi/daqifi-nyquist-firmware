@@ -1232,9 +1232,11 @@ void Streaming_ReportSdDiscard(size_t bytes);
  * in SCPIInterface.c, after its bounded SD-idle wait. */
 void Streaming_EmitSessionSummary(void);
 
-/* #1055 r4: emit even if the SD teardown has not finished. For callers
- * with no bounded SD-idle wait -- see the definition. */
-void Streaming_FlushOwedSessionSummary(void);
+/* #1055 r6: Streaming_FlushOwedSessionSummary() was REMOVED. The forced
+ * consume it provided lost a draining teardown's discards silently; the
+ * bounded hold plus app_SDCardTask's poll cover every path that needed it,
+ * and an early consume now labels itself. See its former definition site in
+ * streaming.c for the full reasoning. */
 
 // #388 — Compile-time profiling counters for the PB streaming hot path.
 // When enabled, instruments encoder + USB write paths with _CP0_GET_COUNT()

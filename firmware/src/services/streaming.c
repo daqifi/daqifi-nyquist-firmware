@@ -259,20 +259,46 @@ static volatile bool gSessionRecordPending = false;
  * teardown has added its discards, consumes the record, and those discards
  * land in a record nobody is waiting on any more.
  *
- * Set unconditionally at stop and released by OBSERVING completion --
- * sd_card_manager_IsIdle() -- rather than by being told. That matters twice:
- *   - it needs no hook in sd_card_manager.c, whose teardown path fw#1124 is
- *     actively changing, so the two rows do not collide;
- *   - a NON-SD session needs no special case: the manager is already idle, so
- *     the first emit attempt releases the hold immediately.
+ * Released by OBSERVING completion -- sd_card_manager_IsIdle() -- rather than
+ * by being told, which needs no hook in sd_card_manager.c, whose teardown path
+ * fw#1124 is actively changing, so the two rows do not collide.
  *
  * Whoever emits LAST -- the one that finds SD idle -- is the one that
- * consumes, with the teardown's discards already added. */
+ * consumes, with the teardown's discards already added.
+ *
+ * ⛔ #1055 r6, THE BLIND LEG OF r5's AUDIT, AND IT REFUTED THE PARAGRAPH THAT
+ * USED TO BE HERE. r4 set this hold UNCONDITIONALLY and justified it by
+ * claiming "a NON-SD session needs no special case: the manager is already
+ * idle, so the first emit attempt releases the hold immediately." That claim
+ * is false, and it was mine. sd_card_manager_IsIdle() is true for exactly two
+ * states, IDLE and INIT (sd_card_manager.c) -- so a manager parked in DEINIT
+ * or ERROR is NOT idle, and a USB-only session that stops after a power-down
+ * plus SD:ENA 0 leaves it parked there with nothing to advance it. The hold
+ * then never releases and the summary is withheld FOREVER: the exact failure
+ * the hold was added to prevent, reintroduced by the fix for it.
+ *
+ * Two independent corrections, because either alone still fails:
+ *   - SET IT ONLY FOR AN SD-LOGGING SESSION. A session that never wrote to SD
+ *     has no teardown report to wait for, so the hold is pure risk there.
+ *   - BOUND IT ANYWAY. ActiveInterface can say SD while the SD interface is
+ *     disabled, and a genuinely SD-logging session can still park its manager
+ *     off-idle. After STREAMING_SD_HOLD_MAX_MS the record is emitted with the
+ *     teardown labelled incomplete -- a summary that states what it is missing
+ *     beats both a short one that lies by omission and no summary at all.
+ * The condition removes the common case; the bound removes "forever". */
 static volatile bool gSessionRecordSdHold = false;
+/* When the hold was raised, for the bound above. Wrap-safe: compared only as
+ * an unsigned difference, like Streaming_GraceExpiredAt(). */
+static volatile TickType_t gSessionRecordHoldSince = 0;
+/* How long the hold may withhold the summary before it is emitted with the SD
+ * teardown labelled incomplete. 5 s matches SCPI_PerformStreamingStop()'s own
+ * bounded SD-idle wait, so the poll's patience is not shorter than the wait
+ * that precedes it -- a tighter bound here would make that wait unreachable. */
+#define STREAMING_SD_HOLD_MAX_MS 5000u
 
 /* Forward-declared here, above its first CALLER (Streaming_Start's backstop),
  * not beside its definition further down. #1055 r4. */
-static void Streaming_EmitSessionSummaryImpl(bool force);
+static void Streaming_EmitSessionSummaryImpl(bool recordDying);
 
 /* #814: rail detection. `gClipLiveMask` is LIVE -- rewritten every tick, so a
  * consumer reading device_status sees the current frame's state rather than a
@@ -2155,10 +2181,12 @@ static void Streaming_Start(void) {
              * after its bounded SD-idle wait, is what fires first for that
              * path. Must run BEFORE Streaming_ClearStats(), which would
              * otherwise wipe the very counters this reads. */
-            /* #1055 r4: FORCED. Streaming_ClearStats() below wipes the live
-             * counters and this session is about to own the record, so holding
-             * for an SD teardown here loses the previous summary rather than
-             * delaying it. */
+            /* #1055 r6: `recordDying` -- the ONE remaining caller that does
+             * not wait. Streaming_ClearStats() below wipes the live counters
+             * and this session is about to own the record, so waiting for an
+             * SD teardown here would lose the previous summary rather than
+             * delay it. Unlike r4's `force`, this skips only the WAITING: if
+             * the teardown had not finished, the summary still says so. */
             Streaming_EmitSessionSummaryImpl(true);
             Streaming_ClearStats();
             Streaming_InitFlowWindow(gpRuntimeConfigStream->Frequency);
@@ -2646,10 +2674,24 @@ static void Streaming_Stop(void) {
          * been cleared or advanced. Streaming_GetStats() takes its own
          * critical section and FreeRTOS nests them, so this is one short
          * region: a struct copy plus three counters. */
+        /* #1055 r6: the hold applies only to a session that could have an SD
+         * teardown report coming. Same predicate shape the #397 transport
+         * liveness check uses, so the two cannot disagree about what "an SD
+         * session" is. Read before the critical section: a config load, not
+         * shared mutable state this region protects. */
+        const bool sessionWasSdLogging =
+                (gpRuntimeConfigStream->ActiveInterface == StreamingInterface_SD ||
+                 gpRuntimeConfigStream->ActiveInterface == StreamingInterface_UsbAndSd);
+        /* Task context at every caller (USB SCPI pri 7, WifiTask pri 2,
+         * streaming_Task pri 6), so the plain tick read is the correct one --
+         * see the FromISR note on the grace-window helpers. */
+        const TickType_t stoppedAt = xTaskGetTickCount();
         taskENTER_CRITICAL();
         Streaming_GetStats(&gSessionRecord);
         gSessionRecordPending = true;
-        gSessionRecordSdHold = true;      /* #1055 r4: see its declaration */
+        gSessionRecordSdHold = sessionWasSdLogging;  /* #1055 r6: NOT uncondi-
+                                                      * tional -- see decl */
+        gSessionRecordHoldSince = stoppedAt;
         taskEXIT_CRITICAL();
     }
 }
@@ -2690,18 +2732,23 @@ void Streaming_EmitSessionSummary(void) {
     Streaming_EmitSessionSummaryImpl(false);
 }
 
-/* #1055 r4: emit even if the SD teardown has not finished.
+/* #1055 r6: Streaming_FlushOwedSessionSummary() IS GONE.
  *
- * For the paths with NO bounded SD-idle wait and no guaranteed later flush.
- * Holding there would turn "may undercount stop-time SD loss" into "may
- * never print at all", and the auto-stop's own comment already records that
- * this row chose the former deliberately. The hold exists for the path that
- * DOES wait; this is the escape hatch for the ones that cannot. */
-void Streaming_FlushOwedSessionSummary(void) {
-    Streaming_EmitSessionSummaryImpl(true);
-}
+ * r4 added it as the escape hatch for paths with no bounded SD-idle wait, on
+ * the reasoning that holding there would turn "may undercount stop-time SD
+ * loss" into "may never print at all". r5's audit then found the cost: a
+ * forced flush consumes the record MID-DRAIN, so the teardown's discards land
+ * in a record nobody is waiting on and are lost without the reader being told.
+ *
+ * Both halves are now unnecessary, because the two things it traded between
+ * were each fixed directly:
+ *   - "may never print" is handled by app_SDCardTask's poll plus the bounded
+ *     hold, which reaches every path including the ones with no wait;
+ *   - "undercount silently" is handled by the sdIncomplete label, so an early
+ *     consume announces itself.
+ * One rule -- the hold and its bound -- instead of a rule and an exemption. */
 
-static void Streaming_EmitSessionSummaryImpl(bool force) {
+static void Streaming_EmitSessionSummaryImpl(bool recordDying) {
     /* ⛔ #1055 r1 finding 1: THE FLAG CONSUME AND THE SNAPSHOT ARE ONE STEP.
      *
      * They used to be two critical sections -- test-and-clear the flag, exit,
@@ -2726,9 +2773,11 @@ static void Streaming_EmitSessionSummaryImpl(bool force) {
      * "emitted but empty" outcome in one step. */
     StreamingStats snap;
     bool pending, hold;
+    TickType_t holdSince;
     taskENTER_CRITICAL();
     pending = gSessionRecordPending;
     hold = gSessionRecordSdHold;
+    holdSince = gSessionRecordHoldSince;
     taskEXIT_CRITICAL();
     if (!pending) {
         return;
@@ -2736,11 +2785,25 @@ static void Streaming_EmitSessionSummaryImpl(bool force) {
     /* #1055 r4: do not consume while the SD teardown may still have discards
      * to add. sd_card_manager_IsIdle() is read OUTSIDE the critical section --
      * it is the manager's own published state and must not be called with
-     * interrupts masked. `force` is the escape hatch for Streaming_Start()'s
-     * backstop, which is about to overwrite this record anyway: holding there
-     * would lose the summary rather than delay it. */
-    if (hold && !force && !sd_card_manager_IsIdle()) {
-        return;
+     * interrupts masked.
+     *
+     * #1055 r6: BOUNDED, and the bound is why the forced flushes are gone.
+     * Waiting forever is not available (the manager can park off-idle, see the
+     * hold's declaration) and consuming early loses the teardown's discards
+     * SILENTLY -- so after STREAMING_SD_HOLD_MAX_MS we emit and say the
+     * teardown was incomplete. `recordDying` is Streaming_Start()'s backstop,
+     * which is about to wipe this record: it skips the WAITING, not the label,
+     * so an early consume is still reported as incomplete rather than passed
+     * off as a complete summary. */
+    bool sdIncomplete = false;
+    uint32_t heldMs = 0;
+    if (hold && !sd_card_manager_IsIdle()) {
+        const TickType_t waited = (TickType_t)(xTaskGetTickCount() - holdSince);
+        if (!recordDying && waited < pdMS_TO_TICKS(STREAMING_SD_HOLD_MAX_MS)) {
+            return;
+        }
+        sdIncomplete = true;
+        heldMs = (uint32_t)waited * (uint32_t)portTICK_PERIOD_MS;
     }
     taskENTER_CRITICAL();
     /* Re-check under the lock: another caller may have consumed it in the
@@ -2788,6 +2851,21 @@ static void Streaming_EmitSessionSummaryImpl(bool force) {
                     snap.dioDroppedSamplesSteady > 0 ||
                     snap.scanStaleDroppedSteady > 0 ||  // #1018 (was missing a Steady term entirely)
                     snap.eosOverruns > 0;  // no Steady variant — hw staleness, not a grace-window false flag
+
+    /* ⛔ #1055 r6: OUTSIDE the hadDrops gate, deliberately. If the SD teardown
+     * did not finish, its discards are not in this record -- so "no drops" is
+     * not established, it is merely unobserved, and a silent return would let
+     * an operator read the absence of a summary as a clean session. This line
+     * is the difference between an incomplete answer and a wrong one.
+     *
+     * Worst case 93 bytes against Logger's 125-byte content ceiling (%u of a
+     * uint32 is 10 digits); test_1055_stream_end_summary_budget.c measures it
+     * with the other three. */
+    if (sdIncomplete) {
+        LOG_E("Stream end (post-grace): SD teardown incomplete after %u ms; "
+              "SD discards not included",
+              (unsigned)heldMs);
+    }
 
     if (hadDrops) {
         uint64_t totalAttempted = snap.totalSamplesStreamed +
@@ -3580,11 +3658,13 @@ void streaming_Task(void) {
              * pre-#982 for THIS path and is not a new regression. What
              * would be new, and is what this call prevents, is indefinite
              * silence. */
-            /* #1055 r4: FORCED, preserving the trade-off the comment above
-             * states. This path has no SD-idle wait, so an un-forced call
-             * would withhold the summary indefinitely -- exactly the
-             * "indefinite silence" this call exists to prevent. */
-            Streaming_EmitSessionSummaryImpl(true);
+            /* #1055 r6: the forced call here is GONE. This path has no
+             * SD-idle wait, which is why r4 forced it -- but app_SDCardTask
+             * now polls the unforced emitter every iteration, and the hold is
+             * bounded, so the summary arrives here without a forced consume
+             * that could discard a draining teardown's reports. The
+             * "indefinite silence" this once prevented is prevented by the
+             * bound instead. */
             goto iter_done;
         }
 

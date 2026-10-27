@@ -65,6 +65,13 @@
     "Stream end (post-grace) bytes lost: USB=%u WiFi=%u SD=%u"
 #define FMT_SAMPLES \
     "Stream end (post-grace) samples lost: encFail=%u encDrop=%u dioDrop=%u"
+/* #1055 r6: the fourth line. Printed when the bounded SD hold expires with the
+ * manager still off-idle, OUTSIDE the hadDrops gate -- an unfinished teardown
+ * means "no drops" is unobserved rather than established, so this one must be
+ * able to print on a session where the other three do not. */
+#define FMT_SD_INCOMPLETE \
+    "Stream end (post-grace): SD teardown incomplete after %u ms; " \
+    "SD discards not included"
 
 /* The pre-split single line. Kept ONLY as the negative control below. */
 #define FMT_PRE_SPLIT \
@@ -191,7 +198,8 @@ TEST(the_pre_split_line_did_not_fit)
 
 TEST(each_summary_line_fits_the_logger_ceiling)
 {
-    const char *const fmts[] = { FMT_HEADLINE, FMT_BYTES, FMT_SAMPLES };
+    const char *const fmts[] = { FMT_HEADLINE, FMT_BYTES, FMT_SAMPLES,
+                                 FMT_SD_INCOMPLETE };
     size_t i;
 
     for (i = 0u; i < sizeof(fmts) / sizeof(fmts[0]); i++) {
@@ -207,6 +215,21 @@ TEST(each_summary_line_fits_the_logger_ceiling)
     ASSERT_EQ(worst_case_len(FMT_HEADLINE), 114u);
     ASSERT_EQ(worst_case_len(FMT_BYTES), 80u);
     ASSERT_EQ(worst_case_len(FMT_SAMPLES), 94u);
+    ASSERT_EQ(worst_case_len(FMT_SD_INCOMPLETE), 93u);   /* #1055 r6 */
+}
+
+/* #1055 r6: the incomplete-teardown line carries exactly ONE quantity, the
+ * milliseconds waited, and must NOT grow a counter. Its whole job is to say
+ * the record is missing data; a number FROM that record would invite reading
+ * it as complete. Pinned because the obvious "improvement" is to append the
+ * SD byte count, which is precisely the number that is not trustworthy here. */
+TEST(the_incomplete_teardown_line_reports_only_the_wait)
+{
+    ASSERT_EQ(conversion_count(FMT_SD_INCOMPLETE), 1u);
+    ASSERT_TRUE(strstr(FMT_SD_INCOMPLETE, "not included") != NULL);
+    /* and it is a post-grace line like the other three, so an operator who
+     * sees it alone is not misled about which counters it refers to */
+    ASSERT_TRUE(strstr(FMT_SD_INCOMPLETE, "(post-grace)") != NULL);
 }
 
 TEST(the_split_lost_none_of_the_ten_quantities)
@@ -274,11 +297,15 @@ TEST(every_line_says_post_grace_on_its_own)
     ASSERT_TRUE(strstr(FMT_HEADLINE, "(post-grace)") != NULL);
     ASSERT_TRUE(strstr(FMT_BYTES, "(post-grace)") != NULL);
     ASSERT_TRUE(strstr(FMT_SAMPLES, "(post-grace)") != NULL);
+    /* #1055 r6: and the fourth. It is the line MOST likely to arrive alone --
+     * it prints outside the hadDrops gate -- so it needs the qualifier most. */
+    ASSERT_TRUE(strstr(FMT_SD_INCOMPLETE, "(post-grace)") != NULL);
 
     /* and each is still identifiable as the same event */
     ASSERT_TRUE(strstr(FMT_HEADLINE, "Stream end") != NULL);
     ASSERT_TRUE(strstr(FMT_BYTES, "Stream end") != NULL);
     ASSERT_TRUE(strstr(FMT_SAMPLES, "Stream end") != NULL);
+    ASSERT_TRUE(strstr(FMT_SD_INCOMPLETE, "Stream end") != NULL);
 }
 
 int main(void)
@@ -290,5 +317,6 @@ int main(void)
     RUN(the_split_lost_none_of_the_ten_quantities);
     RUN(eos_is_not_reported_as_a_lost_sample);
     RUN(every_line_says_post_grace_on_its_own);
+    RUN(the_incomplete_teardown_line_reports_only_the_wait);
     return TEST_SUMMARY();
 }
