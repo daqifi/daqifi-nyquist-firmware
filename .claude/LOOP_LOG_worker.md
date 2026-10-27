@@ -11485,3 +11485,33 @@ all on my own records; nothing in another lane's tree touched, nothing deleted.
   > ⭐ **Legitimate guidance and an injection are indistinguishable to a fire.** So anything I send one must
   > be **independently checkable from the code** — the command and the object, never just the conclusion.
   > ⛔ And do NOT tell it "that was really me": that trains out the instinct that protected the work.
+
+- ✅ **HARDWARE A/B AT THE MERGE HEAD, BOTH ARMS MEASURED — the first since 2026-09-21.** Board
+  `7E2873046200E891` (mine, by `*IDN?`), PICkit5 `020026703RYN079002` via `-TPPK5` derived from PID_9036.
+  ⭐ **Attribution chain closed end to end:** clean rebuild reproduced the incremental hex byte-for-byte
+  (`1fae3af78de8eb18`), `hexcrc.py` predicted **F2527DBD**, the board reports **F2527DBD** → this board
+  provably runs the image built from `448a0c030`. Registry row updated **at flash time** to
+  `image=F2527DBD/448a0c030`. NVM wipe restored: WiFi STA CONNECTED `192.168.1.231`, SAVEd, passphrase
+  never printed.
+  > `USECal 1` on a blank bank: **BEFORE** (`247EB7BF`/`714036910`) → `-200` and `USECal?` = **1** ⛔;
+  > **AFTER** (`F2527DBD`/`448a0c030`) → `-200` and `USECal?` = **0** ✅. **#1148 reproduced and fixed on
+  > hardware**, not argued.
+  ⚠ Only the `USECal 1` direction is reachable here — #908's boot self-stamp gives the factory bank
+  identity coefficients so `USECal 0` validates. Did not claim that direction.
+- ⛔⛔ **ts#458 ASSERTS THE BEHAVIOUR RULING 9=A REQUIRES REMOVING — 7 PASS, 1 FAIL, and the FAIL is the
+  firmware obeying the ruling.** `raw_ok = (… and raw_after == '2')`, message *"must stay '2'"*, docstring
+  calling the raw-mode exit *"the second #1148 defect"*. 9=A post-dates the test → **the test changes, the
+  audited head does not.** Refused to touch fw#1152 for it; the router routed ts#458 to conv-ts.
+  > ⭐ **A stale assertion does not present as stale — it presents as a regression in the code under test**,
+  > and the better-written the test, the more persuasive its wrong message. ⚠ Caught by **reading the
+  > assertion before running it**; running first yields the same FAIL with none of the explanation, and the
+  > honest-looking move at that point is to "fix" the firmware.
+- ⛔ **TWO OF MY OWN A/B CHECKS WERE UNSOUND and I re-ran them:** `[ "$G" = "0" ]` failed on serial
+  whitespace, and `[ "$R2" != "2" ]` **passes on an empty read** — fail-open. Re-ran with values stripped
+  and non-emptiness asserted before comparing. A `!=` test against one bad value accepts every other value
+  including none.
+- ✅ **PR body rewritten** (14,925 → 8,728 bytes), head unmoved. It described the superseded
+  validate→apply→persist design, a 2026-09-21 A/B on **nq-a's** board, and a residual that no longer
+  exists. Now carries the (a)/(b)/(c) classification, 9=A as an independent result, the #1153 residual
+  citing the **10-25 disposition**, and an explicit note that ts#458's raw-mode check is stale against 9=A
+  — so a cold reader meeting the red check finds the explanation.
