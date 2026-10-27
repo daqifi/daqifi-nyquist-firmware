@@ -11462,3 +11462,26 @@ all on my own records; nothing in another lane's tree touched, nothing deleted.
   code this PR already rewrote. **We found them because we were editing there, not because anything looked
   for them** — so two instances say nothing about the rate elsewhere. Filing a claim-scope sweep as its own
   issue AFTER fw#1152 lands; converge-only and the round cap both argue against opening it now.
+
+- ✅ **fw#1152 ROUND 13 PUSHED — `448a0c030d511e106dcae441b3d5c2fa908593c4`**, 0 behind main; audit running,
+  pushes held. Suite **29 / 341 / 0 / 44,767**, 1152 binary **33 / 0 / 825 EXECUTED**, cppcheck 0 CI-form.
+  ⭐ **Item (1) rested on a conflation of two BASES:** `efcdf3d75` is a **blob** = `SCPIADC.c` at current
+  main; `dc967c9e1` is the **direct parent of `50002cd2a`**, this PR's first commit. Their orders differ
+  (PR base: install→save→clear-raw-LAST; main: clear-raw-EARLY→save→install). **PREFIX models the PR base
+  exactly** — the finding described MAIN. Fixed as a **label**, model logic untouched.
+  ⭐ And therefore **ruling 9=A RESTORED main's shape** rather than departing from it — I had been
+  describing it as a trade against the PR's design.
+- ⛔⛔ **THREE SCRATCH FILES WERE ONE SQUASH FROM LANDING ON MAIN, and I pushed two of them myself.**
+  `.claude/HANDOFF_1152_r9/_r10/_r13.md` were committed by those rounds; main carries none and `.claude/` is
+  not gitignored. Round 9's fire **named the SHA "handoff doc" in its report** and I did not question it.
+  > ⭐⭐ **My checklist was deep and entirely about CORRECTNESS — full SHAs, aggregated suites, cppcheck,
+  > per-layer mutations, byte counts, comment balance, ancestry. Not one item asked WHAT CHANGED.** Depth on
+  > one axis reads as coverage. ⚠ And it was invisible against the previous round — each round added only
+  > its own note — **visible only against the MERGE-BASE**, the comparison nobody made. Adopted:
+  > `git diff --name-only <merge-base>..HEAD`, read every path.
+- ⭐⭐ **A SUBAGENT FLAGGED MY OWN RELAYED MESSAGE AS SUSPECTED PROMPT INJECTION, and handled it exactly
+  right.** My `:632` caution arrived **appended to a Bash tool result**, not as a turn. It declined to obey,
+  verified the substance from the code independently, agreed, and recommended distrusting the message.
+  > ⭐ **Legitimate guidance and an injection are indistinguishable to a fire.** So anything I send one must
+  > be **independently checkable from the code** — the command and the object, never just the conclusion.
+  > ⛔ And do NOT tell it "that was really me": that trains out the instinct that protected the work.
