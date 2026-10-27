@@ -4205,17 +4205,17 @@ $(BUTTONLATCH_BIN): test_1092_button_poweroff_latch.c test_framework.h \
 	@# stale read, cancelling a valid suppression); `if (pgStat)` is the round-2
 	@# residual. Neither may come back.
 	@pp=`$(CC) -fpreprocessed -E $(FW_UI_SRC) 2>/dev/null`; \
-	 printf '%s' "$$pp" | grep -q 'autoPromotedThisVbusSession = true' \
-	  || { echo "ERROR: the button path no longer sets the AUTOOn suppression"; \
-	       echo "       latch (#1084). With AUTOOn on and VBUS present the"; \
-	       echo "       STANDBY pass auto-promotes the board straight back up."; \
-	       exit 1; }; \
 	 printf '%s' "$$pp" | grep -qE 'autoPromotedThisVbusSession = [^t]' \
 	  && { echo "ERROR: the button path writes a NON-CONSTANT to the"; \
 	       echo "       suppression latch (#1092 round 1). Assigning pgStat"; \
 	       echo "       also writes FALSE on a stale-false reading, which"; \
 	       echo "       cancels the very shutdown this fix exists to make"; \
 	       echo "       stick. SET ONLY, NEVER CLEAR."; exit 1; } || true; \
+	 printf '%s' "$$pp" | grep -q 'autoPromotedThisVbusSession = true' \
+	  || { echo "ERROR: the button path no longer sets the AUTOOn suppression"; \
+	       echo "       latch (#1084). With AUTOOn on and VBUS present the"; \
+	       echo "       STANDBY pass auto-promotes the board straight back up."; \
+	       exit 1; }; \
 	 printf '%s' "$$pp" | grep -q 'if (gpPowerData->BQ24297Data.status.pgStat) {' \
 	  && { echo "ERROR: the button path gates the latch on the cached pgStat"; \
 	       echo "       again (#1092 round 2). A stale-FALSE reading then"; \

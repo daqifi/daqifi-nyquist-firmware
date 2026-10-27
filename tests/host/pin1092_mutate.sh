@@ -126,7 +126,7 @@ if sub "$P" '    if (pData->requestedPowerState == DO_POWER_DOWN) {
           '    if (pData->requestedPowerState == DO_POWER_DOWN) {
         pData->powerState = STANDBY;
         pData->requestedPowerState = NO_CHANGE;'; then
-    expect "M1 early clear restored" "no longer clears"
+    expect "M1 early clear restored" "handler clears"
 else
     echo "  FAIL M1 anchor absent."; fail=$((fail+1))
 fi
