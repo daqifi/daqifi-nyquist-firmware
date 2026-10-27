@@ -10,11 +10,18 @@
  *
  *     <name>,<bytes>,0x<CRC32>\n
  *
- * where <name> is the file's path RELATIVE to the configured SD directory --
- * exactly the spelling `SYSTem:STORage:SD:CRC?` and `SYSTem:STORage:SD:GET`
- * take as their operand, so a host can feed a manifest line straight back to
- * the device. For a session that stays in bucket 0 that is just
- * `experiment-3.csv`; once #689 bucketing rolls, it is `P001/experiment-65.csv`.
+ * where <name> is the file's FULL path, configured directory included
+ * (#1124 r13, operator item 8 = B). A host can still feed a manifest line
+ * straight back to `SYSTem:STORage:SD:CRC?` or `SYSTem:STORage:SD:GET`,
+ * because retrieval strips the configured-directory prefix -- so the full path
+ * is stripped exactly ONCE and names the file it describes. For a session that
+ * stays in bucket 0 that is `DAQiFi/experiment-3.csv`; once #689 bucketing
+ * rolls, it is `DAQiFi/P001/experiment-65.csv`.
+ *
+ * ⚠ Through r12 this said RELATIVE to the configured directory, and that is
+ * what made the record ambiguous: retrieval strips the directory too, so a
+ * relative name was stripped TWICE and could open a different file. Recording
+ * the full path is what retired the P###-folder-name refusal.
  *
  * WHY A HEADER AND NOT PART OF sd_card_manager.c. That file is not compilable
  * on a host (Harmony, FreeRTOS, FatFs, the whole board graph), so anything
@@ -55,7 +62,9 @@ extern "C" {
  * @param out     Destination buffer (NUL-terminated on success, emptied on
  *                failure).
  * @param outLen  Size of `out` in bytes.
- * @param name    File name relative to the configured directory.
+ * @param name    The file's FULL path, configured directory included -- NOT
+ *                relative to it (#1124 r13). See the format note at the top
+ *                of this header for why.
  * @param bytes   Byte count of that file.
  * @param crc     FINALIZED CRC-32 of that file (post CRC32_Finalize).
  * @param isPrefix Append SD_MANIFEST_PREFIX_MARK, meaning the record and the

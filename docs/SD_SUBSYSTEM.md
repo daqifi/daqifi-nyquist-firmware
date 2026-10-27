@@ -169,11 +169,18 @@ FatFs's per-file sector cache when the unmount discards them.
 file, CRC them, and expect a match only when `filesize >= bytes`. An *unmarked*
 line is the strong claim: `filesize == bytes` and the CRC covers all of it.
 
-The name is the path *relative to the configured directory*, which is exactly
-the operand
-`SYSTem:STORage:SD:CRC?` and `SYSTem:STORage:SD:GET` take, so a manifest line
-can be fed straight back to the device. Names in a #689 bucket keep their
-`P00n/` prefix for the same reason.
+The name is the file's **full path**, configured directory included (#1124 r13,
+operator item 8 = B). A manifest line can still be fed straight back to
+`SYSTem:STORage:SD:CRC?` or `SYSTem:STORage:SD:GET`, because retrieval strips
+the configured-directory prefix — so the full path is stripped exactly *once*
+and names the file it describes. A bucketed file keeps its `P00n/` segment
+inside that path, e.g. `DAQiFi/P001/experiment-65.csv`.
+
+⚠️ Through r12 this read *relative to the configured directory*, and that is
+precisely what made the record ambiguous: retrieval strips the directory too, so
+a relative name was stripped **twice** and could open a different file. Recording
+the full path is what retired the `P###`-folder-name refusal — see the removal
+note further down.
 
 **The CRC is accumulated over the WRITE path, not recomputed afterwards.**
 `sd_card_manager.c` folds each successful `SYS_FS_FileWrite`'s landed bytes
