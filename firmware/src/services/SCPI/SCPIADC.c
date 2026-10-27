@@ -1324,7 +1324,51 @@ static scpi_result_t ADCChanCalmSetClaimed(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    /* #904: the reader's critical section cannot make this store safe on its
+     * own. A 64-bit store is two 32-bit stores on PIC32MZ (CLAUDE.md
+     * atomicity rules), so a writer preempted between them leaves a torn
+     * value sitting in memory, and a reader -- critical section or not --
+     * then reads that torn value back faithfully. Closing the hazard the
+     * getter documents therefore needs BOTH halves: the getter's section
+     * stops a reader being preempted mid-read, this one stops a writer being
+     * preempted mid-write.
+     *
+     * The claim the caller holds does not substitute for it. That claim
+     * serialises this setter against the other cal writers; it does not make
+     * the store atomic against the readers that deliberately take no claim
+     * -- SCPI_ADCChanCalmGet below, MC12b_ConvertToVoltage's per-conversion
+     * read, and the protobuf system message.
+     *
+     * All three of those readers are already closed -- #1054, the read half
+     * of #904, is in the tree. An atomic store stops a reader seeing a
+     * HALF-WRITTEN coefficient; it does not stop a reader that straddles a
+     * COMPLETED one, loading the old low half and then the new high half, so
+     * each reader needs its own section too, and each has one:
+     *
+     *   - the getters below;
+     *   - MC12b_ConvertToVoltage (MC12bADC.c) and the AD7609 twin
+     *     (AD7609.c), which copy CalM, CalB and the module Range together
+     *     under ONE section and scale outside it;
+     *   - the protobuf system message (NanoPB_Encoder.c).
+     *
+     * ⚠ With one difference worth keeping straight, because "guarded" is not
+     * one property here. The two conversion paths snapshot the PAIR, so they
+     * see slope and offset at a single instant. The encoder takes a separate
+     * section per coefficient, which closes the torn-double read but NOT a
+     * straddle across a bulk load: a message can still carry CalM from
+     * before a LOADcal/USECal and CalB from after it. That is a pair-
+     * coherence gap, not a torn 64-bit value, and it is not this store's to
+     * close -- this comment used to assert the per-conversion reader was
+     * unguarded and the fix was deferred for hot-path reasons, which was
+     * simply out of date: #1054 landed it, holding only the loads inside the
+     * section, which is what made the per-sample cost acceptable.
+     *
+     * Task context only, which every caller satisfies: the SCPI callbacks,
+     * and LOADcal's boot-time twin in daqifi_settings_LoadADCCalSettings,
+     * which runs inside the priority-1 APP_FREERTOS_Tasks task. */
+    taskENTER_CRITICAL();
     pRunTimeAInChannels->Data[index].CalM = param2;
+    taskEXIT_CRITICAL();
     return SCPI_RES_OK;
 }
 
@@ -1378,7 +1422,12 @@ static scpi_result_t ADCChanCalbSetClaimed(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    /* #904: same torn-WRITE hazard as ADCChanCalmSetClaimed above, same fix
+     * -- see that function's comment for why the reader-side section and the
+     * streaming claim both fail to cover this store. */
+    taskENTER_CRITICAL();
     pRuntimeAInChannels->Data[index].CalB = param2;
+    taskEXIT_CRITICAL();
     return SCPI_RES_OK;
 }
 
@@ -1403,7 +1452,25 @@ scpi_result_t SCPI_ADCChanCalmGet(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
-    SCPI_ResultDouble(context, pRuntimeAInChannels->Data[index].CalM);
+    // #904: CalM is a 64-bit double, so a bare read is two 32-bit loads on
+    // PIC32MZ (CLAUDE.md atomicity rules) and a concurrent setter on the
+    // OTHER SCPI transport (chanCALM/LOADcal/LOADFcal/USECal, all claim-
+    // guarded against each other but not against this reader) can land
+    // between them and hand back a value that existed in neither the old
+    // nor the new coefficient. Copy under a critical section, then format
+    // the local outside it. That section closes only the direction where
+    // THIS READER is preempted mid-read; the direction where the WRITER is
+    // preempted mid-store is closed by the matching sections on the setters
+    // above and in daqifi_settings_LoadADCCalSettings, and neither half is
+    // sufficient alone. Do NOT take the streaming config-change claim
+    // here, which would gratuitously refuse this query mid-stream for no
+    // corruption risk (queries read and cannot corrupt a partition; see the
+    // comment on CalSaveCommon below for why the SAVE/LOAD commands that
+    // mutate this array do take the claim while this pure reader does not).
+    taskENTER_CRITICAL();
+    double calM = pRuntimeAInChannels->Data[index].CalM;
+    taskEXIT_CRITICAL();
+    SCPI_ResultDouble(context, calM);
     return SCPI_RES_OK;
 }
 
@@ -1428,7 +1495,13 @@ scpi_result_t SCPI_ADCChanCalbGet(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
-    SCPI_ResultDouble(context, pRuntimeAInChannels->Data[index].CalB);
+    // #904: same torn-read hazard as SCPI_ADCChanCalmGet above, same fix --
+    // see that function's comment for the full reasoning (64-bit read on
+    // PIC32MZ, exempt from the streaming claim as a pure query).
+    taskENTER_CRITICAL();
+    double calB = pRuntimeAInChannels->Data[index].CalB;
+    taskEXIT_CRITICAL();
+    SCPI_ResultDouble(context, calB);
     return SCPI_RES_OK;
 }
 

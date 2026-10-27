@@ -47,7 +47,7 @@ firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s wit
 firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Error flushing before file rotation
 firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Error flushing before unmount
 firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Error flushing to SD Card
-firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Failed to open SD Card file for reading: '%s'
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Failed to open SD Card file for reading: '%s' (fs err=%d)
 firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Failed to open SD Card file for writing: '%s'
 firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Failed to open SD Card file: '%s'
 firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]File counter limit reached (%d files). Stopping streaming.
