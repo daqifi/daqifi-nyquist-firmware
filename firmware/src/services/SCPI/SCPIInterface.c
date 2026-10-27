@@ -5364,9 +5364,15 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                   * only legal abbreviation SYST:STR:BENCH, so an operator who
                   * followed the printed remedy got -113. The max was also
                   * interpolated twice; once is enough. */
-                LOG_E("STR:START refused (#524): %d Hz > max %u Hz "
-                      "(%u ch, %u T1) - use <= that or SYST:STR:BENCHmark",
-                      (int)freq, (unsigned)maxFreq,
+                /* #1039: was 127 bytes against the 125-byte ceiling, and Logger
+                 * truncates the TAIL -- which is exactly where the REMEDY sat, so
+                 * the one actionable clause was what the operator lost. The remedy
+                 * now leads and the redundant "> max" is gone; 115 bytes. Keep the
+                 * remedy FIRST if this is ever reworded.
+                 */
+                LOG_E("STR:START refused (#524): use <= %u Hz or "
+                      "SYST:STR:BENCHmark (%d Hz, %u ch, %u T1)",
+                      (unsigned)maxFreq, (int)freq,
                       (unsigned)totalEnabledPublicChannels,
                       (unsigned)activeType1ChannelCount);
                 SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
