@@ -256,9 +256,15 @@ extern "C" {
      * function validates the stored record (daqifi_settings_LoadFromNvm) and
      * resolves the bank, then copies CalM/CalB into the caller's array in a
      * loop that cannot fail. Splitting the validation out lets a caller prove
-     * a bank is good BEFORE it mutates anything, so a later step that can fail
-     * -- persisting a selector to NVM -- cannot leave the runtime array and
-     * NVM disagreeing.
+     * a bank is good BEFORE it mutates anything, so the runtime install is
+     * never attempted unless the bank was already proven loadable -- THIS
+     * COMMAND'S OWN failure path cannot leave a half-applied install.
+     *
+     * NOT a guarantee that the runtime array and NVM stay in agreement in
+     * general: it proves only that the bank was loadable at the moment it
+     * looked. An unclaimed saver, or a save that reports success when it did
+     * not land, can still make them disagree afterwards -- that is the
+     * accepted #1153 residual, which this function does not close.
      *
      * Deliberately a separate function rather than a NULL `channelRuntimeConfig`
      * overload on LoadADCCalSettings: a NULL passed by accident would silently
