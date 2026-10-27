@@ -11543,3 +11543,42 @@ all on my own records; nothing in another lane's tree touched, nothing deleted.
   > literally. **If a heredoc needs one interpolation, splice it afterwards; never unquote the delimiter.**
 - ⏸ **Worktree removals HELD** at the router's request — `orca-ide worktree rm` also deletes the local
   branch, and branch deletion is not operator-approved. Measuring only.
+
+## ts#458 — ruling 9=A flip + the PR-less round-8 companion folded in (2026-10-27)
+
+Head `ec60db118` -> **`3b672ea720adc0e5600c23895e57fae781659106`**, no force, 3 commits.
+Comment: https://github.com/daqifi/daqifi-python-test-suite/pull/458#issuecomment-6452398005
+
+**A test can require the defect, and the rule post-dates the test.** `1148-raw-mode-ordering`
+asserted `raw_after == '2'` -- that a failed `USECal 1` from raw mode leaves the device still in raw
+mode. Ruling 9=A forbids exactly that. The test would red on CORRECT firmware, and the first
+instinct is backwards because the test is well written and its message is persuasive.
+
+**The fake modelled the pre-ruling firmware too**, so flipping the assertion alone fails against it.
+Both halves proved load-bearing by mutation, not asserted: new-assertion/old-fake -> rc=1 9 FAIL;
+old-assertion/new-fake -> rc=1 9 FAIL; both fixed -> 38 PASS 0 FAIL (= baseline).
+
+**The cherry-pick arrived inert in the gate, and "inert" needed the real classify() to see.**
+Its summary read `(N PASS, M SKIP, K FAIL)`; `SUMMARY_RE` wants PASS, FAIL, SKIPPED in that order,
+spelled SKIPPED -- so no summary matched and EVERY run scored `ERROR` via the vacuous-pass guard,
+a fully successful run included. The sibling in the SAME PR carries a `summary_line()` helper whose
+docstring records being bitten by this identical shape. A test that cannot report is not a test;
+nothing about running it would have revealed this -- only classifying its output did.
+Plus no MANIFEST entry -> `partial_ok=False` reintroduced this PR's own defect (a).
+Four arms against the real classify(), incl. the one that matters: a 9=A violation now **reds**.
+
+**Finding 0 reproduced, and ruling 9=A retired HALF of it.** Offline, entry selector 1 + invalid
+USER bank + `--skip-reboot`: persisted calvals ends at **0** (moved 1->0 permanently), with a
+control at entry 0 passing. But `RawOutputMode NOW=False` in both -- so the finding's
+"raw mode additionally left enabled" sub-clause is dead, MEASURED not inferred. A finding can be
+narrowed by a ruling made elsewhere, and re-measuring at the current head is the only way to see it.
+
+Residue UNCHANGED otherwise: finding 0 (selector 1->0, a hazard to a board other lanes inherit),
+finding 2 (zero log clears in the file; `SYSTem:LOG:CLEar` verified registered at
+SCPIInterface.c:9542), finding 1 ("MUST NOT run" still scoped to *unsaved* edits).
+`parked` label deliberately LEFT ON -- the unpark is an operator decision and I did not take it.
+
+**The coordinator's routing omitted the park's substance.** "Flip the assertion, cherry-pick, push,
+send the head" -- the row is at the 5-round cap with 3 findings that survived refutation, and a
+2026-09-28 comment on it warns the labels do NOT mean merge-ready-except-for-a-decision. Reading
+the park before acting on the summary of it is what surfaced that.
