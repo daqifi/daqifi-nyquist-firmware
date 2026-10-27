@@ -350,19 +350,23 @@ echo "==      silent drift would leave the round-trip test measuring a shape    
 echo "==      the firmware no longer has -- green, and meaningless.             =="
 if sub "$S" 'strncmp(p, directory, dirLen) != 0 || p[dirLen] !=' \
             'memcmp(p, directory, dirLen) != 0 || p[dirLen] !='; then
-    expect "R15 strip-model fidelity" "changed shape"
+    expect "R15 strip-model fidelity" "prefix compare in"
 else
     echo "  FAIL R15 anchor absent -- source drifted."; fail=$((fail+1))
 fi
 restore
 
-echo "== R16: FAIL-CLOSED EXTRACTION. The prefix macro is renamed in the header, =="
-echo "==      so the Makefile cannot read it. The test must NOT fall back to a   =="
-echo "==      default: a bucket-name guard checked against the wrong string      =="
-echo "==      passes while covering nothing.                                     =="
+echo "== R16: NEGATIVE CONTROL for the prefix extraction. An INDENTED #define  =="
+echo "==      must still extract. The Makefile\'s sed and #1029\'s defines()      =="
+echo "==      parser read the same macro out of the same header; if only one of  =="
+echo "==      them tolerated leading whitespace, a harmless reformat would fail  =="
+echo "==      the build blaming the prefix. (The fail-CLOSED direction is not    =="
+echo "==      provable here: #1029 reads that macro too and aborts first on a    =="
+echo "==      rename, so this harness cannot make our own guard speak. Said      =="
+echo "==      plainly in the Makefile rather than dressed up as a proven arm.)   =="
 if sub "$H" '#define SD_CARD_MANAGER_BUCKET_PREFIX ' \
-            '#define SD_CARD_MANAGER_BUCKET_PREFIX_RENAMED '; then
-    expect "R16 prefix extraction fails closed" "could not read SD_CARD_MANAGER_BUCKET_PREFIX"
+            '    #define SD_CARD_MANAGER_BUCKET_PREFIX '; then
+    expect "R16 indented #define still extracts (control)" CLEAN
 else
     echo "  FAIL R16 anchor absent -- source drifted."; fail=$((fail+1))
 fi

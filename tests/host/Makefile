@@ -551,7 +551,7 @@ MANIFEST_BIN := run_924_tests
 # drifts keeps PASSING while checking nothing -- and this guard's correctness is
 # exactly "the prefix checked here is the prefix buckets are named with". Empty
 # is fatal in the recipe below, never a default.
-SD_BUCKET_PREFIX := $(shell sed -n 's/^#define[[:space:]]\{1,\}SD_CARD_MANAGER_BUCKET_PREFIX[[:space:]]\{1,\}\("[^"]*"\).*/\1/p' ../../firmware/src/services/sd_card_services/sd_card_manager.h | head -1)
+SD_BUCKET_PREFIX := $(shell sed -n 's/^[[:space:]]*#define[[:space:]]\{1,\}SD_CARD_MANAGER_BUCKET_PREFIX[[:space:]]\{1,\}\("[^"]*"\).*/\1/p' ../../firmware/src/services/sd_card_services/sd_card_manager.h | head -1)
 SD_MANAGER_SRC := ../../firmware/src/services/sd_card_services/sd_card_manager.c
 
 # #980: DAC7718 error-path honesty (lock ownership in DAC7718_ReadWriteReg,
@@ -1359,6 +1359,16 @@ $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h
 	       echo "       string the firmware does not use. The test also carries an"; \
 	       echo "       #error for the same reason, so neither half can default."; \
 	       exit 1; }
+	@# ⚠ HONEST SCOPE OF THAT GUARD: gen_1029_log_budget.py reads the SAME macro
+	@# out of the SAME header and runs as an earlier build prerequisite, so for
+	@# a rename or a removal IT aborts first and this never gets to speak. This
+	@# is a fail-closed BACKSTOP, not an independently reachable arm, and
+	@# pin1124_mutate.sh cannot demonstrate it firing -- stated here rather than
+	@# left to look like a proven check. What R16 DOES prove is the other
+	@# direction: an indented #define still extracts, because this sed now
+	@# tolerates leading whitespace exactly as that generator's parser does. The
+	@# two disagreeing is what would turn a harmless reformat into a build
+	@# failure blaming the prefix.
 	$(CC) $(CFLAGS) -I$(FW_UTIL) -DFW_SD_BUCKET_PREFIX='$(SD_BUCKET_PREFIX)' -o $(MANIFEST_BIN) test_924_sd_manifest.c $(FW_UTIL)/CRC32.c
 
 $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC) $(RECIPES)
