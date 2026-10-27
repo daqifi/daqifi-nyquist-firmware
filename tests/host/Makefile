@@ -3062,6 +3062,82 @@ $(START_BIN): test_998_start_streaming_claimed_order.c test_framework.h $(START_
 	       echo "       release, claim once before the arm), update START_CLAIMED_SHA;"; \
 	       echo "       if it does not, fix the model."; \
 	       exit 1; }
+	@# ⛔⛔ #969 / PR #1020: BOTH #861 STOP PINS UNDER **ONE** CRITICAL SECTION.
+	@# This is the companion the operator ruled for this row (item M = A, 2026-10-27:
+	@# "A for 1020 seems right") -- a SOURCE-LEVEL host check, because a black-box
+	@# SCPI test cannot reach a preemption between two adjacent instructions and
+	@# would pass on both the old and the new firmware.
+	@#
+	@# WHAT IS BEING PROTECTED. SCPI_StartStreaming pins the stop generation and the
+	@# stops-active count, and the arm later re-reads them to decide whether a stop
+	@# was in flight. Each load is individually atomic (aligned 32-bit on PIC32MZ),
+	@# so the section is NOT there to make a load atomic -- it is there to make the
+	@# PAIR describe ONE INSTANT. As two separate loads, a stop that bumped the
+	@# generation before the first load and finished between the two made BOTH
+	@# signals miss it, and the arm published IsEnabled over a running stop.
+	@#
+	@# ⭐ WHY THIS IS ONE SEQUENCE CHECK AND NOT THREE GREPS. The property is an
+	@# ORDER, so it is pinned as an order: the four markers must appear as the
+	@# CONSECUTIVE token run `ENTER GEN ACTIVE EXIT`. That single assertion refuses
+	@# all three ways the fix can be lost, which three presence greps would not:
+	@#   - REVERTED to bare loads   -> no ENTER/EXIT at all, run absent.
+	@#   - ONE READ MOVED OUT       -> `GEN ENTER ACTIVE EXIT`, not consecutive.
+	@#   - SPLIT INTO TWO SECTIONS  -> `ENTER GEN EXIT ENTER ACTIVE EXIT`. Both
+	@#     reads are still inside a critical section, so a per-read "is it guarded"
+	@#     check PASSES while the pair no longer describes one instant. This is the
+	@#     mutant a naive guard misses, and it is the whole point of the ordering.
+	@#
+	@# Comment-STRIPPED via $(CC) -fpreprocessed -E (which strips comments without
+	@# expanding includes), because the paragraphs above this fix in the source name
+	@# every one of these four tokens -- a raw grep would be satisfied by the prose
+	@# that explains the fix. MEASURED on the fixed source: 0 comment lines survive
+	@# inside the extracted body. Token-based rather than line-anchored, so it is
+	@# indifferent to CRLF. ⛔ r3 CORRECTION: an earlier revision of this guard
+	@# used awk, and awk evaluates its rules ONCE PER LINE in RULE order -- so it
+	@# collapsed within-line order and dropped duplicates. A ONE-LINE split
+	@# emitted 'ENTER GEN ACTIVE EXIT' and PASSED: the exact torn snapshot this
+	@# guard exists to block. MEASURED both ways on that line. `grep -o` emits
+	@# every match left-to-right with repeats kept, so the stream is true source
+	@# order, and the comparison is EXACT equality rather than a substring --
+	@# which also refuses a stray ENTER/EXIT pair anywhere in the body.
+	@# ⭐ THE LESSON, because it is general: a mutant set whose LAYOUT matches the
+	@# matcher's UNIT cannot test the matcher. Every original mutant here was
+	@# multi-line, so none of them probed per-line granularity. The one-line
+	@# arms added to pin969_mutate.sh exist for exactly that.
+	@$(CC) -fpreprocessed -E $(START_CLAIMED_SRC) 2>/dev/null \
+	   | awk '/static scpi_result_t SCPI_StartStreaming\(scpi_t \* context\)/{f=1} \
+	          f{print} f&&/^\}/{exit}' > /tmp/.sd969_fn.$$$$; \
+	 test -s /tmp/.sd969_fn.$$$$ \
+	  || { echo "ERROR: could not extract SCPI_StartStreaming's body from"; \
+	       echo "       $(START_CLAIMED_SRC) (#969). The awk anchor is its"; \
+	       echo "       signature; if that changed this check measures NOTHING,"; \
+	       echo "       which is the one way an ordering pin passes while blind."; \
+	       rm -f /tmp/.sd969_fn.$$$$; exit 1; }; \
+	 stream=`grep -oE 'taskENTER_CRITICAL|taskEXIT_CRITICAL|gStreamStopGen|gStreamStopsActive' \
+	           /tmp/.sd969_fn.$$$$ \
+	         | sed -e 's/^taskENTER_CRITICAL$$/ENTER/' -e 's/^taskEXIT_CRITICAL$$/EXIT/' \
+	               -e 's/^gStreamStopGen$$/GEN/'       -e 's/^gStreamStopsActive$$/ACTIVE/' \
+	         | tr '\n' ' ' | sed 's/ *$$//'`; \
+	 rm -f /tmp/.sd969_fn.$$$$; \
+	 test "$$stream" = "ENTER GEN ACTIVE EXIT" \
+	  || { echo "ERROR: #861's two stop pins are no longer taken under ONE critical"; \
+	       echo "       section in SCPI_StartStreaming (#969, PR #1020)."; \
+	       echo "         marker stream: $$stream"; \
+	       echo "         required     : ENTER GEN ACTIVE EXIT  (exactly)"; \
+	       echo "       Each load is atomic by itself; the section exists so the"; \
+	       echo "       PAIR describes one instant. Without it a stop that bumps"; \
+	       echo "       the generation before the first load and completes between"; \
+	       echo "       the two is invisible to BOTH signals, and the arm publishes"; \
+	       echo "       IsEnabled over a stop that was still running -- silently,"; \
+	       echo "       which is the shape #861 exists to eliminate."; \
+	       echo "       Two sections are NOT one: a stream reading"; \
+	       echo "       'ENTER GEN EXIT ENTER ACTIVE EXIT' has each read guarded"; \
+	       echo "       and the pair still torn."; \
+	       echo "       The match is EXACT, so an extra critical section anywhere"; \
+	       echo "       in this function also fails. If one is added on purpose,"; \
+	       echo "       re-scope this stream to the run containing GEN rather than"; \
+	       echo "       widening the expected string."; \
+	       exit 1; }
 	$(CC) $(CFLAGS) -o $(START_BIN) test_998_start_streaming_claimed_order.c
 
 $(SDLOG1029_GEN): gen_1029_log_budget.py $(SD_MGR_SRC) $(SD_MGR_HDR) $(FW_UTIL)/Logger.c $(FW_UTIL)/Logger.h $(RECIPES)
