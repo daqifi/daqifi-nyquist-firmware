@@ -19,6 +19,7 @@ FW_UTIL  := ../../firmware/src/Util
 # TAIL -- so the breakdown AND the "(all post-grace)" qualifier were what an
 # operator lost. Split into three lines; this target measures all three.
 SUMBUDGET_BIN  := run_1055_tests
+SCPISD_START_SRC := ../../firmware/src/services/SCPI/SCPIInterface.c
 STREAMING_SRC  := ../../firmware/src/services/streaming.c
 LOGGER_HDR     := ../../firmware/src/Util/Logger.h
 # Read out of the real Logger.h, never hand-copied: this whole test is an
@@ -742,7 +743,15 @@ START_BIN := run_998_tests
 START_CLAIMED_SRC := ../../firmware/src/services/SCPI/SCPIInterface.c
 START_CLAIMED_BEGIN := if (!sd_card_manager_TryClaim()) {
 START_CLAIMED_END := while (!sd_card_manager_IsWriteReady() && readyWait < 500) {
-START_CLAIMED_SHA := 404e01fdd3b7c9c8eb26cfca959b498ebe9b3e921b77daa0ddd3bca72938d490
+# RE-DERIVED at #1055 r4, not bumped blind. The slice changed because two of
+# its `return SCPI_RES_ERR;` lines became `return SCPI_StartFailedAfterStop();`
+# (:5916 and :5996) so every post-stop exit emits the owed session summary.
+# VERIFIED the three modelled orderings still describe the slice before
+# touching this: claim @5909 is single and precedes the arm @5969; the
+# refusal branch clears @5972 before releasing @5973; and the whole refusal
+# branch precedes the poll head @6028. Both edits are pure return-statement
+# swaps that move nothing.
+START_CLAIMED_SHA := 6450eeb12fbf76b3ec202676df7dafc25c9bac768cdcb0f5446632a0854f7d0f
 
 $(BIN): test_circularbuffer.c test_framework.h stubs/Logger.h stubs/osal/osal.h $(FW_UTIL)/CircularBuffer.c $(FW_UTIL)/CircularBuffer.h $(RECIPES)
 	cp $(FW_UTIL)/CircularBuffer.c $(UUT)
@@ -3301,6 +3310,48 @@ $(SUMBUDGET_BIN): test_1055_stream_end_summary_budget.c test_framework.h \
 	       echo "       against a ceiling derived from it; a defaulted capacity"; \
 	       echo "       would make that measurement meaningless. The test also"; \
 	       echo "       carries an #error, so neither half can default."; \
+	       exit 1; }
+	@# ⛔ #1055 r4 finding 1: EVERY POST-STOP RETURN GOES THROUGH THE NAMED EXIT.
+	@# SCPI_StartStreamingClaimed tears the previous session down early, which
+	@# snapshots its counters into the pending record, and then has THIRTEEN
+	@# error returns after that point. r3 added an emit to the ONE the audit
+	@# named and left twelve siblings owing a summary nothing would print. So
+	@# the rule is structural: after the teardown there must be NO bare
+	@# `return SCPI_RES_ERR;` -- all of them route through
+	@# SCPI_StartFailedAfterStop(), which emits.
+	@#
+	@# ⚠ `[ \t\r]*$$`, not `[ \t]*$$`: these sources are CRLF, so a trailing
+	@# \r sits before the newline and an anchor without it makes the bare-return
+	@# arm DEAD -- it read 0 while a bare return was sitting right there, and
+	@# only the routed count caught the mutant. A guard arm that cannot fire is
+	@# worse than no arm, because the other arm makes the pair look healthy.
+	@#
+	@# ⚠ THE RANGE ENDS AT THE NEXT TOP-LEVEL DEFINITION, not at a named later
+	@# function. Ending it at SCPI_StopStreaming swept in the legitimate bare
+	@# returns of every function in between, so the pin FAILED ON CLEAN SOURCE --
+	@# found only because a mutant's RESTORE did not go back to green. Checking
+	@# that the restore is clean is part of the mutant, not a formality.
+	@#
+	@# COUNT BEFORE POSITION, both directions: zero bare returns AND at least
+	@# thirteen routed ones. The zero alone would also be satisfied by deleting
+	@# the returns, and the count alone cannot see a NEW bare one added later.
+	@awk '/Streaming_UpdateState\(\);  \/\/ Stop timer/{f=1} \
+	     f && /^[A-Za-z_][A-Za-z0-9_ \t*]*\(/{f=0} \
+	     f && /^[ \t]*return SCPI_RES_ERR;[ \t\r]*$$/{bare++} \
+	     f && /return SCPI_StartFailedAfterStop\(\);/{routed++} \
+	     END{printf "%d %d\n", bare+0, routed+0}' $(SCPISD_START_SRC) > /tmp/.p1055.$$$$; \
+	 read bare routed < /tmp/.p1055.$$$$; rm -f /tmp/.p1055.$$$$; \
+	 test "$$bare" -eq 0 && test "$$routed" -ge 13 \
+	  || { echo "ERROR: $(SCPISD_START_SRC): a post-stop error return in"; \
+	       echo "       SCPI_StartStreamingClaimed does not emit the owed session"; \
+	       echo "       summary (#1055 r4 finding 1)."; \
+	       echo "         bare 'return SCPI_RES_ERR;' after the teardown: $$bare (must be 0)"; \
+	       echo "         routed through SCPI_StartFailedAfterStop():      $$routed (need >= 13)"; \
+	       echo "       That function tears the PREVIOUS session down before it can"; \
+	       echo "       fail, so every failure exit after that point owes a summary."; \
+	       echo "       Route it through SCPI_StartFailedAfterStop() rather than"; \
+	       echo "       returning directly -- fixing one named site and leaving its"; \
+	       echo "       siblings is the mistake this row has already made twice."; \
 	       exit 1; }
 	$(CC) $(CFLAGS) -DFW_LOG_MESSAGE_SIZE=$(LOG_MSG_SIZE) -o $(SUMBUDGET_BIN) test_1055_stream_end_summary_budget.c
 

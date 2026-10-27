@@ -1232,6 +1232,10 @@ void Streaming_ReportSdDiscard(size_t bytes);
  * in SCPIInterface.c, after its bounded SD-idle wait. */
 void Streaming_EmitSessionSummary(void);
 
+/* #1055 r4: emit even if the SD teardown has not finished. For callers
+ * with no bounded SD-idle wait -- see the definition. */
+void Streaming_FlushOwedSessionSummary(void);
+
 // #388 — Compile-time profiling counters for the PB streaming hot path.
 // When enabled, instruments encoder + USB write paths with _CP0_GET_COUNT()
 // cycle measurements.  Off by default in production: enable here for a

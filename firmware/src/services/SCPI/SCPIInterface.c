@@ -5132,6 +5132,39 @@ static void SCPI_UnpublishStartInterface(StreamingRuntimeConfig *cfg,
  * because some other transport is mid-start (pre-merge audit). `freqProvided`
  * false means no argument was given and the stored Frequency is reused, which
  * is resolved further down exactly as before. */
+/* ⛔ #1055 r4: THE ONE EXIT FOR "we already stopped the previous session,
+ * then this start failed".
+ *
+ * SCPI_StartStreamingClaimed tears the previous session down early (the
+ * IsEnabled=false + Streaming_UpdateState above its body's midpoint), which
+ * snapshots that session's counters into the pending record. It then has
+ * THIRTEEN error returns after that point. r3 added an emit to exactly ONE of
+ * them -- the PrepareStreamingBuffers failure the audit named -- and left the
+ * other twelve, including the SD free-space refusal, silently owing a summary
+ * that nothing would emit until some later start that may never come.
+ *
+ * Fixing the named site and not its twelve siblings is the mistake this row
+ * has now made twice (r2 finding 3 was the same shape), so this is a single
+ * named exit every post-stop return goes through, and a host-side pin fails
+ * the build if a bare `return SCPI_RES_ERR;` reappears after the teardown.
+ *
+ * Safe at every one of them: the emit is a bool read under a short critical
+ * section and a return when nothing is owed, so a start that failed WITHOUT a
+ * previous session to tear down pays nothing. */
+static scpi_result_t SCPI_StartFailedAfterStop(void) {
+    /* FORCED (#1055 r4). The forcing criterion across this file is "no bounded
+     * SD-idle wait AND no guaranteed later flush", and this path has neither:
+     * Streaming_Start()'s backstop only runs on a SUCCESSFUL start, so a run of
+     * failing starts would withhold the summary indefinitely. Un-forced here
+     * would trade r2 finding 3's fix straight back.
+     *
+     * For contrast, SCPI_PerformStreamingStop stays UN-forced on purpose --
+     * it HAS the wait, and declining to consume there is exactly what lets a
+     * concurrent stop defer to it so the teardown's discards are included. */
+    Streaming_FlushOwedSessionSummary();
+    return SCPI_RES_ERR;
+}
+
 static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                                                 int32_t freq,
                                                 bool freqProvided,
@@ -5738,7 +5771,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
         }
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         SCPI_ClearStreamingOperBits(pRunTimeStreamConfig);
-        return SCPI_RES_ERR;
+        return SCPI_StartFailedAfterStop();
     }
 
     // Partition the streaming buffer pool (auto or static per MemoryConfig) +
@@ -5771,22 +5804,9 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                                      ifaceSetsPinned);
             SCPI_ExecutionError(context, "STR:START: buffer partition failed (USB DMA / tasks not quiescent, or pool error)");
             SCPI_ClearStreamingOperBits(pRunTimeStreamConfig);
-            /* ⛔ #1055 r2 finding 3: A FAILED RESTART STILL OWES A SUMMARY.
-             *
-             * This start already tore the PREVIOUS session down (the
-             * IsEnabled=false + Streaming_UpdateState above), which snapshots
-             * its counters into gSessionRecord and marks it pending. Then the
-             * partition failed and we return here -- Streaming_Start() is never
-             * reached, so its backstop never runs, and that session's summary
-             * waited for a NEXT start that may never come. The operator loses
-             * the loss report for a session that really did lose data, on the
-             * path where they are most likely to want it.
-             *
-             * Emitting here is a no-op when nothing is owed (a bool read under
-             * a short critical section), so it costs the success-adjacent
-             * aborts nothing. */
-            Streaming_EmitSessionSummary();
-            return SCPI_RES_ERR;
+            /* #1055 r2 finding 3's emit moved into
+             * SCPI_StartFailedAfterStop() at r4, with its twelve siblings. */
+            return SCPI_StartFailedAfterStop();
         }
 
         /* #851: THE SD arm. Singular now -- START used to arm once before the
@@ -5847,7 +5867,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                       "during start setup - the buffers were carved for an SD "
                       "session. Retry.");
                 SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-                return SCPI_RES_ERR;
+                return SCPI_StartFailedAfterStop();
             }
             /* #690 (adversarial audit): this arm passes through the #689
              * dir-file-cap guard. If there is no writable location the guard
@@ -5871,7 +5891,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                 LOG_E("Cannot start SD logging - SD suspended: %s\r\n",
                       why ? why : "SPI4 is owned elsewhere");
                 SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-                return SCPI_RES_ERR;
+                return SCPI_StartFailedAfterStop();
             }
             /* #836: CLAIM rather than check-then-set. USB SCPI (pri 7) preempts
              * WiFi SCPI (pri 2) with no shared dispatch mutex, so an SCPI
@@ -5893,7 +5913,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                                      ifaceSetsPinned);
                 LOG_E("Cannot start SD logging - SD card busy with another operation");
                 SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-                return SCPI_RES_ERR;
+                return SCPI_StartFailedAfterStop();
             }
             /* #498 / #503: the disk-full gate lives INSIDE the SD task's WRITE
              * init -- one UpdateSettings(WRITE) does mount + (optional)
@@ -5973,7 +5993,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                 LOG_E("SD log arm refused (#942): %s\r\n",
                       why ? why : "the SD task is not accepting work");
                 SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-                return SCPI_RES_ERR;
+                return SCPI_StartFailedAfterStop();
             }
             /* #836: armed -- ownership has handed over from the claim flag to
              * `mode`, which is MODE_WRITE and keeps IsBusy() true, so there is
@@ -6132,7 +6152,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                                      ifaceSetsPinned);
                 SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
                 SCPI_ClearStreamingOperBits(pRunTimeStreamConfig);
-                return SCPI_RES_ERR;
+                return SCPI_StartFailedAfterStop();
             }
         }
     }
@@ -6379,7 +6399,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
               stopInFlight ? "a stop is still in flight on the other transport"
                            : "a stop was issued during start setup");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-        return SCPI_RES_ERR;
+        return SCPI_StartFailedAfterStop();
     }
 
     if (cfgChanging) {
@@ -6400,7 +6420,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
         LOG_E("STR:START refused (#847): a config change is in flight on the "
               "other SCPI transport. Retry.");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-        return SCPI_RES_ERR;
+        return SCPI_StartFailedAfterStop();
     }
 
     if (inputsGone) {
@@ -6414,7 +6434,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
         LOG_E("STR:START refused (#844): every ADC and DIO input was disabled "
               "during start - nothing left to stream");
         SCPI_ErrorPush(context, SCPI_ERROR_SETTINGS_CONFLICT);
-        return SCPI_RES_ERR;
+        return SCPI_StartFailedAfterStop();
     }
 
     if (ifaceMoved) {
@@ -6431,7 +6451,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
               (int)ifaceForStart, (int)ifaceObserved);
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         SCPI_ClearStreamingOperBits(pRunTimeStreamConfig);
-        return SCPI_RES_ERR;
+        return SCPI_StartFailedAfterStop();
     }
 
     if (mappingMoved) {
@@ -6462,7 +6482,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
         LOG_E("STR:START refused (#846): the enabled-channel set changed during "
               "start; the mapping and sample pool are stale. Retry.");
         SCPI_ErrorPush(context, SCPI_ERROR_SETTINGS_CONFLICT);
-        return SCPI_RES_ERR;
+        return SCPI_StartFailedAfterStop();
     }
 
     if (capRevoked) {
@@ -6481,7 +6501,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
               "max %u Hz. Re-read CONF:CAP:JSON?",
               (int)freq, (unsigned)revalidatedMax);
         SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
-        return SCPI_RES_ERR;
+        return SCPI_StartFailedAfterStop();
     }
 
     Streaming_UpdateState();

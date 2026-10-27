@@ -252,6 +252,27 @@ static volatile uint32_t gScanStaleDroppedSteady = 0;
  * Written under taskENTER_CRITICAL at every site. */
 static StreamingStats gSessionRecord;
 static volatile bool gSessionRecordPending = false;
+/* ⛔ #1055 r4: THE SD-TEARDOWN HOLD. While set, the record is not consumed.
+ *
+ * r3 bounded the data but left the ORDERING open, and r3's audit named the
+ * consequence: a second STOP reaches the emit before the first stop's SD
+ * teardown has added its discards, consumes the record, and those discards
+ * land in a record nobody is waiting on any more.
+ *
+ * Set unconditionally at stop and released by OBSERVING completion --
+ * sd_card_manager_IsIdle() -- rather than by being told. That matters twice:
+ *   - it needs no hook in sd_card_manager.c, whose teardown path fw#1124 is
+ *     actively changing, so the two rows do not collide;
+ *   - a NON-SD session needs no special case: the manager is already idle, so
+ *     the first emit attempt releases the hold immediately.
+ *
+ * Whoever emits LAST -- the one that finds SD idle -- is the one that
+ * consumes, with the teardown's discards already added. */
+static volatile bool gSessionRecordSdHold = false;
+
+/* Forward-declared here, above its first CALLER (Streaming_Start's backstop),
+ * not beside its definition further down. #1055 r4. */
+static void Streaming_EmitSessionSummaryImpl(bool force);
 
 /* #814: rail detection. `gClipLiveMask` is LIVE -- rewritten every tick, so a
  * consumer reading device_status sees the current frame's state rather than a
@@ -2134,7 +2155,11 @@ static void Streaming_Start(void) {
              * after its bounded SD-idle wait, is what fires first for that
              * path. Must run BEFORE Streaming_ClearStats(), which would
              * otherwise wipe the very counters this reads. */
-            Streaming_EmitSessionSummary();
+            /* #1055 r4: FORCED. Streaming_ClearStats() below wipes the live
+             * counters and this session is about to own the record, so holding
+             * for an SD teardown here loses the previous summary rather than
+             * delaying it. */
+            Streaming_EmitSessionSummaryImpl(true);
             Streaming_ClearStats();
             Streaming_InitFlowWindow(gpRuntimeConfigStream->Frequency);
             /* #870: the SESSION owns its header, so the session's start is
@@ -2624,6 +2649,7 @@ static void Streaming_Stop(void) {
         taskENTER_CRITICAL();
         Streaming_GetStats(&gSessionRecord);
         gSessionRecordPending = true;
+        gSessionRecordSdHold = true;      /* #1055 r4: see its declaration */
         taskEXIT_CRITICAL();
     }
 }
@@ -2659,7 +2685,23 @@ static void Streaming_Stop(void) {
  *    Streaming_ClearStats() so the previous session's counters are read
  *    before they are wiped.
  */
+
 void Streaming_EmitSessionSummary(void) {
+    Streaming_EmitSessionSummaryImpl(false);
+}
+
+/* #1055 r4: emit even if the SD teardown has not finished.
+ *
+ * For the paths with NO bounded SD-idle wait and no guaranteed later flush.
+ * Holding there would turn "may undercount stop-time SD loss" into "may
+ * never print at all", and the auto-stop's own comment already records that
+ * this row chose the former deliberately. The hold exists for the path that
+ * DOES wait; this is the escape hatch for the ones that cannot. */
+void Streaming_FlushOwedSessionSummary(void) {
+    Streaming_EmitSessionSummaryImpl(true);
+}
+
+static void Streaming_EmitSessionSummaryImpl(bool force) {
     /* ⛔ #1055 r1 finding 1: THE FLAG CONSUME AND THE SNAPSHOT ARE ONE STEP.
      *
      * They used to be two critical sections -- test-and-clear the flag, exit,
@@ -2683,12 +2725,31 @@ void Streaming_EmitSessionSummary(void) {
      * what retires the ClearStats race, the ownership question and the
      * "emitted but empty" outcome in one step. */
     StreamingStats snap;
-    bool pending;
+    bool pending, hold;
     taskENTER_CRITICAL();
+    pending = gSessionRecordPending;
+    hold = gSessionRecordSdHold;
+    taskEXIT_CRITICAL();
+    if (!pending) {
+        return;
+    }
+    /* #1055 r4: do not consume while the SD teardown may still have discards
+     * to add. sd_card_manager_IsIdle() is read OUTSIDE the critical section --
+     * it is the manager's own published state and must not be called with
+     * interrupts masked. `force` is the escape hatch for Streaming_Start()'s
+     * backstop, which is about to overwrite this record anyway: holding there
+     * would lose the summary rather than delay it. */
+    if (hold && !force && !sd_card_manager_IsIdle()) {
+        return;
+    }
+    taskENTER_CRITICAL();
+    /* Re-check under the lock: another caller may have consumed it in the
+     * window above. Exactly-once survives the two-phase read. */
     pending = gSessionRecordPending;
     if (pending) {
         snap = gSessionRecord;
         gSessionRecordPending = false;
+        gSessionRecordSdHold = false;
     }
     taskEXIT_CRITICAL();
     if (!pending) {
@@ -3519,7 +3580,11 @@ void streaming_Task(void) {
              * pre-#982 for THIS path and is not a new regression. What
              * would be new, and is what this call prevents, is indefinite
              * silence. */
-            Streaming_EmitSessionSummary();
+            /* #1055 r4: FORCED, preserving the trade-off the comment above
+             * states. This path has no SD-idle wait, so an un-forced call
+             * would withhold the summary indefinitely -- exactly the
+             * "indefinite silence" this call exists to prevent. */
+            Streaming_EmitSessionSummaryImpl(true);
             goto iter_done;
         }
 
