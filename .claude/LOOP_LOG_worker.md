@@ -11393,3 +11393,29 @@ all on my own records; nothing in another lane's tree touched, nothing deleted.
   > check would have saved the work.**
   ✅ Narrowed the ask to one yes/no — does the 10-25 acceptance still apply at a head four rounds newer —
   and the router adopted it, plus `mark-audited.sh --disposition` as the mechanism.
+
+- ✅ **fw#1152 ROUND 11 PUSHED AND VERIFIED — `3a26716459ae985156270f8d8154b5b6131aa8a7`**, fast-forward,
+  0 behind main. Suite **29 / 341 / 0 / 44,767** (identical floor — no tests added, only corrected), the
+  1152 binary **33 / 0 / 825 built AND executed**, cppcheck 0 via the CI form, comments balanced 30/30.
+  (c)'s new guard mutation-tested by me **one layer at a time**: derivation removed → exit 2; gate swapped
+  with derivation intact → exit 2.
+- ⛔⛔ **`make <binary-name>` BUILDS AND GUARDS BUT DOES NOT RUN — and I read its rc=0 as "tests pass" for
+  two rounds.** `run_1152_tests` is the **binary's name**, not a run target. Baseline and mutated runs give
+  byte-identical 4-line build output and rc=0. **Twice I concluded the (b) differential was VACUOUS from an
+  exit status that only meant "it compiled."** Built and executed properly: baseline **33/0/825**, degraded
+  R10 → **33/2 failed** at `round10_case_b…:2362`, so it **discriminates** and the fire was right.
+  > ⭐ **Tell: a run that prints no "N tests run" line did not run any.** The guards ARE real — they live in
+  > the recipe and fired twice at exit 2. The full-suite numbers are unaffected (`make run` invokes
+  > `./$(X)`), but my per-target "guard+tests" label overstated for two rounds, and I corrected it on the row.
+- ⛔ **A STALE `file:line` FROM A COMMENT BECAME AN INSTRUCTION IN MY BRIEF.** The old comment cited
+  `daqifi_settings.c:290`/`:331`/`:298-307`; the truth is `:293` ClearNvm, `:334` ErasePage, `:310` the row
+  write — and `:298-307` is the **CRC32/staging block**, a different construct, so it was never right.
+  I copied all three into the round-11 brief where they became instructions; the fire read the file and
+  fixed them. **Fifth consecutive brief of mine carrying an error the fire caught rather than me.**
+  > ⭐⭐ **A `file:line` in a comment is a load-bearing claim with no guard** — nothing recompiles it, and a
+  > three-line drift passes every reading. Cite the **predicate**, not the address.
+- ⚠ **And three of my own harness failures in one verification pass**, all the same family: a regex anchor
+  that aborted (the gate worked, but I let `make` run anyway and read its result); indentation retyped from
+  **displayed output that had my own 2-space prefix added**; and the `make`-does-not-run mistake above.
+  ⭐ **Asserting the mutation applied is necessary but NOT sufficient — the INTERPRETATION step must be
+  gated on the assert too.**
