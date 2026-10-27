@@ -599,7 +599,18 @@ static bool model_ValidateADCCalBank(const ModelNvm *nvm, uint32_t calType)
 typedef enum { RES_OK = 0, RES_ERR } ModelScpiResult;
 
 typedef enum {
-    USECAL_PREFIX = 0,   /* dc967c9e1: the loaded type is reused for the save */
+    USECAL_PREFIX = 0,  /* dc967c9e1 (HISTORICAL -- #1152's OWN base
+                         * commit: verified the direct parent of
+                         * 50002cd2a, this PR's first commit -- #1148's
+                         * reorder is already in, #1152's type-trust fix
+                         * is not yet on top of it; NOT main, whose shape
+                         * is different again). The loaded type is reused
+                         * for the save, unnormalized -- the exact defect
+                         * #1152 fixes (cases 2/4/5 below). POSTFIX is the
+                         * very next commit, adding only the
+                         * normalization line. Kept as the historical
+                         * pre-#1152 shape, not current firmware
+                         * (USECAL_R10 is). */
     USECAL_POSTFIX,      /* #1152 r1: the type is normalized right after the load,
                           * but the bank is still INSTALLED before the save. The
                           * r1 adversarial audit found that a save failure then
