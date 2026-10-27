@@ -789,6 +789,32 @@ def read_ceiling(logger_h_text, logger_c_text):
     # assumes. A constant, a different identifier, an expression, or a third
     # argument each cap at something this tool would have to EVALUATE to know,
     # so all of them are refused rather than guessed at.
+    # ⛔ #1110 r16/4: THE BUFFER vsnprintf WRITES INTO MUST BE SIZED BY
+    # LOG_MESSAGE_SIZE. Every number above is a reservation *against*
+    # LOG_MESSAGE_SIZE, so they describe the real capacity only if the array is
+    # actually that big. `char buffer[64];` with LOG_MESSAGE_SIZE still 128
+    # would derive 125 against a 64-byte buffer -- the same class as r16/1 and
+    # r16/2, found by enumerating this function's inputs rather than by a
+    # review catching it. Keyed on the array vsnprintf is POINTED AT, not on
+    # the name `buffer`, so renaming it is fine and re-sizing it is not.
+    vsn_target = re.search(r"vsnprintf\s*\(\s*(\w+)\s*,", impl)
+    if vsn_target is None:
+        raise ToolError(
+            "could not read the destination argument of "
+            "LogMessageFormatImpl's vsnprintf() -- the ceiling describes that "
+            "buffer's capacity and must not be assumed")
+    buf = vsn_target.group(1)
+    sole_site(
+        impl,
+        r"\b(?:char|uint8_t|int8_t)\b[^;\n]*\b" + re.escape(buf)
+        + r"\s*\[\s*LOG_MESSAGE_SIZE\s*\]",
+        f"the declaration of {buf}[LOG_MESSAGE_SIZE] in LogMessageFormatImpl",
+        f"vsnprintf writes into {buf}, and every reservation here is measured "
+        f"against LOG_MESSAGE_SIZE -- so if {buf} is not LOG_MESSAGE_SIZE "
+        f"bytes the derived ceiling describes a buffer the firmware does not "
+        f"have",
+        depth_text=logger_c_text, depth_base=impl_base)
+
     vsn_assign = re.search(r"(\w+)\s*=\s*vsnprintf\s*\(", impl)
     if vsn_assign is None:
         raise ToolError(
@@ -842,6 +868,47 @@ def read_ceiling(logger_h_text, logger_c_text):
             f"tool would have to evaluate. Measured: `min((LOG_MESSAGE_SIZE - "
             f"3), 60)` derived 125 while the firmware capped at 60. Refused "
             f"rather than interpreted.")
+
+    # ⛔ #1110 r16/5: `min` IS A MACRO DEFINED IN Logger.c, SO ITS MEANING IS
+    # AN INPUT TOO. The clamp is read as "cap at LOG_MESSAGE_SIZE - N", which
+    # is only true if min() selects the SMALLER operand. Logger.c:39 defines it
+    # five lines above an identically-shaped `max`, so a one-character edit
+    # (`<=` to `>=`) or a copy-paste between the two turns the cap into a
+    # floor, and every number this function returns becomes wrong in the
+    # permissive direction while the clamp still reads like a clamp.
+    #
+    # Pinned by normalised text rather than interpreted: any other spelling
+    # gets a human read. The depth check is deliberately NOT applied -- the
+    # shipped definition sits inside `#ifndef min`, which is this file's real
+    # shape, so refusing on depth would refuse the firmware.
+    #
+    # ⚠️ DECLARED RESIDUAL, stated because it cannot be closed from here: that
+    # `#ifndef` means an EARLIER definition of `min` on Logger.c's include
+    # closure would win and this one would never be compiled. Resolving that
+    # needs the XC32 include path, which this tool does not have. Narrow in
+    # practice -- a `min` meaning max would misbehave everywhere it is used,
+    # not only here -- and listed in the PR as accepted rather than silently
+    # assumed away.
+    min_defs = re.findall(
+        r"^[ \t]*#[ \t]*define[ \t]+min[ \t]*\(([^)]*)\)(.*)$",
+        logger_c_text, re.M)
+    if len(min_defs) != 1:
+        raise ToolError(
+            f"Logger.c defines `min` {len(min_defs)} times; the clamp above is "
+            f"read as a cap at LOG_MESSAGE_SIZE - {clamp_reserve}, which holds "
+            f"only if min() selects the smaller operand. Refused rather than "
+            f"picking one.")
+    params = re.sub(r"\s+", "", min_defs[0][0])
+    body = re.sub(r"\s+", "", min_defs[0][1])
+    if (params, body) != ("x,y", "(((x)<=(y))?(x):(y))"):
+        raise ToolError(
+            f"Logger.c's `min` macro is `min({params}) {body}`, not the "
+            f"shipped `min(x,y) (((x) <= (y)) ? (x) : (y))`. The clamp is read "
+            f"as a cap at LOG_MESSAGE_SIZE - {clamp_reserve}, which is only "
+            f"true while min() selects the SMALLER operand -- an identically "
+            f"shaped `max` is defined five lines below it, so this is pinned "
+            f"rather than assumed. Re-derive the ceiling by hand and update "
+            f"read_ceiling().")
 
     ceiling = min(size - vsn_reserve - 1, size - clamp_reserve)
     if ceiling <= 0:
@@ -2305,17 +2372,43 @@ SELF_TEST_ISR_BOUND_CASES = [
 ]
 
 
-def _logger_c(clamp="min((LOG_MESSAGE_SIZE - 3), size)", pre="", lhs="size"):
+# The shipped `min` macro, verbatim including its #ifndef guard. read_ceiling
+# validates it (r16/5), so every Logger.c fixture carries it and a row that
+# wants to vary it says so.
+SELF_TEST_MIN_DEF = ("#ifndef min\n"
+                     "    #define min(x,y) (((x) <= (y)) ? (x) : (y))\n"
+                     "#endif\n")
+
+
+def _as_logger_c(impl_text):
+    """Give a raw LogMessageFormatImpl fixture the rest of a real Logger.c.
+
+    ⛔ read_ceiling validates the `min` macro (r16/5) and the buffer
+    declaration (r16/4) as well as the reservations. A fixture that omits them
+    is REFUSED for a reason it never meant to test -- and because most of the
+    rows below assert only "it refused", every one of them would then pass
+    vacuously while the behaviour it names went unchecked. So every Logger.c
+    fixture in the self-test goes through here, and a row that wants to vary
+    the macro or the buffer says so explicitly via _logger_c().
+    """
+    return SELF_TEST_MIN_DEF + impl_text.replace(
+        "{\n", "{\n    char buffer[LOG_MESSAGE_SIZE];\n", 1)
+
+
+def _logger_c(clamp="min((LOG_MESSAGE_SIZE - 3), size)", pre="", lhs="size",
+              decl="char buffer[LOG_MESSAGE_SIZE];",
+              mindef=None, dest="buffer"):
     """The shipped LogMessageFormatImpl with ONE element varied.
 
     Used by SELF_TEST_LOGGER_C_CASES so each row changes exactly one thing and
     a refusal can be attributed to it. `pre` goes above the function, which is
-    where a redefinition of LOG_MESSAGE_SIZE would sit.
+    where a redefinition of LOG_MESSAGE_SIZE would sit; `decl`/`dest` vary the
+    buffer read_ceiling checks (r16/4) and `mindef` the min macro (r16/5).
     """
-    return (pre
+    return (pre + (SELF_TEST_MIN_DEF if mindef is None else mindef)
             + "static int LogMessageFormatImpl(const char* format, va_list args)"
-            "\n{\n    int size;\n    char buffer[LOG_MESSAGE_SIZE];\n"
-            "    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, format, args);\n"
+            "\n{\n    int size;\n    " + decl + "\n"
+            f"    size = vsnprintf({dest}, LOG_MESSAGE_SIZE - 2, format, args);\n"
             f"    {lhs} = {clamp};\n    return size;\n}}\n")
 
 
@@ -2369,6 +2462,27 @@ SELF_TEST_LOGGER_C_CASES = [
      _logger_c(lhs="other"), None),
     ("r16/2: the arguments in the other order are refused",
      _logger_c(clamp="min(size, (LOG_MESSAGE_SIZE - 3))"), None),
+    # --- r16/4: the buffer vsnprintf writes into must BE LOG_MESSAGE_SIZE ---
+    ("r16/4: a buffer not sized by LOG_MESSAGE_SIZE is refused",
+     _logger_c(decl="char buffer[64];"), None),
+    ("r16/4: vsnprintf pointed at a DIFFERENT array is refused",
+     _logger_c(decl="char buffer[LOG_MESSAGE_SIZE];\n    char other[64];",
+               dest="other"), None),
+    ("r16/4: RENAMING the buffer is fine -- keyed on what vsnprintf writes to",
+     _logger_c(decl="char msgbuf[LOG_MESSAGE_SIZE];", dest="msgbuf"), 125),
+    # --- r16/5: `min` must still select the smaller operand ---
+    ("r16/5: a `min` that selects the LARGER operand is refused",
+     _logger_c(mindef="#ifndef min\n"
+                      "    #define min(x,y) (((x) >= (y)) ? (x) : (y))\n"
+                      "#endif\n"), None),
+    ("r16/5: no `min` definition at all is refused, not assumed",
+     _logger_c(mindef=""), None),
+    ("r16/5: two `min` definitions are refused rather than picking one",
+     _logger_c(mindef=SELF_TEST_MIN_DEF * 2), None),
+    ("r16/5: whitespace in the macro does not matter",
+     _logger_c(mindef="#ifndef min\n"
+                      "#define min( x , y )   (((x)<=(y))?(x):(y))\n"
+                      "#endif\n"), 125),
 ]
 
 
@@ -3481,20 +3595,20 @@ def self_test():
         # correctly from the real reservations and that a shape it cannot read
         # fails loudly instead of falling back to a remembered 125.
         h = "#define LOG_MESSAGE_SIZE 128\n"
-        c = ("static int LogMessageFormatImpl(const char* format, va_list args)"
+        c = (_as_logger_c("static int LogMessageFormatImpl(const char* format, va_list args)"
              "\n{\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, format, "
-             "args);\n    size = min((LOG_MESSAGE_SIZE - 3), size);\n}\n")
+             "args);\n    size = min((LOG_MESSAGE_SIZE - 3), size);\n}\n"))
         # ⛔ r8/1: A COMMENT CONTINUED BY A BACKSLASH STILL COMMENTS THE NEXT
         # LINE. C splices backslash-newline in phase 2, STRICTLY BEFORE
         # comments are recognised in phase 3 -- splice_continuations()' own
         # docstring says so and says every later stage must read its output.
         # read_ceiling() was the one caller that masked RAW text, so the
         # continuation line read as live code and its clamp set the ceiling.
-        cont_c = ("static int LogMessageFormatImpl(const char* f, va_list a)\n"
+        cont_c = (_as_logger_c("static int LogMessageFormatImpl(const char* f, va_list a)\n"
                   "{\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, f, a);"
                   "\n    // historical, superseded: \\\n"
                   "    size = min((LOG_MESSAGE_SIZE - 13), size);\n"
-                  "    size = min((LOG_MESSAGE_SIZE - 3), size);\n}\n")
+                  "    size = min((LOG_MESSAGE_SIZE - 3), size);\n}\n"))
         ceiling_checks += 1
         got, _, _, r_cl = read_ceiling(h, cont_c)
         if (got, r_cl) != (125, 3):
@@ -3508,10 +3622,10 @@ def self_test():
         # wide-net rule to one of the four inputs read_ceiling derives from, so
         # a SECOND clamp still took the first match and reported 125 where the
         # real ceiling was 115.
-        two_clamp = ("static int LogMessageFormatImpl(const char* f, va_list a)\n"
+        two_clamp = (_as_logger_c("static int LogMessageFormatImpl(const char* f, va_list a)\n"
                      "{\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, f, a);"
                      "\n    size = min((LOG_MESSAGE_SIZE - 3), size);\n"
-                     "    size = min((LOG_MESSAGE_SIZE - 13), size);\n}\n")
+                     "    size = min((LOG_MESSAGE_SIZE - 13), size);\n}\n"))
         ceiling_checks += 1
         try:
             got, _, _, _ = read_ceiling(h, two_clamp)
@@ -3524,10 +3638,10 @@ def self_test():
                   f"tighter clamp was never seen")
 
         # Two vsnprintf calls: same shape, the other reservation.
-        two_vsn = ("static int LogMessageFormatImpl(const char* f, va_list a)\n"
+        two_vsn = (_as_logger_c("static int LogMessageFormatImpl(const char* f, va_list a)\n"
                    "{\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, f, a);"
                    "\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 9, f, a);"
-                   "\n    size = min((LOG_MESSAGE_SIZE - 3), size);\n}\n")
+                   "\n    size = min((LOG_MESSAGE_SIZE - 3), size);\n}\n"))
         ceiling_checks += 1
         try:
             got, _, _, _ = read_ceiling(h, two_vsn)
@@ -3542,11 +3656,11 @@ def self_test():
         # depth check is what refuses. And the include-guard exclusion is
         # pinned by the gate passing on the real Logger.h at all, whose define
         # sits at depth 1 under #ifndef LOGGER_H.
-        cond_clamp = ("static int LogMessageFormatImpl(const char* f, va_list a)\n"
+        cond_clamp = (_as_logger_c("static int LogMessageFormatImpl(const char* f, va_list a)\n"
                       "{\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, f, a);"
                       "\n#ifdef DEBUG_BUILD\n"
                       "    size = min((LOG_MESSAGE_SIZE - 13), size);\n"
-                      "#endif\n}\n")
+                      "#endif\n}\n"))
         ceiling_checks += 1
         try:
             got, _, _, _ = read_ceiling(h, cond_clamp)
@@ -3770,14 +3884,14 @@ def self_test():
                   f"LOG_MESSAGE_SIZE 128 with reservations 2 and 3")
         for label, bad_h, bad_c in (
                 ("no LOG_MESSAGE_SIZE", "#define SOMETHING_ELSE 128\n", c),
-                ("no vsnprintf reservation", h,
+                ("no vsnprintf reservation", h, _as_logger_c(
                  "static int LogMessageFormatImpl(const char* format, va_list a"
                  ")\n{\n    size = snprintf_other(buffer, 99);\n    size = min("
-                 "(LOG_MESSAGE_SIZE - 3), size);\n}\n"),
-                ("no clamp", h,
+                 "(LOG_MESSAGE_SIZE - 3), size);\n}\n")),
+                ("no clamp", h, _as_logger_c(
                  "static int LogMessageFormatImpl(const char* format, va_list a"
                  ")\n{\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, f, a"
-                 ");\n}\n")):
+                 ");\n}\n"))):
             try:
                 ceiling_checks += 1
                 read_ceiling(bad_h, bad_c)
@@ -3794,10 +3908,10 @@ def self_test():
         # The ceiling is the quantity every other check is expressed in, so
         # this is not one wrong answer, it is every answer being about the
         # wrong thing.
-        multi_c = ("static int LogMessageFormatImpl(const char* format, va_lis"
+        multi_c = (_as_logger_c("static int LogMessageFormatImpl(const char* format, va_lis"
                    "t args)\n{\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE "
                    "- 2 - 10, format, args);\n    size = min((LOG_MESSAGE_SIZE"
-                   " - 3 - 10), size);\n}\n")
+                   " - 3 - 10), size);\n}\n"))
         ceiling_checks += 1
         got, _, r_vsn, r_clamp = read_ceiling(h, multi_c)
         if (got, r_vsn, r_clamp) != (115, 12, 13):
@@ -3814,10 +3928,10 @@ def self_test():
         # of the integer, the second took a prefix of the expression; both
         # were prefixes. reserve_after() walks the argument by paren depth
         # instead (codex audit on #1110, round 3, both legs).
-        paren_c = ("static int LogMessageFormatImpl(const char* f, va_list a)"
+        paren_c = (_as_logger_c("static int LogMessageFormatImpl(const char* f, va_list a)"
                    "\n{\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, f,"
                    " a);\n    size = min((LOG_MESSAGE_SIZE - 3) - 10, size);"
-                   "\n}\n")
+                   "\n}\n"))
         ceiling_checks += 1
         got, _, r_v, r_c = read_ceiling(h, paren_c)
         if (got, r_v, r_c) != (115, 2, 13):
@@ -3829,10 +3943,10 @@ def self_test():
         # A COMMENT MUST NOT SET THE CEILING. Found by the blind leg: the
         # regexes searched raw Logger.c, so a commented-out or historical line
         # won the search. Measured: a comment saying `- 99` produced 28.
-        cmt_c = ("static int LogMessageFormatImpl(const char* f, va_list a)\n"
+        cmt_c = (_as_logger_c("static int LogMessageFormatImpl(const char* f, va_list a)\n"
                  "{\n    /* was vsnprintf(buffer, LOG_MESSAGE_SIZE - 99, f, a)"
                  "; */\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, f, "
-                 "a);\n    size = min((LOG_MESSAGE_SIZE - 3), size);\n}\n")
+                 "a);\n    size = min((LOG_MESSAGE_SIZE - 3), size);\n}\n"))
         ceiling_checks += 1
         got, _, r_v, _ = read_ceiling(h, cmt_c)
         if (got, r_v) != (125, 2):
@@ -3845,9 +3959,9 @@ def self_test():
         # is NOT `A - b - c` -- the sign on c inverts -- so a reader that
         # strips parens to cope with `(A - b) - c` would silently mis-derive
         # this one. Refusing is the only safe reading.
-        neg_c = ("static int LogMessageFormatImpl(const char* f, va_list a)\n"
+        neg_c = (_as_logger_c("static int LogMessageFormatImpl(const char* f, va_list a)\n"
                  "{\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - (3 - 10),"
-                 " f, a);\n    size = min((LOG_MESSAGE_SIZE - 3), size);\n}\n")
+                 " f, a);\n    size = min((LOG_MESSAGE_SIZE - 3), size);\n}\n"))
         try:
             ceiling_checks += 1
             read_ceiling(h, neg_c)
@@ -3870,8 +3984,8 @@ def self_test():
                 ("a multiplication",
                  "    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2*2, f, a);"
                  "\n    size = min((LOG_MESSAGE_SIZE - 3), size);\n")):
-            bad = ("static int LogMessageFormatImpl(const char* f, va_list a)"
-                   "\n{\n" + expr_c + "}\n")
+            bad = (_as_logger_c("static int LogMessageFormatImpl(const char* f, va_list a)"
+                   "\n{\n" + expr_c + "}\n"))
             try:
                 ceiling_checks += 1
                 read_ceiling(h, bad)
@@ -3995,6 +4109,10 @@ def self_test():
         logger_c = Path(d) / "Logger.c"
         logger_h.write_text("#define LOG_MESSAGE_SIZE 128\n", encoding="utf-8")
         logger_c.write_text(
+            # r16: and the min macro plus the buffer declaration, for the very
+            # reason the r15 note below gives -- read_ceiling validates both
+            # now, so omitting them refuses here too.
+            _as_logger_c(
             "static int LogMessageFormatImpl(const char* format, va_list a)"
             "\n{\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, f, a);\n"
             "    size = min((LOG_MESSAGE_SIZE - 3), size);\n}\n"
@@ -4004,7 +4122,7 @@ def self_test():
             # ToolError where it wanted the real OSError -- a fixture failing
             # for a reason the case is not about.
             "int LogMessage(const char* format, ...)\n{\n"
-            "    const size_t maxLen = LOG_MESSAGE_SIZE - 3;\n}\n",
+            "    const size_t maxLen = LOG_MESSAGE_SIZE - 3;\n}\n"),
             encoding="utf-8")
         try:
             gather_inputs(root, logger_h, logger_c,
