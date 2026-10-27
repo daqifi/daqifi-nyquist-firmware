@@ -22,6 +22,7 @@ SUMBUDGET_BIN  := run_1055_tests
 SCPISD_START_SRC := ../../firmware/src/services/SCPI/SCPIInterface.c
 STREAMING_SRC  := ../../firmware/src/services/streaming.c
 LOGGER_HDR     := ../../firmware/src/Util/Logger.h
+APP_FREERTOS_SRC := ../../firmware/src/app_freertos.c
 # Read out of the real Logger.h, never hand-copied: this whole test is an
 # assertion about a budget, and a budget checked against a stale capacity
 # checks nothing. Empty is fatal in the recipe.
@@ -3275,7 +3276,8 @@ run: $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(ARM_BIN) $(JS
 	./$(SCPIDAC_RAILGATE_BIN)
 
 $(SUMBUDGET_BIN): test_1055_stream_end_summary_budget.c test_framework.h \
-                 $(STREAMING_SRC) $(LOGGER_HDR)
+                 $(STREAMING_SRC) $(LOGGER_HDR) $(SCPISD_START_SRC) \
+                 $(APP_FREERTOS_SRC) $(RECIPES)
 	@# The three formats are COPIED into the test (streaming.c is not
 	@# host-compilable: FreeRTOS, Harmony, the board graph). A copy that drifts
 	@# is a test of itself, so each literal must still be present in the real
@@ -3352,6 +3354,47 @@ $(SUMBUDGET_BIN): test_1055_stream_end_summary_budget.c test_framework.h \
 	       echo "       Route it through SCPI_StartFailedAfterStop() rather than"; \
 	       echo "       returning directly -- fixing one named site and leaving its"; \
 	       echo "       siblings is the mistake this row has already made twice."; \
+	       exit 1; }
+	@# ⛔ #1055 r4 finding 1, THE OTHER HALF: A SLOW TEARDOWN STILL OWES EXACTLY
+	@# ONE SUMMARY, so something must keep ASKING after STOP has given up.
+	@# Streaming_Stop() snapshots the record and raises the SD hold; the unforced
+	@# emitter then declines while the teardown drains. When the teardown outlives
+	@# SCPI_PerformStreamingStop()'s bounded wait, that call site has returned and
+	@# r3 left nothing to ask again -- a silent no-summary.
+	@#
+	@# The poll lives in app_SDCardTask's own while(1), the loop whose progress IS
+	@# the teardown. Verified: streaming.c has NO periodic path that survives a
+	@# stop -- streaming_Task blocks on ulTaskNotifyTake(portMAX_DELAY) and its
+	@# ONLY notifier is in the ISR-driven sampling chain, so post-stop it parks
+	@# forever. A poll there would have been dead code.
+	@#
+	@# POSITION, not presence: the call must be INSIDE that while(1). Mutant-
+	@# verified, all four arms, 2026-10-26 -- clean 1; call deleted 0; call moved
+	@# to another function 0; call moved into the task PROLOGUE (runs once, never
+	@# polls -- the plausible regression) 0; call duplicated 2, so a double poll
+	@# is visible too. The RESTORE returns to 1.
+	@#
+	@# ⚠ The range STARTS at the definition line (ends with `{`), not the name:
+	@# app_freertos.c forward-declares app_SDCardTask ~400 lines earlier, and
+	@# keying on the name alone would open the window there. It ENDS at the next
+	@# top-level definition, for the reason the pin above records.
+	@# ⚠ `[ \t\r]*$$` throughout: these sources are CRLF.
+	@n=`awk '/^static void app_SDCardTask\(.*\{[ \t\r]*$$/ { f=1; next } \
+	         f && /^[A-Za-z_][A-Za-z0-9_ \t*]*\(/ { f=0 } \
+	         f && /^[ \t]*while[ \t]*\(1\)[ \t]*\{[ \t\r]*$$/ { inloop=1 } \
+	         f && inloop && /Streaming_EmitSessionSummary\(\)[ \t]*;/ { n++ } \
+	         END { printf "%d\n", n+0 }' $(APP_FREERTOS_SRC)`; \
+	 test "$$n" -eq 1 \
+	  || { echo "ERROR: $(APP_FREERTOS_SRC): app_SDCardTask's while(1) loop has"; \
+	       echo "       $$n Streaming_EmitSessionSummary() calls, expected exactly 1."; \
+	       echo "       0 means a session whose SD teardown outlives STOP's bounded"; \
+	       echo "       wait never prints its loss summary at all (#1055 r4): the"; \
+	       echo "       record stays pending and nothing asks again. Note a call in"; \
+	       echo "       the task PROLOGUE also reads as 0 -- it must be in the loop,"; \
+	       echo "       because the point is to keep asking until the SD manager is"; \
+	       echo "       idle. More than 1 means the loop polls twice per iteration;"; \
+	       echo "       harmless for correctness (the emitter test-and-clears) but"; \
+	       echo "       it means two authors each added one, so re-read both."; \
 	       exit 1; }
 	$(CC) $(CFLAGS) -DFW_LOG_MESSAGE_SIZE=$(LOG_MSG_SIZE) -o $(SUMBUDGET_BIN) test_1055_stream_end_summary_budget.c
 

@@ -6933,14 +6933,26 @@ static void SCPI_PerformStreamingStop(void) {
      * half-cleared data. The clear stays a read-modify-write under the lock
      * because two transports can stop concurrently.
      *
-     * ⚠ RESIDUAL, STATED RATHER THAN CLOSED: a concurrent stop that reaches
-     * the emit before this one finishes its SD-idle wait consumes the record
-     * first, so discards the teardown reports AFTER that point are not in the
-     * printed summary. The record bounds the damage -- a summary always prints,
-     * with the stop-time data -- but it does not order the two. That ordering
-     * was already documented as best-effort before r2 (see the emit site
-     * below); closing it needs the teardown to signal completion, which is a
-     * larger change than this round. */
+     * ⚠ THE r3 RESIDUAL IS NOW CLOSED FOR THE UNFORCED PATHS (#1055 r4+r5).
+     * It read: a concurrent stop reaching the emit before this one finishes
+     * its SD-idle wait consumes the record first, so discards reported after
+     * that point are missing from the printed summary -- and closing it "needs
+     * the teardown to signal completion, which is a larger change than this
+     * round". r4 added that signal in the form the teardown already offers:
+     * the unforced emitter declines while the SD hold is up and
+     * sd_card_manager_IsIdle() is false, so no unforced caller -- racing or
+     * not -- can consume the record before the drain is done. r5 supplied the
+     * missing half, a poll in app_SDCardTask's loop, so the record is still
+     * consumed exactly once when the drain finishes after every stop caller
+     * has returned.
+     *
+     * ⚠ STILL OPEN, narrowed: Streaming_FlushOwedSessionSummary() forces past
+     * the hold by design, for the paths with no bounded wait and no later poll
+     * (the #397 auto-stop, and Streaming_Start()'s backstop). There, a summary
+     * that prints before the drain can still undercount stop-time SD loss --
+     * deliberately, because the alternative on those paths is no summary at
+     * all. Narrowed from "every path, best-effort" to "two named forcing
+     * paths", which is why this is stated here rather than left implied. */
     if (pRunTimeStreamConfig) {
         taskENTER_CRITICAL();
         pRunTimeStreamConfig->IsEnabled = false;
@@ -7092,16 +7104,27 @@ static void SCPI_PerformStreamingStop(void) {
     /* #982: emit the deferred session-end loss summary HERE -- after the
      * SD-idle wait above, so it covers whatever the stop-time SD teardown
      * (UNMOUNT_DISK) reported via Streaming_ReportSdDiscard() while this
-     * function was waiting. Streaming_UpdateState() above only FLAGGED that
-     * a summary is owed (Streaming_Stop() sets gSessionSummaryPending); this
-     * is what actually computes and, if warranted, prints it. On a
-     * non-SD session the block above is skipped entirely and this is
-     * reached immediately -- same effective behaviour as before this fix,
-     * one call later. If the wait just timed out (sdStillBusy), this may
-     * still undercount a drain that finishes after it prints -- the
-     * "[SD] Streaming stop: SD still finalising" LOG_E and OPER bit 11 set
-     * just above are the record that it might, so this is a best-effort
-     * improvement over "always before", not a guarantee. */
+     * function was waiting. Streaming_UpdateState() above only SNAPSHOTS the
+     * session's counters into the pending record (Streaming_Stop() sets
+     * gSessionRecordPending -- an earlier revision of this comment named
+     * gSessionSummaryPending, which has never existed since r3 replaced the
+     * flag with the record); this is what actually computes and, if
+     * warranted, prints it. On a non-SD session the block above is skipped
+     * entirely and this is reached immediately -- same effective behaviour as
+     * before this fix, one call later.
+     *
+     * #1055 r5: the timed-out case (sdStillBusy) is NO LONGER an undercount
+     * on this path. This call is the UNFORCED emitter, which declines while
+     * the SD hold is up and sd_card_manager_IsIdle() is false, and
+     * app_SDCardTask's loop polls the same emitter every iteration -- so a
+     * teardown that outlives the wait above gets its summary from there,
+     * after the drain, instead of a short one from here. Exactly-once is the
+     * record's test-and-clear, so the two cannot both print. The
+     * "[SD] Streaming stop: SD still finalising" LOG_E and OPER bit 11 above
+     * still record that the WAIT timed out, which is a separate fact from
+     * whether the summary was complete. The remaining exception is
+     * Streaming_FlushOwedSessionSummary(), which bypasses the hold on purpose
+     * for paths that have no bounded wait and no later poll. */
     /* #1055 r3: unconditional again. The record makes this exactly-once and
      * data-correct whoever calls it, so there is no ownership test left to
      * make -- see the refuted token above. */
