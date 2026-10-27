@@ -69,6 +69,7 @@ typedef struct {
     PowerState state;
     bool autoPowerOnUsb;
     bool pgStat;                      /* the CACHED VBUS reading */
+    bool vbusActual;                  /* the PHYSICAL fact: is VBUS there? */
     bool autoPromotedThisVbusSession; /* the suppression latch */
     bool shutdownNotified;
     bool hasSufficientPower;
@@ -78,13 +79,27 @@ typedef struct {
 } Model;
 
 /* Which revision of the two sites is being modelled. */
+/*
+ * ⛔ EVERY DIMENSION OF THE REVISION LIVES HERE, AND THAT IS THE POINT.
+ * refreshBeforeDeciding was briefly a field on Model instead, and the cost was
+ * immediate: four arms inherited r4's entry refresh from the fixture
+ * constructor while modelling pre-r4 firmware, which silently overwrote the
+ * cached reading each one had set up, and TWO arms kept passing for a reason
+ * their scenario no longer contained. A per-fixture default cannot encode
+ * "which revision is this?", because the answer belongs to the shape the arm
+ * is exercising, not to the state it starts from.
+ */
 typedef struct {
     bool clearRequestInCommonHandler; /* DEFECT A: true = pre-fix */
     bool latchOnlyWhenPgStat;         /* DEFECT B: true = pre-fix */
+    bool rearmInsideRequestGate;      /* DEFECT C: true = pre-fix (r3) */
+    bool refreshBeforeDeciding;       /* r4: fresh PHY read before the latch */
 } Shape;
 
-static const Shape SHAPE_OLD = { true,  true  };
-static const Shape SHAPE_NEW = { false, false };
+static const Shape SHAPE_OLD = { true,  true,  true,  false };
+static const Shape SHAPE_NEW = { false, false, false, true  };
+/* r3 as shipped: A and B fixed, the re-arm still gated, no entry refresh. */
+static const Shape SHAPE_R3  = { false, false, true,  false };
 
 /* Power_Down(): rails off, then the EXECUTOR clears the request. */
 static void model_power_down(Model *m) {
@@ -99,11 +114,17 @@ static void model_power_up(Model *m, bool ext) {
 }
 
 /* Power_HandleStandbyState() */
-static void model_standby(Model *m) {
+static void model_standby(Model *m, Shape s) {
+    if (s.refreshBeforeDeciding) {
+        m->pgStat = m->vbusActual;     /* Power_UpdateStatusFromGPIO() */
+    }
+    if (!s.rearmInsideRequestGate && !m->pgStat) {
+        m->autoPromotedThisVbusSession = false;   /* re-arm, first observation */
+    }
     if (m->autoPowerOnUsb && m->req == NO_CHANGE) {
-        if (!m->pgStat) {
-            m->autoPromotedThisVbusSession = false;   /* re-arm */
-        } else if (!m->autoPromotedThisVbusSession) {
+        if (s.rearmInsideRequestGate && !m->pgStat) {
+            m->autoPromotedThisVbusSession = false;   /* re-arm, gated (pre-fix) */
+        } else if (m->pgStat && !m->autoPromotedThisVbusSession) {
             m->req = DO_POWER_UP;
             m->autoPromotedThisVbusSession = true;
         }
@@ -135,7 +156,7 @@ static void model_update(Model *m, Shape s) {
         }
     }
     if (m->state == STANDBY) {
-        model_standby(m);
+        model_standby(m, s);
     }
 }
 
@@ -152,12 +173,23 @@ static void model_button_poweroff(Model *m, Shape s) {
     }
 }
 
+/*
+ * The cable going in changes the PHYSICAL fact first; the cache follows when
+ * something reads the PHY. Poking only the cache modelled a plug-in that r4's
+ * entry refresh then correctly un-did -- so both move here, together.
+ */
+static void plug_in_usb(Model *m) {
+    m->vbusActual = true;
+    m->pgStat = true;              /* Power_Tasks' periodic refresh */
+}
+
 static Model fresh(bool autoOn, bool pgStat) {
     Model m;
     memset(&m, 0, sizeof(m));
     m.state = POWERED_UP;
     m.autoPowerOnUsb = autoOn;
     m.pgStat = pgStat;
+    m.vbusActual = pgStat;        /* cache agrees with reality by default */
     m.hasSufficientPower = true;
     return m;
 }
@@ -229,7 +261,7 @@ TEST(new_shape_keeps_a_pending_shutdown_visible_until_executed) {
     model_button_poweroff(&m, SHAPE_NEW);
     if (m.req == DO_POWER_DOWN) { m.state = STANDBY; }   /* no clear */
     ASSERT_EQ(m.req, DO_POWER_DOWN);       /* consumers see the truth */
-    model_standby(&m);                     /* the executor runs */
+    model_standby(&m, SHAPE_NEW);          /* the executor runs */
     ASSERT_EQ(m.powerDownCalls, 1u);
     ASSERT_EQ(m.req, NO_CHANGE);           /* cleared where it is serviced */
 }
@@ -250,44 +282,145 @@ TEST(autoon_off_is_unaffected_by_either_shape) {
 
 /* ---- DEFECT B: the stale-pgStat latch window ---------------------------- */
 
+/* A fixed, B pre-fix, and NO entry refresh -- the shape this defect lived in.
+ * r4 closes this scenario a second way, by never reading a stale value at all;
+ * the latch is still what makes the shutdown stick, so both hold. */
+static const Shape SHAPE_B_PREFIX = { false, true, false, false };
+
 TEST(old_latch_rule_lets_a_stale_reading_undo_the_shutdown) {
     /* Press while the CACHE says no VBUS, though VBUS is really present. */
     Model m = fresh(true, false);
-    model_button_poweroff(&m, (Shape){ false, true });  /* A fixed, B pre-fix */
+    m.vbusActual = true;                                /* ...it IS present */
+    model_button_poweroff(&m, SHAPE_B_PREFIX);
     ASSERT_FALSE(m.autoPromotedThisVbusSession);        /* latch not set */
-    model_update(&m, (Shape){ false, true });
+    model_update(&m, SHAPE_B_PREFIX);
     ASSERT_EQ(m.powerDownCalls, 1u);                    /* it does power down */
     /* Power_Tasks refreshes the cache: VBUS was there all along. */
     m.pgStat = true;
-    model_update(&m, (Shape){ false, true });
+    model_update(&m, SHAPE_B_PREFIX);
     ASSERT_EQ(m.powerUpCalls, 1u);                      /* ...and back up */
 }
 
 TEST(new_latch_rule_keeps_the_shutdown_through_a_stale_reading) {
     Model m = fresh(true, false);
+    m.vbusActual = true;        /* VBUS present; the cache has not caught up */
     model_button_poweroff(&m, SHAPE_NEW);
     ASSERT_TRUE(m.autoPromotedThisVbusSession);         /* set regardless */
     model_update(&m, SHAPE_NEW);
     ASSERT_EQ(m.powerDownCalls, 1u);
-    m.pgStat = true;
     model_update(&m, SHAPE_NEW);
     ASSERT_EQ(m.powerUpCalls, 0u);                      /* stays down */
     ASSERT_EQ(m.state, STANDBY);
+    /* ⭐ NON-VACUITY. "Did not power up" is ALSO what a board with no VBUS
+     * does, so prove the LATCH is what held it down: clear that one bit,
+     * change nothing else, and the very next pass must promote. Two arms in
+     * this file were passing an hour ago because their VBUS had quietly gone
+     * away instead -- a negative assertion needs its positive control.
+     */
+    m.autoPromotedThisVbusSession = false;
+    model_update(&m, SHAPE_NEW);
+    ASSERT_EQ(m.powerUpCalls, 1u);
 }
 
 /* ---- the unconditional set must be HARMLESS, not merely convenient ------ */
 
-TEST(battery_only_press_rearms_so_a_later_plug_in_still_auto_promotes) {
+TEST(battery_only_press_rearms_when_a_vbus_absent_pass_intervenes) {
     Model m = fresh(true, false);          /* genuinely on battery */
     model_button_poweroff(&m, SHAPE_NEW);
     ASSERT_TRUE(m.autoPromotedThisVbusSession);   /* set unnecessarily */
     model_update(&m, SHAPE_NEW);
     ASSERT_EQ(m.powerDownCalls, 1u);
-    /* Next STANDBY pass, still no VBUS: the handler re-arms the latch. */
+    /* An extra STANDBY pass, still no VBUS, BEFORE the plug-in. */
     model_update(&m, SHAPE_NEW);
     ASSERT_FALSE(m.autoPromotedThisVbusSession);
-    /* Now the user plugs in: #454 must still auto-promote. */
-    m.pgStat = true;
+    plug_in_usb(&m);
+    model_update(&m, SHAPE_NEW);
+    ASSERT_EQ(m.powerUpCalls, 1u);
+}
+
+/* ---- DEFECT C: the r3 regression, which my own test construction hid ----- */
+/*
+ * ⛔ THE ARM ABOVE PASSES ON THE BROKEN CODE TOO, and that is the lesson.
+ * It calls model_update twice before the plug-in, and that second call IS the
+ * VBUS-absent pass the re-arm needed. With it, r3's shape re-arms and the
+ * board auto-powers-on; without it, r3 leaves the latch set for ever. My test
+ * inserted the one event that made the fix look harmless -- a construction
+ * that predetermined its own outcome.
+ *
+ * The real sequence has no such pass: the user holds the button (which holds
+ * the MCU up), so the shutdown pass runs with DO_POWER_DOWN STILL PENDING --
+ * r3 stopped clearing it in the common handler -- which makes the request gate
+ * false and skips the re-arm entirely. USB then goes in before the next ~1 s
+ * pass. So r3's two fixes INTERACT: the deferred clear removed the one pass
+ * the unconditional set depended on. Neither change is wrong alone.
+ *
+ * THE PROPERTY: a latch set by a press must be cleared by the FIRST
+ * observation of VBUS absent, whichever pass makes it.
+ */
+
+/*
+ * ⭐ AND THE CLAIM ABOVE IS A TEST, NOT A COMMENT. "My battery arm would have
+ * passed on the broken code" is the entire lesson of this section, so it is
+ * asserted here rather than asserted about: the SAME sequence, with the SAME
+ * intervening pass, run against r3's shape -- and it promotes. An arm that
+ * can pass on both shapes distinguishes nothing, and the only way to know
+ * that is to run it against the shape it was supposed to catch.
+ */
+TEST(the_battery_arms_sequence_cannot_detect_defect_c_at_all) {
+    Model m = fresh(true, false);
+    model_button_poweroff(&m, SHAPE_R3);
+    model_update(&m, SHAPE_R3);
+    ASSERT_EQ(m.powerDownCalls, 1u);
+    model_update(&m, SHAPE_R3);            /* the intervening VBUS-absent pass */
+    ASSERT_FALSE(m.autoPromotedThisVbusSession);   /* r3 DOES re-arm here */
+    plug_in_usb(&m);
+    model_update(&m, SHAPE_R3);
+    ASSERT_EQ(m.powerUpCalls, 1u);         /* ⛔ the BROKEN shape, passing */
+}
+
+TEST(r3_shape_strands_the_board_when_no_vbus_absent_pass_intervenes) {
+    Model m = fresh(true, false);
+    model_button_poweroff(&m, SHAPE_R3);
+    model_update(&m, SHAPE_R3);            /* shutdown pass, request pending */
+    ASSERT_EQ(m.powerDownCalls, 1u);
+    ASSERT_TRUE(m.autoPromotedThisVbusSession);   /* never re-armed */
+    plug_in_usb(&m);                       /* USB in before the next pass */
+    model_update(&m, SHAPE_R3);
+    model_update(&m, SHAPE_R3);
+    ASSERT_EQ(m.powerUpCalls, 0u);         /* stranded in STANDBY */
+    ASSERT_EQ(m.state, STANDBY);
+    /* ⭐ NON-VACUITY. "Did not power up" is ALSO what a board with no VBUS
+     * does, so prove the LATCH is what held it down: clear that one bit,
+     * change nothing else, and the very next pass must promote. Two arms in
+     * this file were passing an hour ago because their VBUS had quietly gone
+     * away instead. Here it also separates the two r3 failure modes: the
+     * board is stranded by the STUCK LATCH, not by a missing promote path.
+     */
+    m.autoPromotedThisVbusSession = false;
+    model_update(&m, SHAPE_R3);
+    ASSERT_EQ(m.powerUpCalls, 1u);
+}
+
+TEST(new_shape_auto_powers_on_with_no_vbus_absent_pass_intervening) {
+    Model m = fresh(true, false);
+    model_button_poweroff(&m, SHAPE_NEW);
+    model_update(&m, SHAPE_NEW);           /* shutdown pass re-arms anyway */
+    ASSERT_EQ(m.powerDownCalls, 1u);
+    ASSERT_FALSE(m.autoPromotedThisVbusSession);  /* first observation wins */
+    plug_in_usb(&m);
+    model_update(&m, SHAPE_NEW);
+    ASSERT_EQ(m.powerUpCalls, 1u);         /* auto-powers-on */
+}
+
+/* The re-arm must not depend on AUTOOn either: turning it on after the
+ * VBUS-absent period must find the latch already armed. */
+TEST(rearm_does_not_depend_on_autoon_being_enabled) {
+    Model m = fresh(false, false);         /* AUTOOn OFF */
+    model_button_poweroff(&m, SHAPE_NEW);
+    model_update(&m, SHAPE_NEW);
+    ASSERT_FALSE(m.autoPromotedThisVbusSession);
+    m.autoPowerOnUsb = true;               /* user enables AUTOOn later */
+    plug_in_usb(&m);
     model_update(&m, SHAPE_NEW);
     ASSERT_EQ(m.powerUpCalls, 1u);
 }
@@ -316,7 +449,11 @@ int main(void) {
     RUN(autoon_off_is_unaffected_by_either_shape);
     RUN(old_latch_rule_lets_a_stale_reading_undo_the_shutdown);
     RUN(new_latch_rule_keeps_the_shutdown_through_a_stale_reading);
-    RUN(battery_only_press_rearms_so_a_later_plug_in_still_auto_promotes);
+    RUN(battery_only_press_rearms_when_a_vbus_absent_pass_intervenes);
+    RUN(the_battery_arms_sequence_cannot_detect_defect_c_at_all);
+    RUN(r3_shape_strands_the_board_when_no_vbus_absent_pass_intervenes);
+    RUN(new_shape_auto_powers_on_with_no_vbus_absent_pass_intervening);
+    RUN(rearm_does_not_depend_on_autoon_being_enabled);
     RUN(assigning_pgstat_would_clear_a_valid_suppression);
     return TEST_SUMMARY();
 }
