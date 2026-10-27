@@ -820,6 +820,48 @@ def splice_continuations(src):
             if src[i + 1] == "\r" and i + 2 < n and src[i + 2] == "\n":
                 i += 3
                 continue
+            # ⛔ #1110 r14 (blind leg): BACKSLASH, WHITESPACE, THEN NEWLINE.
+            #
+            #     LOG_E \<space>
+            #     ("%126u", 0U);
+            #
+            # GCC SPLICES THAT -- with `warning: backslash and newline
+            # separated by space` -- so the call compiles and can truncate.
+            # This function did not splice it, so find_calls() never saw a
+            # `LOG_E(` and the site was INVISIBLE: measured 0 findings for a
+            # 126-byte format, against 1 for the same code with the stray
+            # space removed.
+            #
+            # REFUSED rather than spliced, deliberately, and this is a
+            # considered divergence from the compiler rather than an
+            # oversight:
+            #   - trailing whitespace before the newline is a GCC EXTENSION,
+            #     not C (C99 5.1.1.2 deletes a backslash IMMEDIATELY followed
+            #     by a newline). Modelling an extension is exactly the kind of
+            #     C-modelling this tool otherwise refuses to do;
+            #   - GCC itself warns, so the construct is dubious to the
+            #     compiler too -- a gate agreeing with that is not an
+            #     imposition;
+            #   - MEASURED on this tree: ZERO occurrences in the scanned
+            #     sources, so the refusal cannot break the build, and the
+            #     remedy (delete the stray space) is one keystroke.
+            # Splicing it would also be defensible; silently not seeing the
+            # call is not, and that was the status quo.
+            j = i + 1
+            while j < n and src[j] in " \t":
+                j += 1
+            if j > i + 1 and j < n and (
+                    src[j] == "\n"
+                    or (src[j] == "\r" and j + 1 < n and src[j + 1] == "\n")):
+                raise ToolError(
+                    f"line {src.count(chr(10), 0, i) + 1}: a line-continuation "
+                    f"backslash is followed by whitespace before the newline. "
+                    f"GCC splices this anyway (it warns: 'backslash and newline "
+                    f"separated by space'), so the call compiles -- but it is "
+                    f"not a C continuation and this checker will not model a "
+                    f"compiler extension. Delete the whitespace after the "
+                    f"backslash. Refusing rather than guessing, because the "
+                    f"alternative outcome is a call this tool cannot see.")
         out.append(src[i])
         orig_pos.append(i)
         i += 1
@@ -1741,6 +1783,35 @@ def scan_file(path, rel, macros, ceiling):
                 f"unresolvable: {macro}'s format argument is not a string "
                 f"literal", ""))
             continue
+        # ⛔ #1110 r14 (steered leg): THE ISR PATH COPIES THE FORMAT VERBATIM,
+        # so a site has TWO ceilings and neither dominates the other.
+        #
+        # LogMessage() (Logger.c) branches on LogIsInISR(). In ISR context it
+        # does NOT format: it scans the format with a bound of
+        # `LOG_MESSAGE_SIZE - 3`, memcpy()s those bytes, and appends "\r\n\0".
+        # Logger.h says as much -- "Format args are ignored in ISR context;
+        # use static strings" -- and LOG_E/LOG_I/LOG_D are ISR-AWARE, deciding
+        # at RUNTIME, so any site can take that path.
+        #
+        # The two measures diverge in both directions. `%u` makes the FORMATTED
+        # length larger than the raw text; `%%` makes it SMALLER, because the
+        # ISR path copies two bytes where vsnprintf would emit one. The audit's
+        # example is the second case and it was invisible: 120 'X' plus
+        # "%% END" is 126 raw bytes (truncates in an ISR) but 125 formatted, so
+        # the old single check passed it.
+        #
+        # literal_text() already decodes C escapes -- `\n` is one byte there --
+        # so len(fmt) IS the byte count the ISR path would copy.
+        #
+        # Reported as its own finding rather than folded into a max(): the
+        # failure mode and the REMEDY differ. Over the formatted ceiling means
+        # bound an argument; over the raw ceiling means shorten the literal
+        # itself, and no annotation can help. Keeping them separate also keeps
+        # the baseline's reason text meaningful.
+        #
+        # MEASURED on this tree when added: 0 of 506 sites exceed the raw
+        # ceiling, so the baseline is unchanged -- this closes a gap without
+        # moving any existing verdict.
         worst, reason = measure(fmt, find_annotation(spliced_lines, sline,
                                                      split))
         if reason is not None:
@@ -1748,6 +1819,27 @@ def scan_file(path, rel, macros, ceiling):
         elif worst > ceiling:
             found.append(Finding(
                 rel, line, f"worst case {worst} bytes > ceiling {ceiling}",
+                escape_for_record(fmt)))
+        elif len(fmt) > ceiling:
+            # ⛔ LAST, and only when the formatted measures stayed silent.
+            #
+            # My first cut reported this as an INDEPENDENT finding, before the
+            # formatted check. That broke 8 self-tests, all the same way: a
+            # format with NO conversions has raw length == formatted length, so
+            # every long fixed-text message was reported TWICE for one defect.
+            # The two measures only disagree when the source text is LONGER
+            # than its output -- `%%` being the case that matters -- and that
+            # is precisely when this check adds information.
+            #
+            # The cost of ordering it this way, stated: a site over BOTH
+            # ceilings reports the formatted one first, and the raw finding
+            # appears only after that is fixed. That is ordinary iterative
+            # linting, and it is cheaper than permanent duplication on every
+            # long message.
+            found.append(Finding(
+                rel, line,
+                f"raw format {len(fmt)} bytes > ceiling {ceiling} -- the ISR "
+                f"path copies the format verbatim without formatting it",
                 escape_for_record(fmt)))
     return found
 
@@ -2017,6 +2109,20 @@ SELF_TEST_CEILING_SPELLINGS = [
 
 SELF_TEST_REJECTION_CASES = [
     (
+        "r14: a continuation backslash followed by whitespace is refused",
+        'LOG_E \\ \n("%126u", 0U);',
+        "followed by whitespace before the newline",
+        "⛔ r14 BLIND LEG. GCC splices `backslash, space, newline` -- it "
+        "warns about it -- so this compiles and the 126-byte message "
+        "truncates. splice_continuations() required the newline IMMEDIATELY "
+        "after the backslash, so it did not splice, find_calls() never saw a "
+        "`LOG_E(`, and the site was INVISIBLE: measured 0 findings against 1 "
+        "for the same code with the stray space deleted. Refused rather than "
+        "spliced because trailing whitespace is a GCC EXTENSION, not C, and "
+        "zero occurrences exist in this tree -- so the refusal cannot break "
+        "the build and the remedy is one keystroke",
+    ),
+    (
         "r9: max= must be decimal",
         '/* log_budget: max=0x80 */ LOG_E("%s", s);',
         "not a decimal",
@@ -2074,6 +2180,19 @@ SELF_TEST_REJECTION_CASES = [
 ]
 
 SELF_TEST_CASES = [
+    (
+        "r14: the ISR path copies the format RAW, so %% can hide a truncation",
+        'LOG_E_ONCE(1, "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX%% END");',
+        1,
+        "⛔ r14 STEERED LEG. LogMessage() branches on LogIsInISR(); in ISR "
+        "context it does NOT format -- it memcpy()s the format itself, bounded "
+        "at LOG_MESSAGE_SIZE - 3. So the ISR ceiling applies to the RAW text, "
+        "and `%%` makes the raw text LONGER than the output: 120 X plus "
+        "'%% END' is 126 bytes copied but only 125 formatted. The formatted "
+        "measure alone passed it, so a message that truncates on every ISR "
+        "firing produced NO finding. This is the one direction in which the "
+        "two measures disagree, which is why the raw check earns its place",
+    ),
     (
         "r10: an annotation with trailing ' -- prose' still binds",
         'LOG_E("%s", s);  /* log_budget: max=8 -- `s` is a short enum name */',
