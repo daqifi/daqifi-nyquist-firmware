@@ -96,8 +96,7 @@ static DaqifiSettingsType gActiveCalBank = DaqifiSettings_FactAInCalParams;
  * it. Making gActiveCalBank volatile would also work for THIS pair, but it
  * would pin the wrong thing: the requirement is an ORDER between two
  * variables, not a property of one, and the next non-volatile value added to
- * the snapshot would silently escape again. */
-#define CAL_BARRIER() __asm__ volatile ("" ::: "memory")
+ * the snapshot would silently escape again.
  *
  * ⚠ Bumped by EVERY writer of the live coefficients -- the bank load and both
  * CONF:ADC:chanCALM / chanCALB setters -- via
@@ -112,6 +111,14 @@ static DaqifiSettingsType gActiveCalBank = DaqifiSettings_FactAInCalParams;
  * and concludes ALL identity -- a view that held at no instant. The argument
  * was about a single writer and the hazard needs only two. */
 static volatile uint32_t gCalGeneration = 0u;
+
+/* The compiler barrier the seqlock above is built on. Placed BELOW the block
+ * that explains it, deliberately: putting the #define inside that comment's
+ * text closed it early and orphaned its remaining lines as bare ` *` at file
+ * scope, which does not compile. The host suite stayed green through that,
+ * because nothing in tests/host ever COMPILES this file -- the #908 guards
+ * read it with sed and grep. See the parse guard in tests/host. */
+#define CAL_BARRIER() __asm__ volatile ("" ::: "memory")
 
 /* #625: the friendly name is emitted UNESCAPED into the JSON info message
  * ("friendlyName":"%s") and copied into the PB info message, so it must be

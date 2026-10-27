@@ -3326,7 +3326,7 @@ SEQ908_BIN := run_908_tests
 # setter-bracket check. A guard that reads a file it does not depend on does
 # not run when that file changes -- make reuses the binary and the check is
 # silently skipped, which is a guard that cannot fail rather than a guard.
-$(SEQ908_BIN): test_908_cal_source_seqlock.c test_framework.h $(SETTINGS_SRC) $(SCPIADC_SRC) $(SCPI_IFACE_SRC) cal_compose_908.awk check_seq908_order.py seq908_order_fixture.c $(RECIPES)
+$(SEQ908_BIN): test_908_cal_source_seqlock.c test_framework.h $(SETTINGS_SRC) $(SCPIADC_SRC) $(SCPI_IFACE_SRC) cal_compose_908.awk check_seq908_order.py seq908_order_fixture.c check_comment_integrity.py $(RECIPES)
 	@sed -n '/^bool daqifi_settings_LoadADCCalSettings/,/^}/p' $(SETTINGS_SRC) \
 	   > /tmp/.fw908_load.$$$$; \
 	 n=`grep -cE 'daqifi_settings_(Begin|End)CalWrite' /tmp/.fw908_load.$$$$`; \
@@ -3471,6 +3471,20 @@ $(SEQ908_BIN): test_908_cal_source_seqlock.c test_framework.h $(SETTINGS_SRC) $(
 	       echo "       generation mid-write and believes it; and the critical"; \
 	       echo "       section must be INNERMOST around the store, or the"; \
 	       echo "       64-bit CalM/CalB pair can tear (#904)."; \
+	       exit 1; }
+	@$(PYTHON) check_comment_integrity.py $(SETTINGS_SRC) $(SCPIADC_SRC) $(SCPI_IFACE_SRC) \
+	  || { echo "ERROR: a firmware file this target's guards READ no longer has"; \
+	       echo "       intact comment structure, so it almost certainly does not"; \
+	       echo "       compile. See the line(s) above."; \
+	       echo "       ⚠ WHY THIS GUARD EXISTS: every other #908 source check"; \
+	       echo "       below reads these files with sed/grep/awk, and NOTHING in"; \
+	       echo "       tests/host COMPILES them. On 2026-10-27 a #define inserted"; \
+	       echo "       into the middle of a block comment closed it early and"; \
+	       echo "       stranded 13 lines at file scope; the firmware did not"; \
+	       echo "       build, and this suite reported 31 binaries / 318 tests /"; \
+	       echo "       0 failed with every position pin PASSING, because a pin"; \
+	       echo "       over grep line numbers is happy with invalid C."; \
+	       echo "       ⛔ A pass here is NOT a compile. Only a build is."; \
 	       exit 1; }
 	@$(PYTHON) check_seq908_order.py $(CC) seq908_order_fixture.c \
 	  || { echo "ERROR: the cal-source seqlock's ORDERING property failed."; \
