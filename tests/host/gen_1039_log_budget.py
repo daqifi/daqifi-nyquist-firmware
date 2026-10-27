@@ -538,10 +538,24 @@ def _clamp_of(clamp_src, extra=""):
     `extra` goes ABOVE the clamp line, for cases about surrounding source.
     """
     h = "#define LOG_MESSAGE_SIZE 128\n"
-    c = ("void LogMessageFormatImpl(const char *f, va_list a)\n{\n"
-         "    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, f, a);\n"
-         + (extra + "\n" if extra else "")
-         + clamp_src + "\n}\n")
+    # ⛔ #1110 r16: THE REST OF A REAL Logger.c COMES FROM THE GATE, NOT FROM
+    # HERE. read_ceiling() now also validates the `min` macro and the buffer
+    # vsnprintf writes into, so a fixture carrying only a vsnprintf and a clamp
+    # is REFUSED -- measured: all four clamp cases below failed with "could not
+    # find the declaration of buffer[LOG_MESSAGE_SIZE]", and because the
+    # Makefile runs this --self-test as the FIRST step of the $(LOG1039_GEN)
+    # rule, `make run` then stopped before any host suite ran at all.
+    #
+    # Reusing the gate's own as_logger_c() rather than pasting the two elements
+    # here is this module's ONE SEAM principle: a second copy of "what a
+    # complete Logger.c looks like" would be free to drift from the gate's,
+    # which is exactly the divergence r4/r5 found when the two sides each
+    # prepared their own input for a shared walk.
+    c = _gate().as_logger_c(
+        "void LogMessageFormatImpl(const char *f, va_list a)\n{\n"
+        "    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, f, a);\n"
+        + (extra + "\n" if extra else "")
+        + clamp_src + "\n}\n")
     return _gate_read_ceiling(h, c)[3]          # (ceiling, size, vsn, clamp)
 
 

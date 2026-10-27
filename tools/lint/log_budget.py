@@ -2380,7 +2380,7 @@ SELF_TEST_MIN_DEF = ("#ifndef min\n"
                      "#endif\n")
 
 
-def _as_logger_c(impl_text):
+def as_logger_c(impl_text):
     """Give a raw LogMessageFormatImpl fixture the rest of a real Logger.c.
 
     ⛔ read_ceiling validates the `min` macro (r16/5) and the buffer
@@ -3595,7 +3595,7 @@ def self_test():
         # correctly from the real reservations and that a shape it cannot read
         # fails loudly instead of falling back to a remembered 125.
         h = "#define LOG_MESSAGE_SIZE 128\n"
-        c = (_as_logger_c("static int LogMessageFormatImpl(const char* format, va_list args)"
+        c = (as_logger_c("static int LogMessageFormatImpl(const char* format, va_list args)"
              "\n{\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, format, "
              "args);\n    size = min((LOG_MESSAGE_SIZE - 3), size);\n}\n"))
         # ⛔ r8/1: A COMMENT CONTINUED BY A BACKSLASH STILL COMMENTS THE NEXT
@@ -3604,7 +3604,7 @@ def self_test():
         # docstring says so and says every later stage must read its output.
         # read_ceiling() was the one caller that masked RAW text, so the
         # continuation line read as live code and its clamp set the ceiling.
-        cont_c = (_as_logger_c("static int LogMessageFormatImpl(const char* f, va_list a)\n"
+        cont_c = (as_logger_c("static int LogMessageFormatImpl(const char* f, va_list a)\n"
                   "{\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, f, a);"
                   "\n    // historical, superseded: \\\n"
                   "    size = min((LOG_MESSAGE_SIZE - 13), size);\n"
@@ -3622,7 +3622,7 @@ def self_test():
         # wide-net rule to one of the four inputs read_ceiling derives from, so
         # a SECOND clamp still took the first match and reported 125 where the
         # real ceiling was 115.
-        two_clamp = (_as_logger_c("static int LogMessageFormatImpl(const char* f, va_list a)\n"
+        two_clamp = (as_logger_c("static int LogMessageFormatImpl(const char* f, va_list a)\n"
                      "{\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, f, a);"
                      "\n    size = min((LOG_MESSAGE_SIZE - 3), size);\n"
                      "    size = min((LOG_MESSAGE_SIZE - 13), size);\n}\n"))
@@ -3638,7 +3638,7 @@ def self_test():
                   f"tighter clamp was never seen")
 
         # Two vsnprintf calls: same shape, the other reservation.
-        two_vsn = (_as_logger_c("static int LogMessageFormatImpl(const char* f, va_list a)\n"
+        two_vsn = (as_logger_c("static int LogMessageFormatImpl(const char* f, va_list a)\n"
                    "{\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, f, a);"
                    "\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 9, f, a);"
                    "\n    size = min((LOG_MESSAGE_SIZE - 3), size);\n}\n"))
@@ -3656,7 +3656,7 @@ def self_test():
         # depth check is what refuses. And the include-guard exclusion is
         # pinned by the gate passing on the real Logger.h at all, whose define
         # sits at depth 1 under #ifndef LOGGER_H.
-        cond_clamp = (_as_logger_c("static int LogMessageFormatImpl(const char* f, va_list a)\n"
+        cond_clamp = (as_logger_c("static int LogMessageFormatImpl(const char* f, va_list a)\n"
                       "{\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, f, a);"
                       "\n#ifdef DEBUG_BUILD\n"
                       "    size = min((LOG_MESSAGE_SIZE - 13), size);\n"
@@ -3884,11 +3884,11 @@ def self_test():
                   f"LOG_MESSAGE_SIZE 128 with reservations 2 and 3")
         for label, bad_h, bad_c in (
                 ("no LOG_MESSAGE_SIZE", "#define SOMETHING_ELSE 128\n", c),
-                ("no vsnprintf reservation", h, _as_logger_c(
+                ("no vsnprintf reservation", h, as_logger_c(
                  "static int LogMessageFormatImpl(const char* format, va_list a"
                  ")\n{\n    size = snprintf_other(buffer, 99);\n    size = min("
                  "(LOG_MESSAGE_SIZE - 3), size);\n}\n")),
-                ("no clamp", h, _as_logger_c(
+                ("no clamp", h, as_logger_c(
                  "static int LogMessageFormatImpl(const char* format, va_list a"
                  ")\n{\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, f, a"
                  ");\n}\n"))):
@@ -3908,7 +3908,7 @@ def self_test():
         # The ceiling is the quantity every other check is expressed in, so
         # this is not one wrong answer, it is every answer being about the
         # wrong thing.
-        multi_c = (_as_logger_c("static int LogMessageFormatImpl(const char* format, va_lis"
+        multi_c = (as_logger_c("static int LogMessageFormatImpl(const char* format, va_lis"
                    "t args)\n{\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE "
                    "- 2 - 10, format, args);\n    size = min((LOG_MESSAGE_SIZE"
                    " - 3 - 10), size);\n}\n"))
@@ -3928,7 +3928,7 @@ def self_test():
         # of the integer, the second took a prefix of the expression; both
         # were prefixes. reserve_after() walks the argument by paren depth
         # instead (codex audit on #1110, round 3, both legs).
-        paren_c = (_as_logger_c("static int LogMessageFormatImpl(const char* f, va_list a)"
+        paren_c = (as_logger_c("static int LogMessageFormatImpl(const char* f, va_list a)"
                    "\n{\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, f,"
                    " a);\n    size = min((LOG_MESSAGE_SIZE - 3) - 10, size);"
                    "\n}\n"))
@@ -3943,7 +3943,7 @@ def self_test():
         # A COMMENT MUST NOT SET THE CEILING. Found by the blind leg: the
         # regexes searched raw Logger.c, so a commented-out or historical line
         # won the search. Measured: a comment saying `- 99` produced 28.
-        cmt_c = (_as_logger_c("static int LogMessageFormatImpl(const char* f, va_list a)\n"
+        cmt_c = (as_logger_c("static int LogMessageFormatImpl(const char* f, va_list a)\n"
                  "{\n    /* was vsnprintf(buffer, LOG_MESSAGE_SIZE - 99, f, a)"
                  "; */\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, f, "
                  "a);\n    size = min((LOG_MESSAGE_SIZE - 3), size);\n}\n"))
@@ -3959,7 +3959,7 @@ def self_test():
         # is NOT `A - b - c` -- the sign on c inverts -- so a reader that
         # strips parens to cope with `(A - b) - c` would silently mis-derive
         # this one. Refusing is the only safe reading.
-        neg_c = (_as_logger_c("static int LogMessageFormatImpl(const char* f, va_list a)\n"
+        neg_c = (as_logger_c("static int LogMessageFormatImpl(const char* f, va_list a)\n"
                  "{\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - (3 - 10),"
                  " f, a);\n    size = min((LOG_MESSAGE_SIZE - 3), size);\n}\n"))
         try:
@@ -3984,7 +3984,7 @@ def self_test():
                 ("a multiplication",
                  "    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2*2, f, a);"
                  "\n    size = min((LOG_MESSAGE_SIZE - 3), size);\n")):
-            bad = (_as_logger_c("static int LogMessageFormatImpl(const char* f, va_list a)"
+            bad = (as_logger_c("static int LogMessageFormatImpl(const char* f, va_list a)"
                    "\n{\n" + expr_c + "}\n"))
             try:
                 ceiling_checks += 1
@@ -4112,7 +4112,7 @@ def self_test():
             # r16: and the min macro plus the buffer declaration, for the very
             # reason the r15 note below gives -- read_ceiling validates both
             # now, so omitting them refuses here too.
-            _as_logger_c(
+            as_logger_c(
             "static int LogMessageFormatImpl(const char* format, va_list a)"
             "\n{\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, f, a);\n"
             "    size = min((LOG_MESSAGE_SIZE - 3), size);\n}\n"
