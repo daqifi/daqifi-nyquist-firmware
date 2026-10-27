@@ -2295,10 +2295,44 @@ static void sd_OpenSessionManifest(void) {
      * are checked with it -- SD_ValidatePathParam already rejects them, so
      * that half is belt-and-braces against a future relaxation of that
      * validator, which would otherwise silently break this format. */
-    if (strpbrk(gpSDCardSettings->file, ",\r\n") != NULL) {
-        LOG_E("[SD] #924 no manifest: file name '%s' contains a delimiter "
-              "(',' CR or LF) that the manifest format cannot represent",
-              gpSDCardSettings->file);
+    /* ⛔ #1124 r14: THE WHOLE RECORDED PATH, NOT JUST THE FILE.
+     *
+     * r13 (operator item 8 = B) put the configured DIRECTORY into every
+     * recorded name, which moved this guard's scope without moving the guard.
+     * SD_ValidatePathParam rejects control characters, backslash and colon --
+     * but NOT a comma -- so SD:DIR "trial,1" is accepted, and the line became
+     *
+     *     trial,1/exp.csv,20480,0x1A2B3C4D
+     *
+     * FOUR fields where the format has three: a parser reads the name as
+     * "trial", the byte count as "1/exp.csv" and the CRC as "20480". Not a
+     * truncation but a well-formed-looking LIE, which is worse.
+     *
+     * Both fields are checked because the recorded path is
+     * <directory>/[<bucket>/]<file> and the bucket segment is generated as
+     * "P%03u" -- it cannot carry a delimiter -- so directory and file are
+     * between them the whole user-controlled surface. CR and LF are kept in
+     * the set as belt-and-braces: SD_ValidatePathParam rejects them today, and
+     * a future relaxation of that validator would otherwise silently break
+     * this format.
+     *
+     * Refusing the sidecar, not truncating and not refusing the session: the
+     * invariant worth keeping is that a manifest which EXISTS is well-formed,
+     * because that is what lets the companion test treat an unparsable line as
+     * a defect rather than a possibility.
+     *
+     * The diagnostic names the FIELD rather than echoing the value: the remedy
+     * is to rename that field, the operator knows what they set, and a 40-byte
+     * value would push this message into the tail Logger truncates. */
+    const char *badField = NULL;
+    if (strpbrk(gpSDCardSettings->directory, ",\r\n") != NULL) {
+        badField = "SD:DIRectory";
+    } else if (strpbrk(gpSDCardSettings->file, ",\r\n") != NULL) {
+        badField = "SD:FILE";
+    }
+    if (badField != NULL) {
+        LOG_E("[SD] #924 rename %s - a ',' CR or LF cannot appear in a "
+              "manifest name, so this session gets no sidecar", badField);
         return;
     }
 

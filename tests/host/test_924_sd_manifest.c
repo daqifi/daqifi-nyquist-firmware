@@ -1140,6 +1140,70 @@ TEST(a_recorded_name_retrieves_the_file_it_describes)
 
 
 
+/* ------------------------------------------------------------------ *
+ * #1124 r14: the manifest-open delimiter guard, modelled.
+ *
+ * sd_card_manager.c is not host-compilable, so the guard's predicate is
+ * COPIED here and the Makefile pins the real one -- the same drift-guard
+ * arrangement the formats use. Both arms, because r13 put the configured
+ * DIRECTORY into every recorded name and the guard had only ever looked at
+ * the file.
+ * ------------------------------------------------------------------ */
+static bool manifest_guard_refuses(const char *dir, const char *file)
+{
+    return strpbrk(dir, ",\r\n") != NULL || strpbrk(file, ",\r\n") != NULL;
+}
+
+/* What ef52cf04a shipped, kept ONLY as the negative control: the test must
+ * show the two predicates DISAGREE on the reported case. */
+static bool manifest_guard_refuses_r13(const char *dir, const char *file)
+{
+    (void)dir;
+    return strpbrk(file, ",\r\n") != NULL;
+}
+
+TEST(a_delimiter_in_the_directory_would_corrupt_the_record)
+{
+    /* ⛔ THE FINDING. SD_ValidatePathParam rejects control characters,
+     * backslash and colon -- but NOT a comma -- so SD:DIR "trial,1" is a
+     * configurable value. Since r13 records the FULL path, the line becomes
+     * four fields where the format has three, and it PARSES: the name reads
+     * as "trial", the byte count as "1/exp.csv", the CRC as "20480". A
+     * well-formed-looking lie is worse than a truncation, which is why the
+     * guard refuses the sidecar rather than writing it. */
+    char line[160];
+    int n = SdManifest_FormatLine(line, sizeof(line), "trial,1/exp.csv",
+                                  20480u, 0x1A2B3C4Du, false);
+    ASSERT_TRUE(n > 0);
+
+    /* count the fields the way a CSV reader would */
+    {
+        size_t commas = 0; const char *q;
+        for (q = line; *q != '\0'; q++) { if (*q == ',') commas++; }
+        /* three fields = two commas; the stray one in the directory makes three */
+        ASSERT_EQ(commas, 3u);
+    }
+
+    /* so the guard must refuse it -- and the r13 guard did NOT */
+    ASSERT_TRUE(manifest_guard_refuses("trial,1", "exp.csv"));
+    ASSERT_TRUE(manifest_guard_refuses_r13("trial,1", "exp.csv") == false);
+
+    /* the pre-existing half still holds: a comma in the FILE is refused by
+     * both, so this change is additive and not a replacement */
+    ASSERT_TRUE(manifest_guard_refuses("DAQiFi", "ex,p.csv"));
+    ASSERT_TRUE(manifest_guard_refuses_r13("DAQiFi", "ex,p.csv"));
+
+    /* CR and LF are in the set as belt-and-braces against a future
+     * relaxation of SD_ValidatePathParam, which rejects them today */
+    ASSERT_TRUE(manifest_guard_refuses("tri\ral", "exp.csv"));
+    ASSERT_TRUE(manifest_guard_refuses("DAQiFi", "exp\n.csv"));
+
+    /* and an ordinary configuration is admitted, so the guard is not simply
+     * refusing everything */
+    ASSERT_TRUE(manifest_guard_refuses("DAQiFi", "exp.csv") == false);
+    ASSERT_TRUE(manifest_guard_refuses("DAQiFi/sub", "exp.csv") == false);
+}
+
 int main(void)
 {
     printf("=== #924 SD session integrity manifest ===\n");
@@ -1176,5 +1240,6 @@ int main(void)
     RUN(the_directory_half_strips_where_the_name_half_refuses);
     RUN(the_manifest_name_is_usable_however_the_file_is_spelled);
     RUN(a_recorded_name_retrieves_the_file_it_describes);
+    RUN(a_delimiter_in_the_directory_would_corrupt_the_record);
     return TEST_SUMMARY();
 }

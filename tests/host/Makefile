@@ -952,11 +952,19 @@ $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h
 	@# f_opendir("d/") and f_opendir("d") name one directory. Classified by what
 	@# the callee actually DOES, not by which class looks adjacent -- this file
 	@# already records a round lost to classifying a read by its variable name.
+	@# 21 -> 22 at #1124 r14: the manifest-open DELIMITER guard now scans the
+	@# directory as well as the file, because r13 put the directory into every
+	@# recorded name. CLASSIFICATION: canonicalisation-INDEPENDENT, and that is
+	@# a property of the predicate rather than of the variable -- strpbrk() asks
+	@# whether a ',' CR or LF appears ANYWHERE in the string, and a trailing
+	@# separator cannot change that answer. So SdManifest_CanonicalDirLen() would
+	@# add nothing here. (Contrast the join sites, where a doubled '/' changes
+	@# the constructed path and the accessor is load-bearing.)
 	@n=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null \
 	    | grep -oE '(gpSDCardSettings|cfg)->(directory|opDirectory)' | wc -l`; \
-	 test "$$n" -eq 21 \
+	 test "$$n" -eq 22 \
 	  || { echo "ERROR: $(SD_MANAGER_SRC) now has $$n raw reads of ->directory /"; \
-	       echo "       ->opDirectory, not the 21 classified in this recipe (#1124)."; \
+	       echo "       ->opDirectory, not the 22 classified in this recipe (#1124)."; \
 	       echo "       The canonicalisation invariant is about every USE, not just"; \
 	       echo "       every join: a read can reach a callee that neither joins nor"; \
 	       echo "       canonicalises, and no join-keyed check sees it. (Until r13 the"; \
@@ -1353,6 +1361,38 @@ $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h
 	   echo "       Everything in that arm must use the snapshot; the global is"; \
 	   echo "       clearable by SCPI at priority 7 while this task runs at 5."; \
 	   exit 1; fi
+	@# ⛔ #1124 r14: THE DELIMITER GUARD COVERS THE WHOLE RECORDED PATH.
+	@# r13 put the configured DIRECTORY into every recorded name, which moved
+	@# this guard's scope without moving the guard. SD_ValidatePathParam rejects
+	@# control characters, backslash and colon -- but NOT a comma -- so
+	@# SD:DIR "trial,1" was accepted and the line became
+	@#     trial,1/exp.csv,20480,0x1A2B3C4D
+	@# four fields where the format has three: a parser reads the name as
+	@# "trial", the bytes as "1/exp.csv" and the CRC as "20480". A well-formed
+	@# LOOKING lie, not a truncation.
+	@#
+	@# BOTH arms are pinned. The directory arm is the finding; the file arm is
+	@# the pre-existing half, and dropping it while keeping the other would be
+	@# the same defect mirrored. The bucket segment needs no arm -- it is
+	@# generated as "P%03u" and cannot carry a delimiter -- so these two are
+	@# between them the whole user-controlled surface of the recorded path.
+	@#
+	@# Comments stripped and the text flattened before matching, for the two
+	@# reasons this file has now recorded twice: the removed names are still
+	@# NAMED in nearby comments, and `-E` preserves the geometry so a wrapped
+	@# call is invisible to a line-based grep.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' '`; \
+	 for f in directory file; do \
+	   printf '%s' "$$pp" \
+	     | grep -qE "strpbrk\(gpSDCardSettings->$$f, *\",?.?.?\"\)|strpbrk\(gpSDCardSettings->$$f," \
+	    || { echo "ERROR: $(SD_MANAGER_SRC)'s manifest-open guard no longer scans"; \
+	         echo "       gpSDCardSettings->$$f for a manifest delimiter (#1124 r14)."; \
+	         echo "       Since r13 the recorded name is the FULL path, so a ',' in"; \
+	         echo "       EITHER the directory or the file produces a line with four"; \
+	         echo "       fields instead of three -- which parses, wrongly, rather"; \
+	         echo "       than failing. Both arms are required."; \
+	         exit 1; }; \
+	 done
 	@# ⛔ #1124 r13 / OPERATOR ITEM 8 = B: THE RULING'S TWO HALVES, PINNED
 	@# TOGETHER, because either one alone is the r11 defect again.
 	@#
