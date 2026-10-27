@@ -11348,3 +11348,24 @@ all on my own records; nothing in another lane's tree touched, nothing deleted.
   space-indented continuation; `tail` read as a total; an f-string apostrophe; and now taking only the
   `clean:` target line while its tokens live on tab-indented recipe lines → "0 clean entries"). All four
   **false alarms**, all from **re-deriving the extractor instead of reusing the one that worked.**
+
+- ✅ **fw#1152 ROUND 10 PUSHED AND VERIFIED — `bc873b8b3c2b9ebdb5c4f96f6e92c2a32bfa2681`**, fast-forward,
+  0 behind main. Re-measured on a pinned clean tree: **29 binaries / 341 tests / 0 FAILED / 44,767
+  assertions**, cppcheck 0 via the CI form with the baseline unmodified, every `LOG_E` ≤125 B. F1 closed —
+  the re-read now classifies by `calVals`; the unchecked assertion **deleted**, and what survives at
+  `:1988` is a *quoted* record of what r9 wrongly assumed. All three review-leg findings fixed. The two
+  pre-existing HIGHs went to **#1153** with reproductions.
+- ⛔⛔ **FOURTH INSTANCE OF MY OWN STANDING LENS, COMMITTED IN THE SAME TURN AS WRITING THE LENS UP.** I
+  told the fire and the router that `TopLevelMatchesCommitted` is unreliable *"because it runs against the
+  corrupted `gTempFflashBuffer`."* **False** — `LoadFromNvm` reads flash directly via `PA_TO_KVA1` into a
+  LOCAL; the shared buffer is `SaveToNvm`-only.
+  > ⭐⭐ **The correct mechanism was written in a comment inside the very function I was describing**, and
+  > the true cause (unclaimed concurrency via `CONF:VOLT:SAVE` → `SCPI_SaveDataPrecision`, no claim) is
+  > something **I had verified myself two turns earlier** and then substituted a wrong mechanism for.
+  ⭐ Three additions: **the lens applies to BRIEFS and MESSAGES, not just source** — a "because X" in a
+  brief is load-bearing and a subagent will build on it; **writing the rule down did not make me run it**,
+  with the violation and the authoring in the same turn; and **the fix survived the wrong reasoning**,
+  which is why nobody noticed — *a right conclusion does not validate its stated premise, and a premise
+  nobody needs is a premise nobody checks.*
+  ✅ The fire refused the claim and used the correct mechanism in the code, the header doc and the README.
+  Corrected on the row and going to the router.
