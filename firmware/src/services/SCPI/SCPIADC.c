@@ -1764,10 +1764,16 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
      *
      * Nothing depended on the old order. The reload reads a DIFFERENT NVM
      * bank (FAINCAL/UAINCAL) from the one the save writes (TOP_LEVEL), so the
-     * persisted selector is not an input to the reload; and no other reader
-     * can observe the gap between them, because the wrapper's claim (#847)
-     * excludes the other SCPI transport and a session START across this whole
-     * body.
+     * persisted selector is not an input to the reload; and no other CLAIMED
+     * writer can observe the gap between them, because the wrapper's claim
+     * (#847) excludes the other SCPI transport and a session START across
+     * this whole body. It does NOT exclude a writer that never takes the
+     * claim: SCPI_SaveAutoPowerOnUsb, SCPI_SaveDataPrecision and
+     * SCPI_SaveDeviceName (SCPIInterface.c) each do LoadFromNvm -> modify ->
+     * SaveToNvm on this same TOP_LEVEL record with no
+     * Streaming_BeginConfigChange() call, so they can interleave with this
+     * body on either transport; that gap is the pre-existing #1153 residual,
+     * not something closed here.
      *
      * The reorder is a real gate and not just two equally destructive steps
      * swapped: daqifi_settings_LoadADCCalSettings validates before it copies
@@ -2078,12 +2084,15 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
      *   writer on another transport -- SCPI_LANSettingsSave is a real one, and
      *   it takes no config claim -- can overwrite gTempFflashBuffer between
      *   the memcpy and the comparison. The flash write LANDED; only the
-     *   comparison failed. So SaveToNvm returns false, the install above is
-     *   skipped, and the NEW selector is in NVM while the PREVIOUS
-     *   coefficients are live. SCPI_ADCUseCalGet reads the selector straight
-     *   out of NVM (:1866), so USECal? reports the new selection while
-     *   acquisition converts with the old bank. Ordinary concurrent USB/WiFi
-     *   configuration reaches this; no flash fault is required.
+     *   comparison failed. So SaveToNvm returns false -- which is exactly why
+     *   the recovery just above does not trust that return value outright:
+     *   it re-reads the committed record into a local snapshot and installs
+     *   (below) only when that snapshot carries the intended selector --
+     *   true here, since the write actually landed (round 10's case (b)).
+     *   When the re-read instead shows a record that does NOT carry the
+     *   intended selector, or is unreadable, the install is skipped and this
+     *   call returns -200 without it. Ordinary concurrent USB/WiFi
+     *   configuration reaches this path; no flash fault is required.
      *
      * nvm_ErasePage cannot help either: it returns true on BOTH branches
      * (nvm.c:45-54 -- the failure branch's only action is a commented-out
@@ -2097,7 +2106,11 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
      * claim discipline covering every settings writer. All three are outside
      * this PR; see the row for the parked transaction question. What this
      * ordering does buy is that the common case -- a bank that fails
-     * validation -- still touches nothing at all.
+     * validation -- still touches no NVM and no calibration coefficients.
+     * It is NOT true, since Ruling 9=A, that this case touches nothing at
+     * all: `RawOutputMode` is cleared unconditionally right after the
+     * `param1 == 2` branch above, before validation runs, so a validation
+     * failure has already left raw mode by the time it is reported.
      *
      * LOG_E kept remedy-first ("reboot or re-select") and under the
      * 125-byte usable payload (see the byte-budget note at the mismatch
