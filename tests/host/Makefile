@@ -730,35 +730,50 @@ START_BIN := run_998_tests
 START_CLAIMED_SRC := ../../firmware/src/services/SCPI/SCPIInterface.c
 START_CLAIMED_BEGIN := if (!sd_card_manager_TryClaim()) {
 START_CLAIMED_END := while (!sd_card_manager_IsWriteReady() && readyWait < 500) {
-# ⚠ CORRECTED HERE, AND THIS IS NOT DRIFT. The previous value
-# (404e01fd...) NEVER MATCHED: measured at every revision from ad9cc4993
-# ("model SCPI_StartStreamingClaimed's SD-arm ordering (#998) (#1006)", the
-# commit that introduced the pin) through origin/main, against each
-# revision's OWN anchors, the slice hashes to the value below and the pin read
-# 404e01fd at all of them. The anchors never changed either -- one distinct
-# pair across the whole history -- so there is no revision at which the pin
-# was right.
+# ⚠ THIS VALUE IS THE **CRLF** SLICE, AND THAT IS NOT INCIDENTAL -- DO NOT
+# "CORRECT" IT TO THE LF ONE. I did exactly that in this branch and broke CI;
+# this comment is here so the next reader does not repeat it.
 #
-# Consequence, because it is larger than the one line: `$(START_BIN)` is a
-# prerequisite of `run` AND invoked in its recipe, and
-# `firmware/src/services/SCPI/**` and `tests/host/**` are both in
-# host-tests.yml's paths filter, which runs `make run`. All three legs a guard
-# needs were intact. So this did not fail silently -- it failed LOUDLY and
-# continuously, and `make run` has been unable to build past run_998_tests on
-# main since #1006 landed. Nothing downstream of it in the recipe ran.
+# .gitattributes marks this path `text eol=crlf`, so a compliant checkout --
+# including CI's -- writes CRLF, and the recipe below hashes the WORKING TREE.
+# Measured, both representations of the same commit:
 #
-# ⚠ THE LESSON IS THE FAILURE MODE, NOT THE TYPO. A mis-transcribed pin
-# presents identically to real drift: the message says "the CODE ... has
-# changed" and sends the reader to diff a region that never changed, against a
-# model that still describes it correctly. The check that distinguishes the two
-# is not reading the slice -- it is asking whether the pin EVER matched, which
-# costs one pass over history and is the only thing that separates "your edit
-# broke this" from "this value was never right". Verified before changing it:
-# the model's three properties still hold in the slice
-# (SCPIInterface.c:5816-5935) -- refusal at 5823 before the poll at 5935,
+#   CRLF working tree  404e01fdd3b7...  <- this pin, and what CI computes
+#   LF   (same bytes)  80d9cebbee1b...
+#
+# ⛔ THE TRAP: `git ls-files --eol` reports `i/lf w/lf attr/text eol=crlf` in
+# some worktrees here -- the attribute says crlf and the file on disk is LF
+# anyway. In such a tree the guard fails locally while CI passes, and every
+# obvious instinct then makes it worse:
+#
+#   - Hashing the committed blob (`git show <rev>:<path>`) CANNOT reproduce
+#     this pin at ANY revision, because git stores the blob LF-normalised. So
+#     a history sweep over blobs returns "the pin never matched once", which is
+#     consistent, confident, and measuring the wrong artifact. That is the
+#     error I made, and it reads as proof precisely because it is uniform.
+#   - Stripping CR before hashing is the same mistake spelled differently.
+#   - A local `make run` proves nothing in either direction: green means the
+#     tree's endings happen to match the pin's origin, red means they do not.
+#
+# To re-derive this pin, reproduce CI's representation explicitly rather than
+# trusting the checkout:
+#
+#   git show HEAD:firmware/src/services/SCPI/SCPIInterface.c | sed 's/$/\r/' \
+#     | sed -n '/^[[:space:]]*<BEGIN anchor>/,/^[[:space:]]*<END anchor>/p' \
+#     | sha256sum
+#
+# ⚠ The sibling pin SD_ARM_HELPER_SHA is NOT exposed to this, because it goes
+# through hash_function.py instead of `sed | sha256sum`. That asymmetry is the
+# real defect here: a line-ending-sensitive guard in a repo that rewrites line
+# endings on checkout. Routing this pin through the same helper would remove
+# the hazard rather than document it, and is the right follow-up -- deliberately
+# NOT done inside a merge-refresh commit.
+#
+# Independently of the hash, the model's three properties do still hold in the
+# slice (SCPIInterface.c:5816-5935): refusal at 5823 before the poll at 5935,
 # ClearStartupDirFull at 5836 before ReleaseClaim at 5880, and exactly one
-# TryClaim in the file, which the anchor-count check above independently pins.
-START_CLAIMED_SHA := 80d9cebbee1b896bc3c2e41b6487010f48f3968bb3c6fa16d632c78398ff693e
+# TryClaim in the file, which the anchor-count check above pins separately.
+START_CLAIMED_SHA := 404e01fdd3b7c9c8eb26cfca959b498ebe9b3e921b77daa0ddd3bca72938d490
 
 $(BIN): test_circularbuffer.c test_framework.h stubs/Logger.h stubs/osal/osal.h $(FW_UTIL)/CircularBuffer.c $(FW_UTIL)/CircularBuffer.h $(RECIPES)
 	cp $(FW_UTIL)/CircularBuffer.c $(UUT)
