@@ -2305,6 +2305,73 @@ SELF_TEST_ISR_BOUND_CASES = [
 ]
 
 
+def _logger_c(clamp="min((LOG_MESSAGE_SIZE - 3), size)", pre="", lhs="size"):
+    """The shipped LogMessageFormatImpl with ONE element varied.
+
+    Used by SELF_TEST_LOGGER_C_CASES so each row changes exactly one thing and
+    a refusal can be attributed to it. `pre` goes above the function, which is
+    where a redefinition of LOG_MESSAGE_SIZE would sit.
+    """
+    return (pre
+            + "static int LogMessageFormatImpl(const char* format, va_list args)"
+            "\n{\n    int size;\n    char buffer[LOG_MESSAGE_SIZE];\n"
+            "    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, format, args);\n"
+            f"    {lhs} = {clamp};\n    return size;\n}}\n")
+
+
+# ⛔ #1110 r16: WHAT IN *Logger.c* CAN MOVE THE CEILING, as a table.
+#
+# The r13 spelling table (below) pins what Logger.h may say. This one pins the
+# other half, which r15 showed was unguarded in two places: the value can be
+# redefined in Logger.c, and the clamp's SECOND argument bounds the message
+# just as much as its first. Both reported a ceiling of 125 while the firmware
+# had 61 and 60 respectively, and a 100-byte message passed clean in each case.
+#
+# One loop, so adding a row is the only way to change the contract. Rows
+# expecting a NUMBER are the non-vacuity half: without them a refusal that
+# fired on everything would read as a pass.
+SELF_TEST_LOGGER_C_CASES = [
+    # --- the shipped form, and that a different reserve is FOLLOWED ---
+    ("the shipped Logger.c derives 125", _logger_c(), 125),
+    ("a different clamp reserve is followed, not assumed",
+     _logger_c(clamp="min((LOG_MESSAGE_SIZE - 13), size)"), 115),
+    # --- r16/1: LOG_MESSAGE_SIZE must not be redefined in Logger.c ---
+    ("r16/1 THE MEASURED DEFECT: #undef then #define 64 derived 125, real 61",
+     _logger_c(pre="#undef LOG_MESSAGE_SIZE\n#define LOG_MESSAGE_SIZE 64\n"),
+     None),
+    ("r16/1: a bare #define in Logger.c is refused",
+     _logger_c(pre="#define LOG_MESSAGE_SIZE 64\n"), None),
+    ("r16/1: an #undef alone is refused -- it changes what the buffer is",
+     _logger_c(pre="#undef LOG_MESSAGE_SIZE\n"), None),
+    ("r16/1: `#  define` spacing is caught -- a wider net than the parser",
+     _logger_c(pre="#  define LOG_MESSAGE_SIZE 64\n"), None),
+    ("r16/1: an indented redefinition is caught",
+     _logger_c(pre="   #define LOG_MESSAGE_SIZE 64\n"), None),
+    ("r16/1: a redefinition inside a conditional is refused, not evaluated",
+     _logger_c(pre="#ifdef DEBUG_BUILD\n#define LOG_MESSAGE_SIZE 64\n#endif\n"),
+     None),
+    # NON-VACUITY, both directions: the refusal keys on LIVE code and on the
+    # NAME, not on text that merely looks like either.
+    ("r16/1: a COMMENTED-OUT redefinition does not refuse",
+     _logger_c(pre="/* #define LOG_MESSAGE_SIZE 64 */\n"), 125),
+    ("r16/1: an unrelated #define in Logger.c is fine",
+     _logger_c(pre="#define LOG_PREFIX \"daqifi\"\n"), 125),
+    # --- r16/2: the clamp's second argument and its assignment target ---
+    ("r16/2 THE MEASURED DEFECT: a constant 2nd argument derived 125, real 60",
+     _logger_c(clamp="min((LOG_MESSAGE_SIZE - 3), 60)"), None),
+    ("r16/2: a foreign identifier as 2nd argument is refused",
+     _logger_c(clamp="min((LOG_MESSAGE_SIZE - 3), tightCap)"), None),
+    ("r16/2: an expression as 2nd argument is refused, not evaluated",
+     _logger_c(clamp="min((LOG_MESSAGE_SIZE - 3), size - 4)"), None),
+    ("r16/2: a three-argument clamp is refused",
+     _logger_c(clamp="min((LOG_MESSAGE_SIZE - 3), size, 60)"), None),
+    ("r16/2: the clamp assigned to a DIFFERENT variable is refused",
+     _logger_c(lhs="other"), None),
+    ("r16/2: the arguments in the other order are refused",
+     _logger_c(clamp="min(size, (LOG_MESSAGE_SIZE - 3))"), None),
+]
+
+
 SELF_TEST_CEILING_SPELLINGS = [
     # --- the one accepted form, plus the formatting it tolerates ---
     ("the shipped form: a single plain decimal #define",
@@ -2360,6 +2427,32 @@ SELF_TEST_CEILING_SPELLINGS = [
 ]
 
 SELF_TEST_REJECTION_CASES = [
+    (
+        "r16/3: a URL's // must not terminate an unclosed annotation value",
+        '/* see http://example.com log_budget: max=1\n'
+        '   +200 */\n'
+        'LOG_E("%s", s);',
+        "not closed on its own line",
+        "⛔ THE MEASURED r16/3 DEFECT. Termination searched the raw line for a "
+        "`//` BEFORE the marker, meaning to recognise a line comment -- so any "
+        "URL satisfied it. On the previous head this bound max=1 and reported "
+        "0 findings, while the IDENTICAL comment with the URL deleted was "
+        "correctly refused: a refusal defeated by mentioning a link. "
+        "Termination now comes from the comment walk's own per-span state, "
+        "which is not reading the text and so cannot be fooled by it",
+    ),
+    (
+        "r16/3: a CLOSED earlier comment on the line does not terminate a "
+        "later unclosed annotation",
+        '/* note */ /* log_budget: max=1\n'
+        '   +200 */ LOG_E("%s", s);',
+        "not closed on its own line",
+        "the per-span half of r16/3: this line holds TWO comments and they "
+        "have OPPOSITE answers -- the first closes, the second does not. A "
+        "line-level `*/ in the raw text` test sees the first one's terminator "
+        "and blesses the second one's value. Only asking the span that "
+        "actually CONTAINS the annotation gets this right",
+    ),
     (
         "r14: a continuation backslash followed by whitespace is refused",
         'LOG_E \\ \n("%126u", 0U);',
@@ -3092,6 +3185,24 @@ SELF_TEST_AMBIGUITY_CASES = [
 #
 # Each case is (name, src_lines, line, expected, why).
 SELF_TEST_ANNOTATION_CASES = [
+    # --- ⛔ r16/3: termination is the ANNOTATION'S OWN span, and these are the
+    #     acceptance half. Without them the r16/3 refusal could be made to
+    #     pass by refusing every annotation that is not followed by `*/`,
+    #     which would reject correct house style.
+    ("r16/3: a // annotation is terminated -- it cannot continue by definition",
+     ['// log_budget: max=1',
+      'LOG_E("%s", s);'], 2, [1],
+     "a line comment ends at the newline, so its value is unambiguous. The "
+     "old code reached the same verdict for the wrong reason (it matched the "
+     "`//` as text); this pins the verdict so the lexical rewrite keeps it"),
+    ("r16/3: an annotation whose OWN comment closes is terminated, even when "
+     "a later comment on the line stays open",
+     ['/* log_budget: max=1 */ /* note',
+      '   continues */ LOG_E("%s", s);'], 2, [1],
+     "the mirror of the rejection case: the annotation's span closes on its "
+     "own line, so max=1 is complete and must be ACCEPTED, although the line "
+     "ends inside a second, unterminated comment. Keying on the line's "
+     "trailing state instead of the span's would refuse this"),
     # --- the defect: a bound must NOT reach the following call
     ("trailing comment does not leak forward",
      ['LOG_E("short %s", "x"); /* log_budget: max=1 */',
@@ -3288,6 +3399,7 @@ def self_test():
         # Makefile. Incremented BEFORE each attempt, so the cases that expect a
         # ToolError are counted too.
         ceiling_checks = 0
+        logger_c_checks = 0
         isr_checks = 0
         # ⛔ #1110 r9: THE ONE LINE MODEL, PINNED STRUCTURALLY.
         #
@@ -3512,6 +3624,39 @@ def self_test():
                       f"at an ISR ceiling of 115 and {len(loose)} at 125; "
                       f"expected 1 and 0. The bound is read but not applied, "
                       f"which is the r14 defect one level in")
+
+        # ⛔ #1110 r16: THE Logger.c CONTRACT, as a table. See
+        # SELF_TEST_LOGGER_C_CASES for why both halves exist.
+        for lbl, c_variant, want in SELF_TEST_LOGGER_C_CASES:
+            logger_c_checks += 1
+            try:
+                got = read_ceiling(h, c_variant)[0]
+            except ToolError as e:
+                if want is not None:
+                    failures += 1
+                    print(f"  FAIL [Logger.c: {lbl}]: REFUSED ({e}), expected "
+                          f"this form to derive {want} -- a refusal on a form "
+                          f"the tool is meant to read is the spec being wrong")
+                continue
+            except Exception as e:                       # noqa: BLE001
+                # Same reason as the spelling runner: a refusal must be a clean
+                # ToolError, not a traceback, or the row loses its name.
+                failures += 1
+                print(f"  FAIL [Logger.c: {lbl}]: raised "
+                      f"{type(e).__name__}: {e} -- expected "
+                      f"{'a clean ToolError refusal' if want is None else want}")
+                continue
+            if want is None:
+                failures += 1
+                print(f"  FAIL [Logger.c: {lbl}]: ACCEPTED and derived {got}, "
+                      f"expected a refusal -- this is a form whose real "
+                      f"ceiling differs from the one derived from Logger.h, so "
+                      f"accepting it gates the tree against a number the "
+                      f"firmware does not have")
+            elif got != want:
+                failures += 1
+                print(f"  FAIL [Logger.c: {lbl}]: derived {got}, "
+                      f"expected {want}")
 
         # ⛔ #1110 r13 (item 17 = A): THE SPELLING CONTRACT, as a table.
         # One loop, so adding a row is the only way to change the contract and
@@ -3885,6 +4030,7 @@ def self_test():
     print(f"log_budget self-test: {len(SELF_TEST_CASES)}/"
           f"{len(SELF_TEST_CASES)} extraction cases + "
           f"{ceiling_checks}/{ceiling_checks} ceiling cases + "
+          f"{logger_c_checks}/{logger_c_checks} Logger.c cases + "
           f"{len(SELF_TEST_SUPPRESSION_CASES)}/"
           f"{len(SELF_TEST_SUPPRESSION_CASES)} suppression cases + "
           f"{len(SELF_TEST_WAIVER_CASES)}/{len(SELF_TEST_WAIVER_CASES)} "
