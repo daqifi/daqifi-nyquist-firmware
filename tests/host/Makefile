@@ -81,6 +81,8 @@ SD_BENCH_SRC := ../../firmware/src/services/SCPI/SCPIStorageSD.c
 # if the function ever contains a string literal rather than hashing text it
 # might have mangled. It contains none today (pure control flow).
 ARM_BIN := run_971_tests
+FORCEGATE_BIN := run_756_tests
+SDSPI_DRV_SRC := ../../firmware/src/config/default/driver/sdspi/src/drv_sdspi.c
 SD_ARM_HELPER := SD_ArmOrRefuseWithCleanup
 SD_ARM_HELPER_SHA := 48fc182fdf552b9a5cb860d7dc16821212874f734d9504d68fd110c75c97ee9f
 
@@ -728,7 +730,35 @@ START_BIN := run_998_tests
 START_CLAIMED_SRC := ../../firmware/src/services/SCPI/SCPIInterface.c
 START_CLAIMED_BEGIN := if (!sd_card_manager_TryClaim()) {
 START_CLAIMED_END := while (!sd_card_manager_IsWriteReady() && readyWait < 500) {
-START_CLAIMED_SHA := 404e01fdd3b7c9c8eb26cfca959b498ebe9b3e921b77daa0ddd3bca72938d490
+# ⚠ CORRECTED HERE, AND THIS IS NOT DRIFT. The previous value
+# (404e01fd...) NEVER MATCHED: measured at every revision from ad9cc4993
+# ("model SCPI_StartStreamingClaimed's SD-arm ordering (#998) (#1006)", the
+# commit that introduced the pin) through origin/main, against each
+# revision's OWN anchors, the slice hashes to the value below and the pin read
+# 404e01fd at all of them. The anchors never changed either -- one distinct
+# pair across the whole history -- so there is no revision at which the pin
+# was right.
+#
+# Consequence, because it is larger than the one line: `$(START_BIN)` is a
+# prerequisite of `run` AND invoked in its recipe, and
+# `firmware/src/services/SCPI/**` and `tests/host/**` are both in
+# host-tests.yml's paths filter, which runs `make run`. All three legs a guard
+# needs were intact. So this did not fail silently -- it failed LOUDLY and
+# continuously, and `make run` has been unable to build past run_998_tests on
+# main since #1006 landed. Nothing downstream of it in the recipe ran.
+#
+# ⚠ THE LESSON IS THE FAILURE MODE, NOT THE TYPO. A mis-transcribed pin
+# presents identically to real drift: the message says "the CODE ... has
+# changed" and sends the reader to diff a region that never changed, against a
+# model that still describes it correctly. The check that distinguishes the two
+# is not reading the slice -- it is asking whether the pin EVER matched, which
+# costs one pass over history and is the only thing that separates "your edit
+# broke this" from "this value was never right". Verified before changing it:
+# the model's three properties still hold in the slice
+# (SCPIInterface.c:5816-5935) -- refusal at 5823 before the poll at 5935,
+# ClearStartupDirFull at 5836 before ReleaseClaim at 5880, and exactly one
+# TryClaim in the file, which the anchor-count check above independently pins.
+START_CLAIMED_SHA := 80d9cebbee1b896bc3c2e41b6487010f48f3968bb3c6fa16d632c78398ff693e
 
 $(BIN): test_circularbuffer.c test_framework.h stubs/Logger.h stubs/osal/osal.h $(FW_UTIL)/CircularBuffer.c $(FW_UTIL)/CircularBuffer.h $(RECIPES)
 	cp $(FW_UTIL)/CircularBuffer.c $(UUT)
@@ -747,6 +777,55 @@ $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC) $(RE
 	@grep -qE '^#define[[:space:]]+SCPI_SD_BENCH_STALL_TIMEOUT_MS[[:space:]]+10000U[[:space:]]*$$' $(SD_BENCH_SRC) \
 	  || { echo "ERROR: SCPI_SD_BENCH_STALL_TIMEOUT_MS is no longer '10000U' in $(SD_BENCH_SRC)."; \
 	       echo "       Update FW_STALL_TIMEOUT_MS in test_943_bench_stall_bound.c and re-derive its numbers."; \
+	       exit 1; }
+	@# ⛔ #756 item 4 -> A (operator 2026-10-25): THIS PIN'S POLARITY IS INVERTED
+	@# from what it was. It used to assert the presence WAIT existed and that it
+	@# pumped USB before delaying (while < pump < delay). The wait is withdrawn,
+	@# so that pin is not merely obsolete -- deleting it would leave the NEW
+	@# invariant unguarded, and the new invariant is the safety-relevant one:
+	@#
+	@#   SCPI_CheckSDCardPresent() MUST NOT BLOCK.
+	@#
+	@# Over USB this function runs ON the USB task. A 500 ms park there filled
+	@# the ring, blocked the encoder and overflowed the sample pool: ACQUIRED
+	@# SAMPLES LOST. Pumping inside the wait divided the window by 20 and left
+	@# the defect the same KIND, which is what the round-3 HIGH said. So the
+	@# thing worth pinning is the absence of any wait, not the shape of one.
+	@#
+	@# ⚠ READ ON COMMENT-STRIPPED SOURCE, scoped to this ONE function.
+	@#   - Stripped, because the call site necessarily EXPLAINS the withdrawn
+	@#     wait, and that prose contains the words "while", "delay" and
+	@#     "UsbCdc_PumpWrite". Measured: the raw count was 1 and the code count
+	@#     0, the single hit being the word "while" in the new explanation. A
+	@#     raw-text pin here would be re-broken by every future author who
+	@#     documents WHY the wait is gone -- i.e. by doing the right thing.
+	@#   - Scoped, because other functions in this file delay legitimately
+	@#     (SD:BENCHmark's stall loop below is one), so a file-wide absence
+	@#     check would be false on correct code.
+	@#   - And the awk anchor matches the FULL SIGNATURE, not a name prefix.
+	@#     Measured: with a prefix anchor, renaming the function to
+	@#     SCPI_CheckSDCardPresentX STILL MATCHED, so the extraction still
+	@#     succeeded and the vacuity guard below could never fire. An
+	@#     unanchored pattern makes its own guard unreachable, and the mutant
+	@#     that was supposed to prove the guard is what exposed it.
+	@$(CC) -fpreprocessed -E $(SD_BENCH_SRC) 2>/dev/null \
+	   | awk '/^static bool SCPI_CheckSDCardPresent\(scpi_t \*context\) \{$$/{f=1} f{print} f&&/^\}/{exit}' \
+	   > /tmp/.sd756_fn.$$$$; \
+	 n=`grep -c . /tmp/.sd756_fn.$$$$`; \
+	 blk=`grep -cE 'vTaskDelay|UsbCdc_PumpWrite|while[[:space:]]*\(|for[[:space:]]*\(' /tmp/.sd756_fn.$$$$`; \
+	 kick=`grep -c 'DRV_SDSPI_DetectPollExpireNow' /tmp/.sd756_fn.$$$$`; \
+	 rm -f /tmp/.sd756_fn.$$$$; \
+	 test "$$n" -gt 4 && test "$$blk" -eq 0 && test "$$kick" -eq 1 \
+	  || { echo "ERROR: SCPI_CheckSDCardPresent() in $(SD_BENCH_SRC) no longer"; \
+	       echo "       matches #756's withdrawn-wait invariant."; \
+	       echo "         function lines extracted: $$n (must be > 4, else the"; \
+	       echo "           extraction found nothing and this check is vacuous)"; \
+	       echo "         blocking constructs:      $$blk (must be 0)"; \
+	       echo "         detect-poll kicks:        $$kick (must be 1)"; \
+	       echo "       A delay, pump or loop here parks the USB task and loses"; \
+	       echo "       ACQUIRED SAMPLES (round-2/3 HIGHs). The kick must stay:"; \
+	       echo "       without it a stale-DETACHED read is never corrected and"; \
+	       echo "       the next query is as wrong as this one."; \
 	       exit 1; }
 	@grep -qE '^#define[[:space:]]+SCPI_SD_BENCH_STALL_POLL_MS[[:space:]]+5U[[:space:]]*$$' $(SD_BENCH_SRC) \
 	  || { echo "ERROR: SCPI_SD_BENCH_STALL_POLL_MS is no longer '5U' in $(SD_BENCH_SRC)."; \
@@ -770,6 +849,47 @@ $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC) $(RE
 # binary up to date and the guard would run the previous rule, which is the
 # same defect `$(RECIPES)` was added for one level down (#976).
 CDEF := ../../tools/lint/cdef.py
+# #756 r6 (audit MEDIUM, both legs): DRV_SDSPI_DetectPollExpireNow samples the
+# time OUTSIDE its critical section, so a caller preempted between its sample
+# and the lock can see a NEWER published detectForceAt, underflow the unsigned
+# subtraction, pass the interval gate, and double-force an exclusive SPI4
+# detection -- then rewind detectForceAt and mis-gate the next caller too.
+#
+# drv_sdspi.c is not host-compilable (Harmony/OSAL/SYS_TIME), so the test
+# re-implements the gate's two shapes, same technique as $(BENCH_BIN) and
+# $(BIN970). These greps are what stop the model from drifting away from the
+# real one -- without them the test measures its own copy of the logic.
+$(FORCEGATE_BIN): test_756_detect_force_rate_limit.c test_framework.h $(SDSPI_DRV_SRC) $(RECIPES)
+	@# the STALE-SAMPLE ARM must be present, by exact form. This is the fix;
+	@# if it goes, the test still passes (it models both shapes itself) while
+	@# the firmware is broken again -- which is the whole failure mode a
+	@# re-implementation test has.
+	@grep -qF 'if (dObj->detectForceEver && (nowCount < dObj->detectForceAt))' $(SDSPI_DRV_SRC) \
+	  || { echo "ERROR: $(SDSPI_DRV_SRC) no longer refuses a STALE time sample in"; \
+	       echo "       DRV_SDSPI_DetectPollExpireNow (#756 r6)."; \
+	       echo "       nowCount is sampled OUTSIDE the critical section, so without"; \
+	       echo "       this arm a caller preempted before the lock computes"; \
+	       echo "       nowCount - detectForceAt as an unsigned UNDERFLOW, passes the"; \
+	       echo "       pollingIntervalMs gate, forces a second back-to-back exclusive"; \
+	       echo "       SPI4 detection, and moves detectForceAt BACKWARDS."; \
+	       echo "       test_756_detect_force_rate_limit.c models both shapes, so it"; \
+	       echo "       keeps passing without this -- which is why the pin exists."; \
+	       exit 1; }
+	@# and the sample must still be taken outside the section: if someone
+	@# "fixes" this by moving it inside, the arm above becomes dead and the
+	@# test's premise is gone. Both facts, or neither is meaningful.
+	@n=`grep -c 'const uint64_t nowCount = SYS_TIME_Counter64Get();' $(SDSPI_DRV_SRC)`; \
+	 c=`grep -c 'critState = OSAL_CRIT_Enter(OSAL_CRIT_TYPE_HIGH);' $(SDSPI_DRV_SRC)`; \
+	 test "$$n" -eq 1 && test "$$c" -ge 1 \
+	  || { echo "ERROR: $(SDSPI_DRV_SRC)'s detect-force gate no longer has the"; \
+	       echo "       shape test_756 models: nowCount samples=$$n (expected 1),"; \
+	       echo "       OSAL_CRIT_Enter sites=$$c (expected >= 1)."; \
+	       echo "       If the sample moved INSIDE the section the stale-sample arm"; \
+	       echo "       is dead code and this test is measuring nothing -- re-derive"; \
+	       echo "       both before changing this pin."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -o $(FORCEGATE_BIN) test_756_detect_force_rate_limit.c
+
 $(ARM_BIN): test_971_sd_arm_refusal_order.c test_framework.h $(SD_BENCH_SRC) hash_function.py $(CDEF) $(RECIPES)
 	@python3 hash_function.py --find $(SD_BENCH_SRC) $(SD_ARM_HELPER) >/dev/null 2>&1 \
 	  || { python3 hash_function.py --find $(SD_BENCH_SRC) $(SD_ARM_HELPER); \
@@ -3022,11 +3142,146 @@ $(HEXWIN_BIN): test_1141_hex_record_upper_panel_error.c test_framework.h \
 # TWENTY-SEVEN run prerequisites and this branch's had TWENTY-FOUR, each right
 # about itself. The union is TWENTY-EIGHT -- main's twenty-seven plus this
 # branch's one. Verified by cross-check rather than by eye: every one of the 28
-# prerequisites has a `./$(X)` recipe line and an entry in `clean` (28/28/33),
+# prerequisites has a `./$(X)` recipe line and an entry in `clean` (29/29/34),
 # with no duplicates -- the check that catches a dropped or doubled entry, which
 # is the failure this block's own history keeps recording.
 # #1029's names carry the 1029 suffix so they cannot shadow #1000's
 # $(SDLOG_BIN)/$(GEN_1000).
+#
+# SIXTEENTH additive collision, same resolution: each side's target rule kept
+# INTACT, only `run` and `clean` unioned. This branch adds #908's
+# $(SEQ908_BIN) (the cal-source seqlock guard); main added #904's
+# $(TEAR904_BIN) and $(FORCEGATE_BIN).
+#
+# COUNTS, MEASURED ON THE MERGED LISTS -- 31 run prerequisites, 31 `./$(X)`
+# recipe lines, 36 `clean` entries (35 unique). Base had 28/28/33, so main's
+# two and this branch's one account for all three deltas exactly. The
+# parenthetical in the FIFTEENTH paragraph above is superseded: it was bumped
+# by one when main's merge added two, and read 29/29/34 against a tree that
+# measured 30/30/35.
+#
+# ⚠ WHAT THIS PARAGRAPH IS ACTUALLY FOR. My first attempt at this merge
+# unioned the two conflict regions as TEXT and produced 29 prerequisites with
+# ONE `./$(X)` line -- every other test's invocation deleted, while the
+# prerequisite list still named them. That builds all 29 binaries and runs one,
+# so `make run` EXITS 0 having executed a single test: a green suite that tests
+# almost nothing. Nothing in this file would have objected.
+#
+# So the resolution is not complete until prerequisites and invocations are
+# measured and AGREE -- as SETS, both directions, not as totals, since equal
+# totals are reachable from a swapped pair. `clean` additionally holds four
+# generated artifacts that are not run prerequisites ($(UUT), $(GEN_1000),
+# $(GEN_1125), $(SDLOG1029_GEN)), which is why only its number differs; the
+# $(SDLOG1029_GEN) duplicate predates the merge base and is a harmless
+# second `rm -f`, not something this merge introduced.
+# ---------------------------------------------------------------------------
+# PR firmware#1048 (issue #904): the CalM/CalB 64-bit pair, BOTH halves.
+#
+# This row was `blocked` on an operator ruling that it is "UNVALIDATABLE on
+# this station's hardware" -- every board here holds IDENTITY coefficients, and
+# a torn read of 1.0 / 0.0 is indistinguishable from a clean one. The ruling
+# named two exits: a calibrated board, or a host-level test injecting the pair
+# directly. test_904_cal_pair_tear.c is the second, so this target is what
+# discharges the block.
+#
+# The guards below pin the WRITE half across all three writer sites, because
+# the model cannot see the firmware. #1054 shipped the read half; #1086's
+# read-side comment states the rule the matrix encodes -- "neither half is
+# sufficient alone".
+TEAR904_BIN := run_904_tests
+
+# ⚠ THIS DEFINITION MUST STAY ABOVE THE RULE BELOW. make expands a
+# PREREQUISITE list when it READS the rule, so a variable defined later in
+# the file expands to NOTHING there and the dependency silently disappears.
+# It was defined below `run:` and did exactly that: daqifi_settings.c was not
+# a dependency of run_904_tests, so an edit to the file the guards grep
+# reused the stale binary and the guards did not run.
+#
+# The recipe's uses were unaffected, which is what made it invisible -- recipe
+# lines expand at EXECUTION time, after the whole file is parsed, so the greps
+# always had the right path. Correct recipe, absent dependency.
+#
+# And do not verify this by printing the variable: `make -np` reports
+# SETTINGS_SRC_904 as a valid path even while broken, because that dump also
+# happens after the parse. The only evidence is the EXPANDED RULE line
+# (`make -np | grep '^run_904_tests:'`), which must name this file.
+SETTINGS_SRC_904 := ../../firmware/src/services/daqifi_settings.c
+
+# Comment-stripper for the order guard below. `-fpreprocessed` is what makes
+# this work on a Harmony .c: it does NOT resolve the #includes (nothing on this
+# station can) and does NOT expand macros, so taskENTER_CRITICAL() is seen as
+# written -- it only removes comments, which is the whole requirement.
+STRIP904 := $(CC) -fpreprocessed -E -P
+
+# ⚠ cal_order_904.awk IS A PREREQUISITE BELOW because the guards READ it.
+# A guard that reads a file it does not depend on does not re-run when that
+# file changes -- make reuses the binary and the check is silently skipped.
+# That is the defect this row was pulled up on one round earlier; it applies
+# to the checker itself exactly as it applied to the sources it checks.
+$(TEAR904_BIN): test_904_cal_pair_tear.c test_framework.h cal_order_904.awk cal_order_904_cases.c $(SETTINGS_SRC_904) $(SCPIADC_SRC) $(RECIPES)
+	@for spec in "daqifi_settings_LoadADCCalSettings:$(SETTINGS_SRC_904):EMBX" \
+	             "daqifi_settings_SaveADCCalSettings:$(SETTINGS_SRC_904):EMBX" \
+	             "ADCChanCalmSetClaimed:$(SCPIADC_SRC):EMX" \
+	             "ADCChanCalbSetClaimed:$(SCPIADC_SRC):EBX"; do \
+	   fn=`echo $$spec | cut -d: -f1`; src=`echo $$spec | cut -d: -f2`; \
+	   want=`echo $$spec | cut -d: -f3`; \
+	   got=`$(STRIP904) $$src 2>/dev/null | awk -v fn=$$fn -f cal_order_904.awk`; \
+	   test "$$got" = "$$want" \
+	     || { echo "ERROR: $$fn in $$src no longer brackets its 64-bit cal"; \
+	          echo "       access in a critical section IN ORDER."; \
+	          echo "       event sequence: got '$$got', want '$$want'"; \
+	          echo "         E=taskENTER_CRITICAL  M=.CalM  B=.CalB  X=taskEXIT_CRITICAL"; \
+	          echo "       A missing letter is a missing (or COMMENTED-OUT) call;"; \
+	          echo "       a reordered one means a store sits OUTSIDE the section"; \
+	          echo "       -- and that case has the same token COUNTS as a correct"; \
+	          echo "       one, which is why this checks order, not counts."; \
+	          echo "       #1054 guards the READERS, so an unguarded WRITER does"; \
+	          echo "       not leave a symmetric gap -- it hands a protected"; \
+	          echo "       reader a TORN pair, which the critical section then"; \
+	          echo "       makes it confident in. See the 2x2 matrix in"; \
+	          echo "       test_904_cal_pair_tear.c: neither half suffices alone."; \
+	          exit 1; }; \
+	 done
+#	⚠ THE GUARD'S OWN ARMS -- it proves it can ACCEPT and REJECT, every build.
+#	The guard this replaced passed with both critical-section calls commented
+#	out, and nothing in the build would ever have said so. A positive check
+#	alone cannot distinguish "the code is correct" from "the check is inert",
+#	so both directions are asserted here rather than claimed in a commit
+#	message, against the named shapes in cal_order_904_cases.c.
+#
+#	The two ACCEPT rows are load-bearing, not padding: a checker tightened
+#	until it rejects everything is not a checker, and `oneline_correct` exists
+#	because the fix for the one-line defect could easily have become "reject
+#	anything with several events on one line".
+	@fail=0; \
+	 for case in case_multiline_correct:EMBX \
+	             case_oneline_correct:EMBX \
+	             case_oneline_store_outside:MEBX \
+	             case_enter_commented:MBX \
+	             case_missing_exit:EMB \
+	             case_reordered_multiline:MEBX \
+	             case_access_after_exit:EMBXM; do \
+	   fn=`echo $$case | cut -d: -f1`; want=`echo $$case | cut -d: -f2`; \
+	   got=`$(STRIP904) -x c cal_order_904_cases.c 2>/dev/null \
+	          | awk -v fn=$$fn -f cal_order_904.awk`; \
+	   test "$$got" = "$$want" || { \
+	     echo "ERROR: the #904 order guard's own arm '$$fn' is wrong:"; \
+	     echo "       got '$$got', want '$$want'."; \
+	     echo "       The guard above cannot be trusted until this passes --"; \
+	     echo "       an arm that no longer behaves means the checker, not the"; \
+	     echo "       firmware, has changed. See cal_order_904_cases.c."; \
+	     fail=1; }; \
+	 done; \
+	 test "$$fail" -eq 0
+	$(CC) $(CFLAGS) -o $(TEAR904_BIN) test_904_cal_pair_tear.c
+
+# CNT_IN_FN_DEF_904 lived here and is GONE: the order guard replaced its only
+# two call sites, so it was a definition nothing called. Its lesson -- that the
+# shared CNT_IN_FN returns 0 for a FORWARD-DECLARED function, because it
+# anchors on the prototype and exits at the next match, so a guard expecting
+# ABSENCE passes VACUOUSLY on that false 0 -- is kept in cal_order_904.awk's
+# header, where the definition-vs-prototype rule is actually implemented.
+
 # ---------------------------------------------------------------------------
 # PR firmware#1077 round 8 (issue #908): identity.cal.source composite
 # coherence. The reported source is a pair of facts -- "are the live
@@ -3122,17 +3377,19 @@ $(SEQ908_BIN): test_908_cal_source_seqlock.c test_framework.h $(SETTINGS_SRC) $(
 	 done
 	$(CC) $(CFLAGS) -o $(SEQ908_BIN) test_908_cal_source_seqlock.c
 
-run: $(SEQ908_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(ARM_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) \
+run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(ARM_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) \
      $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) $(NAME_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) \
      $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
      $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) \
-     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN)
+     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN)
 	./$(SEQ908_BIN)
+	./$(TEAR904_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
 	./$(BENCH_BIN)
 	./$(ARM_BIN)
+	./$(FORCEGATE_BIN)
 	./$(JSONESC_BIN)
 	./$(SYSINFO_BIN)
 	./$(SUSPEND_BIN)
@@ -3159,11 +3416,12 @@ run: $(SEQ908_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(ARM_BIN) $(JSO
 
 clean:
 	rm -f $(SEQ908_BIN)
+	rm -f $(TEAR904_BIN)
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
 	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) \
 	      $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) \
 	      $(HEXWIN_BIN) $(LOGONCE_BIN) $(GEN_1125) $(DACREINIT_BIN) $(CALFINITE_BIN) \
 	      $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(NAME_BIN) $(SDLOG1029_GEN).tmp $(FAILNEXT_BIN) \
-	      $(FAILNEXT_REAL_BIN) $(ARM_BIN) $(SCPIDAC_RAILGATE_BIN)
+	      $(FAILNEXT_REAL_BIN) $(ARM_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN)
 
 .PHONY: run clean
