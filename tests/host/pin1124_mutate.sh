@@ -332,27 +332,34 @@ else
 fi
 restore
 
-echo "== R13: the SD:DIR setter stops refusing a bucket-shaped directory ======="
-echo "==      (r11 finding 4: SD:DIR \"P001\" then accepted, and every manifest  =="
-echo "==      name a bucketed session records retrieves a DIFFERENT file)       =="
-if sub "$S" 'SdManifest_DirShadowsBucketName(dirCandidate,' \
-            'SdManifest_DirShadowsBucketNameXX(dirCandidate,'; then
-    expect "R13 setter enforcement site" "SD:DIR setter no longer refuses"
+echo "== R13: the manifest records a RELATIVE name again, not the full path. ==="
+echo "==      Operator item 8 = B made the full path the record, which is what  =="
+echo "==      retired the P###-folder refusal: retrieval also strips SD:DIR, so =="
+echo "==      a relative record is stripped TWICE and opens a different file.   =="
+echo "==      Mutated to gpSDCardSettings->file -- the realistic wrong choice,  =="
+echo "==      recording the bare name -- and chosen because NO pin counts       =="
+echo "==      ->file reads, so the ->directory COUNT pin cannot fire first and  =="
+echo "==      mask this one. That masking is exactly what happened to me at r14. =="
+if sub "$F" '                                        gSDCardData.filePath,' \
+            '                                        gpSDCardSettings->file,'; then
+    expect "R13 full-path recording" "does not record the FULL path"
 else
     echo "  FAIL R13 anchor absent -- source drifted."; fail=$((fail+1))
 fi
 restore
 
-echo "== R14: the MANIFEST-OPEN check goes, leaving the setter alone to guard. =="
-echo "==      Not equivalent: the setter never sees a directory ALREADY in NVM, =="
-echo "==      which is precisely the population that would write a silently     =="
-echo "==      misdirecting manifest.                                            =="
-echo "==      RENAMED, not deleted, on purpose: the pin keys on the CALL form  =="
-echo "==      '...Name(' -- a bare-name grep would still match '...NameXX'   =="
-echo "==      and pass. That prefix trap has bitten this row before.          =="
-if sub "$F" 'if (SdManifest_DirShadowsBucketName(gpSDCardSettings->directory,' \
-            'if (SdManifest_DirShadowsBucketNameXX(gpSDCardSettings->directory,'; then
-    expect "R14 manifest-open enforcement site" "no longer refuses to open a manifest"
+echo "== R14: the manifest-open delimiter guard stops scanning the DIRECTORY.  =="
+echo "==      r13 put the directory into every recorded name, and              =="
+echo "==      SD_ValidatePathParam permits a comma, so SD:DIR \"trial,1\" yields  =="
+echo "==      a four-field line that PARSES wrongly rather than failing.       =="
+echo "==      COUNT-PRESERVING on purpose: the read of ->directory stays, only =="
+echo "==      the strpbrk scan goes. Deleting the whole arm drops a            =="
+echo "==      ->directory read, which fires the COUNT pin first and aborts the =="
+echo "==      recipe before this pin runs -- measured at r14, and the reason   =="
+echo "==      this mutant is shaped the way it is.                             =="
+if sub "$F" '    if (strpbrk(gpSDCardSettings->directory, ",\r\n") != NULL) {' \
+            '    if (gpSDCardSettings->directory[0] == 0x01) {'; then
+    expect "R14 directory-delimiter guard" "no longer scans"
 else
     echo "  FAIL R14 anchor absent -- source drifted."; fail=$((fail+1))
 fi
