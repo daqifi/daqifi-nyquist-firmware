@@ -1572,6 +1572,22 @@ scpi_result_t SCPI_ADCChanCalbGet(scpi_t * context) {
  * do. Boot's first-run factory save (app_freertos.c) calls
  * daqifi_settings_SaveADCCalSettings directly, never through these callbacks,
  * so it cannot meet the claim. */
+/* #908 (r13): set factory_present from the PAGE, not from whoever last wrote
+ * it. The ONLY writer of that flag outside boot, so both the save and the load
+ * path go through here and cannot disagree about how it is derived.
+ *
+ * daqifi_settings_ValidateADCCalBank does a CRC-validated LoadFromNvm into its
+ * own frame and installs no coefficients, so this answers "is the committed
+ * factory record valid right now?" without disturbing the live runtime array
+ * and without a scratch buffer on the caller's stack. */
+static void RefreshFactoryCalPresence(void) {
+    if (daqifi_settings_ValidateADCCalBank(DaqifiSettings_FactAInCalParams)) {
+        daqifi_settings_ClearFactoryCalMissing();
+    } else {
+        daqifi_settings_MarkFactoryCalMissing();
+    }
+}
+
 static scpi_result_t CalSaveCommon(scpi_t * context,
                                    DaqifiSettingsType type,
                                    const char * what) {
@@ -1584,29 +1600,36 @@ static scpi_result_t CalSaveCommon(scpi_t * context,
     AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(
             BOARDRUNTIMECONFIG_AIN_CHANNELS);
     bool saved = daqifi_settings_SaveADCCalSettings(type, pRuntimeAInChannels);
-    /* #908 (Qodo pass 4): daqifi_settings_SaveToNvm erases the target NVM
-     * page BEFORE writing the replacement record (daqifi_settings.c,
-     * daqifi_settings_ClearNvm then nvm_WriteRowtoAddr), so a FAILED
-     * factory-bank save (a bad row write, a size guard, ...) can leave the
-     * page erased or holding a partial record -- not the flag's prior
-     * state. A successful save makes the slot present right now, not
-     * merely as of the last boot, so clear the flag immediately; a FAILED
-     * one must equally not leave a stale "present" behind. This is the
-     * fail-safe direction deliberately: mark missing outright rather than
-     * re-validating the page with a fresh load (which the caller's own
-     * runtime array must not be overwritten by, and which costs a second
-     * AInRuntimeArray-sized scratch buffer on this task's stack for a
-     * rarely-hit failure path). SCPI_RES_ERR already tells the caller the
-     * save itself failed; factory_present:false afterward is consistent
-     * with that, not a surprise, and a retried SAVEFcal that succeeds
-     * clears it correctly. SAVEcal (user bank) never touches this flag
-     * either way; it tracks the FACTORY slot only. */
+    /* #908 (r13): the flag is derived by ASKING THE MEDIUM, never from the
+     * save's return value.
+     *
+     * ⛔ WHY NOT `saved`. factory_present is a claim about what is ON THE
+     * PAGE, and the writer's return value is a claim about the WRITE. Those
+     * come apart: #1153's pre-existing race (LAN:SAVE takes no claim and
+     * shares gTempFflashBuffer) lets SaveADCCalSettings return true over a
+     * corrupt factory slot, or false over an intact one. Either way the flag
+     * is then wrong and STAYS wrong. The #1153 race itself is out of scope
+     * here; trusting the return value was this PR's own choice, and that is
+     * what changes.
+     *
+     * An earlier revision of this comment argued the opposite -- that marking
+     * missing on a failed save was "the fail-safe direction deliberately",
+     * rather than re-validating, because re-validating "costs a second
+     * AInRuntimeArray-sized scratch buffer on this task's stack". That
+     * objection is answered and the reasoning is deleted rather than amended
+     * around: daqifi_settings_ValidateADCCalBank (added by #1152) does a
+     * CRC-validated LoadFromNvm into ITS OWN frame and installs nothing, so
+     * the caller's runtime array is untouched and this task's stack pays
+     * nothing extra. And "fail-safe" was the wrong frame regardless: a flag
+     * that is wrong in the SAFE direction over an intact bank still reports a
+     * calibrated board as uncalibrated, permanently.
+     *
+     * Called on the LOAD path too -- see CalLoadCommon. A successful LOADFcal
+     * PROVES the page is valid, and before r13 nothing on the load path
+     * cleared the flag, so a stale "missing" survived the one operation that
+     * demonstrates the opposite. */
     if (type == DaqifiSettings_FactAInCalParams) {
-        if (saved) {
-            daqifi_settings_ClearFactoryCalMissing();
-        } else {
-            daqifi_settings_MarkFactoryCalMissing();
-        }
+        RefreshFactoryCalPresence();
     }
     scpi_result_t result = saved ? SCPI_RES_OK : SCPI_RES_ERR;
     Streaming_EndConfigChange();
@@ -1685,6 +1708,22 @@ static scpi_result_t CalLoadCommon(scpi_t * context,
             BOARDRUNTIMECONFIG_AIN_CHANNELS);
     scpi_result_t result = daqifi_settings_LoadADCCalSettings(
             type, pRuntimeAInChannels) ? SCPI_RES_OK : SCPI_RES_ERR;
+    /* #908 (r13): re-derive factory_present here too.
+     *
+     * Before r13 this path never touched the flag, so a stale "missing"
+     * survived a SUCCESSFUL LOADFcal -- the one operation that demonstrates
+     * the page is readable and valid. Combined with a save whose return value
+     * had lied, the board could report itself uncalibrated indefinitely while
+     * applying real factory coefficients to every reading.
+     *
+     * Derived the same way as on the save path rather than from `result`: the
+     * load's outcome is a claim about this call, and the flag is a claim about
+     * the page. Unconditional for the factory type, not gated on success,
+     * because a FAILED load is exactly when the page's state is most in
+     * question. */
+    if (type == DaqifiSettings_FactAInCalParams) {
+        RefreshFactoryCalPresence();
+    }
     Streaming_EndConfigChange();
     return result;
 }

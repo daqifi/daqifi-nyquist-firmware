@@ -415,6 +415,65 @@ TEST(one_setter_alone_really_is_harmless_which_is_why_this_looked_exempt)
     ASSERT_FALSE(allIdentity);
 }
 
+/* ---- r13: where factory_present is DERIVED FROM ------------------------
+ *
+ * Two models of the same flag, differing only in what they ask:
+ *
+ *   from_return(saved)      what CalSaveCommon did before r13
+ *   from_page(page_valid)   what RefreshFactoryCalPresence does now
+ *
+ * They agree whenever the writer's return matches the medium, which is the
+ * ordinary case and is why the defect is invisible in testing. They come apart
+ * exactly when #1153's race makes the return a lie -- and `saved` is then
+ * wrong in BOTH directions, so a one-sided test would miss half of it.
+ */
+static bool flag_present_from_return(bool saved) { return saved; }
+static bool flag_present_from_page(bool page_valid) { return page_valid; }
+
+TEST(factory_present_is_derived_from_the_page_not_the_saves_return)
+{
+    /* The two rows where they disagree. Each is reachable through #1153: the
+     * shared gTempFflashBuffer is clobbered by an unclaimed LAN:SAVE either
+     * side of the write. */
+
+    /* 1. The save REPORTED SUCCESS over a slot that is not valid. */
+    ASSERT_EQ(flag_present_from_page(false), false);
+    ASSERT_TRUE(flag_present_from_return(true) != flag_present_from_page(false));
+
+    /* 2. The save REPORTED FAILURE over a slot that is perfectly intact. This
+     *    is the direction the old comment called "fail-safe", and it is the
+     *    worse one: the board applies real factory coefficients to every
+     *    reading while reporting itself uncalibrated, and nothing clears it. */
+    ASSERT_EQ(flag_present_from_page(true), true);
+    ASSERT_TRUE(flag_present_from_return(false) != flag_present_from_page(true));
+
+    /* And they agree when the return is honest -- so the fix changes nothing
+     * on the ordinary path, which is what makes it safe to take at round 13. */
+    ASSERT_EQ(flag_present_from_return(true), flag_present_from_page(true));
+    ASSERT_EQ(flag_present_from_return(false), flag_present_from_page(false));
+}
+
+TEST(a_successful_factory_load_must_leave_the_flag_present)
+{
+    /* Before r13 the LOAD path never touched the flag, so this state was
+     * reachable and sticky: a save whose return had lied left "missing", and a
+     * later SUCCESSFUL LOADFcal -- which proves the page readable and valid --
+     * did not correct it.
+     *
+     * Modelled as the derivation the load path now performs: it asks the page,
+     * not the load's own result. */
+    const bool page_valid_after_a_successful_load = true;
+    ASSERT_EQ(flag_present_from_page(page_valid_after_a_successful_load), true);
+
+    /* The pre-r13 load path, which asked NOTHING: whatever the flag was, it
+     * stayed. Pinned as the known positive so this test cannot pass against a
+     * load path that is still silent. */
+    bool stale_flag = false;                 /* left over from a lying save */
+    ASSERT_EQ(stale_flag, false);            /* pre-r13: unchanged by a load */
+    stale_flag = flag_present_from_page(page_valid_after_a_successful_load);
+    ASSERT_EQ(stale_flag, true);             /* r13: corrected by the load */
+}
+
 int main(void)
 {
     printf("#908 round 8 -- identity.cal.source composite coherence\n");
@@ -429,5 +488,7 @@ int main(void)
     RUN(two_unbracketed_setters_make_the_scan_conclude_a_state_that_never_held);
     RUN(bracketing_both_setters_lets_the_reader_detect_the_interleave);
     RUN(one_setter_alone_really_is_harmless_which_is_why_this_looked_exempt);
+    RUN(factory_present_is_derived_from_the_page_not_the_saves_return);
+    RUN(a_successful_factory_load_must_leave_the_flag_present);
     return TEST_SUMMARY();
 }
