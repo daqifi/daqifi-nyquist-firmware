@@ -59,11 +59,12 @@
  * The formats, exactly as streaming.c carries them.
  * ------------------------------------------------------------------ */
 #define FMT_HEADLINE \
-    "Stream end (post-grace): lost %u/%llu samples (%u%%)"
+    "Stream end (post-grace): lost %u/%llu samples (%u%%); " \
+    "eos=%u stale not lost"
 #define FMT_BYTES \
     "Stream end (post-grace) bytes lost: USB=%u WiFi=%u SD=%u"
 #define FMT_SAMPLES \
-    "Stream end (post-grace) samples lost: encFail=%u encDrop=%u dioDrop=%u eos=%u"
+    "Stream end (post-grace) samples lost: encFail=%u encDrop=%u dioDrop=%u"
 
 /* The pre-split single line. Kept ONLY as the negative control below. */
 #define FMT_PRE_SPLIT \
@@ -203,9 +204,9 @@ TEST(each_summary_line_fits_the_logger_ceiling)
      * that eats the headroom should have to look at it. Two lines could only
      * be made to fit by cutting the labels to encF/encD/dioD for 3 bytes of
      * margin, which is why this is three. */
-    ASSERT_EQ(worst_case_len(FMT_HEADLINE), 83u);
+    ASSERT_EQ(worst_case_len(FMT_HEADLINE), 114u);
     ASSERT_EQ(worst_case_len(FMT_BYTES), 80u);
-    ASSERT_EQ(worst_case_len(FMT_SAMPLES), 109u);
+    ASSERT_EQ(worst_case_len(FMT_SAMPLES), 94u);
 }
 
 TEST(the_split_lost_none_of_the_ten_quantities)
@@ -218,9 +219,9 @@ TEST(the_split_lost_none_of_the_ten_quantities)
      * lossPercent, usb/wifi/sd bytes, encFail, encDrop, dioDrop, eos. */
     ASSERT_EQ(conversion_count(FMT_PRE_SPLIT), 10u);
 
-    ASSERT_EQ(conversion_count(FMT_HEADLINE), 3u);   /* loss/attempted/percent */
+    ASSERT_EQ(conversion_count(FMT_HEADLINE), 4u);   /* loss/attempted/pct/eos */
     ASSERT_EQ(conversion_count(FMT_BYTES), 3u);      /* USB/WiFi/SD            */
-    ASSERT_EQ(conversion_count(FMT_SAMPLES), 4u);    /* encFail/encDrop/dio/eos*/
+    ASSERT_EQ(conversion_count(FMT_SAMPLES), 3u);    /* encFail/encDrop/dioDrop*/
     ASSERT_EQ(conversion_count(FMT_HEADLINE)
               + conversion_count(FMT_BYTES)
               + conversion_count(FMT_SAMPLES), 10u);
@@ -229,7 +230,7 @@ TEST(the_split_lost_none_of_the_ten_quantities)
      * sample count, and demoting it to %u in a reword would silently wrap
      * past 4.29e9 samples -- reachable in a long session. */
     ASSERT_TRUE(strstr(FMT_HEADLINE, "%llu") != NULL);
-    ASSERT_EQ(conversion_count(FMT_HEADLINE), 3u);
+    ASSERT_EQ(conversion_count(FMT_HEADLINE), 4u);
 
     /* every label from the original survives somewhere in the three */
     {
@@ -247,6 +248,21 @@ TEST(the_split_lost_none_of_the_ten_quantities)
             ASSERT_TRUE(strstr(FMT_PRE_SPLIT, labels[i]) != NULL);
         }
     }
+}
+
+TEST(eos_is_not_reported_as_a_lost_sample)
+{
+    /* #1055 r1 review LOW: eosOverruns is ADC-register STALENESS -- the task
+     * was behind but the data it read was fresh -- and the emitter excludes it
+     * from totalSampleLoss and the percentage for exactly that reason. It used
+     * to be printed under the "samples lost" heading, contradicting the
+     * arithmetic. It now sits on the headline, labelled. */
+    ASSERT_TRUE(strstr(FMT_SAMPLES, "eos") == NULL);
+    ASSERT_TRUE(strstr(FMT_HEADLINE, "eos=") != NULL);
+    ASSERT_TRUE(strstr(FMT_HEADLINE, "stale not lost") != NULL);
+    /* and the "samples lost" line still carries only genuine losses */
+    ASSERT_TRUE(strstr(FMT_SAMPLES, "samples lost") != NULL);
+    ASSERT_EQ(conversion_count(FMT_SAMPLES), 3u);
 }
 
 TEST(every_line_says_post_grace_on_its_own)
@@ -272,6 +288,7 @@ int main(void)
     RUN(the_pre_split_line_did_not_fit);
     RUN(each_summary_line_fits_the_logger_ceiling);
     RUN(the_split_lost_none_of_the_ten_quantities);
+    RUN(eos_is_not_reported_as_a_lost_sample);
     RUN(every_line_says_post_grace_on_its_own);
     return TEST_SUMMARY();
 }

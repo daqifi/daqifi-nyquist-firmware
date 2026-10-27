@@ -2918,6 +2918,24 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context) {
     // Stop
     pStreamCfg->IsEnabled = false;
     Streaming_UpdateState();
+    /* #1055 r1 finding 3: THIS IS A TERMINATING PATH, so it emits.
+     * Before #982 the summary printed inline in Streaming_Stop(), so
+     * every stop produced one. Moving the emission out left this path
+     * only FLAGGING that a summary is owed, with nothing emitting it
+     * until some LATER session's Streaming_Start() backstop -- which may
+     * never come. That is a regression against pre-#982 behaviour, not a
+     * deferral. Emitting here restores it.
+     *
+     * Straight away, with no SD-idle wait: unlike SYST:STR:STOP these
+     * paths never arm SD logging, so there is no stop-time teardown whose
+     * Streaming_ReportSdDiscard() this would need to wait for -- the
+     * reason #982 deferred the emission in the first place does not apply.
+     *
+     * The ARM sites in these same functions deliberately do NOT emit:
+     * their Streaming_UpdateState() starts a session, and Streaming_Start()
+     * already carries the backstop that flushes the PREVIOUS session's
+     * summary before clearing its counters. */
+    Streaming_EmitSessionSummary();
     /* #870: repair OPER after a run that never set it.
      *
      * This path deliberately never sets OPER_MEASURING -- it arms by poking
@@ -3357,6 +3375,24 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
         if (!armRefused) {
             cfg->IsEnabled = false;
             Streaming_UpdateState();
+            /* #1055 r1 finding 3: THIS IS A TERMINATING PATH, so it emits.
+             * Before #982 the summary printed inline in Streaming_Stop(), so
+             * every stop produced one. Moving the emission out left this path
+             * only FLAGGING that a summary is owed, with nothing emitting it
+             * until some LATER session's Streaming_Start() backstop -- which may
+             * never come. That is a regression against pre-#982 behaviour, not a
+             * deferral. Emitting here restores it.
+             *
+             * Straight away, with no SD-idle wait: unlike SYST:STR:STOP these
+             * paths never arm SD logging, so there is no stop-time teardown whose
+             * Streaming_ReportSdDiscard() this would need to wait for -- the
+             * reason #982 deferred the emission in the first place does not apply.
+             *
+             * The ARM sites in these same functions deliberately do NOT emit:
+             * their Streaming_UpdateState() starts a session, and Streaming_Start()
+             * already carries the backstop that flushes the PREVIOUS session's
+             * summary before clearing its counters. */
+            Streaming_EmitSessionSummary();
         }
         *outStartFailed = true; *outKBps = 0;
         return false;   // not "saturated" — start failure is signaled via *outStartFailed
@@ -3385,6 +3421,24 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
     // stream transitions — #425/#467/#517).
     cfg->IsEnabled = false;
     Streaming_UpdateState();
+    /* #1055 r1 finding 3: THIS IS A TERMINATING PATH, so it emits.
+     * Before #982 the summary printed inline in Streaming_Stop(), so
+     * every stop produced one. Moving the emission out left this path
+     * only FLAGGING that a summary is owed, with nothing emitting it
+     * until some LATER session's Streaming_Start() backstop -- which may
+     * never come. That is a regression against pre-#982 behaviour, not a
+     * deferral. Emitting here restores it.
+     *
+     * Straight away, with no SD-idle wait: unlike SYST:STR:STOP these
+     * paths never arm SD logging, so there is no stop-time teardown whose
+     * Streaming_ReportSdDiscard() this would need to wait for -- the
+     * reason #982 deferred the emission in the first place does not apply.
+     *
+     * The ARM sites in these same functions deliberately do NOT emit:
+     * their Streaming_UpdateState() starts a session, and Streaming_Start()
+     * already carries the backstop that flushes the PREVIOUS session's
+     * summary before clearing its counters. */
+    Streaming_EmitSessionSummary();
     /* #870: same repair as SYST:STR:THRoughput -- see the comment there. This
      * path also arms by poking IsEnabled, never sets OPER_MEASURING, and is
      * not interlocked against a STOP parked in the SD close. */
@@ -6830,8 +6884,37 @@ static void SCPI_PerformStreamingStop(void) {
     const bool ownedSdLoggingSession =
             SCPI_SdWriteIsStreamingLog(pSDCardRuntimeConfig);
 
+    /* ⛔ #1055 r1 finding 2: WHICH STOP OWNS THE SUMMARY.
+     *
+     * Two stops can run concurrently (USB SCPI at priority 7 preempts the
+     * WifiTask, and gStreamStopsActive exists because of exactly that). The
+     * first one performs the stop, sets the summary-pending flag and then
+     * BLOCKS in the SD-idle wait below. A second stop arriving in that window
+     * finds streaming already stopped, falls straight through to the emit
+     * site, and CONSUMES the flag -- printing a summary that predates the
+     * SD teardown's Streaming_ReportSdDiscard(), which is the whole thing
+     * #982 deferred the emission to capture. The first stop then finds the
+     * flag already clear and prints nothing.
+     *
+     * So only the call that actually performed the enabled->stopped
+     * transition may emit. Read-and-clear IsEnabled in ONE critical section
+     * and let the observed value be the token: exactly one concurrent stop
+     * can see `true`, and that is the one whose teardown the summary is
+     * waiting on.
+     *
+     * This LOSES NOTHING for a stop issued while nothing was streaming: it
+     * used to reach the emit site and no-op on the pending flag anyway, so
+     * gating on ownership changes no observable behaviour there.
+     *
+     * (The clear was previously a bare write; making it a read-modify-write
+     * under the lock is also what lets the two concurrent stops disagree
+     * about who won, rather than both reading `true`.) */
+    bool thisStopOwnsSummary = false;
     if (pRunTimeStreamConfig) {
+        taskENTER_CRITICAL();
+        thisStopOwnsSummary = pRunTimeStreamConfig->IsEnabled;
         pRunTimeStreamConfig->IsEnabled = false;
+        taskEXIT_CRITICAL();
     }
 
     Streaming_UpdateState();
@@ -6989,7 +7072,13 @@ static void SCPI_PerformStreamingStop(void) {
      * "[SD] Streaming stop: SD still finalising" LOG_E and OPER bit 11 set
      * just above are the record that it might, so this is a best-effort
      * improvement over "always before", not a guarantee. */
-    Streaming_EmitSessionSummary();
+    /* #1055 r1 finding 2: only the stop that owns the teardown emits -- see
+     * thisStopOwnsSummary above. A concurrent second stop must not consume
+     * the flag before the SD teardown this call is still waiting on has
+     * reported. */
+    if (thisStopOwnsSummary) {
+        Streaming_EmitSessionSummary();
+    }
 
     /* #870: the encoder resets that used to be here have MOVED to
      * Streaming_Start()'s enabled-session block, next to the test-pattern

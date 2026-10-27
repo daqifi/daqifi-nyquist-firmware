@@ -2619,27 +2619,44 @@ static void Streaming_Stop(void) {
  *    before they are wiped.
  */
 void Streaming_EmitSessionSummary(void) {
+    /* ⛔ #1055 r1 finding 1: THE FLAG CONSUME AND THE SNAPSHOT ARE ONE STEP.
+     *
+     * They used to be two critical sections -- test-and-clear the flag, exit,
+     * then snapshot. SYST:STR:STATS:CLEar runs Streaming_ClearStats() from
+     * SCPI at priority 7 and can land in the gap, zeroing every counter; the
+     * summary then reports nothing (hadDrops is false) while the flag has
+     * ALREADY been consumed, so the session's summary is lost and cannot be
+     * re-emitted by any later caller. Exactly-once and atomic-with-its-data
+     * are the same requirement here: a flag that says "a summary is owed" is
+     * worthless if the data it refers to can be wiped before it is read.
+     *
+     * Streaming_GetStats() takes taskENTER_CRITICAL() itself and FreeRTOS
+     * critical sections NEST (uxCriticalNesting is a counter), so calling it
+     * inside is safe on this port -- it copies a struct and three counters,
+     * which is the same order of work the outer section already does. It is
+     * called only when pending, so the common no-op path does not pay for it.
+     */
+    StreamingStats snap;
+    bool pending;
     taskENTER_CRITICAL();
-    bool pending = gSessionSummaryPending;
+    pending = gSessionSummaryPending;
     gSessionSummaryPending = false;
+    if (pending) {
+        Streaming_GetStats(&snap);
+    }
     taskEXIT_CRITICAL();
     if (!pending) {
         return;
     }
 
-    /* Qodo (PR #1055): snapshot rather than read gStreamStats / the scan
-     * counters live. By the time any caller reaches this function the timer
-     * ISR is disabled (Streaming_Stop() already ran), but the priority-9
-     * deferred sample task can still be mid-increment on a notification that
-     * was already in flight -- reading a 64-bit field (totalSamplesStreamed,
-     * totalBytesStreamed) without a critical section can observe a torn
-     * value if that task preempts between the two halves of the read.
-     * Streaming_GetStats() already does exactly this snapshot correctly
-     * (single taskENTER_CRITICAL covering the struct copy plus the two
-     * ISR-owned counters) -- reuse it instead of duplicating the "which
-     * fields need special handling" logic a second time in this file. */
-    StreamingStats snap;
-    Streaming_GetStats(&snap);
+    /* The torn-read hazard the snapshot above also closes (Qodo, PR #1055):
+     * the timer ISR is disabled by the time any caller reaches here, but the
+     * priority-9 deferred sample task can still be mid-increment on a
+     * notification already in flight, so reading a 64-bit field
+     * (totalSamplesStreamed, totalBytesStreamed) unprotected can observe a
+     * torn value. Streaming_GetStats() handles that correctly in one place;
+     * r1 finding 1 moved the CALL into the flag's critical section rather
+     * than duplicating its field-by-field logic here. */
 
     // Gate on STEADY counters so startup-window transients (within
     // gLossGraceSec, default 3 s) don't produce misleading end-of-
@@ -2708,19 +2725,26 @@ void Streaming_EmitSessionSummary(void) {
          * and a steady-counter number read as a total is a misleading number.
          * test_1055_stream_end_summary_budget.c measures all three against the
          * real ceiling and proves the ten quantities all survived the split. */
-        LOG_E("Stream end (post-grace): lost %u/%llu samples (%u%%)",
+        /* #1055 r1 review LOW: eos belongs HERE, labelled, and NOT under
+         * "samples lost". eosOverruns is ADC-register staleness -- the task
+         * was behind but the data it read was fresh -- and this function
+         * deliberately EXCLUDES it from totalSampleLoss and the percentage
+         * for exactly that reason. Printing it beneath a "samples lost"
+         * heading contradicted the arithmetic two lines above it. */
+        LOG_E("Stream end (post-grace): lost %u/%llu samples (%u%%); "
+              "eos=%u stale not lost",
               (unsigned)totalSampleLoss,
               (unsigned long long)totalAttempted,
-              (unsigned)lossPercent);
+              (unsigned)lossPercent,
+              (unsigned)snap.eosOverruns);
         LOG_E("Stream end (post-grace) bytes lost: USB=%u WiFi=%u SD=%u",
               (unsigned)snap.usbDroppedBytesSteady,
               (unsigned)snap.wifiDroppedBytesSteady,
               (unsigned)snap.sdDroppedBytesSteady);
-        LOG_E("Stream end (post-grace) samples lost: encFail=%u encDrop=%u dioDrop=%u eos=%u",
+        LOG_E("Stream end (post-grace) samples lost: encFail=%u encDrop=%u dioDrop=%u",
               (unsigned)snap.encoderFailuresSteady,
               (unsigned)snap.encoderDroppedSamplesSteady,
-              (unsigned)snap.dioDroppedSamplesSteady,
-              (unsigned)snap.eosOverruns);
+              (unsigned)snap.dioDroppedSamplesSteady);
     }
 }
 
