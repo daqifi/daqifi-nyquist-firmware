@@ -269,7 +269,7 @@ SPEC_RE = re.compile(
 # A prefix-matching capture let `max=1+200` and `max=1<<7` read as 1, budgeting
 # a %s at ONE and silencing a message. The refusal and the parser must not
 # share a blind spot: detect broadly, accept narrowly.
-ANNOTATION_RE = re.compile(r"log_budget:\s*max\s*=\s*(.*?)\s*(?:\*/|$)", re.S)
+ANNOTATION_RE = re.compile(r"log_budget:\s*max\s*=\s*(.*?)\s*(\*/|$)", re.S)
 # A decimal list, OPTIONALLY followed by " -- <prose>".
 #
 # ⛔ MEASURED, and the reason this is not the stricter `max=(\d+)\s*\*/`: three
@@ -409,43 +409,121 @@ def reserve_after(impl, prefix_re, where, gone_msg):
     return sum(terms)
 
 
+# Names this tool READS out of the source. An #ifndef on one of these is never
+# an include guard -- it is a configurable default, and the whole point of the
+# depth check is that its value may not be the compiled one.
+CEILING_INPUT_MACROS = ("LOG_MESSAGE_SIZE",)
+
+
 def preproc_depth(text, offset):
-    r"""Preprocessor-conditional nesting depth at `offset`, NOT counting an
+    r"""Preprocessor-conditional nesting depth at `offset`, exempting ONE true
     include guard.
 
-    ⛔ #1110 r11: "refuse if the input is inside #if" cannot be implemented
-    literally. MEASURED on the real Logger.h: the `#define LOG_MESSAGE_SIZE`
-    sits at depth 1, and the sole unclosed open is `#ifndef LOGGER_H` -- the
-    file's INCLUDE GUARD, which wraps all 619 lines. A literal depth test
-    refuses the actual firmware header, so the guard has to be excluded or the
-    whole rule is unusable.
+    ⛔ #1110 r12 (HIGH): r11's exemption was "an #ifndef X whose next directive
+    is #define X", and that is ALSO the shape of a CONFIGURABLE DEFAULT:
 
-    An `#ifndef X` whose next directive is `#define X` is the include-guard
-    idiom (Logger.h: `#ifndef LOGGER_H` then `#define\tLOGGER_H`) and cannot
-    produce two alternative values, which is the hazard the rule is about. Any
-    other conditional CAN, so it counts.
+        #ifndef LOG_MESSAGE_SIZE
+        #define LOG_MESSAGE_SIZE 128      <- overridable with -D on the build line
+        #endif
+
+    Exempting that is the exact opposite of what the depth check is for: the
+    value is conditional, a -D override is invisible to this tool, and r11
+    accepted it reporting 125. A local `#ifndef LOGGER_FEATURE / #define
+    LOGGER_FEATURE 1` wrapping other code was exempted the same way.
+
+    So a guard must satisfy ALL THREE, and anything else counts as a
+    conditional:
+
+      1. the #define is VALUE-LESS -- `#define LOGGER_H` with no replacement
+         text. A guard marks a file as seen; it never carries a value.
+      2. the macro is NOT one this tool reads (CEILING_INPUT_MACROS). An
+         #ifndef on a ceiling input is a configurable default by definition.
+      3. it opens at the FILE HEAD (the first directive) and closes at the
+         FILE END (its #endif is the last directive) -- which is what makes it
+         a file guard rather than a region switch.
+
+    Logger.h satisfies all three: `#ifndef LOGGER_H` / `#define\tLOGGER_H` is
+    the first directive pair, LOGGER_H is not an input, and the matching
+    `#endif /* LOGGER_H */` is the last directive of 619 lines.
     """
+    directives = list(re.finditer(
+        r"^[ \t]*#[ \t]*(ifndef|ifdef|if|elif|else|endif)\b[ \t]*(\w+)?(.*)$",
+        text, re.M))
+    if not directives:
+        return 0
+
+    # Which opener, if any, is the file's single true include guard?
+    guard_idx = None
+    first = directives[0]
+    if first.group(1) == "ifndef" and first.group(2):
+        name = first.group(2)
+        valueless = re.match(
+            r"\s*#[ \t]*define[ \t]+" + re.escape(name) + r"[ \t]*(?:/\*.*)?$",
+            text[first.end():], re.M)
+        if valueless and name not in CEILING_INPUT_MACROS:
+            # does its #endif close the file, i.e. is it the LAST directive?
+            depth = 0
+            for k, mm in enumerate(directives):
+                kind = mm.group(1)
+                if kind in ("if", "ifdef", "ifndef"):
+                    depth += 1
+                elif kind == "endif":
+                    depth -= 1
+                    if depth == 0:
+                        if k == len(directives) - 1:
+                            guard_idx = 0
+                        break
+
     depth = 0
-    stack = []
-    for mm in re.finditer(
-            r"^[ \t]*#[ \t]*(ifndef|ifdef|if|elif|else|endif)\b[ \t]*(\w+)?",
-            text, re.M):
+    for k, mm in enumerate(directives):
         if mm.start() >= offset:
             break
         kind = mm.group(1)
         if kind in ("if", "ifdef", "ifndef"):
-            is_guard = False
-            if kind == "ifndef" and mm.group(2):
-                is_guard = re.match(
-                    r"\s*#[ \t]*define[ \t]+" + re.escape(mm.group(2)) + r"\b",
-                    text[mm.end():]) is not None
-            stack.append(is_guard)
-            if not is_guard:
-                depth += 1
+            depth += 0 if k == guard_idx else 1
         elif kind == "endif":
-            if stack and not stack.pop():
-                depth = max(depth - 1, 0)
+            depth = max(depth - 1, 0) if depth > 0 else 0
     return depth
+
+
+def extract_brace_body(text, open_idx):
+    r"""The text between the brace at `open_idx` and its MATCHING close, or None.
+
+    ⛔ #1110 r12: the body was taken with `\{(.*?)\n\}` -- non-greedy to the
+    first newline-then-brace -- so ANY column-0 `}` inside the function ended it
+    early. MEASURED: a `}` closing an inner block at column 0 hid the tighter of
+    two clamps, so r11's clamp COUNT saw one, accepted it, and read_ceiling
+    returned 125 where the real ceiling was 115. The r11 defect re-entering
+    through a different door, which is why the extraction is now structural.
+
+    Brace DEPTH, skipping string and character literals so a `}` inside one
+    cannot close the body. Comments are already masked to spaces by the caller,
+    so they need no handling here -- and that is a precondition, not an
+    assumption: read_ceiling masks before it calls this.
+    """
+    if open_idx < 0 or open_idx >= len(text) or text[open_idx] != "{":
+        return None
+    depth, i, n = 0, open_idx, len(text)
+    while i < n:
+        ch = text[i]
+        if ch == '"' or ch == "'":
+            quote = ch
+            i += 1
+            while i < n:
+                if text[i] == "\\":
+                    i += 2
+                    continue
+                if text[i] == quote:
+                    break
+                i += 1
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[open_idx + 1:i]
+        i += 1
+    return None
 
 
 def sole_site(text, wide_re, what, hint, depth_text=None, depth_base=0):
@@ -572,18 +650,16 @@ def read_ceiling(logger_h_text, logger_c_text):
     # INPUT 2 of 4: the definition of LogMessageFormatImpl. Counted too -- two
     # definitions (an #ifdef'd debug variant, say) would silently hand the
     # reservations of whichever came first.
-    sole_site(
+    sig = sole_site(
         logger_c_text, r"LogMessageFormatImpl\s*\([^)]*\)\s*\{",
         "the definition of LogMessageFormatImpl in Logger.c",
         "the buffer reservations are read from its body and must not be assumed")
-    body = re.search(
-        r"LogMessageFormatImpl\s*\([^)]*\)\s*\{(.*?)\n\}", logger_c_text, re.S)
-    if not body:
+    impl = extract_brace_body(logger_c_text, sig.end() - 1)
+    if impl is None:
         raise ToolError(
-            "found LogMessageFormatImpl's signature but not a body closed by a "
-            "brace in column 0 -- the reservations are read from that body")
-    impl = body.group(1)
-    impl_base = body.start(1)
+            "found LogMessageFormatImpl's signature but could not match its "
+            "braces -- the reservations are read from that body")
+    impl_base = sig.end()
 
     # INPUTS 3 and 4 of 4: the two reservations. The WIDE net is every
     # `vsnprintf(` / `min(` in the body -- deliberately wider than
@@ -1115,6 +1191,42 @@ def comment_text(src_lines, idx, split=None):
     return split[idx][1]
 
 
+def annotation_value_can_continue(src_lines, idx):
+    """Could the annotation value on src_lines[idx] continue on the NEXT line?
+
+    ⛔ #1110 r12 REVIEW: the first cut of the r12 refusal never asked this.
+    It refused whenever the value ENDED the line's comment text -- which is the
+    house-style form
+
+        /* why this bound is safe:
+         * log_budget: max=45
+         */
+
+    correct source, and the live form of two of the eight real annotations in
+    this firmware (sd_card_manager.c:1543 and :2951; three of eight if you
+    count any multi-line block). It crashed the self-test on a fixture written
+    to pin exactly that form. A refusal that fires on correct source is the
+    spec being wrong, not the source -- and a minority shape is still correct
+    source, so "only 2 of 8" is not a reason to refuse it.
+
+    So ask the narrower question the hazard actually poses: is there anything
+    on the next line for the value to be read as continuing INTO? A `*/` or an
+    empty decorated line closes the value; anything else might extend it.
+
+    Reads the RAW next line, deliberately NOT the annotation regex -- a
+    detector built from the parser's own net inherits its blind spots. Fails
+    CLOSED: ANY non-empty continuation refuses, digits or not, so a form this
+    function has not anticipated is rejected rather than guessed at.
+    """
+    nxt = src_lines[idx + 1] if 0 <= idx + 1 < len(src_lines) else ""
+    s = nxt.strip()
+    if s.startswith("*/"):
+        return False                 # the block closes; nothing follows
+    if s.startswith("*"):
+        s = s[1:].strip()            # drop the block decoration, then re-ask
+    return not (s == "" or s.startswith("*/"))
+
+
 def find_annotation(src_lines, line, split=None):
     """Return the widths declared by a /* log_budget: max=N[,N...] */ marker.
 
@@ -1140,16 +1252,56 @@ def find_annotation(src_lines, line, split=None):
     # bound check itself; it delegates here now, so the check lives here.
     if not (0 <= idx < len(split)):
         return None
-    texts = [comment_text(src_lines, idx, split)]
+    # (line index, comment text) -- the INDEX is needed because comment_text()
+    # strips the comment markers, so `*/` is invisible in the text and the
+    # "is this value terminated?" test below has to look at the RAW line.
+    texts = [(idx, comment_text(src_lines, idx, split))]
     k = idx - 1
     while k >= 0 and cmap[k]:
-        texts.append(comment_text(src_lines, k, split))
+        texts.append((k, comment_text(src_lines, k, split)))
         k -= 1
-    for text in texts:
+    for t_idx, text in texts:
         m = ANNOTATION_RE.search(text)
         if m:
             raw = m.group(1).strip()
             mv = ANNOTATION_LIST_RE.fullmatch(raw)
+            raw_line = src_lines[t_idx] if 0 <= t_idx < len(src_lines) else ""
+            # Terminated if the RAW line closes the block comment after the
+            # annotation, carries a // comment (which cannot continue), is followed
+            # by ` -- prose`, or -- r12 REVIEW -- has nothing on the next line for
+            # the value to continue INTO.
+            after = raw_line.split("log_budget:", 1)[-1]
+            prose_after_value = bool(mv) and raw != mv.group(1)
+            terminated = (("*/" in after)
+                          or ("//" in raw_line.split("log_budget:")[0])
+                          or prose_after_value
+                          or not annotation_value_can_continue(src_lines, t_idx))
+            if mv and not terminated:
+                # ⛔ #1110 r12: THE VALUE MUST NOT BE ABLE TO CONTINUE ON THE
+                # NEXT LINE. Annotations are read per LINE, so
+                #
+                #     /* log_budget: max=1
+                #        +200 */
+                #
+                # matched `1` on the first line, full-matched it as a decimal
+                # list, and BOUND max=1 -- silencing the message. The r10
+                # expression refusal defeated simply by pressing Enter;
+                # measured as 0 findings where a refusal was due.
+                #
+                # Keyed on "the digit list ENDS the line's comment text with
+                # nothing after it", NOT on "the comment spans lines": the house
+                # style puts annotations inside multi-line blocks and THREE of
+                # the five real ones do exactly that, carrying ` -- prose` after
+                # the value. Prose terminates the value; an empty tail does not.
+                # (A `//` annotation with a bare value would also be refused
+                # here although it cannot continue. None exists in the tree, the
+                # refusal is loud, and the remedy -- put `*/` or a `--` note
+                # after the value -- is one keystroke. Fail-closed by choice.)
+                raise ToolError(
+                    f"line {line}: /* log_budget: max={raw} */ is not closed on "
+                    f"its own line, so the value could continue on the next one "
+                    f"and be read as only its first term. Put the `*/` (or a "
+                    f"` -- note`) after the value, on the same line.")
             if not mv:
                 # #1110 r10: the WHOLE value must be a decimal list. See
                 # ANNOTATION_RE for why a prefix match was not enough.
@@ -1261,10 +1413,17 @@ def measure(fmt, annotation):
                 f"one")
         if conv == "s":
             str_seen += 1
-            if prec not in (None, ""):
+            if prec is not None:
                 # %.Ns prints at most N characters -- bounded by the format
                 # itself, no annotation needed.
-                total += max(field, int(prec))
+                #
+                # ⛔ #1110 r12 review LOW: and `%.s` is precision ZERO. C99
+                # 7.19.6.1 says an omitted precision after the '.' is taken as
+                # zero, so `%.s` prints NOTHING -- the most tightly bounded %s
+                # there is. The old condition excluded prec == "" and sent it to
+                # the "unresolvable, needs an annotation" branch, demanding a
+                # bound for a conversion that cannot print a single character.
+                total += max(field, int(prec or 0))
                 continue
             if str_widths is None:
                 return None, ("unresolvable: %s with no /* log_budget: max=N */ "
@@ -1825,6 +1984,22 @@ SELF_TEST_REJECTION_CASES = [
         "r8/4 counted calls by their START line, so a MULTI-LINE call ending on "
         "the LOG_E's line was not counted and its annotation leaked onto the "
         "LOG_E. Overlap, not start, is the question",
+    ),
+    (
+        "r12 review: a value a continuation line could EXTEND is refused",
+        '/* log_budget: max=1\n +200 */ LOG_E("%s", s);',
+        "could continue on the next one",
+        "the r12 defect itself: annotations are read per LINE, so `max=1` "
+        "full-matched as a decimal list and BOUND 1, silencing a truncating "
+        "message. The r10 expression refusal was defeated by pressing Enter",
+    ),
+    (
+        "r12 review: a DECORATED continuation line is refused too",
+        '/* log_budget: max=1\n * +200 */ LOG_E("%s", s);',
+        "could continue on the next one",
+        "the same hazard wearing the house-style ' * ' decoration. The "
+        "continuation test strips the decoration and re-asks, so this cannot "
+        "be smuggled past by formatting it like the accepted form",
     ),
 ]
 
@@ -2428,8 +2603,13 @@ SELF_TEST_AMBIGUITY_CASES = [
     ("two calls under a MULTI-LINE comment block holding the annotation",
      ['/* why this bound is safe:', ' * log_budget: max=1', ' */',
       'LOG_E("%s", "x"); LOG_E("%s", big);'], 4, 2, True,
-     "the house-style shape -- six of the eight real annotations live in a "
-     "block like this, so the leak was reachable from the dominant form"),
+     "the block-interior house-style shape. MEASURED 2026-10-26, because an "
+     "earlier revision of this line claimed 'six of the eight real "
+     "annotations': it is TWO of the eight (sd_card_manager.c:1543 and :2951), "
+     "three if you count any multi-line block. The most common real form is "
+     "the single-line `/* log_budget: max=N */`, five of eight -- so this is "
+     "a reachable minority shape, NOT the dominant form, and the honest reason "
+     "to keep the case is that r12 proved a refusal can single it out"),
     ("two calls, annotation-looking text only in a STRING above",
      ['puts("log_budget: max=1");', 'LOG_E("%s", "x"); LOG_E("%s", big);'],
      2, 2, False,
@@ -2573,6 +2753,17 @@ SELF_TEST_ANNOTATION_CASES = [
       ' */',
       'LOG_E("%s", s);'], 5, [12],
      "the common real shape, with the closer on its own line"),
+    ("a value closed by a bare `*/` on the next line still binds",
+     ['/* why this bound is safe:',
+      ' * log_budget: max=1',
+      ' */',
+      'LOG_E("%s", big);'], 4, [1],
+     "⛔ r12 REVIEW, THE OTHER SIDE OF THE SAME PIN: the first cut of the "
+     "r12 refusal rejected this -- correct source, the dominant real form, and "
+     "a shape another fixture exists to pin. It crashed the self-test. "
+     "Accepting it is as load-bearing as refusing the two continuation cases "
+     "in SELF_TEST_REJECTION_CASES; neither pin alone would have caught the "
+     "over-broad refusal"),
 ]
 
 # comment_only_map() is a named predicate in its own right, so its contract is
@@ -3031,7 +3222,20 @@ def self_test():
 
     # ambiguous_annotation(): a bound with several candidate calls is refused.
     for name, src, line, n, expected, why in SELF_TEST_AMBIGUITY_CASES:
-        got = ambiguous_annotation(src, line, n)
+        # ⛔ #1110 r12 review: CATCH. These fixtures reach find_annotation, which
+        # REFUSES, and an escaping ToolError left main() printing a traceback
+        # instead of a FAIL line -- which is how the over-broad r12 refusal
+        # presented when it rejected the house-style form: a stack trace naming
+        # "line 4" of no file, with no fixture name and no `why`. A self-test
+        # that cannot say WHICH case broke is most of a self-test's value gone.
+        try:
+            got = ambiguous_annotation(src, line, n)
+        except ToolError as e:
+            failures += 1
+            print(f"  FAIL [ambiguity: {name}]: refused -- {e} -- the fixture "
+                  f"is correct source, so a refusal here is the refusal being "
+                  f"over-broad: {why}")
+            continue
         if got != expected:
             failures += 1
             print(f"  FAIL [ambiguity: {name}]: {got}, expected {expected} "
@@ -3047,7 +3251,15 @@ def self_test():
 
     # find_annotation(): a bound binds to its own call and to no other.
     for name, src, line, expected, why in SELF_TEST_ANNOTATION_CASES:
-        got = find_annotation(src, line)
+        # Same reason as the ambiguity runner above: these fixtures reach the
+        # refusals, and an escaping ToolError costs the fixture's NAME.
+        try:
+            got = find_annotation(src, line)
+        except ToolError as e:
+            failures += 1
+            print(f"  FAIL [annotation: {name}]: refused -- {e} -- a refusal on "
+                  f"a binding fixture means the refusal is over-broad: {why}")
+            continue
         if got != expected:
             failures += 1
             print(f"  FAIL [annotation: {name}]: find_annotation -> {got}, "
@@ -3119,6 +3331,11 @@ def self_test():
           f"{len(SELF_TEST_AMBIGUITY_CASES)} ambiguity cases + "
           f"{len(SELF_TEST_ANNOTATION_CASES)}/"
           f"{len(SELF_TEST_ANNOTATION_CASES)} annotation-binding cases + "
+          # ⛔ r12 review: these ran but were never COUNTED here, so a run that
+          # silently skipped every refusal looked identical to one that checked
+          # them all. A case the summary does not name cannot be audited.
+          f"{len(SELF_TEST_REJECTION_CASES)}/"
+          f"{len(SELF_TEST_REJECTION_CASES)} rejection cases + "
           f"1/1 IO-error case pass")
     return 0
 

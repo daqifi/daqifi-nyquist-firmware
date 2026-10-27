@@ -4083,10 +4083,19 @@ void sd_card_manager_ProcessState() {
                         sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
                                 (uint8_t*)eofMarker, sizeof(eofMarker) - 1);
                     } else {
-                        /* #1039: was 137 bytes against the 125-byte ceiling, so the whole
-                         * parenthetical -- why a missing terminator matters at all -- was
-                         * truncated away. 105 now; #725 still tracks the distinguishable
-                         * terminator.
+                        /* #1039: the old form measured 137 bytes against the 125-byte
+                         * ceiling, so the TAIL 12 bytes were cut: "ishable one)", leaving
+                         * the message ending "...#725 tracks a distingu". Note what that
+                         * does and does not cost -- the clause explaining WHY a missing
+                         * terminator matters ("a plain EOF would look like a complete
+                         * file") survived in full; the truncation destroyed the end of the
+                         * #725 cross-reference. An earlier revision of this comment said
+                         * the whole parenthetical was truncated away, which overstates a
+                         * 12-byte tail cut by a factor of six.
+                         *
+                         * 103 bytes now (tools/lint/log_budget.py, worst case: %u of a
+                         * uint32 is 10 digits), so nothing is cut. #725 still tracks the
+                         * distinguishable terminator.
                          */
                         LOG_E("[SD] aborted after %u bytes - no terminator "
                               "sent; a plain EOF looks like a complete "
