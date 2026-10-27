@@ -214,9 +214,9 @@ echo "==     (the shape that defeated an operand-keyed enumeration: 2 of 8)  =="
 if sub "$F" 'snprintf(path, sizeof(path), "%.*s/%s" SD_MANIFEST_EXT,
                            (int)SdManifest_CanonicalDirLen(gpSDCardSettings->directory),
                            gpSDCardSettings->directory,
-                           gSDCardData.baseFilename)' 'snprintf(path, sizeof(path), "%s/%s" SD_MANIFEST_EXT,
+                           gpSDCardSettings->file)' 'snprintf(path, sizeof(path), "%s/%s" SD_MANIFEST_EXT,
                            gpSDCardSettings->directory,
-                           gSDCardData.baseFilename)'; then
+                           gpSDCardSettings->file)'; then
     expect "M1 count arm" "path construction is no longer"
 else
     echo "  FAIL M1 anchor absent -- source drifted from this harness."; fail=$((fail+1))
@@ -269,9 +269,9 @@ echo "==      sd_ManifestPathSafeToOverwrite drops 3 -> 2 and its own '>= 3'    
 echo "==      pin DOES fire too, so this arm asserts PIN C's message            =="
 echo "==      specifically rather than merely that something failed.            =="
 if sub "$F" '    if (!sd_ManifestPathSafeToOverwrite(path)) {
-        LOG_E("[SD] #924 manifest path holds a non-manifest file - left as is");' \
+        LOG_E("[SD] #1124 manifest path holds a non-manifest file - left as is");' \
            '    if (0) {
-        LOG_E("[SD] #924 manifest path holds a non-manifest file - left as is");'; then
+        LOG_E("[SD] #1124 manifest path holds a non-manifest file - left as is");'; then
     expect "R23 unlink-predicate arm" "no longer gates its unlink"
 else
     echo "  FAIL R23 anchor absent -- source drifted from this harness."; fail=$((fail+1))
