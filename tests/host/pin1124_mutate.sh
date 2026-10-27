@@ -72,7 +72,21 @@ fi
 BF=$(mktemp); BG=$(mktemp); BS=$(mktemp); BH=$(mktemp)
 cp "$F" "$BF"; cp "$G" "$BG"; cp "$S" "$BS"; cp "$H" "$BH"
 restore() { cp "$BF" "$F"; cp "$BG" "$G"; cp "$BS" "$S"; cp "$BH" "$H"; }
-trap 'restore; rm -f "$BF" "$BG" "$BS" "$BH"' EXIT INT TERM
+cleanup() { restore; rm -f "$BF" "$BG" "$BS" "$BH"; }
+# ⛔ #1124 r12 finding 3. `trap '...' EXIT INT TERM` was NOT equivalent to
+# this. On INT or TERM bash runs the handler and then RESUMES the script --
+# it does not exit for you -- so the handler restored the tree and the run
+# then carried on and re-mutated it. Interrupting this harness (the obvious
+# thing to do when it looks stuck mid-mutant) therefore left a MUTATED
+# firmware source in the worktree, which is the one outcome a harness that
+# edits real sources must never produce. A later build or commit would have
+# picked it up.
+#
+# So the signal handlers exit explicitly, and the EXIT trap -- which `exit`
+# itself fires -- is the single place cleanup happens.
+trap cleanup EXIT
+trap 'printf "\n** INTERRUPTED -- restoring the tree **\n" >&2; exit 130' INT
+trap 'printf "\n** TERMINATED -- restoring the tree **\n" >&2; exit 143' TERM
 cd "$W/tests/host" || exit 2
 
 pass=0; fail=0
@@ -369,6 +383,58 @@ if sub "$H" '#define SD_CARD_MANAGER_BUCKET_PREFIX ' \
     expect "R16 indented #define still extracts (control)" CLEAN
 else
     echo "  FAIL R16 anchor absent -- source drifted."; fail=$((fail+1))
+fi
+restore
+
+echo "== R17: the manifest OCCUPANCY CEILING is removed (r12 finding 1). Every =="
+echo "==      session then adds a manifest to the parent with no ceiling, and  =="
+echo "==      the #689 O(directory size) create wedge comes back.              =="
+if sub "$F" 'CountDirEntries(gpSDCardSettings->directory,' \
+            'CountDirEntriesXX(gpSDCardSettings->directory,'; then
+    expect "R17 occupancy ceiling present" "no longer bounds manifest creation"
+else
+    echo "  FAIL R17 anchor absent -- source drifted."; fail=$((fail+1))
+fi
+restore
+
+echo "== R18: THE MUTANT THAT STILL COMPILES AND LOOKS LIKE A WORKING GUARD.   =="
+echo "==      filesOnly true -> false. It then counts bucket SUBDIRECTORIES as  =="
+echo "==      well, and bucket 0 IS the parent, so the count is already        =="
+echo "==      ~MAX_DIR_FILES before the first bucket exists -- the guard        =="
+echo "==      refuses EVERY manifest from the moment bucketing began. Not a     =="
+echo "==      ceiling: the feature switched off, with a plausible log line.     =="
+if sub "$F" 'SD_CARD_MANAGER_MAX_DIR_FILES, true,
+                            &parentFsError);' 'SD_CARD_MANAGER_MAX_DIR_FILES, false,
+                            &parentFsError);'; then
+    expect "R18 filesOnly must be true" "no longer bounds manifest creation"
+else
+    echo "  FAIL R18 anchor absent -- source drifted."; fail=$((fail+1))
+fi
+restore
+
+echo "== R19: CountDirEntries loses the filesOnly parameter, so there is no     =="
+echo "==      files-only count to ask for and the parent's two budget terms     =="
+echo "==      cannot be separated.                                              =="
+if sub "$F" 'static uint32_t CountDirEntries(const char* dirPath, uint32_t cap,
+                                bool filesOnly, bool* pFsError) {' 'static uint32_t CountDirEntries(const char* dirPath, uint32_t cap,
+                                int filesOnly, bool* pFsError) {'; then
+    expect "R19 filesOnly stays in the signature" "signature in"
+else
+    echo "  FAIL R19 anchor absent -- source drifted."; fail=$((fail+1))
+fi
+restore
+
+echo "== R20: the HEADER-write arm stops marking the record a PREFIX (r12       =="
+echo "==      review leg). On an error Harmony has already destroyed FatFs's    =="
+echo "==      partial count, so the line would assert the CRC covers a file     =="
+echo "==      that may begin with bytes the CRC never saw.                      =="
+if sub "$F" '                            gSDCardData.fileRecordIsPrefix = true;
+                        }
+                        if (hdrWritten > 0) {' '                        }
+                        if (hdrWritten > 0) {'; then
+    expect "R20 header arm marks the record" "r10 finding 3 --"
+else
+    echo "  FAIL R20 anchor absent -- source drifted."; fail=$((fail+1))
 fi
 restore
 

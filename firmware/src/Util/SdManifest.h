@@ -58,6 +58,10 @@ extern "C" {
  * @param name    File name relative to the configured directory.
  * @param bytes   Byte count of that file.
  * @param crc     FINALIZED CRC-32 of that file (post CRC32_Finalize).
+ * @param isPrefix Append SD_MANIFEST_PREFIX_MARK, meaning the record and the
+ *                file on the card may disagree about the length IN EITHER
+ *                DIRECTION. See the block inside this function for the four
+ *                conditions that set it and which direction each implies.
  * @return Number of characters written (excluding the NUL), or -1.
  */
 /* #924 (round-3 audit HIGH): the marker appended when the record describes a
@@ -258,23 +262,50 @@ static inline int SdManifest_FormatLine(char *out, size_t outLen,
     /* '\n' only, not "\r\n": the manifest is a machine-read sidecar, not one
      * of the device's CSV payloads, and a bare LF is what `str.splitlines()` /
      * `csv.reader` / `wc -l` all agree on. */
-    /* #924 (round-3 audit HIGH): `isPrefix` says "crc is the CRC32 of the FIRST
-     * `bytes` bytes of this file, and the file may be LONGER". It is appended
-     * as a FOURTH field rather than by altering the first three, so a reader
-     * indexing [0..2] is unaffected and the CRC stays VERIFIABLE -- truncate to
-     * `bytes` and the value still matches. That is the property a bare
-     * "invalid" marker would have thrown away.
+    /* #924 (round-3 audit HIGH): `isPrefix` is appended as a FOURTH field
+     * rather than by altering the first three, so a reader indexing [0..2] is
+     * unaffected and the CRC stays VERIFIABLE -- truncate the file to `bytes`
+     * and the value still matches. That is the property a bare "invalid"
+     * marker would have thrown away.
      *
-     * It is reached when a write to the data file returned an error: Harmony's
-     * SYS_FS_FileWrite overwrites FatFs's partial byte count with
-     * 0xFFFFFFFF on any error (sys_fs.c:2442-2448) even though f_write
-     * accumulates `*bw` as it goes and keeps it across ABORT (ff.c:4041), so
-     * THE COMMITTED COUNT IS DESTROYED BEFORE THE FIRMWARE CAN SEE IT. Counting
-     * the OFFERED bytes instead would be a CRC over bytes that may not be on
-     * the card; omitting the line would make the manifest disagree with the
-     * file list, which this file's append site already argues against. A
-     * truthful prefix record is the only one of the three that is both correct
-     * and checkable. */
+     * ⛔ WHAT IT MEANS (broadened at #1124 r12; the earlier wording was
+     * narrower than the code and is the stale text that round flagged). It
+     * says: `crc` is the CRC32 of the first `bytes` bytes as this firmware
+     * counted them, and THE FILE ON THE CARD MAY DISAGREE WITH THAT COUNT IN
+     * EITHER DIRECTION. Not just "the file may be longer" -- two of the four
+     * setters mean it may be SHORTER, and a reader told only about "longer"
+     * would mis-handle them.
+     *
+     * The four setters, and which direction each implies (sd_card_manager.c):
+     *
+     *  1. a DATA write returned an error (SDCardWrite). Harmony's
+     *     SYS_FS_FileWrite overwrites FatFs's partial `*bw` with 0xFFFFFFFF on
+     *     any error (sys_fs.c:2442-2448) even though f_write accumulates it
+     *     and keeps it across ABORT (ff.c:4041), so THE COMMITTED COUNT IS
+     *     DESTROYED BEFORE THE FIRMWARE CAN SEE IT -> the file may be LONGER
+     *     than `bytes`.
+     *  2. the stream-file HEADER write returned an error (#1124 r12 review
+     *     leg). Same mechanism as 1; it is a separate setter only because the
+     *     header is the one stream-file byte range that does not pass through
+     *     SDCardWrite() -> the file may be LONGER.
+     *  3. a FileSync before unmount FAILED (#1124 r10 finding 3). FF_FS_TINY
+     *     is 0 (ffconf.h:226), so FatFs holds a per-file sector cache, and
+     *     counted bytes may still be sitting in it when the unmount discards
+     *     them -> the file may be SHORTER than `bytes`.
+     *  4. a FileClose during unmount FAILED (#1124 r10 finding 3). That close
+     *     did not flush either, so the same doubt and the same direction as 3
+     *     -> the file may be SHORTER.
+     *
+     * Counting the OFFERED bytes instead would be a CRC over bytes that may
+     * not be on the card; omitting the line would make the manifest disagree
+     * with the file list, which this file's append site already argues
+     * against. A truthful "these two may not agree" record is the only one of
+     * the three that is both correct and checkable.
+     *
+     * A VERIFIER should therefore treat a marked line as: read min(bytes,
+     * filesize) bytes, CRC them, and expect a match only if filesize >= bytes.
+     * An unmarked line is the strong claim -- filesize == bytes AND the CRC
+     * covers all of it. */
     n = snprintf(out, outLen, "%s,%llu,0x%08X%s\n", name,
                  (unsigned long long)bytes, (unsigned)crc,
                  isPrefix ? SD_MANIFEST_PREFIX_MARK : "");

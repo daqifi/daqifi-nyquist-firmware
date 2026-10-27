@@ -140,11 +140,37 @@ file, appended as that file is closed:
 experiment.csv,20480,0x1A2B3C4D
 experiment-1.csv,20480,0x7788AA99
 P001/experiment-65.csv,9012,0x00C0FFEE
+P001/experiment-66.csv,4096,0xDEADBEEF,PARTIAL
 ```
 
-`<name>,<bytes>,0x<CRC32>`, LF-terminated, no header row — so **the line count
-is the session's stream-file count**. The name is the path *relative to the
-configured directory*, which is exactly the operand
+`<name>,<bytes>,0x<CRC32>[,PARTIAL]`, LF-terminated, no header row — so **the
+line count is the session's stream-file count**.
+
+**The optional fourth field.** `,PARTIAL` means *the record and the file on the
+card may disagree about the length, in **either** direction* — `<CRC32>` covers
+the first `<bytes>` bytes **as the firmware counted them**, and nothing
+guarantees the file is that long. It is appended as a fourth field rather than
+by altering the first three, so a reader indexing `[0..2]` is unaffected and the
+CRC stays verifiable. Four conditions set it:
+
+| condition | the file may be |
+|---|---|
+| a data write returned an error (`SDCardWrite`) | **longer** than `<bytes>` |
+| the #824 header write returned an error | **longer** than `<bytes>` |
+| a `FileSync` before unmount failed | **shorter** than `<bytes>` |
+| a `FileClose` during unmount failed | **shorter** than `<bytes>` |
+
+The first two are Harmony destroying FatFs's partial byte count (it overwrites
+`*bw` with `0xFFFFFFFF` on any error, so bytes may be on the card that nothing
+can count); the last two are `FF_FS_TINY == 0`, so counted bytes may still be in
+FatFs's per-file sector cache when the unmount discards them.
+
+**A verifier should therefore** read `min(bytes, filesize)` bytes of a marked
+file, CRC them, and expect a match only when `filesize >= bytes`. An *unmarked*
+line is the strong claim: `filesize == bytes` and the CRC covers all of it.
+
+The name is the path *relative to the configured directory*, which is exactly
+the operand
 `SYSTem:STORage:SD:CRC?` and `SYSTem:STORage:SD:GET` take, so a manifest line
 can be fed straight back to the device. Names in a #689 bucket keep their
 `P00n/` prefix for the same reason.
@@ -186,10 +212,31 @@ without reading #924:**
 - **`gWriteSessionIsStreamingLog` gates it**, so `SYST:STOR:SD:BENCHmark` —
   which shares this same WRITE state and rotation path — produces no manifest.
 
-**Two configured names get NO manifest, by refusal rather than by accident.**
-Both are checked once, at manifest open, and both log a `LOG_E` naming the
-reason; the logging session itself continues normally.
+**Three configurations get NO manifest, by refusal rather than by accident.**
+Each is checked once, at manifest open, and each logs a `LOG_E` naming the
+reason *and the remedy first* (Logger truncates the tail at 125 bytes); the
+logging session itself continues normally. Withholding an integrity record must
+never be what stops a capture.
 
+- **A configured directory that carries a rotation bucket's name** — `P000`
+  through `P999`, i.e. `SD_CARD_MANAGER_BUCKET_PREFIX` plus a digit run
+  (#1124 r11). With `SD:DIR "P001"` a rotated file at `P001/P001/exp-64.csv` is
+  recorded as `P001/exp-64.csv`, and handing that back to `:GET`/`:CRC` makes
+  `SD_StripConfiguredDir` remove the leading `P001/` as though it were the
+  configured-directory prefix — retrieving a *different* file, or none. The
+  `SYST:STOR:SD:DIRectory` setter refuses such a name outright; this second
+  check at manifest open covers a value already in NVM that the setter never
+  saw.
+- **A configured directory already holding `MAX_DIR_FILES` files** (#1124 r12).
+  The manifest is always created in the *parent*, never in the session's #689
+  bucket, so once a session rolls into `P001` nothing consults the parent's file
+  count again and one manifest per session would accumulate there with no
+  ceiling — walking the parent's FatFs entry count back toward the O(directory
+  size) create wedge #689 exists to escape. Counted files-only, because the
+  parent's budget has separate file and subdirectory terms and bucket 0 *is* the
+  parent. An unreadable directory takes this same path: unreadable reads as
+  full, the safe direction for a guard whose failure mode is re-entering a
+  wedge. **This bounds the damage; it does not make manifests rotate.**
 - **A name containing `,`, CR or LF.** The line format echoes the name raw, and
   `SD_ValidatePathParam` (`SCPIStorageSD.c`) accepts a comma — so
   `SYST:STOR:SD:FILE "trial,1.csv"` would emit a record reading as *four*

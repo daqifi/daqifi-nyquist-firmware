@@ -910,14 +910,15 @@ $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h
 	@# un-stripped length. Two defects cancelling; fixing one exposed the other.
 	@#
 	@# So: an ALLOWLIST BY COUNT over every raw read of the field. A new read
-	@# changes the number and forces the author to classify it here. The 22 in
+	@# changes the number and forces the author to classify it here. The 24 in
 	@# the current head, all read and classified once:
 	@#   4  the accessor's own argument                              canonical
 	@#   8  "%.*s/" join operands                                    canonical
 	@#   5  sd_EnterBucket / sd_BuildBucketPath arguments,   canonicalised at
 	@#      and sd_OpenSessionManifest's bucket-name check             callee
-	@#   4  LOG_* / "dir='%s'" message text                           cosmetic
-	@#   1  strncpy -> SYS_FS_DirectoryMake                          benign: FatFs
+	@#   5  LOG_* / "dir='%s'" message text                           cosmetic
+	@#   2  strncpy -> SYS_FS_DirectoryMake, and #1124 r12's         benign: FatFs
+	@#      CountDirEntries -> SYS_FS_DirOpen occupancy check
 	@#      create_name() ignores a terminating separator (E3, ff.c:2880), so
 	@#      f_mkdir("d/") and f_mkdir("d") name the same directory. Benign because
 	@#      of a VENDOR behaviour, not because of anything we do -- which is
@@ -932,9 +933,19 @@ $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h
 	@# class, same as sd_EnterBucket's) and the directory named in the LOG_E
 	@# that reports why the session gets no manifest (cosmetic). NEITHER
 	@# constructs a path, which is the property this count protects.
+	@#
+	@# 22 -> 24 at #1124 r12 finding 1, both in the same function's new
+	@# occupancy guard: the CountDirEntries argument and its LOG_E.
+	@# ⚠ The CountDirEntries one is NOT callee-canonicalised -- that function
+	@# hands the path straight to SYS_FS_DirOpen. It is in the FatFs-benign
+	@# class for the SAME vendor reason as the DirectoryMake read above:
+	@# create_name() ignores a terminating separator (E3, ff.c:2880), so
+	@# f_opendir("d/") and f_opendir("d") name one directory. Classified by what
+	@# the callee actually DOES, not by which class looks adjacent -- this file
+	@# already records a round lost to classifying a read by its variable name.
 	@n=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null \
 	    | grep -oE '(gpSDCardSettings|cfg)->(directory|opDirectory)' | wc -l`; \
-	 test "$$n" -eq 22 \
+	 test "$$n" -eq 24 \
 	  || { echo "ERROR: $(SD_MANAGER_SRC) now has $$n raw reads of ->directory /"; \
 	       echo "       ->opDirectory, not the 20 classified in this recipe (#1124)."; \
 	       echo "       The canonicalisation invariant is about every USE, not just"; \
@@ -1000,27 +1011,41 @@ $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h
 	@# unmarked with "the bytes counted are the bytes sent either way"; that is
 	@# false exactly when the sync failed.
 	@#
-	@# BOTH ARMS BY POSITION, not by count: a count of three assignments cannot
-	@# see WHICH branch each one is in -- the r9 arm-1b lesson. Each failure
-	@# LOG_E must be followed by the marker within a few lines.
+	@# EVERY ARM BY POSITION, not by count: a count of assignments cannot see
+	@# WHICH branch each one is in -- the r9 arm-1b lesson. Each failure LOG_E
+	@# must be followed by the marker within a few lines.
+	@#
+	@# 3 -> 4 at #1124 r12's review leg, which added the HEADER-write arm: on an
+	@# error there Harmony has already destroyed FatFs's partial count, so bytes
+	@# may be on the card that neither currentFileBytes nor the CRC fold can
+	@# account for -- the same mechanism as the data-write arm. The header is a
+	@# separate site only because it is the one stream-file byte range that does
+	@# not pass through SDCardWrite(). It gets its OWN position arm below, so the
+	@# raised count still cannot be satisfied by assignments in wrong branches.
+	@# Distances are measured on the PREPROCESSED text, where comments are gone:
+	@# the header marker sits 6 lines past its LOG_E in that form and the nearest
+	@# other assignment is ~500 lines away, so these windows cannot cross-match.
 	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null`; \
 	 n=`printf '%s\n' "$$pp" | grep -c 'fileRecordIsPrefix = true'`; \
 	 sl=`printf '%s\n' "$$pp" | grep -n 'Error flushing before unmount' | head -1 | cut -d: -f1`; \
 	 cl=`printf '%s\n' "$$pp" | grep -n 'Failed to close file during unmount' | head -1 | cut -d: -f1`; \
-	 sm=0; cm=0; \
+	 hl=`printf '%s\n' "$$pp" | grep -n 'header write short' | head -1 | cut -d: -f1`; \
+	 sm=0; cm=0; hm=0; \
 	 if [ -n "$$sl" ]; then sm=`printf '%s\n' "$$pp" | sed -n "$$sl,$$((sl+6))p" | grep -c 'fileRecordIsPrefix = true'`; fi; \
 	 if [ -n "$$cl" ]; then cm=`printf '%s\n' "$$pp" | sed -n "$$cl,$$((cl+6))p" | grep -c 'fileRecordIsPrefix = true'`; fi; \
-	 test "$$n" -eq 3 && test "$$sm" -ge 1 && test "$$cm" -ge 1 \
+	 if [ -n "$$hl" ]; then hm=`printf '%s\n' "$$pp" | sed -n "$$hl,$$((hl+8))p" | grep -c 'fileRecordIsPrefix = true'`; fi; \
+	 test "$$n" -eq 4 && test "$$sm" -ge 1 && test "$$cm" -ge 1 && test "$$hm" -ge 1 \
 	  || { echo "ERROR: #1124 r10 finding 3 -- the unmount manifest record is no"; \
 	       echo "       longer marked when its byte count is in doubt."; \
-	       echo "         fileRecordIsPrefix = true assignments: $$n (expected 3)"; \
+	       echo "         fileRecordIsPrefix = true assignments: $$n (expected 4)"; \
 	       echo "         within 6 lines of the SYNC failure LOG_E:  $$sm (need >= 1)"; \
 	       echo "         within 6 lines of the CLOSE failure LOG_E: $$cm (need >= 1)"; \
+	       echo "         within 8 lines of the HEADER-write LOG_E:   $$hm (need >= 1)"; \
 	       echo "       FF_FS_TINY is 0, so a failed sync or close can leave"; \
 	       echo "       counted bytes in FatFs's sector cache for the unmount to"; \
 	       echo "       discard. An unmarked record then OVERSTATES the bytes and"; \
 	       echo "       its CRC covers data the card never received."; \
-	       echo "       Position is asserted, not just the count: three"; \
+	       echo "       Position is asserted, not just the count: four"; \
 	       echo "       assignments in the wrong branches satisfy a count."; \
 	       exit 1; }
 	@# ARM 2 -- the asymmetry is not interchangeable. If someone ever "unifies"
@@ -1345,6 +1370,50 @@ $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h
 	       echo "       changed shape. test_924_sd_manifest.c models that function to"; \
 	       echo "       test the record->retrieve round trip; re-derive the model"; \
 	       echo "       (strip_configured_dir_model) before trusting those results."; \
+	       exit 1; }
+	@# ⛔ #1124 r12 finding 1: the manifest's OCCUPANCY CEILING.
+	@# The manifest is always created in the PARENT, never in the session's #689
+	@# bucket, so once a session rolls into P001 nothing consults the parent's
+	@# file count again and one manifest per session accumulates with no ceiling
+	@# -- walking the parent's FatFs entry count back toward the O(directory
+	@# size) create wedge #689 exists to escape.
+	@#
+	@# Pinned on the JOINED preprocessed text, deliberately. The `true` that
+	@# selects files-only counting sits on a CONTINUATION line, and `cc -E`
+	@# preserves that geometry (this file records the measurement), so no
+	@# line-oriented grep can see the argument and the call together. Joining is
+	@# the right instrument for an argument spanning lines -- what is wrong is
+	@# ASSUMING the preprocessor already joined it.
+	@#
+	@# filesOnly is pinned as part of the call, not just the call: keying on the
+	@# call alone would pass `false`, and `false` counts the bucket
+	@# SUBDIRECTORIES too. Bucket 0 IS the parent, so the combined count is
+	@# already ~MAX_DIR_FILES before the first bucket exists -- the guard would
+	@# refuse every manifest from the moment bucketing began. That is not a
+	@# ceiling, it is switching the feature off, and it would look like a
+	@# working guard.
+	@$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr -s '[:space:]' ' ' \
+	  | grep -qE 'CountDirEntries\( *gpSDCardSettings->directory, *SD_CARD_MANAGER_MAX_DIR_FILES, *true' \
+	  || { echo "ERROR: $(SD_MANAGER_SRC) no longer bounds manifest creation by the"; \
+	       echo "       configured directory's FILE occupancy (#1124 r12 finding 1)."; \
+	       echo "       Expected CountDirEntries(<directory>, MAX_DIR_FILES, true, ...)"; \
+	       echo "       in sd_OpenSessionManifest. Note the THIRD argument: with"; \
+	       echo "       false it counts bucket subdirectories too, and since bucket 0"; \
+	       echo "       IS the parent that count is already ~MAX_DIR_FILES before any"; \
+	       echo "       bucket exists -- the guard would then refuse EVERY manifest"; \
+	       echo "       while still looking like it worked."; \
+	       exit 1; }
+	@# And the mode itself must still exist in the signature: without the
+	@# parameter there is no files-only count to ask for, and the guard above
+	@# would not compile -- but a default-valued or reordered parameter could
+	@# compile and silently mean something else.
+	@$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr -s '[:space:]' ' ' \
+	  | grep -qE 'static uint32_t CountDirEntries\(const char\* dirPath, uint32_t cap, bool filesOnly, bool\* pFsError\)' \
+	  || { echo "ERROR: CountDirEntries' signature in $(SD_MANAGER_SRC) changed."; \
+	       echo "       #1124 r12 finding 1's occupancy guard needs the filesOnly"; \
+	       echo "       mode, and the parent's entry budget has separate file and"; \
+	       echo "       subdirectory terms that a combined count cannot separate."; \
+	       echo "       Re-derive the guard with the signature."; \
 	       exit 1; }
 	@# The prefix the guard must match is the one buckets are NAMED with, so the
 	@# test is handed the macro's real value rather than a hand-copied copy. Read

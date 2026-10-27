@@ -1044,8 +1044,24 @@ static int CircularBufferToSDWrite(uint8_t* buf, uint32_t len) {
  * error, so callers that act on fullness must be able to tell them apart —
  * rolling to a fresh bucket is right for a full directory and wrong for a
  * broken filesystem. pFsError (optional) reports which happened. */
+/* `filesOnly` skips SUBDIRECTORY entries, counting only files.
+ *
+ * #1124 r12 finding 1 needs that distinction and the combined count cannot
+ * give it. The parent directory's entry budget (see MAX_DIR_FILES above) has
+ * two separate terms -- up to MAX_DIR_FILES *files* at 3 FatFs entries each,
+ * plus up to MAX_BUCKET *subdirectories* at 1 each -- and bucket 0 IS the
+ * parent, so by design the parent already holds ~MAX_DIR_FILES entries before
+ * the first bucket is ever created. A guard keyed on the combined count would
+ * therefore refuse from the moment bucketing began, which is not a ceiling,
+ * it is switching the feature off.
+ *
+ * The scan is bounded TWICE: by `cap` on what is counted, and by the total
+ * entries READ, because with filesOnly a directory full of subdirectories
+ * advances the read position without advancing `count`. Exceeding the read
+ * bound means the directory already holds more than the design permits, so it
+ * fails safe (returns `cap`) exactly as the error paths below do. */
 static uint32_t CountDirEntries(const char* dirPath, uint32_t cap,
-                                bool* pFsError) {
+                                bool filesOnly, bool* pFsError) {
     if (pFsError != NULL) {
         *pFsError = false;
     }
@@ -1067,9 +1083,24 @@ static uint32_t CountDirEntries(const char* dirPath, uint32_t cap,
         return cap;
     }
     uint32_t count = 0;
+    /* Read bound: the most entries a conforming directory can hold under the
+     * budget -- cap files, MAX_BUCKET subdirectories, and the two dot entries
+     * skipped below. */
+    const uint32_t readCap = cap + SD_CARD_MANAGER_MAX_BUCKET + 2u;
+    uint32_t scanned = 0u;
     SYS_FS_FSTAT st;
     memset(&st, 0, sizeof(st));
     while (count < cap) {
+        if (scanned >= readCap) {
+            LOG_E("[SD] CountDirEntries('%s'): over %u entries - failing safe",
+                  dirPath, (unsigned)readCap);
+            (void)SYS_FS_DirClose(dh);
+            if (pFsError != NULL) {
+                *pFsError = true;
+            }
+            return cap;
+        }
+        scanned++;
         if (SYS_FS_DirRead(dh, &st) == SYS_FS_RES_FAILURE) {
             /* #690: a mid-scan read error means the count is untrustworthy —
              * fail safe (refuse) rather than proceed on a partial count. Log
@@ -1088,6 +1119,9 @@ static uint32_t CountDirEntries(const char* dirPath, uint32_t cap,
         }
         if (strcmp(st.fname, ".") == 0 || strcmp(st.fname, "..") == 0) {
             continue;                       // skip dot entries
+        }
+        if (filesOnly && (st.fattrib & SYS_FS_ATTR_DIR) != 0) {
+            continue;                       // #1124 r12: subdirectory, not a file
         }
         count++;
     }
@@ -1757,8 +1791,11 @@ static bool sd_EnterBucket(const char* dir, uint32_t bucket) {
      * right answer for a broken card. */
     bool fsError = false;
     gSDCardData.bucketFileCountAtStart =
+        /* false: count every entry, exactly as before #1124 r12 added the
+         * mode. A bucket holds only data files, so the two agree there --
+         * passed explicitly rather than relying on that. */
         CountDirEntries(gSDCardData.bucketPath, SD_CARD_MANAGER_MAX_DIR_FILES,
-                        &fsError);
+                        false, &fsError);
     if (fsError) {
         LOG_E("[SD] #689 bucket '%s' unreadable - refusing rather than rolling",
               gSDCardData.bucketPath);
@@ -2094,7 +2131,26 @@ static bool sd_ManifestPathSafeToOverwrite(const char *path) {
         return false;
     }
     peekRead = SYS_FS_FileRead(probeHandle, peek, sizeof(peek));
-    (void)SYS_FS_FileClose(probeHandle);
+    /* ⛔ #1124 r12 review leg: this close result is NOT cosmetic, which is why
+     * it is no longer discarded. FF_FS_LOCK is 10, so a handle that fails to
+     * close keeps its lock slot -- and the slot is what some LATER open needs.
+     * The failure then surfaces as an apparently spontaneous FR_LOCKED on a
+     * DIFFERENT file, the same class of defect #924's own post-merge audit
+     * found in the manifest/stream-file collision. Nothing here can release
+     * the slot, so the diagnostic IS the remedy: it gives that later
+     * FR_LOCKED a cause in the log instead of leaving it unexplained.
+     *
+     * The path is deliberately not printed: this buffer can be 87 characters
+     * and Logger's content ceiling is 125, so naming it would push the line
+     * over and truncate the TAIL -- losing the lock-slot explanation, which is
+     * the only part worth having. The manifest open logs the path on the very
+     * next line anyway. (Two sibling LOG_Es in this function ARE over that
+     * ceiling at 169 and 199 bytes; they belong to #1110's sweep under the
+     * same ruling that split this work, and are not touched here.) */
+    if (SYS_FS_FileClose(probeHandle) != SYS_FS_RES_SUCCESS) {
+        LOG_E("[SD] #924 manifest probe close failed (err=%d) - a FatFs lock "
+              "slot may stick", (int)SYS_FS_Error());
+    }
     if (peekRead == (size_t)-1) {
         LOG_E("[SD] #924 could not read existing file '%s' before opening "
               "it for write - refusing to risk it", path);
@@ -2129,6 +2185,55 @@ static void sd_OpenSessionManifest(void) {
         LOG_E("[SD] #924 rename SD:DIR - '%s' is a bucket name, so this "
               "session gets no manifest", gpSDCardSettings->directory);
         return;
+    }
+    /* ⛔ #1124 r12 finding 1: BOUND THE MANIFEST BY THE SAME CAPACITY RULE THE
+     * DATA FILES OBEY, or it re-opens the #689 create wedge this module was
+     * bucketed to escape.
+     *
+     * The manifest is built from gpSDCardSettings->directory, i.e. it always
+     * lands in the PARENT -- never in the session's bucket. While bucket 0 is
+     * active the parent IS the bucket, so #689's own roll-at-MAX_DIR_FILES
+     * counts manifests and the budget holds. Once a session rolls into P001
+     * the active bucket is a subdirectory and nothing consults the parent's
+     * file count again, so one manifest per session accumulates there with no
+     * ceiling at all. Hundreds of short sessions then take the parent past the
+     * MAX_DIR_FILES files the budget above allows it -- each a 3-entry LFN --
+     * and FatFs's O(directory size) create walks back toward the ~1,536-entry
+     * wedge #689 was filed for.
+     *
+     * filesOnly, because the parent's budget has two independent terms and
+     * bucket 0 being the parent means the combined count is ~MAX_DIR_FILES
+     * before the first bucket exists -- keying on it would refuse every
+     * manifest from the moment bucketing began. Files are the term a manifest
+     * adds to.
+     *
+     * The SIDECAR is skipped, loudly; the logging is untouched. The data path
+     * has its own refusal for a genuinely exhausted layout (startupDirFull),
+     * and withholding an integrity record must never be what stops a capture.
+     * An FS error takes this same path: CountDirEntries returns `cap` and sets
+     * the flag, so unreadable reads as full, which is the safe direction for a
+     * guard whose failure mode is re-entering a wedge.
+     *
+     * Costs one bounded directory scan per session, on the session's first
+     * open only -- the same price #689 already accepts for advancing a bucket.
+     *
+     * ⚠ THIS BOUNDS THE DAMAGE; IT DOES NOT MAKE MANIFESTS ROTATE. Putting the
+     * manifest in the session's own bucket would, and is the better end state,
+     * but it MOVES the file host tooling globs for -- a layout change that
+     * belongs with the r12 finding-2 ruling now with the operator, not smuggled
+     * in beside it. */
+    {
+        bool parentFsError = false;
+        const uint32_t parentFiles =
+            CountDirEntries(gpSDCardSettings->directory,
+                            SD_CARD_MANAGER_MAX_DIR_FILES, true,
+                            &parentFsError);
+        if (parentFsError
+            || parentFiles >= SD_CARD_MANAGER_MAX_DIR_FILES) {
+            LOG_E("[SD] #924 prune '%s' or set a new SD:DIR: %u files, no manifest",
+                  gpSDCardSettings->directory, (unsigned)parentFiles);
+            return;
+        }
     }
     /* ⛔ #1124 r10 finding 2: NO TRAILING-SEPARATOR CHECK BELONGS HERE, and
      * r9's was actively harmful. The manifest name is always `<something>` +
@@ -4223,6 +4328,43 @@ void sd_card_manager_ProcessState() {
                             LOG_E("[SD] header write short: expected=%u "
                                   "written=%d ('%s')", (unsigned)hdrLen,
                                   hdrWritten, gSDCardData.filePath);
+                        }
+                        if (hdrWritten < 0) {
+                            /* ⛔ #1124 r12 review leg: mark the record a
+                             * PREFIX, because on an ERROR the committed count
+                             * is destroyed before we can see it. Harmony's
+                             * SYS_FS_FileWrite overwrites FatFs's partial `*bw`
+                             * with 0xFFFFFFFF on any error (sys_fs.c) even
+                             * though f_write accumulates it and keeps it across
+                             * ABORT (ff.c) -- so bytes MAY be on the card that
+                             * neither currentFileBytes nor fileCrcRunning below
+                             * can account for, since the `hdrWritten > 0` arm
+                             * does not run.
+                             *
+                             * Without this the manifest line for this file
+                             * carries NO marker, which asserts the CRC covers
+                             * the file exactly -- while the file may begin with
+                             * unknown bytes the CRC never saw. ",PARTIAL" says
+                             * precisely the true thing instead: the CRC is of
+                             * the first `bytes` bytes and the file may be
+                             * longer. This is the identical argument SdManifest.h
+                             * already makes for the DATA write path; the header
+                             * was the one write that never applied it, because
+                             * it is the only stream-file byte range that does
+                             * not pass through SDCardWrite().
+                             *
+                             * The clean short-write arm (0 <= hdrWritten <
+                             * hdrLen) deliberately does NOT set this: there the
+                             * reported count is trustworthy, the fold below
+                             * covers exactly those bytes, and the record is
+                             * genuinely exact. Marking it too would spend the
+                             * marker's meaning on a case that does not need it.
+                             *
+                             * Safe to set here: the success arm's
+                             * SdManifest_FreshFileAccounting() runs EARLIER in
+                             * this same block, so nothing clears it afterwards,
+                             * and it is reset per file rather than per session. */
+                            gSDCardData.fileRecordIsPrefix = true;
                         }
                         if (hdrWritten > 0) {
                             gSDCardData.currentFileBytes += (uint32_t)hdrWritten;
