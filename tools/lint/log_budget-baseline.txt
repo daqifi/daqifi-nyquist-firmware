@@ -117,4 +117,4 @@ firmware/src/services/wifi_services/wifi_manager.c :: unresolvable: %s with no /
 firmware/src/services/wifi_services/wifi_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Warning: Could not set device name
 firmware/src/services/wifi_services/wifi_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]WiFi error occurred (count: %d)\r\n
 firmware/src/services/wifi_services/wifi_tcp_server.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: SCPI Error %d: %s\r\n
-firmware/src/state/data/AInSample.c :: no conservative width for '%p' (conversion '%p') -- add it to WIDTHS in tools/lint/log_budget.py or annotate the site :: Sample pool external init: NULL or zero (%p, %p, %u, %u)
+firmware/src/state/data/AInSample.c :: no conservative width for '%p' (conversion '%p') -- add it to WIDTHS in tools/lint/log_budget.py (8 hex digits on this target for %p). An annotation cannot bound it: max=N applies only to %s :: Sample pool external init: NULL or zero (%p, %p, %u, %u)

@@ -102,7 +102,29 @@ raises ToolError (exit 2, "could not produce a verdict") rather than guessing:
     one arm) is a reported finding, never a skipped call.
   * THE BASELINE IS A SERIALISATION BOUNDARY: every non-printable byte is
     escaped on write and the loader splits on newline only, so no message can
-    split its own record.
+    split its own record. It is also written ATOMICALLY (temp file +
+    os.replace), because a write that fails after truncating destroys the very
+    artifact the gate depends on.
+  * EVERY INPUT THE CEILING DERIVES FROM is counted with that wide net, not
+    just LOG_MESSAGE_SIZE: the LogMessageFormatImpl definition, the vsnprintf
+    reservation and the min() clamp too. Any of them appearing more than once,
+    or inside a preprocessor conditional, is refused -- an INCLUDE GUARD does
+    not count as one, because Logger.h wraps all 619 lines in `#ifndef
+    LOGGER_H` and a literal depth test would refuse the real header.
+
+⛔ AND ONE DECLARED GAP, stated here rather than only in the run's output:
+
+    SCANNED_SUFFIXES = ("*.c",)
+
+**LOG_E IN A HEADER IS NOT MEASURED AT ALL.** A message defined in a `.h` --
+including one inside a macro that expands at every call site -- is invisible to
+this gate, and its absence from the baseline means nothing. That is a scope
+limit, not a clean bill: widening it needs a decision about macro expansion
+(the same text would be reported once per header, not once per call), which is
+why it has not simply been switched on. Anyone reading "0 findings" for a
+header-defined message is reading a gap, and the same shape caught us once
+already -- cppcheck.sh's regenerate-by-default behaviour was documented in the
+script header and nowhere a user looks.
 
 Only the gate run compares against the baseline, so only it can drift: --list
 just prints what it sees, and --write-baseline IS the remedy for drift. Neither
@@ -111,6 +133,8 @@ check; both exit 0 on success.
 """
 import argparse
 import collections
+import os
+import tempfile
 import re
 import sys
 from pathlib import Path
@@ -385,6 +409,78 @@ def reserve_after(impl, prefix_re, where, gone_msg):
     return sum(terms)
 
 
+def preproc_depth(text, offset):
+    r"""Preprocessor-conditional nesting depth at `offset`, NOT counting an
+    include guard.
+
+    ⛔ #1110 r11: "refuse if the input is inside #if" cannot be implemented
+    literally. MEASURED on the real Logger.h: the `#define LOG_MESSAGE_SIZE`
+    sits at depth 1, and the sole unclosed open is `#ifndef LOGGER_H` -- the
+    file's INCLUDE GUARD, which wraps all 619 lines. A literal depth test
+    refuses the actual firmware header, so the guard has to be excluded or the
+    whole rule is unusable.
+
+    An `#ifndef X` whose next directive is `#define X` is the include-guard
+    idiom (Logger.h: `#ifndef LOGGER_H` then `#define\tLOGGER_H`) and cannot
+    produce two alternative values, which is the hazard the rule is about. Any
+    other conditional CAN, so it counts.
+    """
+    depth = 0
+    stack = []
+    for mm in re.finditer(
+            r"^[ \t]*#[ \t]*(ifndef|ifdef|if|elif|else|endif)\b[ \t]*(\w+)?",
+            text, re.M):
+        if mm.start() >= offset:
+            break
+        kind = mm.group(1)
+        if kind in ("if", "ifdef", "ifndef"):
+            is_guard = False
+            if kind == "ifndef" and mm.group(2):
+                is_guard = re.match(
+                    r"\s*#[ \t]*define[ \t]+" + re.escape(mm.group(2)) + r"\b",
+                    text[mm.end():]) is not None
+            stack.append(is_guard)
+            if not is_guard:
+                depth += 1
+        elif kind == "endif":
+            if stack and not stack.pop():
+                depth = max(depth - 1, 0)
+    return depth
+
+
+def sole_site(text, wide_re, what, hint, depth_text=None, depth_base=0):
+    """The ONE occurrence of `wide_re`, or ToolError naming the problem.
+
+    ⛔ #1110 r11: EVERY input read_ceiling derives from goes through this, not
+    just the one r10 hardened. The rule r10 established -- a refusal must
+    detect with a WIDER net than the parser accepts with -- was applied to
+    LOG_MESSAGE_SIZE alone, so the other three inputs still took the FIRST
+    match silently. A second or #ifdef'd `min((LOG_MESSAGE_SIZE - N), size)`
+    gave 125 where the real ceiling was 115: the same defect, one level in.
+
+    `depth_text`/`depth_base` let a site found inside an extracted region be
+    depth-checked against the WHOLE file, where the directives actually live.
+    """
+    hits = list(re.finditer(wide_re, text, re.M))
+    if not hits:
+        raise ToolError(f"could not find {what} -- {hint}")
+    if len(hits) > 1:
+        raise ToolError(
+            f"{what} occurs {len(hits)} times, and this tool does not evaluate "
+            f"the preprocessor -- so there is no single right one to read. "
+            f"Refused rather than taking the first, which is what silently "
+            f"gated the tree against one arm of an #ifdef. Re-derive the "
+            f"ceiling by hand and update read_ceiling().")
+    dt = depth_text if depth_text is not None else text
+    off = depth_base + hits[0].start()
+    if preproc_depth(dt, off) > 0:
+        raise ToolError(
+            f"{what} is inside a preprocessor conditional (an include guard "
+            f"does not count). Its value may not be the one the firmware "
+            f"compiles with, so it is refused rather than assumed.")
+    return hits[0]
+
+
 def read_ceiling(logger_h_text, logger_c_text):
     """Derive the effective ceiling from Logger.h and Logger.c.
 
@@ -447,18 +543,13 @@ def read_ceiling(logger_h_text, logger_c_text):
     # The general rule, worth keeping: A REFUSAL MUST DETECT WITH A WIDER NET
     # THAN THE PARSER ACCEPTS WITH. Detect ANY definition (any value, any
     # `#  define` spacing), then accept only a bare decimal.
-    defs = re.findall(r"^[ \t]*#[ \t]*define[ \t]+LOG_MESSAGE_SIZE\b(.*)$",
-                      logger_h_text, re.M)
-    if not defs:
-        raise ToolError(
-            "could not find '#define LOG_MESSAGE_SIZE <n>' in Logger.h -- the "
-            "ceiling is read from source and must not be assumed")
-    if len(defs) > 1:
-        raise ToolError(
-            f"Logger.h defines LOG_MESSAGE_SIZE {len(defs)} times "
-            f"({', '.join(defs)}) -- a conditional or duplicated ceiling is "
-            f"refused, not resolved. Picking one would gate every message in "
-            f"the tree against a ceiling the firmware may not have.")
+    # INPUT 1 of 4: LOG_MESSAGE_SIZE.
+    msz = sole_site(
+        logger_h_text,
+        r"^[ \t]*#[ \t]*define[ \t]+LOG_MESSAGE_SIZE\b(.*)$",
+        "'#define LOG_MESSAGE_SIZE <n>' in Logger.h",
+        "the ceiling is read from source and must not be assumed")
+    defs = [msz.group(1)]
     raw_size = defs[0].strip()
     # BARE DECIMAL ONLY for this one number. It is the quantity every other
     # check is expressed in, and r8 taught that interpreting notation here
@@ -478,14 +569,34 @@ def read_ceiling(logger_h_text, logger_c_text):
             f"message in the tree is measured against.")
     size = int(raw_size)
 
+    # INPUT 2 of 4: the definition of LogMessageFormatImpl. Counted too -- two
+    # definitions (an #ifdef'd debug variant, say) would silently hand the
+    # reservations of whichever came first.
+    sole_site(
+        logger_c_text, r"LogMessageFormatImpl\s*\([^)]*\)\s*\{",
+        "the definition of LogMessageFormatImpl in Logger.c",
+        "the buffer reservations are read from its body and must not be assumed")
     body = re.search(
         r"LogMessageFormatImpl\s*\([^)]*\)\s*\{(.*?)\n\}", logger_c_text, re.S)
     if not body:
         raise ToolError(
-            "could not find the body of LogMessageFormatImpl in Logger.c -- "
-            "the buffer reservations are read from it and must not be assumed")
+            "found LogMessageFormatImpl's signature but not a body closed by a "
+            "brace in column 0 -- the reservations are read from that body")
     impl = body.group(1)
+    impl_base = body.start(1)
 
+    # INPUTS 3 and 4 of 4: the two reservations. The WIDE net is every
+    # `vsnprintf(` / `min(` in the body -- deliberately wider than
+    # reserve_after's own `...(?=\(*\s*LOG_MESSAGE_SIZE)` pattern, because a
+    # SECOND clamp that does not mention LOG_MESSAGE_SIZE still means there are
+    # two clamps and no single answer. Depth is checked against the whole file,
+    # where the directives live.
+    sole_site(impl, r"vsnprintf\s*\(", "a vsnprintf( call in LogMessageFormatImpl",
+              "the vsnprintf reservation is read from it",
+              depth_text=logger_c_text, depth_base=impl_base)
+    sole_site(impl, r"\bmin\s*\(", "a min( clamp in LogMessageFormatImpl",
+              "the clamp reservation is read from it",
+              depth_text=logger_c_text, depth_base=impl_base)
     vsn_reserve = reserve_after(impl, r"vsnprintf\s*\(\s*\w+\s*,\s*",
                                 "vsnprintf's size argument",
                                 "LogMessageFormatImpl no longer calls "
@@ -1218,9 +1329,19 @@ def measure(fmt, annotation):
                     f"only %s arguments, so it cannot speak for this one. "
                     f"RESTRUCTURE the message to drop the floating conversion, "
                     f"or accept the finding in the baseline")
+            # ⛔ #1110 r11 review LOW: "or annotate the site" is REMOVED here
+            # too. It was wrong for the same reason it was wrong for a float --
+            # /* log_budget: max=N */ feeds str_widths, which is consumed ONLY
+            # in the %s branch, so it cannot bound a %p any more than a %f.
+            # Leaving the clause on this branch after fixing the float one was
+            # the same unactionable advice, one branch over. For %p the width
+            # genuinely IS derivable, so WIDTHS is the real remedy and the only
+            # one offered.
             return None, (f"no conservative width for '{m.group(0)}' "
                           f"(conversion '%{conv}') -- add it to WIDTHS in "
-                          f"tools/lint/log_budget.py or annotate the site")
+                          f"tools/lint/log_budget.py (8 hex digits on this "
+                          f"target for %p). An annotation cannot bound it: "
+                          f"max=N applies only to %s")
         w = WIDTHS[key]
         if conv in INT_SIGN_BYTES and prec:
             # An explicit precision on an integer conversion is a MINIMUM digit
@@ -1245,6 +1366,37 @@ def measure(fmt, annotation):
         return None, (f"annotation declares {len(str_widths)} width(s) but the "
                       f"call has {str_seen} %s")
     return fixed + total, None
+
+
+def write_text_atomic(path, text):
+    """Write `text` to `path` so a failure cannot leave a damaged file.
+
+    ⛔ #1110 r11: `path.write_text(...)` opens with 'w' -- truncating -- and
+    THEN encodes. Any encode failure (a lone surrogate was the measured one)
+    leaves the file at ZERO BYTES: the baseline this gate depends on is
+    destroyed by the attempt to rewrite it, and the next run reports every
+    finding as new. Same shape as a fail-closed check placed after its own side
+    effect.
+
+    So: encode FIRST, write a temp file in the SAME directory (os.replace is
+    only atomic within a filesystem), then replace. A raise now happens before
+    anything irreversible, and the old file is still there.
+    """
+    data = text.encode("utf-8")          # fail here, before touching `path`
+    d = os.path.dirname(os.path.abspath(str(path))) or "."
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".log_budget.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, str(path))
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def split_lines_1model(text):
@@ -1286,6 +1438,18 @@ def escape_for_record(text):
             out.append("\\n")
         elif ch == "\t":
             out.append("\\t")
+        elif 0xDC80 <= ord(ch) <= 0xDCFF:
+            # ⛔ #1110 r11: a LONE SURROGATE from surrogateescape decoding --
+            # one undecodable BYTE of the source, e.g. the 0xC2 of a UTF-8
+            # "\xc2\xb5" that arrived split or in a non-UTF-8 file. It is NOT
+            # encodable back to UTF-8, so leaving it here made write_text()
+            # raise -- AFTER opening the baseline with 'w', which truncated a
+            # perfectly good file to zero bytes. Recover the byte it stands for
+            # (ord - 0xDC00) and escape that.
+            out.append("\\x%02x" % (ord(ch) - 0xDC00))
+        elif 0xD800 <= ord(ch) <= 0xDFFF:
+            # any other surrogate: not a byte, still not encodable
+            out.append("\\u%04x" % ord(ch))
         elif ord(ch) < 0x20 or ord(ch) == 0x7F:
             out.append("\\x%02x" % ord(ch))
         else:
@@ -2581,6 +2745,76 @@ def self_test():
                   f"OUT clamp set the ceiling every message is measured "
                   f"against")
 
+        # ⛔ #1110 r11: EVERY INPUT, not just LOG_MESSAGE_SIZE. r10 applied the
+        # wide-net rule to one of the four inputs read_ceiling derives from, so
+        # a SECOND clamp still took the first match and reported 125 where the
+        # real ceiling was 115.
+        two_clamp = ("static int LogMessageFormatImpl(const char* f, va_list a)\n"
+                     "{\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, f, a);"
+                     "\n    size = min((LOG_MESSAGE_SIZE - 3), size);\n"
+                     "    size = min((LOG_MESSAGE_SIZE - 13), size);\n}\n")
+        ceiling_checks += 1
+        try:
+            got, _, _, _ = read_ceiling(h, two_clamp)
+        except ToolError:
+            pass                                      # the expected outcome
+        else:
+            failures += 1
+            print(f"  FAIL [ceiling: two clamps]: derived {got} instead of "
+                  f"refusing -- reserve_after took the FIRST min() and the "
+                  f"tighter clamp was never seen")
+
+        # Two vsnprintf calls: same shape, the other reservation.
+        two_vsn = ("static int LogMessageFormatImpl(const char* f, va_list a)\n"
+                   "{\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, f, a);"
+                   "\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 9, f, a);"
+                   "\n    size = min((LOG_MESSAGE_SIZE - 3), size);\n}\n")
+        ceiling_checks += 1
+        try:
+            got, _, _, _ = read_ceiling(h, two_vsn)
+        except ToolError:
+            pass
+        else:
+            failures += 1
+            print(f"  FAIL [ceiling: two vsnprintf]: derived {got} instead of "
+                  f"refusing")
+
+        # An #ifdef'd clamp: ONE match, so a count alone cannot see it -- the
+        # depth check is what refuses. And the include-guard exclusion is
+        # pinned by the gate passing on the real Logger.h at all, whose define
+        # sits at depth 1 under #ifndef LOGGER_H.
+        cond_clamp = ("static int LogMessageFormatImpl(const char* f, va_list a)\n"
+                      "{\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, f, a);"
+                      "\n#ifdef DEBUG_BUILD\n"
+                      "    size = min((LOG_MESSAGE_SIZE - 13), size);\n"
+                      "#endif\n}\n")
+        ceiling_checks += 1
+        try:
+            got, _, _, _ = read_ceiling(h, cond_clamp)
+        except ToolError:
+            pass
+        else:
+            failures += 1
+            print(f"  FAIL [ceiling: #ifdef'd clamp]: derived {got} instead of "
+                  f"refusing -- one match, so only the DEPTH check can see it")
+
+        # And an include guard must NOT be mistaken for a conditional.
+        ceiling_checks += 1
+        guarded_h = ("#ifndef LOGGER_H\n#define\tLOGGER_H\n"
+                     "#define LOG_MESSAGE_SIZE 128\n#endif\n")
+        try:
+            got, _, _, _ = read_ceiling(guarded_h, c)
+        except ToolError as e:
+            failures += 1
+            print(f"  FAIL [ceiling: include guard refused]: {e} -- the real "
+                  f"Logger.h wraps all 619 lines in #ifndef LOGGER_H, so a "
+                  f"literal depth test makes the tool unusable")
+        else:
+            if got != 125:
+                failures += 1
+                print(f"  FAIL [ceiling: include guard]: derived {got}, "
+                      f"expected 125")
+
         # ⛔ #1110 r10: A REFUSAL MUST DETECT WITH A WIDER NET THAN THE PARSER
         # ACCEPTS WITH. The definition COUNTER used the parser's own narrow
         # regex, so a second #define in any form that regex could not read was
@@ -3012,8 +3246,8 @@ def main(argv=None):
             "#\n"
             "# Permanent waivers with a stated reason go in\n"
             "# tools/lint/log_budget-suppress.txt instead.\n")
-        args.baseline.write_text(header + "".join(ln + "\n" for ln in lines),
-                                 encoding="utf-8")
+        write_text_atomic(args.baseline,
+                          header + "".join(ln + "\n" for ln in lines))
         print(f"Wrote {len(lines)} finding(s) to {args.baseline}")
         return 0
 

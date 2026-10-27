@@ -270,7 +270,23 @@ static const Site kSites[] = {
  *
  * +64 covers the growth sweep, which prepends up to a ceiling's worth of
  * filler on top of a message, and the `wanted[WORK + 4]` siblings. */
-#define WORK (LOG_BUDGET * 2 + 64)
+/* ⛔ #1110 r11 review LOW: DERIVED FROM BOTH REQUIREMENTS, because r10's
+ * single derivation covered only one of them and landed TWO BYTES SHORT.
+ *
+ * Two different bodies fill a WORK-sized buffer and they scale differently:
+ *
+ *   the boundary sweep   LOG_BUDGET * 2 + a NUL          251 at LOG_BUDGET 125
+ *   the frozen pre-fix   sizeof(OLD_CLOCK) + its two     316
+ *   literals             %u substitutions (20)
+ *
+ * `LOG_BUDGET * 2 + 64` = 314, so OLD_CLOCK's 315-byte worst case overran it.
+ * Taking the MAX of the two, each expressed from what it actually needs, means
+ * neither can be left behind when the other moves -- and no magic number is
+ * carried. sizeof() is a constant expression, so this is valid in an array
+ * declarator and in _Static_assert (it is only #if that cannot see it). */
+#define WORK_BOUNDARY (LOG_BUDGET * 2 + 8)
+#define WORK_FROZEN   ((int)sizeof(OLD_CLOCK) + 20 + 8)
+#define WORK (WORK_BOUNDARY > WORK_FROZEN ? WORK_BOUNDARY : WORK_FROZEN)
 
 /* Fail at COMPILE time rather than corrupting the stack at run time. Both
  * arms are what the bodies below actually need: the boundary sweep's longest
@@ -279,6 +295,9 @@ _Static_assert(WORK > LOG_BUDGET * 2,
                "WORK must hold the boundary sweep's longest filler plus a NUL");
 _Static_assert(WORK >= LOG_BUDGET + 64,
                "WORK must hold the growth sweep's ceiling-worth of filler");
+_Static_assert(WORK >= (int)sizeof(OLD_CLOCK) + 20,
+               "WORK must hold the longest FROZEN pre-fix message plus its two "
+               "%u substitutions -- r10's derivation was 2 bytes short of this");
 
 /* --------------------------------------------------------------------------
  * Tests
