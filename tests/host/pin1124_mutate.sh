@@ -235,52 +235,83 @@ else
 fi
 restore
 
-echo "== R21 (#1124 r16): drop the stale-manifest discard from the wrapper. Every count =="
-echo "==        arm stays satisfied; only PIN A sees that refusal now leaves   =="
-echo "==        a previous session's record beside truncated data.             =="
-if sub "$F" '    sd_DiscardStaleManifests();
-}' '}'; then
-    expect "R21 wrapper discard arm" "no longer discards a stale manifest"
+echo "== R21 (#1124 r17): drop the manifest invalidation entirely. Nothing     =="
+echo "==        else notices: the counts are unchanged and the manifest still  =="
+echo "==        opens fine. Only PIN A sees that a reused data file is now      =="
+echo "==        truncated with the previous session's record left beside it.    =="
+if sub "$F" '                if (isSessionFirstOpen) {
+                    sd_InvalidateSessionManifest();
+                }' ''; then
+    expect "R21 invalidation present" "is not invalidated BEFORE the data file"
 else
     echo "  FAIL R21 anchor absent -- source drifted from this harness."; fail=$((fail+1))
 fi
 restore
 
-echo "== R22: turn ONE refusal's 'return false;' back into a bare 'return;'. =="
-echo "==        This is the shape an eleventh refusal arm would have, and it   =="
-echo "==        skips the discard entirely while the function still compiles.  =="
-if sub "$F" '                  gpSDCardSettings->directory, (unsigned)parentFiles);
-            return false;' '                  gpSDCardSettings->directory, (unsigned)parentFiles);
-            return;'; then
-    expect "R22 total-verdict arm" "verdict is not total"
+echo "== R22: MOVE the invalidation to AFTER the truncating open. The call is   =="
+echo "==      still there, still gated, still reached -- a presence check reads =="
+echo "==      this as healthy. It deletes the record of data this session just  =="
+echo "==      wrote, so only the ORDER arm of PIN A can see it.                 =="
+if sub "$F" '                if (isSessionFirstOpen) {
+                    sd_InvalidateSessionManifest();
+                }' '' \
+   && sub "$F" '                        (SYS_FS_FILE_OPEN_WRITE_PLUS));' \
+                '                        (SYS_FS_FILE_OPEN_WRITE_PLUS));
+                if (isSessionFirstOpen) { sd_InvalidateSessionManifest(); }'; then
+    expect "R22 invalidation ORDER" "is not invalidated BEFORE the data file"
 else
-    echo "  FAIL R22 anchor absent -- source drifted from this harness."; fail=$((fail+1))
+    echo "  FAIL R22 anchors absent -- source drifted from this harness."; fail=$((fail+1))
 fi
 restore
 
-echo "== R23: unlink WITHOUT the create path's own predicate. Count-safe:    =="
-echo "==        sd_ManifestPathSafeToOverwrite drops 4 -> 3 and its own '>= 3' =="
-echo "==        pin still passes, so only PIN C can see this.                  =="
-if sub "$F" 'if (!sd_ManifestPathSafeToOverwrite(path)) {' 'if (0) {'; then
+echo "== R23: unlink WITHOUT the create path's own predicate. Count-safe:       =="
+echo "==      sd_ManifestPathSafeToOverwrite drops 3 -> 2 and its own '>= 3'    =="
+echo "==      pin DOES fire too, so this arm asserts PIN C's message            =="
+echo "==      specifically rather than merely that something failed.            =="
+if sub "$F" '    if (!sd_ManifestPathSafeToOverwrite(path)) {
+        LOG_E("[SD] #924 manifest path holds a non-manifest file - left as is");' \
+           '    if (0) {
+        LOG_E("[SD] #924 manifest path holds a non-manifest file - left as is");'; then
     expect "R23 unlink-predicate arm" "no longer gates its unlink"
 else
     echo "  FAIL R23 anchor absent -- source drifted from this harness."; fail=$((fail+1))
 fi
 restore
 
-echo "== R24: sweep only the PRIMARY name, not the fallback. The fallback is =="
-echo "==        the one that survives in exactly the collision case it exists  =="
-echo "==        for, so this is the subtlest of the four.                      =="
-if sub "$F" '    const char *const bases[2] = { gSDCardData.baseFilename,
-                                   gpSDCardSettings->file };' \
-           '    const char *const bases[2] = { gSDCardData.baseFilename,
-                                   gSDCardData.baseFilename };'; then
-    expect "R24 both-names arm" "no longer sweeps BOTH candidate"
+echo "== R24: drop the isSessionFirstOpen CAPTURE, so the gate reads fileCounter =="
+echo "==      at the open -- where the unique-target probe has already bumped    =="
+echo "==      it. Invalidation would then be skipped exactly when a name is      =="
+echo "==      REUSED, which is the only case it exists for.                      =="
+if sub "$F" '                const bool isSessionFirstOpen = (gSDCardData.fileCounter == 0);' \
+            '                /* capture removed by the mutant */'; then
+    expect "R24 first-open capture" "no longer gated on isSessionFirstOpen"
 else
     echo "  FAIL R24 anchor absent -- source drifted from this harness."; fail=$((fail+1))
 fi
 restore
 
+echo "== R25: move the DIRECTORY refusal BELOW the zero-size shortcut. Both      =="
+echo "==      checks are still present and a presence grep passes; a directory   =="
+echo "==      stats with fsize == 0, so it takes the shortcut and the refusal    =="
+echo "==      below is dead. ORDER is the whole property, so only PIN E sees it. =="
+if sub "$F" '    if ((st.fattrib & SYS_FS_ATTR_DIR) != 0) {
+        LOG_E("[SD] #924 the manifest path is a DIRECTORY - refusing to touch it");
+        return false;
+    }
+    if (st.fsize == 0u) {
+        return true;    /* nothing there to be destroyed either way */
+    }' '    if (st.fsize == 0u) {
+        return true;    /* nothing there to be destroyed either way */
+    }
+    if ((st.fattrib & SYS_FS_ATTR_DIR) != 0) {
+        LOG_E("[SD] #924 the manifest path is a DIRECTORY - refusing to touch it");
+        return false;
+    }'; then
+    expect "R25 directory-check ORDER" "does not refuse a DIRECTORY"
+else
+    echo "  FAIL R25 anchor absent -- source drifted from this harness."; fail=$((fail+1))
+fi
+restore
 
 echo "== M3: NEGATIVE CONTROL. A raw \"%s/ join inside a COMMENT must NOT fire =="
 echo "==     -- a pin that trips on prose is as useless as one that is blind. =="

@@ -1366,9 +1366,27 @@ static scpi_result_t ADCChanCalmSetClaimed(scpi_t * context) {
      * Task context only, which every caller satisfies: the SCPI callbacks,
      * and LOADcal's boot-time twin in daqifi_settings_LoadADCCalSettings,
      * which runs inside the priority-1 APP_FREERTOS_Tasks task. */
+    /* ⚠ GENERATION BRACKET OUTSIDE, CRITICAL SECTION INSIDE -- the same
+     * nesting as the bank load in daqifi_settings.c, for the same two
+     * reasons. The generation spans the whole logical write so a reader
+     * cannot sample an even generation mid-write; the critical section is the
+     * innermost thing around the 64-bit store so the store cannot tear.
+     *
+     * #908 (codex-r8) on the bracket: it stops a concurrent
+     * CONF:CAP:JSON? identity scan splicing this write together with another
+     * setter's into a composite that never existed. One setter alone yields a
+     * genuine before-or-after; two do not.
+     *
+     * ⚠ Neither guard set can see this nesting on its own -- cal_order_904's
+     * extractor emits no token for BeginCalWrite, and #908's own check only
+     * asked that the bracket be PRESENT. The order guard added to
+     * tests/host/Makefile in this commit is what pins it.
+     */
+    daqifi_settings_BeginCalWrite();
     taskENTER_CRITICAL();
     pRunTimeAInChannels->Data[index].CalM = param2;
     taskEXIT_CRITICAL();
+    daqifi_settings_EndCalWrite();
     return SCPI_RES_OK;
 }
 
@@ -1425,9 +1443,13 @@ static scpi_result_t ADCChanCalbSetClaimed(scpi_t * context) {
     /* #904: same torn-WRITE hazard as ADCChanCalmSetClaimed above, same fix
      * -- see that function's comment for why the reader-side section and the
      * streaming claim both fail to cover this store. */
+    /* Same nesting as ADCChanCalmSetClaimed above -- generation outside,
+     * critical section inside. See that function for why. */
+    daqifi_settings_BeginCalWrite();
     taskENTER_CRITICAL();
     pRuntimeAInChannels->Data[index].CalB = param2;
     taskEXIT_CRITICAL();
+    daqifi_settings_EndCalWrite();
     return SCPI_RES_OK;
 }
 
@@ -1561,6 +1583,22 @@ scpi_result_t SCPI_ADCChanCalbGet(scpi_t * context) {
  * do. Boot's first-run factory save (app_freertos.c) calls
  * daqifi_settings_SaveADCCalSettings directly, never through these callbacks,
  * so it cannot meet the claim. */
+/* #908 (r13): set factory_present from the PAGE, not from whoever last wrote
+ * it. The ONLY writer of that flag outside boot, so both the save and the load
+ * path go through here and cannot disagree about how it is derived.
+ *
+ * daqifi_settings_ValidateADCCalBank does a CRC-validated LoadFromNvm into its
+ * own frame and installs no coefficients, so this answers "is the committed
+ * factory record valid right now?" without disturbing the live runtime array
+ * and without a scratch buffer on the caller's stack. */
+static void RefreshFactoryCalPresence(void) {
+    if (daqifi_settings_ValidateADCCalBank(DaqifiSettings_FactAInCalParams)) {
+        daqifi_settings_ClearFactoryCalMissing();
+    } else {
+        daqifi_settings_MarkFactoryCalMissing();
+    }
+}
+
 static scpi_result_t CalSaveCommon(scpi_t * context,
                                    DaqifiSettingsType type,
                                    const char * what) {
@@ -1572,8 +1610,39 @@ static scpi_result_t CalSaveCommon(scpi_t * context,
     }
     AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(
             BOARDRUNTIMECONFIG_AIN_CHANNELS);
-    scpi_result_t result = daqifi_settings_SaveADCCalSettings(
-            type, pRuntimeAInChannels) ? SCPI_RES_OK : SCPI_RES_ERR;
+    bool saved = daqifi_settings_SaveADCCalSettings(type, pRuntimeAInChannels);
+    /* #908 (r13): the flag is derived by ASKING THE MEDIUM, never from the
+     * save's return value.
+     *
+     * ⛔ WHY NOT `saved`. factory_present is a claim about what is ON THE
+     * PAGE, and the writer's return value is a claim about the WRITE. Those
+     * come apart: #1153's pre-existing race (LAN:SAVE takes no claim and
+     * shares gTempFflashBuffer) lets SaveADCCalSettings return true over a
+     * corrupt factory slot, or false over an intact one. Either way the flag
+     * is then wrong and STAYS wrong. The #1153 race itself is out of scope
+     * here; trusting the return value was this PR's own choice, and that is
+     * what changes.
+     *
+     * An earlier revision of this comment argued the opposite -- that marking
+     * missing on a failed save was "the fail-safe direction deliberately",
+     * rather than re-validating, because re-validating "costs a second
+     * AInRuntimeArray-sized scratch buffer on this task's stack". That
+     * objection is answered and the reasoning is deleted rather than amended
+     * around: daqifi_settings_ValidateADCCalBank (added by #1152) does a
+     * CRC-validated LoadFromNvm into ITS OWN frame and installs nothing, so
+     * the caller's runtime array is untouched and this task's stack pays
+     * nothing extra. And "fail-safe" was the wrong frame regardless: a flag
+     * that is wrong in the SAFE direction over an intact bank still reports a
+     * calibrated board as uncalibrated, permanently.
+     *
+     * Called on the LOAD path too -- see CalLoadCommon. A successful LOADFcal
+     * PROVES the page is valid, and before r13 nothing on the load path
+     * cleared the flag, so a stale "missing" survived the one operation that
+     * demonstrates the opposite. */
+    if (type == DaqifiSettings_FactAInCalParams) {
+        RefreshFactoryCalPresence();
+    }
+    scpi_result_t result = saved ? SCPI_RES_OK : SCPI_RES_ERR;
     Streaming_EndConfigChange();
     return result;
 }
@@ -1650,6 +1719,22 @@ static scpi_result_t CalLoadCommon(scpi_t * context,
             BOARDRUNTIMECONFIG_AIN_CHANNELS);
     scpi_result_t result = daqifi_settings_LoadADCCalSettings(
             type, pRuntimeAInChannels) ? SCPI_RES_OK : SCPI_RES_ERR;
+    /* #908 (r13): re-derive factory_present here too.
+     *
+     * Before r13 this path never touched the flag, so a stale "missing"
+     * survived a SUCCESSFUL LOADFcal -- the one operation that demonstrates
+     * the page is readable and valid. Combined with a save whose return value
+     * had lied, the board could report itself uncalibrated indefinitely while
+     * applying real factory coefficients to every reading.
+     *
+     * Derived the same way as on the save path rather than from `result`: the
+     * load's outcome is a claim about this call, and the flag is a claim about
+     * the page. Unconditional for the factory type, not gated on success,
+     * because a FAILED load is exactly when the page's state is most in
+     * question. */
+    if (type == DaqifiSettings_FactAInCalParams) {
+        RefreshFactoryCalPresence();
+    }
     Streaming_EndConfigChange();
     return result;
 }
