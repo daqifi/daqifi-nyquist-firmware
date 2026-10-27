@@ -60,6 +60,12 @@ jobs:
       # prerequisite on a CONTINUATION line, and a recipe-only reference that
       # must stay silent — and every arm decides the exit code.
       #
+      # Four further arms score the checker's own EXIT rather than make's
+      # warnings: a Makefile make cannot finish reading, $(value ...) in the
+      # file, $(value ...) one include away — each of which scored a clean
+      # exit 0 before #1174 r2 — and a CLEAN fixture that must stay 0, which
+      # is what stops a checker that refuses everything from passing them.
+      #
       # ⚠ One mutation is undetectable from inside: deleting the line that
       # turns a failed arm into a non-zero exit cannot be caught by that exit.
       # Fixture integrity is covered; the reporting mechanism itself is not,
@@ -67,13 +73,19 @@ jobs:
       - name: Self-test the checker
         run: python3 tools/lint/make_prereq_audit.py --self-test
 
-      # Exit 0 = make read every rule with no undefined-variable warning.
+      # Three outcomes, not two — "could not measure" is its own answer:
+      #
+      # Exit 0 = make read every rule to the end with no undefined-variable
+      #          warning, and every reference was of a kind make reports on.
       # Exit 1 = warnings, annotated with ::error file=,line=:: so each one
       #          points at the rule whose prerequisite list was empty.
-      # Exit 2 = the tool could not run (no such Makefile, or make could not
-      #          read it). Never silently
-      #          green: a checker pointed at a file with no guard rules reports
-      #          0 findings and looks like a pass, so a missing path is an
-      #          error rather than an empty success.
+      # Exit 2 = NO VERDICT. Either the tool could not run (no such Makefile),
+      #          or make exited non-zero and so stopped before the end of the
+      #          file, or the file reaches for a variable through $(value ...)
+      #          / an unfollowable include, which --warn-undefined-variables
+      #          cannot see. Never silently green: a checker pointed at a file
+      #          with no guard rules reports 0 findings and looks like a pass,
+      #          and before #1174 r2 a Makefile make could not even READ scored
+      #          the same clean 0.
       - name: Audit guard prerequisites
         run: python3 tools/lint/make_prereq_audit.py

@@ -47,6 +47,34 @@ so a zero from the audit is unfalsifiable unless the instrument has just been
 shown to fire. The fixture carries the three evasions above and every arm
 decides the exit code.
 
+**Delegating to make removes the parser's blind spots and adds two of its own,
+so the gate has three outcomes — clean, findings, and NO VERDICT:**
+
+- **make stopping early.** A warning list only speaks for the whole file if
+  make finished reading it. Measured on a fixture whose line 2 was a
+  `missing separator`: make died there, never reached the genuinely undefined
+  prerequisite on line 3, and the checker printed `warnings : 0 / (none)` and
+  exited **0** — a clean bill on a file make could not read. Only one non-zero
+  exit used to be handled (the one whose stderr happened to say *No rule to
+  make target*), so every other way of failing read as cleanliness. Any
+  non-zero exit is now a refusal; this Makefile exits 0 with no stderr, so
+  nothing is carved out for it.
+- **`$(value X)`.** `value` yields a variable's unexpanded text *without
+  referencing it*, so `--warn-undefined-variables` says nothing whether or not
+  it is defined yet. Measured: `ok: base.c $(value LATE)` warns **0** times
+  where the same rule spelled `${LATE}` warns once — and the prerequisite list
+  is just as empty. A file using it therefore gets no verdict, and the scan
+  follows `include`s because the evasion works just as well one file away. It
+  refuses any include it cannot follow by text alone (one naming a variable,
+  or an unreadable file) rather than skipping it silently. This Makefile
+  contains none of either.
+
+Both are the same shape as the parser's defeats: something that looks like a
+measurement but is the absence of one. The self-test's three refusal arms each
+exited **0** on the checker's previous head, and a fourth arm holds a clean
+fixture at 0 — without it, a checker that refused *everything* would satisfy
+the other three.
+
 ⚠ It does **not** check whether a rule declares `$(RECIPES)` (this Makefile
 itself). That is the separate "is this guard ever *re-evaluated*?" question,
 and `run_947_tests` is currently the only one of the `run_*` rules omitting it
