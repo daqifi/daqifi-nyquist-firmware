@@ -266,9 +266,10 @@ static inline void sd_ForeignBitSet(uint32_t idx) {
 
 static inline bool sd_ForeignBitTest(uint32_t idx) {
     if (idx >= SD_FOREIGN_PART_LIMIT) {
-        /* Cannot be one of ours, so nothing recorded it as ours. The scan
-         * FAULTs on such an index rather than silently dropping it, so this
-         * arm is only reached by a counter we could not have written. */
+        /* No bit exists for it, and none should: this session cannot produce
+         * an index past its own part limit. The index pass skips such a record
+         * for the same reason (r22 audit :2871) rather than faulting on it --
+         * a FOREIGN file may legitimately carry one. */
         return false;
     }
     return (gForeignPartBits[idx >> 5u] & ((uint32_t)1u << (idx & 31u))) != 0u;
@@ -2867,19 +2868,28 @@ static sd_InspectResult sd_ManifestRecordsName(const char *manifestPath,
                     out = SD_INSPECT_FAULT;
                     break;
                 }
-                if (idx != SDMANIFEST_PART_NONE) {
-                    if (idx >= SD_FOREIGN_PART_LIMIT) {
-                        /* Unreachable by construction: this session cannot
-                         * produce an index past its own part limit, so a
-                         * recorded one past it cannot be ours. Asserted rather
-                         * than assumed -- if the limit and the formatter ever
-                         * disagree, a silently dropped index is a missed
-                         * collision. */
-                        LOG_E("[SD1124] unparsable index %u over limit",
-                              (unsigned)idx);
-                        out = SD_INSPECT_FAULT;
-                        break;
-                    }
+                /* ⛔⛔ #1124 r22 AUDIT MEDIUM (:2871): AN INDEX PAST OUR LIMIT
+                 * IS SKIPPED, NOT A FAULT.
+                 *
+                 * r21 asserted-and-FAULTed here, on the reasoning that this
+                 * session cannot produce an index past its own part limit so a
+                 * recorded one "cannot occur". The premise is right and the
+                 * conclusion was backwards: the record is not OURS, it is
+                 * SOMEONE ELSE'S, and a foreign session is perfectly entitled
+                 * to a file called exp-5000.csv. FAULT is a refusal, so one
+                 * such record disarmed every capture in that directory.
+                 *
+                 * The sound reading of "cannot be one of ours" is: do not set
+                 * a bit for it. There is nothing to check, because this
+                 * session will never open that name.
+                 *
+                 * ⭐ Same shape as the manifest-count cap the previous round
+                 * removed, and worth naming: "this cannot happen, so assert"
+                 * is only safe when the thing that cannot happen is OURS to
+                 * produce. For anything a FOREIGN file can legitimately be,
+                 * the fail-closed branch becomes a denial of service. */
+                if ((idx != SDMANIFEST_PART_NONE)
+                        && (idx < SD_FOREIGN_PART_LIMIT)) {
                     sd_ForeignBitSet(idx);
                 }
             }
@@ -2909,18 +2919,27 @@ static sd_InspectResult sd_ManifestRecordsName(const char *manifestPath,
  *
  * FAULT always means refuse, in both modes.
  */
-static sd_InspectResult sd_ScanForeignManifests(const char *needle) {
+/* One directory's worth of the scan.
+ *
+ * `isOwnDir` selects whether this session's OWN manifest leaf is excluded.
+ * ⛔ It must be excluded ONLY in the configured directory. In the PARENT a
+ * manifest of the same leaf name belongs to a DIFFERENT session -- one
+ * configured at the parent -- and is exactly the record r22 finding :2930 is
+ * about, so excluding by leaf name there would skip the very manifest the
+ * parent is being scanned for. */
+static sd_InspectResult sd_ScanOneDirectory(const char *dir, bool isOwnDir,
+                                            const char *needle) {
     char ownLeaf[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX
                  + sizeof(SD_MANIFEST_EXT) + 1u];
     char path[SD_SESSION_MANIFEST_PATH_MAX];
-    const char *dir = gpSDCardSettings->directory;
     const size_t dirLen = SdManifest_CanonicalDirLen(dir);
     uint32_t manifests = 0u;
     uint32_t scanned = 0u;
     sd_InspectResult out = SD_INSPECT_CLEAR;
     SYS_FS_FSTAT st;
 
-    if (!sd_SessionManifestLeaf(ownLeaf, sizeof(ownLeaf))) {
+    ownLeaf[0] = '\0';
+    if (isOwnDir && !sd_SessionManifestLeaf(ownLeaf, sizeof(ownLeaf))) {
         /* Cannot name our own manifest, so nothing read below could be
          * distinguished from it. Refuse rather than risk treating our own
          * live records as a foreign session's, or vice versa. */
@@ -2965,7 +2984,8 @@ static sd_InspectResult sd_ScanForeignManifests(const char *needle) {
         if (!SdManifest_NameHasManifestExt(st.fname)) {
             continue;
         }
-        if (SdManifest_PathsEqualCaseInsensitive(st.fname, ownLeaf)) {
+        if (isOwnDir
+                && SdManifest_PathsEqualCaseInsensitive(st.fname, ownLeaf)) {
             continue;                   /* our own: its records are ours */
         }
         manifests++;        /* counted for the log only -- never a refusal */
@@ -2985,6 +3005,71 @@ static sd_InspectResult sd_ScanForeignManifests(const char *needle) {
     }
 
     (void)SYS_FS_DirClose(dh);
+    return out;
+}
+
+/* ⛔⛔ #1124 r22 AUDIT MEDIUM (:2930): WHEN THE CONFIGURED DIRECTORY IS ITSELF
+ * A BUCKET, THE PARENT IS SCANNED TOO -- FOR EVERY SESSION, NOT JUST AN OPT-IN.
+ *
+ * r21 narrowed the OPT-IN away from this layout (SD:FILE ",1" is refused while
+ * SD:DIR names a bucket), which closed the truncation case. It did not close
+ * the DEFAULT case, and the default case does not need the opt-in:
+ *
+ *   SD:DIR D/P001, ordinary logging. A part that a session configured at D
+ *   wrote into D/P001 has been DELETED; its owner manifest is `D/<name>.mfst`,
+ *   in the PARENT. Our session recreates that name -- it is absent, so nothing
+ *   refuses -- and the parent's manifest now describes our bytes.
+ *
+ * Same creation-not-truncation mechanism as the scope correction two rounds
+ * ago, one directory level up. Bounded: ONE extra directory, once per session,
+ * and only for a configured directory that wears a bucket's name. Ordinary
+ * logging in an ordinary directory reads exactly one directory, as before.
+ *
+ * Only ONE level up, deliberately: #689 creates buckets as immediate children
+ * of the configured directory and never nests them, so a bucket's parent is
+ * where its owning session was configured. Walking further would be modelling
+ * a layout this firmware does not produce. */
+static sd_InspectResult sd_ScanForeignManifests(const char *needle) {
+    const char *dir = gpSDCardSettings->directory;
+    const size_t dirLen = SdManifest_CanonicalDirLen(dir);
+    sd_InspectResult out = sd_ScanOneDirectory(dir, true, needle);
+
+    if (out != SD_INSPECT_CLEAR) {
+        return out;
+    }
+    /* Is the LAST component a bucket name? Then its parent holds the manifest
+     * of whoever wrote into it. */
+    {
+        size_t cut = dirLen;
+        while (cut > 0u && dir[cut - 1u] != '/') {
+            cut--;
+        }
+        if (cut > 1u) {                 /* there IS a parent to speak of */
+            const char *leaf = dir + cut;
+            const size_t leafLen = dirLen - cut;
+            bool looksLikeBucket = (leafLen >= 2u)
+                    && (SdManifest_FoldChar(leaf[0])
+                        == SdManifest_FoldChar(SD_CARD_MANAGER_BUCKET_PREFIX[0]));
+            size_t i;
+            for (i = 1u; looksLikeBucket && (i < leafLen); i++) {
+                if ((leaf[i] < '0') || (leaf[i] > '9')) {
+                    looksLikeBucket = false;
+                }
+            }
+            if (looksLikeBucket) {
+                char parent[SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX + 1u];
+                const size_t parentLen = cut - 1u;   /* drop the separator */
+                if (parentLen < sizeof(parent)) {
+                    memcpy(parent, dir, parentLen);
+                    parent[parentLen] = '\0';
+                    /* isOwnDir false: a same-leaf manifest up here belongs to
+                     * a session configured at the parent, which is precisely
+                     * what we came to find. */
+                    out = sd_ScanOneDirectory(parent, false, needle);
+                }
+            }
+        }
+    }
     return out;
 }
 

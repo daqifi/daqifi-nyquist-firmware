@@ -99,6 +99,11 @@ typedef struct {
     unsigned foreignManifests;
     bool     mfstNameIsADataFile;
     bool     realManifestIsDamaged;
+    /* r22 audit: a FOREIGN record whose part index is past this session's own
+     * limit (exp-5000.csv), and the bucket-parent layout. */
+    bool     foreignOverLimitRecord;
+    bool     dirIsBucket;
+    bool     parentRecordsTarget;
     /* observations */
     bool    opened;          /* the WRITE_PLUS open happened (truncating) */
     bool    manifestRemoved; /* something was unlinked */
@@ -143,34 +148,54 @@ typedef struct {
     /* r21 audit MEDIUM (:2909): a .mfst is identified by CONTENT, so a data
      * file wearing that name is skipped rather than parsed-and-FAULTed. */
     bool identifyByContent;
+    /* r22 audit MEDIUM (:2871): an index past our part limit is SKIPPED. False
+     * reproduces r21, which FAULTed -- and FAULT is a refusal, so one foreign
+     * exp-5000.csv disarmed every capture in the directory. */
+    bool overLimitIsSkipped;
+    /* r22 audit MEDIUM (:2930): when the configured directory is itself a
+     * bucket, the PARENT is scanned too -- for every session, not just an
+     * opt-in, because creation alone invalidates a parent's record. */
+    bool scansParentOfBucket;
 } Shape;
 
 static const Shape SHAPE_R18 = { true,  false, false, false, false, false,
-                                 false, false, false, false, false };
+                                 false, false, false, false, false,
+                                 false, false };
 /* r19 as shipped: refuse-by-default and the disarm, but the gate still derived
  * the manifest name independently, honoured an opt-in on a recorded set's
  * part, let an inspector fault read as permissive, and never consumed. */
 static const Shape SHAPE_R19 = { false, true,  false, false, false, false,
-                                 false, false, false, false, false };
+                                 false, false, false, false, false,
+                                 false, false };
 /* r20 as shipped: everything r19 lacked, and none of r21's three. This is the
  * baseline every r21 test is differential against -- without it, "the fix
  * works" would be a claim about a shape nobody ever ran. */
 static const Shape SHAPE_R20 = { false, true,  true,  true,  true,  true,
-                                 false, false, false, false, false };
+                                 false, false, false, false, false,
+                                 false, false };
 /* What the r21 audit BLOCKED: every r21 property, and neither audit fix. This
  * is the baseline the two arms below are differential against. */
 static const Shape SHAPE_R21_AUDITED = { false, true, true, true, true, true,
-                                         true, true, true, false, false };
+                                         true, true, true, false, false,
+                                         false, false };
+/* What the r22 audit BLOCKED: every r21 fix plus both r21-audit fixes, and
+ * neither r22-audit fix. The baseline the arms below are differential against. */
+static const Shape SHAPE_R22_AUDITED = { false, true, true, true, true, true,
+                                         true, true, true, true, true,
+                                         false, false };
 static const Shape SHAPE_C   = { false, true,  true,  true,  true,  true,
-                                 true,  true,  true,  true,  true  };
+                                 true,  true,  true,  true,  true,
+                                 true,  true  };
 /* r21 with the scan's fail-closed arm removed: the one-line mistake that makes
  * an unparseable manifest read as empty. Everything else intact. */
 static const Shape SHAPE_C_SCAN_SKIPS = { false, true, true, true, true, true,
-                                          true, true, false, true, true };
+                                          true, true, false, true, true,
+                                          true, true };
 /* C's gate without the disarm: what this PR shipped before conv-ts asked
  * whether a refused session leaves the card usable. */
 static const Shape SHAPE_C_NO_DISARM = { false, false, true, true, true, true,
-                                         true, true, true, true, true };
+                                         true, true, true, true, true,
+                                         true, true };
 
 static World world(FsState data, FsState mfst, bool ours, bool asked) {
     World w;
@@ -276,6 +301,25 @@ static void model_open_target(World *w, Shape s) {
     if (s.refuseForeignRecord && w->realManifestIsDamaged && s.scanFaultRefuses) {
         w->refusal = REFUSE_MANIFEST_UNPARSABLE;
         return;
+    }
+    /* r22 audit MEDIUM (:2871): a foreign record whose index is past our own
+     * part limit. It cannot be one of our names, so there is nothing to check
+     * -- skip it. r21 FAULTed, i.e. refused. */
+    if (s.refuseForeignRecord && w->foreignOverLimitRecord
+            && !s.overLimitIsSkipped) {
+        w->refusal = REFUSE_MANIFEST_UNPARSABLE;
+        return;
+    }
+    /* r22 audit MEDIUM (:2930): the configured directory IS a bucket and the
+     * record lives in the parent's manifest. Needs no opt-in: the part was
+     * deleted, so creating it refuses nothing and the parent's record starts
+     * describing our bytes. */
+    if (s.refuseForeignRecord && w->dirIsBucket && w->parentRecordsTarget) {
+        if (s.scansParentOfBucket) {
+            w->refusal = REFUSE_FOREIGN_RECORD;
+            return;
+        }
+        /* r22's behaviour: the parent was never read. */
     }
     if (s.refuseForeignRecord) {
         if (w->foreign == FOREIGN_RECORDS_TARGET) {
@@ -937,6 +981,77 @@ TEST(a_damaged_real_manifest_still_refuses) {
     ASSERT_FALSE(model_is_busy(&w));
 }
 
+/* ---- r22 audit MEDIUM (:2871): a big foreign index is not a fault ------- */
+
+TEST(the_audited_r22_faulted_on_a_foreign_record_with_a_large_index) {
+    World w = world(FS_ABSENT, FS_ABSENT, false, false);
+    w.foreignOverLimitRecord = true;
+    model_arm_session(&w, SHAPE_R22_AUDITED);
+    model_open_target(&w, SHAPE_R22_AUDITED);
+    ASSERT_FALSE(w.opened);
+    ASSERT_EQ(w.refusal, REFUSE_MANIFEST_UNPARSABLE);
+}
+
+/* ⭐ The arm the audit asked for by name: an exp-5000.csv record in the
+ * directory, and a fresh exp.csv session still ARMS. */
+TEST(a_foreign_record_with_an_index_past_our_limit_still_arms) {
+    World w = world(FS_ABSENT, FS_ABSENT, false, false);
+    w.foreignOverLimitRecord = true;
+    model_arm_session(&w, SHAPE_C);
+    model_open_target(&w, SHAPE_C);
+    model_finish_refusal(&w, SHAPE_C);
+    ASSERT_TRUE(w.opened);
+    ASSERT_EQ(w.refusal, REFUSE_NONE);
+    ASSERT_TRUE(model_is_busy(&w));
+}
+
+/* ---- r22 audit MEDIUM (:2930): the parent of a bucket directory --------- */
+
+/* ⛔ The default path, with NO opt-in. r21 narrowed the opt-in away from this
+ * layout, which closed truncation and left creation open. */
+TEST(the_audited_r22_recreated_a_part_recorded_by_the_parents_manifest) {
+    World w = world(FS_ABSENT, FS_ABSENT, false, false);
+    w.dirIsBucket = true;
+    w.parentRecordsTarget = true;
+    model_arm_session(&w, SHAPE_R22_AUDITED);
+    model_open_target(&w, SHAPE_R22_AUDITED);
+    ASSERT_TRUE(w.opened);            /* the parent was never read */
+    ASSERT_EQ(w.refusal, REFUSE_NONE);
+}
+
+TEST(a_bucket_directory_scans_its_parent_even_without_the_opt_in) {
+    World w = world(FS_ABSENT, FS_ABSENT, false, false);
+    w.dirIsBucket = true;
+    w.parentRecordsTarget = true;
+    model_arm_session(&w, SHAPE_C);
+    model_open_target(&w, SHAPE_C);
+    model_finish_refusal(&w, SHAPE_C);
+    ASSERT_FALSE(w.opened);
+    ASSERT_EQ(w.refusal, REFUSE_FOREIGN_RECORD);
+    ASSERT_FALSE(model_is_busy(&w));
+}
+
+/* ⭐ THE CONTROL: an ordinary directory must not pay for this, and a bucket
+ * directory whose parent records nothing of ours must still log. Without these
+ * the two arms above are satisfied by "refuse whenever the directory looks
+ * like a bucket", which would break ordinary logging into a bucket. */
+TEST(a_bucket_directory_whose_parent_records_nothing_still_logs) {
+    World a = world(FS_ABSENT, FS_ABSENT, false, false);
+    a.dirIsBucket = true;             /* parentRecordsTarget stays false */
+    model_arm_session(&a, SHAPE_C);
+    model_open_target(&a, SHAPE_C);
+    ASSERT_TRUE(a.opened);
+    ASSERT_EQ(a.refusal, REFUSE_NONE);
+
+    World b = world(FS_ABSENT, FS_ABSENT, false, false);
+    b.parentRecordsTarget = true;     /* but the directory is NOT a bucket, so
+                                       * there is no parent to consult */
+    model_arm_session(&b, SHAPE_C);
+    model_open_target(&b, SHAPE_C);
+    ASSERT_TRUE(b.opened);
+    ASSERT_EQ(b.refusal, REFUSE_NONE);
+}
+
 int main(void) {
     RUN(r18_truncates_an_existing_target_without_being_asked);
     RUN(c_refuses_an_existing_target);
@@ -984,5 +1099,10 @@ int main(void) {
     RUN(the_audited_r21_faulted_on_a_data_file_named_mfst);
     RUN(a_non_manifest_file_named_mfst_is_skipped_not_faulted);
     RUN(a_damaged_real_manifest_still_refuses);
+    RUN(the_audited_r22_faulted_on_a_foreign_record_with_a_large_index);
+    RUN(a_foreign_record_with_an_index_past_our_limit_still_arms);
+    RUN(the_audited_r22_recreated_a_part_recorded_by_the_parents_manifest);
+    RUN(a_bucket_directory_scans_its_parent_even_without_the_opt_in);
+    RUN(a_bucket_directory_whose_parent_records_nothing_still_logs);
     return TEST_SUMMARY();
 }

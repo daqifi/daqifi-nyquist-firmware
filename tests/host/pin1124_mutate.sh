@@ -988,6 +988,83 @@ else
 fi
 restore
 
+echo "== R56 (PIN 25): FAULT on an index past our part limit -- the r22 audit  =="
+echo "==      MEDIUM. A foreign record named exp-5000.csv then disarms every   =="
+echo "==      capture in that directory. The scan still works, the bits are    =="
+echo "==      still exact for in-range indices, every other arm passes.        =="
+if sub "$F" '                if ((idx != SDMANIFEST_PART_NONE)
+                        && (idx < SD_FOREIGN_PART_LIMIT)) {
+                    sd_ForeignBitSet(idx);
+                }' \
+            '                if (idx != SDMANIFEST_PART_NONE) {
+                    if (idx >= SD_FOREIGN_PART_LIMIT) {
+                        out = SD_INSPECT_FAULT;
+                        break;
+                    }
+                    sd_ForeignBitSet(idx);
+                }'; then
+    expect "R56 an over-limit index is skipped" "is no"
+else
+    echo "  FAIL R56 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R57 (PIN 26): drop the PARENT walk, so a DEFAULT session logging into =="
+echo "==      a bucket can recreate a part the parent's manifest still         =="
+echo "==      records. No opt-in involved, so every opt-in test passes.        =="
+if sub "$F" '                    out = sd_ScanOneDirectory(parent, false, needle);' \
+            '                    (void)parent;'; then
+    expect "R57 a bucket dir scans its parent" "PIN 26a: the PARENT walk is gone"
+else
+    echo "  FAIL R57 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R58 (PIN 26, the isOwnDir arm): scan the parent but EXCLUDE our own   =="
+echo "==      manifest leaf there. The walk is present and looks right; it     =="
+echo "==      simply skips the one manifest it went to find -- a session       =="
+echo "==      configured at the PARENT with the same name.                     =="
+if sub "$F" '                    out = sd_ScanOneDirectory(parent, false, needle);' \
+            '                    out = sd_ScanOneDirectory(parent, true, needle);'; then
+    expect "R58 the parent walk does not exclude our leaf" \
+           "PIN 26b: the parent walk no longer passes"
+else
+    echo "  FAIL R58 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R59 (PIN 23c): accept an EMPTY operand with \",1\". The grant then goes  =="
+echo "==      to whatever name was already staged -- including one the '/' or  =="
+echo "==      '~' rules had just refused on its own command.                   =="
+if sub "$S" '        if (fileLen == 0) {' \
+            '        if (false) {'; then
+    expect "R59 the opt-in requires a name" "accepts an EMPTY operand"
+else
+    echo "  FAIL R59 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R60 (PIN 23d): accept a TILDE, so an 8.3 alias can be granted         =="
+echo "==      overwrite on a file whose long name compares unequal to it.      =="
+if sub "$S" "        if (memchr(pBuff, '~', fileLen) != NULL) {" \
+            "        if (false) {"; then
+    expect "R60 the opt-in refuses a tilde" "accepts a TILDE"
+else
+    echo "  FAIL R60 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R61 (PIN 23e): accept a non-canonical DIR form, where the text and    =="
+echo "==      the resolved path can diverge and the record comparison is       =="
+echo "==      textual.                                                         =="
+if sub "$S" '        if (SD_DirHasNonCanonicalForm(pSDCardRuntimeConfig->directory)) {' \
+            '        if (false) {'; then
+    expect "R61 the opt-in refuses a non-canonical dir" "accepts a NON-CANONICAL"
+else
+    echo "  FAIL R61 anchor absent."; fail=$((fail+1))
+fi
+restore
+
 echo "== restored =="
 expect "post-restore baseline" CLEAN
 

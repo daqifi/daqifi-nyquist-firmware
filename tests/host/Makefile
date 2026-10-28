@@ -143,7 +143,23 @@ SD_MANAGER_SRC := ../../firmware/src/services/sd_card_services/sd_card_manager.c
 # re-derive. A hand-copied expectation in a message is a second source of truth;
 # there is now one, substituted into both.
 SD1124_CANON := 9
-SD1124_ACC   := 9
+# ⛔⛔ r22: THE TWO COUNTERS NOW LEGITIMATELY DIVERGE, and that needs saying
+# out loud because this ledger's whole premise was that they move TOGETHER --
+# "a new site moving only ONE of them is the defect this pin exists to catch".
+#
+# r22's audit fix (:2930) scans the PARENT when the configured directory is
+# itself a rotation bucket, and to find the parent sd_ScanForeignManifests
+# needs the directory's CANONICAL LENGTH for arithmetic -- it walks back to the
+# last separator -- and then formats nothing. So it is the first site to use
+# the accessor WITHOUT a join: accessor +1, joins +0.
+#
+# The invariant is unharmed, because the invariant was never "the counts are
+# equal". It is "every JOIN goes through the accessor", and 9 joins with 10
+# accessor calls still satisfies it; the extra call is a consumer of the
+# canonical length, not a producer of a path. Equality was a useful proxy while
+# every caller was a join, and this is where the proxy stops holding. If a
+# future edit makes joins EXCEED the accessor count, that is still the defect.
+SD1124_ACC   := 10
 
 # #981 (post-audit): compiles and RUNS the ENTIRE real SDCardWrite() --
 # signature through closing brace, extracted verbatim from $(SD_MANAGER_SRC)
@@ -1561,13 +1577,43 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	@# and the code cannot part company again.
 	@pp=`$(CC) -fpreprocessed -E $(SD_BENCH_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
 	 case "$$pp" in \
-	   *"if ((fileLen > 0) && (memchr(pBuff, '/', fileLen) != NULL)) {"*) ;; \
+	   *"if (memchr(pBuff, '/', fileLen) != NULL) {"*) ;; \
 	   *) echo "ERROR: #1124 r21 PIN 23a: the opt-in accepts a SEPARATOR in the name."; \
 	      echo "       SD:FILE no longer refuses the overwrite opt-in for a"; \
 	      echo "       name containing '/'. The manifest for"; \
 	      echo "       sub/exp.csv lives in <dir>/sub, which the foreign-record"; \
 	      echo "       scan does not read, so the one check protecting it is"; \
 	      echo "       blind (audit :2905)."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"if (fileLen == 0) {"*) ;; \
+	   *) echo "ERROR: #1124 r22 PIN 23c: the opt-in accepts an EMPTY operand."; \
+	      echo "       \`SD:FILE \"\",1\` then hands the grant to whatever name"; \
+	      echo "       was already staged -- including one the '/' or '~' rules"; \
+	      echo "       had just refused on its own command (audit :1129). A"; \
+	      echo "       grant that names nothing cannot be checked against"; \
+	      echo "       anything, and an unexaminable grant is not permission."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"if (memchr(pBuff, '~', fileLen) != NULL) {"*) ;; \
+	   *) echo "ERROR: #1124 r22 PIN 23d: the opt-in accepts a TILDE in the name."; \
+	      echo "       A FatFs 8.3 alias (LONGFI~1.CSV) names the same file as"; \
+	      echo "       a long name while comparing unequal to it, which is the"; \
+	      echo "       one divergence the textual record comparison cannot see"; \
+	      echo "       (audit :2862). This rule was DESCRIBED in an earlier"; \
+	      echo "       round and never written -- hence the pin."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"if (SD_DirHasNonCanonicalForm(pSDCardRuntimeConfig->directory)) {"*) ;; \
+	   *) echo "ERROR: #1124 r22 PIN 23e: the opt-in accepts a NON-CANONICAL"; \
+	      echo "       directory form. '//', a '.' or '..' component, or a"; \
+	      echo "       trailing '/' are spellings where the TEXT and the PATH"; \
+	      echo "       diverge, and the record comparison is textual"; \
+	      echo "       (audit :2862). Refuse the form; do not model the"; \
+	      echo "       equivalence."; \
 	      exit 1;; \
 	 esac; \
 	 case "$$pp" in \
@@ -1611,6 +1657,73 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	        exit 1;; \
 	   esac; \
 	 done
+	@# ⛔⛔ PIN 25 -- r22 AUDIT MEDIUM (:2871): AN INDEX PAST OUR PART LIMIT IS
+	@# SKIPPED, NOT FAULTED.
+	@#
+	@# r21 asserted-and-FAULTed, reasoning that this session cannot produce such
+	@# an index so a recorded one "cannot occur". The premise was right and the
+	@# conclusion backwards: the record is not OURS, and a foreign session is
+	@# entitled to a file called exp-5000.csv. FAULT is a refusal, so one such
+	@# record disarmed every capture in the directory.
+	@#
+	@# ⭐ THE GENERAL RULE, and the reason this is pinned rather than just
+	@# fixed: "this cannot happen, so assert" is only safe when the impossible
+	@# thing is OURS TO PRODUCE. For anything a FOREIGN file may legitimately be,
+	@# the fail-closed branch is a denial of service. Second instance in two
+	@# rounds (the manifest-count cap was the first).
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"if ((idx != SDMANIFEST_PART_NONE) && (idx < SD_FOREIGN_PART_LIMIT)) { sd_ForeignBitSet(idx); }"*) ;; \
+	   *) echo "ERROR: #1124 r22 PIN 25: an index past SD_FOREIGN_PART_LIMIT is no"; \
+	      echo "       longer simply SKIPPED in the index pass. If it faults, one"; \
+	      echo "       foreign record named exp-5000.csv refuses every capture in"; \
+	      echo "       that directory (audit :2871). It cannot be one of our"; \
+	      echo "       parts, so there is nothing to check -- do not set a bit."; \
+	      exit 1;; \
+	 esac
+	@# ⛔⛔ PIN 26 -- r22 AUDIT MEDIUM (:2930): A BUCKET-SHAPED CONFIGURED
+	@# DIRECTORY ALSO SCANS ITS PARENT, FOR EVERY SESSION.
+	@#
+	@# r21 narrowed the OPT-IN away from this layout, which closed truncation and
+	@# left CREATION open -- and creation needs no opt-in. With SD:DIR = D/P001, a
+	@# part that a session configured at D wrote into the bucket has its owner
+	@# manifest in D; delete the part, log ordinarily into the bucket, and the
+	@# parent's record starts describing our bytes with nothing having refused.
+	@#
+	@# Both halves are pinned with SEPARATE diagnostics (26a / 26b): the parent
+	@# walk EXISTS, and it passes isOwnDir FALSE. One message for both would
+	@# make a mutant that drops the walk and a mutant that mis-sets the flag
+	@# indistinguishable, and the second would then prove nothing the first did
+	@# not -- the PIN 23a/23b lesson.
+	@# isOwnDir is load-bearing and easy to get wrong: That flag is load-bearing and easy to get wrong -- excluding our own
+	@# manifest leaf in the parent would skip a same-named manifest belonging to a
+	@# session configured THERE, which is the exact record being looked for.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"sd_ScanOneDirectory(parent,"*) ;; \
+	   *) echo "ERROR: #1124 r22 PIN 26a: the PARENT walk is gone."; \
+	      echo "       A bucket-shaped configured directory must also scan its"; \
+	      echo "       parent (audit :2930), or the DEFAULT path can recreate a"; \
+	      echo "       part the parent's manifest still records -- no opt-in"; \
+	      echo "       involved, so no opt-in test can see it."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"sd_ScanOneDirectory(parent, false, needle);"*) ;; \
+	   *) echo "ERROR: #1124 r22 PIN 26b: the parent walk no longer passes"; \
+	      echo "       isOwnDir=false. Excluding our own manifest LEAF in the"; \
+	      echo "       parent skips a same-named manifest belonging to a"; \
+	      echo "       session configured THERE -- which is the exact record"; \
+	      echo "       the parent is being scanned for."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"sd_ScanOneDirectory(dir, true, needle)"*) ;; \
+	   *) echo "ERROR: #1124 r22 PIN 26: the configured directory is no longer"; \
+	      echo "       scanned with isOwnDir=true, so this session's own manifest"; \
+	      echo "       is treated as foreign and its own records refuse it."; \
+	      exit 1;; \
+	 esac
 	$(CC) $(CFLAGS) -o $(GATE1124_BIN) test_1124_overwrite_gate.c
 
 $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h \

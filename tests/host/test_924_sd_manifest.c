@@ -1487,6 +1487,33 @@ TEST(part_index_says_none_to_a_near_miss) {
     ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/expx-1.csv", "DAQiFi", "exp.csv", &f), SDMANIFEST_PART_NONE);
 }
 
+/* ⛔⛔ #1124 r22 AUDIT MEDIUM (:2871): A LARGE INDEX IS A NUMBER, NOT A FAULT.
+ *
+ * The parser knows nothing about any session's part LIMIT, and must not: a
+ * foreign session is entitled to a file called exp-5000.csv, and r21 FAULTed
+ * on one -- which, FAULT being a refusal, disarmed every capture in that
+ * directory. The parser's job is to say which index the name encodes; deciding
+ * that an index is out of OUR range belongs to the caller, as a skip.
+ *
+ * So: a big index parses cleanly, and only an UNREPRESENTABLE one faults. The
+ * boundary cases around the firmware's own limit (4161) are here to make the
+ * separation of concerns explicit rather than incidental. */
+TEST(part_index_treats_a_large_index_as_a_number_not_a_fault) {
+    bool f = true;
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-5000.csv", "DAQiFi", "exp.csv", &f), 5000u);
+    ASSERT_FALSE(f);
+    /* at, and either side of, the firmware's part limit -- all just numbers */
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-4160.csv", "DAQiFi", "exp.csv", &f), 4160u);
+    ASSERT_FALSE(f);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-4161.csv", "DAQiFi", "exp.csv", &f), 4161u);
+    ASSERT_FALSE(f);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-999999.csv", "DAQiFi", "exp.csv", &f), 999999u);
+    ASSERT_FALSE(f);
+    /* ...and in a bucket, which is where a long foreign session's parts live */
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/P078/exp-5000.csv", "DAQiFi", "exp.csv", &f), 5000u);
+    ASSERT_FALSE(f);
+}
+
 int main(void)
 {
     printf("=== #924 SD session integrity manifest ===\n");
@@ -1537,5 +1564,6 @@ int main(void)
     RUN(a_foreign_base_name_that_is_one_of_our_parts_is_recognised);
     RUN(part_index_inverts_the_generator_over_a_set_of_stems_and_extensions);
     RUN(part_index_says_none_to_a_near_miss);
+    RUN(part_index_treats_a_large_index_as_a_number_not_a_fault);
     return TEST_SUMMARY();
 }

@@ -602,6 +602,59 @@ static bool SD_ValidatePathParam(const char *p, size_t len, bool isFileName)
  * function is not a reachable state. */
 static volatile uint32_t gSdDirGeneration = 0u;
 
+/* ⛔⛔ #1124 r22 AUDIT HIGH (:2862): does `dir` carry a form where the TEXT
+ * and the PATH can diverge?
+ *
+ * The foreign-record guard compares recorded names textually, and every record
+ * this firmware writes is canonical, so that is sound -- while the configured
+ * directory is itself canonical. These forms break it, because FatFs resolves
+ * them and the text does not:
+ *   - "D//sub"   a duplicated separator: an empty path component
+ *   - "D/./sub"  or "D/../sub": '.' and '..' components
+ *   - "D/"       a trailing separator
+ * SdManifest_CanonicalDirLen strips a trailing slash at every construction, so
+ * that one is already handled downstream -- it is refused here anyway, because
+ * the point of this predicate is that the GRANT is only given where the
+ * comparison it relies on is exact, and listing all four keeps that argument
+ * readable rather than depending on which ones happen to be absorbed.
+ *
+ * ⚠ REFUSE THE FORM, DO NOT MODEL THE EQUIVALENCE. Normalising here, or
+ * teaching the comparator FatFs's full equivalence set, is the treadmill that
+ * cost rounds 16-19. Refusing the handful of spellings where text and path
+ * part company is bounded, checkable, and only ever costs an opt-in. */
+static bool SD_DirHasNonCanonicalForm(const char *dir)
+{
+    size_t len;
+
+    if (dir == NULL) {
+        return false;
+    }
+    len = strlen(dir);
+    if (len == 0u) {
+        return false;
+    }
+    if (dir[len - 1u] == '/') {
+        return true;                    /* trailing separator */
+    }
+    if (strstr(dir, "//") != NULL) {
+        return true;                    /* empty component */
+    }
+    /* '.' or '..' as a whole component, at any position. */
+    {
+        const char *p = dir;
+        while (p != NULL) {
+            const char *end = strchr(p, '/');
+            const size_t seg = (end != NULL) ? (size_t)(end - p) : strlen(p);
+            if ((seg == 1u && p[0] == '.')
+                    || (seg == 2u && p[0] == '.' && p[1] == '.')) {
+                return true;
+            }
+            p = (end != NULL) ? (end + 1) : NULL;
+        }
+    }
+    return false;
+}
+
 /* ⛔⛔ #1124 r21 AUDIT HIGH (:2874): does any component of `dir` wear a
  * ROTATION BUCKET's name?
  *
@@ -1019,7 +1072,63 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
      * Checked BEFORE anything is committed, so a refused command changes
      * nothing, and checked for the opt-in ONLY. */
     if (overwriteAsked) {
-        if ((fileLen > 0) && (memchr(pBuff, '/', fileLen) != NULL)) {
+        /* ⛔⛔ #1124 r22 AUDIT HIGH (:1129): THE GRANT BINDS TO THE RESOLVED
+         * TARGET, SO THE WHITELIST MUST VALIDATE THAT -- NOT THE OPERAND.
+         *
+         * r21 ran these checks only when an operand was present, and the
+         * no-operand branch below still applied the grant. So `SD:FILE "",1`
+         * handed the opt-in to whatever name was ALREADY staged -- including a
+         * `sub/exp.csv` that the '/' rule had just refused on its own command.
+         * The restriction was enforced on the act of NAMING and the grant
+         * escaped through the act of NOT naming.
+         *
+         * The rule is now the simple one: ",1" REQUIRES A NON-EMPTY OPERAND
+         * THAT PASSES THE WHITELIST ITSELF. A grant that names nothing cannot
+         * be checked against anything, and an unexaminable grant is not
+         * permission -- the same principle as an empty authorised subject
+         * being a refusal on the SD side. */
+        if (fileLen == 0) {
+            /* log_budget: max=40 */
+            LOG_E("[SD1124] scope grant needs a name");
+            SCPI_ExecutionError(context,
+                                "SYST:STOR:SD:FILE: overwrite requires the "
+                                "filename in the same command - send "
+                                "SYST:STOR:SD:FILE \"<name>\",1");
+            result = SCPI_RES_ERR;
+            goto __exit_point;
+        }
+        /* ⛔ #1124 r22 AUDIT HIGH (:2862): '~' is refused because a FatFs 8.3
+         * ALIAS ("LONGFI~1.CSV") names the same file as a long name while
+         * comparing unequal to it, which is exactly the divergence the textual
+         * record comparison cannot see.
+         *
+         * ⚠ HONESTLY: this check did not exist. It was described as part of the
+         * agreed whitelist and was never written -- the second time in this row
+         * that a rule lived only in prose (the '/' rule was the first, found by
+         * r21's audit). The audit asking "find out why it isn't firing" has the
+         * answer "because it was never there", and that is worth saying plainly
+         * rather than presenting this as a repair. */
+        if (memchr(pBuff, '~', fileLen) != NULL) {
+            /* log_budget: max=40 */
+            LOG_E("[SD1124] scope name has a tilde");
+            SCPI_ExecutionError(context,
+                                "SYST:STOR:SD:FILE: overwrite not allowed for a "
+                                "name containing '~' - it may be an 8.3 alias "
+                                "of a different file; use the long name");
+            result = SCPI_RES_ERR;
+            goto __exit_point;
+        }
+        if (SD_DirHasNonCanonicalForm(pSDCardRuntimeConfig->directory)) {
+            /* log_budget: max=40 */
+            LOG_E("[SD1124] scope dir form not canonical");
+            SCPI_ExecutionError(context,
+                                "SYST:STOR:SD:FILE: overwrite not allowed while "
+                                "SYST:STOR:SD:DIR contains '//', a '.' or '..' "
+                                "component, or a trailing '/'");
+            result = SCPI_RES_ERR;
+            goto __exit_point;
+        }
+        if (memchr(pBuff, '/', fileLen) != NULL) {
             /* The manifest for `sub/exp.csv` lives in <dir>/sub, which the
              * scan does not read, so a foreign record there would be
              * invisible to the one check that protects it. */
