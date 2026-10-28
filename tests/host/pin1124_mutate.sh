@@ -1119,10 +1119,12 @@ echo "==      An unsuffixed FIRST file inside a bucket (which happens whenever =
 echo "==      the configured directory is already full) then sets no bit, so   =="
 echo "==      the exact check never runs. Fail-OPEN, and it reads as a          =="
 echo "==      deliberate scoping choice.                                       =="
-if sub "$U" '    if (SdManifest_SegmentsEqual(leaf, leafLen, file, fileLen)) {
+echo "==      r28: re-pointed -- fix 2 renamed the operands to fileLeaf/        =="
+echo "==      fileLeafLen and the variable to bucketPresent.                    =="
+if sub "$U" '    if (SdManifest_SegmentsEqual(leaf, leafLen, fileLeaf, fileLeafLen)) {
         return 0u;
     }' \
-            '    if (!inBucket && SdManifest_SegmentsEqual(leaf, leafLen, file, fileLen)) {
+            '    if (!bucketPresent && SdManifest_SegmentsEqual(leaf, leafLen, fileLeaf, fileLeafLen)) {
         return 0u;
     }'; then
     expect "R65 index 0 is not gated on the bucket" "index 0 is gated on the bucket again"
@@ -1275,11 +1277,14 @@ echo "== R76 (PIN 36): return after the UPWARD scan, so a session configured   =
 echo "==      in a bucket never reads its own bucket children -- where #689 is =="
 echo "==      about to put its parts. The parent scan still works, so PIN 28a  =="
 echo "==      passes.                                                          =="
-if sub "$F" '            out = sd_ScanOneDirectory(parent, false, needle);
-            if (out != SD_INSPECT_CLEAR) {
+echo "==      \u26a0 KEEPS the call, so PIN 28a stays satisfied and only PIN 36      =="
+echo "==      sees the lost fall-through. Converting it to a bare `return`      =="
+echo "==      removes the assignment too and 28a answers first -- the           =="
+echo "==      one-invariant-per-mutant rule again.                              =="
+if sub "$F" '            if (out != SD_INSPECT_CLEAR) {
                 return out;
             }' \
-            '            return sd_ScanOneDirectory(parent, false, needle);'; then
+            '            return out;'; then
     expect "R76 the upward scan falls through to the downward" \
            "no longer falls through"
 else
