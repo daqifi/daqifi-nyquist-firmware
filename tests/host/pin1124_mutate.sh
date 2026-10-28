@@ -906,7 +906,7 @@ echo "==      opt-in or not. Nothing else notices: the scan still works, the   =
 echo "==      bits are still exact, every refusal test still passes.           =="
 if sub "$F" '        manifests++;        /* counted for the log only -- never a refusal */' \
             '        if (++manifests > 16u) { out = SD_INSPECT_FAULT; break; }'; then
-    expect "R49 no manifest-count cap" "the manifest COUNT is compared"
+    expect "R49 no manifest-count cap" "the manifest counter is no longer a"
 else
     echo "  FAIL R49 anchor absent."; fail=$((fail+1))
 fi
@@ -970,6 +970,21 @@ if sub "$S" """        gSdDirGeneration++;""" \
            "PIN 24 lost: pSDCardRuntimeConfig->directory[pathLen]"
 else
     echo "  FAIL R54 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R55 (PIN 21, the COMPARISON arm): keep the plain increment AND add a  =="
+echo "==      separate cap beside it. PIN 21's first arm is satisfied -- the    =="
+echo "==      increment still stands alone -- so only the arm that forbids a   =="
+echo "==      relational test on the counter can see it. Two arms, two         =="
+echo "==      mutants: R49 trips the first, this trips the second.             =="
+if sub "$F" '        manifests++;        /* counted for the log only -- never a refusal */' \
+            '        manifests++;        /* counted for the log only -- never a refusal */
+        if (manifests > 16u) { out = SD_INSPECT_FAULT; break; }'; then
+    expect "R55 the manifest count is never compared" \
+           "the manifest COUNT is compared"
+else
+    echo "  FAIL R55 anchor absent."; fail=$((fail+1))
 fi
 restore
 
