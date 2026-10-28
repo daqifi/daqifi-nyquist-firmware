@@ -2594,7 +2594,22 @@ static sd_InspectResult sd_NameIsRotationPartOfExistingManifest(const char *name
  * reads, never a refusal: the refusal is decided by the exact comparison.
  */
 #define SD_FOREIGN_SCAN_MAX_MANIFESTS   16u
-#define SD_FOREIGN_SCAN_MAX_LINES       (SD_CARD_MANAGER_MAX_DIR_FILES + 1u)
+/* ⛔⛔ #1124 r21: THIS CAP WAS WRONG BY ~64x AND THE ERROR WAS A FALSE
+ * REFUSAL, found by actually deriving the cost rather than asserting it.
+ *
+ * It read (SD_CARD_MANAGER_MAX_DIR_FILES + 1u) = 65, which is the cap on files
+ * in ONE DIRECTORY. A manifest does not record one directory: it lives in the
+ * parent and records the WHOLE SESSION, which #689 spreads across buckets
+ * 0..SD_CARD_MANAGER_MAX_BUCKET. So a perfectly ordinary long session produces
+ * a manifest of thousands of lines, this cap called it unparsable, and the
+ * scan returned FAULT -- refusing a session over a manifest that was entirely
+ * well-formed. A bound taken from the wrong dimension is not a conservative
+ * bound; it is a bug that only shows up on the longest, most valuable runs.
+ *
+ * Derived from both dimensions now, so it tracks either macro moving: buckets
+ * 0..MAX_BUCKET inclusive, MAX_DIR_FILES files each, plus one. */
+#define SD_FOREIGN_SCAN_MAX_LINES \
+        (((SD_CARD_MANAGER_MAX_BUCKET + 1u) * SD_CARD_MANAGER_MAX_DIR_FILES) + 1u)
 
 /* Build this session's own manifest FILE NAME (no directory), for telling our
  * manifest apart from a foreign one while reading directory entries.
@@ -2619,7 +2634,12 @@ static bool sd_SessionManifestLeaf(char *out, size_t outLen) {
  * make an unparseable manifest read as one recording nothing. */
 static sd_InspectResult sd_ManifestRecordsName(const char *manifestPath,
                                                const char *needle) {
-    char chunk[64];
+    /* 256 and not 64: the read count is what this costs, and a 4x bigger
+     * chunk is 4x fewer SYS_FS_FileRead calls over the same bytes. Not larger,
+     * because this runs on app_SDCardTask, whose stack is 1024 words with a
+     * profiled 468-word peak (app_freertos.c) -- 256 + SD_MANIFEST_LINE_MAX
+     * keeps the addition well inside that margin. */
+    char chunk[256];
     char line[SD_MANIFEST_LINE_MAX];
     size_t lineLen = 0u;
     uint32_t lines = 0u;
