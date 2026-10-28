@@ -23,20 +23,42 @@ name: make-prereq
 # as make is concerned, which would suppress the warning for exactly this
 # defect.
 #
-# Trigger scope mirrors log-budget.yml and cppcheck.yml: the file that is
-# measured, the tool itself, and this workflow. Nothing else can change a
-# verdict here.
+# Trigger scope mirrors log-budget.yml and cppcheck.yml: the files that are
+# MEASURED, the tool itself, and this workflow. The measured set is every file
+# in make's MAKEFILE_LIST -- the root Makefile AND any `include`d fragment --
+# so the filter covers *.mk too. A trigger narrower than the measurement is a
+# gate that can be bypassed by editing the right file (#1174 r11).
 on:
   pull_request:
     branches: [main]
     paths:
       - 'tests/host/Makefile'
+      # ⛔ EVERY MAKEFILE THE GATE READS, NOT JUST THE ROOT. The audit scans
+      # every file in make's MAKEFILE_LIST, so an `include`d fragment is part
+      # of what it measures -- and a filter naming only the root Makefile
+      # meant editing that fragment changed the measured input WITHOUT running
+      # the gate. A trigger narrower than the measurement is a gate that can
+      # be bypassed by editing the right file. There are 0 .mk files under
+      # tests/host today, so this costs nothing and arms the trigger before
+      # the first one is added, rather than after it hides something.
+      - 'tests/host/*.mk'
+      - 'tests/host/**/*.mk'
       - 'tools/lint/make_prereq_audit.py'
       - '.github/workflows/make-prereq.yml'
   push:
     branches: [main]
     paths:
       - 'tests/host/Makefile'
+      # ⛔ EVERY MAKEFILE THE GATE READS, NOT JUST THE ROOT. The audit scans
+      # every file in make's MAKEFILE_LIST, so an `include`d fragment is part
+      # of what it measures -- and a filter naming only the root Makefile
+      # meant editing that fragment changed the measured input WITHOUT running
+      # the gate. A trigger narrower than the measurement is a gate that can
+      # be bypassed by editing the right file. There are 0 .mk files under
+      # tests/host today, so this costs nothing and arms the trigger before
+      # the first one is added, rather than after it hides something.
+      - 'tests/host/*.mk'
+      - 'tests/host/**/*.mk'
       - 'tools/lint/make_prereq_audit.py'
       - '.github/workflows/make-prereq.yml'
 

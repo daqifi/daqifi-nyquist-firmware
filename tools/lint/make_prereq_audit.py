@@ -161,6 +161,40 @@ THREAT MODEL -- WHAT THIS TOOL CLAIMS, AND WHAT IT DOES NOT
     it is out of scope if it requires deliberately hiding a dependency, since
     the gate protects against accident, not malice.
 
+THE RESIDUAL CLASS, AND WHY IT IS DOCUMENTED RATHER THAN CHASED
+    Rounds 9-11 of this PR's audit each found further Make constructs that
+    reach a late-defined prerequisite by a route the scan does not see. They
+    fall into four families, and the list is recorded because an undocumented
+    residual invites exactly the trust this tool must not be given:
+
+      1. DEFERRED EVALUATION -- `$(eval ...)`, `$(file ...)`, and text built at
+         expansion time. Refused where the token appears; a name assembled from
+         fragments cannot be seen at all.
+      2. INDIRECTION THROUGH A COMPUTED NAME -- `$(call $(F),X)`, `$(call $F,X)`,
+         `$(call call,...)`, and an `origin()`-based definedness test. Refused
+         by requiring a literal identifier as `call`'s first argument; a name
+         composed at runtime remains invisible.
+      3. RECURSION -- `$(MAKE)`, `gmake`, `/usr/bin/make`, `command make`,
+         `then $(MAKE)`, and any of them behind a variable assignment or `env`.
+         Refused in command position; a submake invoked through a shell
+         variable or a script is not distinguishable from any other command.
+      4. CONDITIONAL DEFINEDNESS -- `ifdef`/`ifndef`/`ifeq`/`ifneq`. Refused
+         wholesale, because resolving whether each tested name is assigned
+         later is the Make model this tool exists not to be.
+
+    ⭐ A MISS IN ANY OF THESE IS A FALSE NEGATIVE OF A NEW CHECK, NOT A
+    REGRESSION. `main` has no such gate at all, so the comparison for "is this
+    safe to land" is against ZERO coverage, not against a working check that
+    this one weakens. Every refusal above strictly increases what the gate
+    catches relative to main; what the residual class bounds is how much
+    FURTHER it could go, not whether it is worse than before.
+
+    Each family is also only reachable by writing the construct deliberately
+    or by a Makefile style this repo does not use -- all four measure 0 hits on
+    the audited file. Combined with the threat model above (accident, not
+    adversary), that is why the list is published and the hardening stops here
+    rather than continuing to enumerate Make.
+
 WHAT THIS DOES NOT COVER. It answers "can this guard fire at all?" -- does the
 rule's prerequisite list actually name the source it guards. It does NOT answer
 "is this guard ever RE-EVALUATED?": a rule omitting $(RECIPES) (the Makefile
