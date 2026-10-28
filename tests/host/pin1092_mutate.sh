@@ -238,13 +238,13 @@ restore
 echo "== M10: drop the ENTRY VBUS refresh, leaving only the pre-power-up one.   =="
 echo "==      The re-arm then decides on a CACHED pgStat, where a stale FALSE   =="
 echo "==      and a truthful FALSE are indistinguishable.                       =="
-if sub "$P" '    Power_UpdateStatusFromGPIO();
+if sub "$P" '    Power_RefreshVbusFromPhy();
 
     /* #454: Auto-power-up on VBUS-present.' \
           '    /* mutant: entry refresh removed */
 
     /* #454: Auto-power-up on VBUS-present.'; then
-    expect "M10 entry refresh precedes the re-arm" "decides the latch re-arm"
+    expect "M10 entry refresh present and first" "entry refresh"
 else
     echo "  FAIL M10 anchor absent."; fail=$((fail+1))
 fi
@@ -270,8 +270,10 @@ echo "==      present and correctly ordered), so only PIN 7 can catch this --  =
 echo "==      which is the point: the hazard is the CALLEE, not the position.   =="
 echo "==      The renamed-wrapper variant is covered by the pin's own          =="
 echo "==      self-test, which cannot be expressed as a one-line sed here.     =="
-if sub "$P" '    Power_RefreshVbusFromPhy();' \
-          '    Power_RefreshVbusFromPhy();
+if sub "$P" 'CALLEES transitively, so renaming a wrapper cannot defeat it. */
+    Power_RefreshVbusFromPhy();' \
+          'CALLEES transitively, so renaming a wrapper cannot defeat it. */
+    Power_RefreshVbusFromPhy();
     Power_UpdateStatusFromGPIO();'; then
     expect "M12 no blocking call before Power_Down" "transitively reaches a blocking sink"
 else
