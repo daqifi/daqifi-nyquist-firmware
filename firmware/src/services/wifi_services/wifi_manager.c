@@ -95,6 +95,15 @@ struct stateMachineInst {
 static void __attribute__((unused)) SetEventFlag(wifi_manager_stateFlag_t *pEventFlagState, uint16_t flag);
 static void __attribute__((unused)) ResetEventFlag(wifi_manager_stateFlag_t *pEventFlagState, uint16_t flag);
 static uint8_t __attribute__((unused)) GetEventFlagStatus(wifi_manager_stateFlag_t eventFlagState, uint16_t flag);
+/* ⛔ #1060 r2: the AP->STA settle wait, SLICED so a failed BSSDisconnect can be
+ * re-attempted WITHIN it rather than after it. The product is the 500 ms this
+ * branch has always spent letting the AP stop -- expressed as a product so a
+ * change to either factor cannot silently alter the settle time that the
+ * "Let AP fully stop" comment depends on. 5 x 100 ms gives the transport five
+ * further chances to recover at no added cost. */
+#define WIFI_MANAGER_APSTA_SETTLE_SLICES   5u
+#define WIFI_MANAGER_APSTA_SETTLE_SLICE_MS 100u
+
 static bool SendEvent(wifi_manager_event_t event);
 static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * const pInstance, uint16_t event);
 static void ApplyPowerSavePolicy(stateMachineInst_t * const pInstance);
@@ -1872,17 +1881,82 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     // it for all four needs a recovery path (a DEINIT, whose
                     // WDRV_WINC_Close clears isConnected, is one), not a
                     // per-site patch.
+                    /* ⛔ #1060 r2: RE-ATTEMPT A FAILED DISCONNECT ACROSS THE
+                     * SETTLE DELAY THIS BRANCH ALREADY SPENDS.
+                     *
+                     * The r1 audit's scenario is a TRANSPORT failure that then
+                     * RECOVERS: hif_send returns M2M_ERR_BUS_FAIL for both the
+                     * AP-disable and the disconnect, so neither request reaches
+                     * the chip and the driver's isConnected stays true. One
+                     * attempt that is only logged therefore loses the single
+                     * thing that would have cleared it -- and because this
+                     * branch has (correctly) cleared every mode flag by now,
+                     * ERROR -> REINIT takes the fresh-init arm, where
+                     * WDRV_WINC_Initialize and WDRV_WINC_Open both return the
+                     * existing instance without running wincResetCtrlDcpt, so
+                     * isConnected is never cleared and every later
+                     * WDRV_WINC_IPUseDHCPSet is refused -- for ever, after the
+                     * transport is healthy again.
+                     *
+                     * ⭐ THE DEFECT IS NEW BY SUBTRACTION, which is what makes a
+                     * retry the right instance fix. Nothing added here
+                     * misbehaves; the stale STA_CONNECTED this PR removes was
+                     * ACCIDENTALLY routing ERROR -> REINIT into the arm that
+                     * retried the disconnect. That protection was real while
+                     * the flag was wrong. Re-setting the flag to get it back
+                     * would reinstate the wrong link-state report this PR
+                     * exists to fix, so the recovery is restored where it
+                     * belongs instead: by making this call succeed.
+                     *
+                     * ⚠ NOT a copy of the three older log-only sites (:1695 and
+                     * the disable / STA-reconfigure paths). Those are the
+                     * PRE-EXISTING instances of this class, and copying their
+                     * shape is what produced this one.
+                     *
+                     * COSTS NO WALL CLOCK. The branch already waits 500 ms for
+                     * the AP to stop; the attempts are spread across that same
+                     * wait rather than added to it, so the common case (the
+                     * first attempt succeeds, or returns the harmless
+                     * REQUEST_ERROR for an already-disconnected chip) is
+                     * unchanged in both behaviour and timing.
+                     *
+                     * RESIDUAL, stated rather than implied: if EVERY attempt
+                     * fails the wedge remains. That is the pre-existing class
+                     * shared with the three older sites; it needs a recovery
+                     * path (a DEINIT, whose WDRV_WINC_Close clears
+                     * isConnected) rather than a per-site patch, and it is
+                     * ticketed as the #1060 design item. This closes the
+                     * instance this PR introduced, which is the scope ruled. */
                     {
-                        const WDRV_WINC_STATUS discStatus = WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
+                        WDRV_WINC_STATUS discStatus =
+                                WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
+                        unsigned attempt = 0u;
+                        /* Don't deinitialize - the driver gets into a bad state
+                         * (-1) after deinit. Instead wait for the AP to stop,
+                         * re-attempting the disconnect while we wait. */
+                        while (attempt < WIFI_MANAGER_APSTA_SETTLE_SLICES) {
+                            vTaskDelay(pdMS_TO_TICKS(
+                                    WIFI_MANAGER_APSTA_SETTLE_SLICE_MS));
+                            attempt++;
+                            if ((WDRV_WINC_STATUS_OK == discStatus) ||
+                                (WDRV_WINC_STATUS_REQUEST_ERROR == discStatus)) {
+                                continue;   /* done; just finish settling */
+                            }
+                            discStatus = WDRV_WINC_BSSDisconnect(
+                                    pInstance->wdrvHandle);
+                        }
                         if ((WDRV_WINC_STATUS_OK != discStatus) &&
                             (WDRV_WINC_STATUS_REQUEST_ERROR != discStatus)) {
-                            LOG_E("WiFi: BSS disconnect failed on AP->STA (status=%d)", (int)discStatus);
+                            /* Shortened deliberately: the REMEDY is written
+                             * last, so the remedy is what a 125-byte clamp
+                             * eats. 122 bytes left only 3 to spare. */
+                            LOG_E("WiFi: AP->STA disconnect failed, %u tries "
+                                  "(status=%d) - DHCP refused until a reinit "
+                                  "clears isConnected (#1060)",
+                                  (unsigned)(WIFI_MANAGER_APSTA_SETTLE_SLICES + 1u),
+                                  (int)discStatus);
                         }
                     }
-
-                    // Don't deinitialize - the driver gets into a bad state (-1) after deinit
-                    // Instead, just wait for AP to stop and then configure for STA mode
-                    vTaskDelay(pdMS_TO_TICKS(500));  // Let AP fully stop
                     
                     // Now configure for STA mode using the existing driver handle
                     // The INIT event will reconfigure for STA without reinitializing

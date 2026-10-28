@@ -204,6 +204,8 @@ SCPI_INTERFACE_H := ../../firmware/src/services/SCPI/SCPIInterface.h
 SCPI_INTERFACE_C := ../../firmware/src/services/SCPI/SCPIInterface.c
 USBCDC_SRC := ../../firmware/src/services/UsbCdc/UsbCdc.c
 WIFI_TCP_SRC := ../../firmware/src/services/wifi_services/wifi_tcp_server.c
+WIFI_MGR_SRC := ../../firmware/src/services/wifi_services/wifi_manager.c
+APSTA1060_BIN := run_1060_tests
 # #913: UserSpi.c's spi_XferByte busy-spin -> spin-then-vTaskDelay yield.
 # Like BENCH_BIN this needs no UUT copy and no stubs -- UserSpi.c is NOT
 # includable on the host (FreeRTOS, Harmony's definitions.h/configuration.h,
@@ -316,6 +318,90 @@ SCPIDAC_SRC := ../../firmware/src/services/SCPI/SCPIDAC.c
 # on are a COPY; the recipe greps them and refuses to build on drift, same
 # convention as SPI913_BIN.
 DAC1057_BIN := run_1057_tests
+
+
+$(APSTA1060_BIN): test_1060_apsta_disconnect_retry.c test_framework.h \
+                  $(WIFI_MGR_SRC) $(RECIPES)
+	@# ⛔ #1060 PIN 1 -- the AP->STA disconnect is RE-ATTEMPTED, and bounded.
+	@# The r1 audit's scenario is a transport failure that then RECOVERS, so a
+	@# single logged attempt loses the one call that would have cleared the
+	@# driver's isConnected -- after which ERROR -> REINIT takes the fresh-init
+	@# arm, never clears it, and DHCP is refused for ever.
+	@pp=`$(CC) -fpreprocessed -E $(WIFI_MGR_SRC) 2>/dev/null`; \
+	 printf '%s' "$$pp" \
+	   | grep -q 'while (attempt < WIFI_MANAGER_APSTA_SETTLE_SLICES)' \
+	  || { echo "ERROR: the AP->STA branch no longer re-attempts a failed"; \
+	       echo "       BSSDisconnect (#1060 r2). One logged attempt loses the"; \
+	       echo "       only call that clears the driver's isConnected, and the"; \
+	       echo "       fresh-init arm of ERROR -> REINIT does not clear it, so"; \
+	       echo "       every later IPUseDHCPSet is refused -- permanently,"; \
+	       echo "       after the transport has recovered."; exit 1; }
+	@# ⛔ PIN 2 -- THE SETTLE TIME IS PRESERVED, as a PRODUCT. The claim that the
+	@# retry "costs no wall clock" rests entirely on the attempts being spread
+	@# across the 500 ms this branch already spent letting the AP stop. Computed
+	@# from the source's own two constants, so raising either without lowering
+	@# the other fails the build instead of quietly lengthening every AP->STA
+	@# switch -- or, worse, shortening the settle the "Let AP fully stop"
+	@# comment depends on.
+	@sl=`sed -n 's/^#define WIFI_MANAGER_APSTA_SETTLE_SLICES *\([0-9]*\)u.*/\1/p' $(WIFI_MGR_SRC) | head -1`; \
+	 ms=`sed -n 's/^#define WIFI_MANAGER_APSTA_SETTLE_SLICE_MS *\([0-9]*\)u.*/\1/p' $(WIFI_MGR_SRC) | head -1`; \
+	 test -n "$$sl" && test -n "$$ms" \
+	  || { echo "ERROR: could not read the #1060 settle constants from"; \
+	       echo "       $(WIFI_MGR_SRC) -- an empty value would make the"; \
+	       echo "       product below 0 and this pin vacuous."; exit 1; }; \
+	 test $$(( sl * ms )) -eq 500 \
+	  || { echo "ERROR: the AP->STA settle is now $$sl x $$ms = $$(( sl * ms )) ms,"; \
+	       echo "       not 500 (#1060 r2). The retry is spread ACROSS that"; \
+	       echo "       wait, so the two constants are one decision: changing"; \
+	       echo "       either alone either lengthens every AP->STA switch or"; \
+	       echo "       shortens the settle that 'Let AP fully stop' needs."; \
+	       exit 1; }
+	@# ⛔ PIN 3 -- REQUEST_ERROR still counts as DONE, not as a failure. It is
+	@# the harmless "isConnected was already false" answer and is the COMMON
+	@# case on an ordinary AP->STA switch; treating it as a failure would retry
+	@# five times on every single switch and log an error each time.
+	@$(CC) -fpreprocessed -E $(WIFI_MGR_SRC) 2>/dev/null \
+	   | grep -q 'WDRV_WINC_STATUS_REQUEST_ERROR == discStatus' \
+	  || { echo "ERROR: the #1060 retry no longer treats REQUEST_ERROR as done."; \
+	       echo "       That is the harmless already-disconnected answer and the"; \
+	       echo "       common case, so the loop would retry on every AP->STA"; \
+	       echo "       switch and report a failure that did not happen."; exit 1; }
+	@# ⛔ PIN 4 -- ⭐ SCOPE: THE THREE OLDER LOG-ONLY SITES ARE UNTOUCHED.
+	@# The operator ruled A -- fix the instance this PR introduced, TICKET the
+	@# wider class -- so widening the fix to the pre-existing sites is as much a
+	@# violation as not fixing the instance. This pin exists to catch a
+	@# well-meant future "while I'm here", and it is the only pin in this file
+	@# whose job is to stop work rather than require it. If a recovery path for
+	@# the class lands, this number changes deliberately and this pin is the
+	@# place that records why.
+	@n=`$(CC) -fpreprocessed -E $(WIFI_MGR_SRC) 2>/dev/null \
+	     | grep -c 'const WDRV_WINC_STATUS discStatus = WDRV_WINC_BSSDisconnect('`; \
+	 test "$$n" -eq 3 \
+	  || { echo "ERROR: $$n single-attempt BSSDisconnect site(s), expected 3"; \
+	       echo "       (#1060, operator ruling A). Those three are the"; \
+	       echo "       PRE-EXISTING instances of this class and are out of"; \
+	       echo "       scope for this PR: the class needs a recovery path (a"; \
+	       echo "       DEINIT, whose WDRV_WINC_Close clears isConnected), not"; \
+	       echo "       three more per-site patches. If that recovery path has"; \
+	       echo "       landed, update this count and say so."; exit 1; }
+	@# ⛔ PIN 5 -- the exhausted-retry log names the TICKET. When the retry does
+	@# not save it the operator is in the pre-existing class, and the one thing
+	@# that makes that diagnosable from SYSTem:LOG? is the reference.
+	@#
+	@# ⚠ KEYED ON A FRAGMENT THAT LIVES ON ONE SOURCE LINE. The message is built
+	@# from adjacent string literals across three lines, and
+	@# `cc -fpreprocessed -E` strips COMMENTS while PRESERVING THE GEOMETRY --
+	@# it does not join literals or collapse lines. Matching the whole sentence
+	@# therefore failed on correct code (measured: this pin fired on the very
+	@# commit that added the message). Flattening would not fix it either: the
+	@# concatenation boundary leaves `a " "reinit` in the text, not `a reinit`.
+	@$(CC) -fpreprocessed -E $(WIFI_MGR_SRC) 2>/dev/null \
+	   | grep -q 'clears isConnected (#1060)' \
+	  || { echo "ERROR: the #1060 exhausted-retry message no longer names the"; \
+	       echo "       ticket. A bare 'disconnect failed' leaves the operator"; \
+	       echo "       with a board that refuses DHCP and no way to connect"; \
+	       echo "       that symptom to the known class."; exit 1; }
+	$(CC) $(CFLAGS) -o $(APSTA1060_BIN) test_1060_apsta_disconnect_retry.c
 
 $(BIN): test_circularbuffer.c test_framework.h stubs/Logger.h stubs/osal/osal.h $(FW_UTIL)/CircularBuffer.c $(FW_UTIL)/CircularBuffer.h $(RECIPES)
 	cp $(FW_UTIL)/CircularBuffer.c $(UUT)
@@ -894,8 +980,9 @@ $(DAC1057_BIN): test_1057_dac7718_wait_stat.c test_framework.h $(DAC7718_SRC) $(
 # re-express their target as a fragment -- a mechanical move of one recipe,
 # which is strictly cheaper than this resolution has been nine times running.
 run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-     $(SPI913_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(DAC1057_BIN)
+     $(SPI913_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(DAC1057_BIN) $(APSTA1060_BIN)
 	./$(BIN)
+	./$(APSTA1060_BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
 	./$(BENCH_BIN)
@@ -912,6 +999,6 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) 
 
 clean:
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-	      $(SPI913_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(DAC1057_BIN) $(GEN_1000)
+	      $(SPI913_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(DAC1057_BIN) $(GEN_1000) $(APSTA1060_BIN)
 
 .PHONY: run clean

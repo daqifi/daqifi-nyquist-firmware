@@ -147,6 +147,7 @@ on:
       - 'firmware/src/HAL/UserSpi/UserSpi.c'
       - 'firmware/src/HAL/UserUart/UserUart.c'
       - 'firmware/src/HAL/UserI2c/UserI2c.c'
+      - 'firmware/src/services/wifi_services/wifi_manager.c'
       # #1004: the ms<->tick assumptions test_1004_help_write_abort.c derives
       # are grepped straight out of this file (configTICK_RATE_HZ,
       # configTICK_TYPE_WIDTH_IN_BITS).
@@ -173,6 +174,7 @@ on:
       - 'firmware/src/HAL/UserSpi/UserSpi.c'
       - 'firmware/src/HAL/UserUart/UserUart.c'
       - 'firmware/src/HAL/UserI2c/UserI2c.c'
+      - 'firmware/src/services/wifi_services/wifi_manager.c'
       # #1004: the ms<->tick assumptions test_1004_help_write_abort.c derives
       # are grepped straight out of this file (configTICK_RATE_HZ,
       # configTICK_TYPE_WIDTH_IN_BITS).
