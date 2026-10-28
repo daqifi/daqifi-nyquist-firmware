@@ -2725,6 +2725,30 @@ static sd_InspectResult sd_NameIsRotationPartOfExistingManifest(const char *name
     if (dash == NULL || (dash + 1) >= end) {
         return SD_INSPECT_CLEAR;        /* no "-N" tail: not a part */
     }
+    /* ⛔⛔ #1124 r28 AUDIT MEDIUM (:2728): ONLY A CANONICAL UNPADDED SUFFIX.
+     *
+     * generateFilename emits the index with "%u", which never pads. So
+     * `exp-01.csv` is a name this firmware CANNOT produce -- and this function
+     * accepted it, stripped "-01", found an unrelated `exp.csv.mfst`, and
+     * refused a fresh `exp-01.csv` even with the overwrite opt-in granted.
+     * Fourth instance of a FOREIGN name tripping a refusal.
+     *
+     * ⛔ AND THE RULE ALREADY EXISTED, one file away. SdManifest_PartIndexOf
+     * has rejected leading zeros since r21; this r20 function never got it.
+     * One rule, two consumers, one updated -- the same enumeration failure as
+     * r27's ceiling, three rounds later.
+     *
+     * ⚠ ENUMERATED THIS TIME, by behaviour rather than by name: the part-suffix
+     * rule has exactly TWO consumers (this and PartIndexOf). There are two
+     * other digit loops over names -- sd_DirLeafIsBucket here and
+     * SD_DirHasBucketComponent in SCPIStorageSD.c -- and they must do the
+     * OPPOSITE, because buckets are "P%03u" and `P001` is padded BY DESIGN.
+     * Adding this rule to all four would have broken bucket matching, which is
+     * why "find every consumer" has to mean every consumer of THIS rule, not
+     * every site that looks similar. */
+    if ((dash[1] == '0') && ((end - dash) > 2)) {
+        return SD_INSPECT_CLEAR;        /* padded: never one of our parts */
+    }
     for (const char *d = dash + 1; d < end; d++) {
         if ((*d < '0') || (*d > '9')) {
             return SD_INSPECT_CLEAR;    /* "-foo" is not a part index */
@@ -3220,8 +3244,31 @@ static sd_InspectResult sd_ScanForeignManifests(const char *needle) {
         return out;
     }
 
+    /* ⛔⛔ #1124 r28 AUDIT HIGH (:3234): UP AND DOWN ARE **NOT** MUTUALLY
+     * EXCLUSIVE, and r27 returned early after looking up.
+     *
+     * My claim was that a session either sits inside a bucket (look up) or at
+     * the top of a bucket set (look down). Measured at source, that is false:
+     * sd_BuildBucketPath formats `<CONFIGURED dir>/P%03u`, so a session
+     * configured at `D/P001` has #689 create `D/P001/P001` for ITS OWN
+     * rotation. Such a session needs BOTH -- the parent `D`, whose session
+     * wrote into `D/P001`, AND its own children `D/P001/P00n`, where its parts
+     * are about to go. r27 scanned only the parent and returned.
+     *
+     * ⛔ THIS ALSO WITHDRAWS A RESIDUAL. My draft listed nested buckets
+     * (`D/P001/P001`) as "a layout #689 never creates". That is wrong -- the
+     * firmware creates it whenever the configured directory is bucket-named,
+     * which SD:DIR permits. The residual's justification was false, so it is
+     * withdrawn rather than reworded, and this is the fix that replaces it.
+     *
+     * ⭐ The lesson is about the shape of the claim, not the layout: "these two
+     * cases are exclusive" is a claim about EVERY input, and I reached it by
+     * thinking about the two inputs I had in mind. Down is now unconditional
+     * (our rotation always goes to a child of the configured directory), and up
+     * is additional. */
     if (sd_DirLeafIsBucket(dir, dirLen, &cut)) {
-        /* CASE 2: we are inside a bucket, so look UP. */
+        /* Look UP: a session configured at the parent wrote into this bucket
+         * and recorded it from up there. */
         char parent[SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX + 1u];
         const size_t parentLen = cut - 1u;      /* drop the separator */
         if (parentLen < sizeof(parent)) {
@@ -3230,11 +3277,14 @@ static sd_InspectResult sd_ScanForeignManifests(const char *needle) {
             /* isOwnDir false: a same-leaf manifest up there belongs to a
              * session configured at the parent, which is what we came for. */
             out = sd_ScanOneDirectory(parent, false, needle);
+            if (out != SD_INSPECT_CLEAR) {
+                return out;
+            }
         }
-        return out;
     }
 
-    /* CASE 3: we are at the top of a bucket set, so look DOWN. */
+    /* Look DOWN, ALWAYS: #689 puts this session's own rotation parts in
+     * `<configured dir>/P###`, whatever the configured directory is called. */
     {
         uint32_t b;
         for (b = 1u; (b <= SD_CARD_MANAGER_MAX_BUCKET)

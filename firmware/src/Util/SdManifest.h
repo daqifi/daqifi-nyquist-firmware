@@ -406,119 +406,157 @@ static inline bool SdManifest_SegmentsEqual(const char *a, size_t la,
  */
 #define SDMANIFEST_PART_NONE  0xFFFFFFFFu
 
+/* How many FatFs segments does `p` have? Uses the one iterator, so a doubled
+ * or trailing separator does not change the count. */
+static inline unsigned SdManifest_CountSegments(const char *p)
+{
+    const char *seg;
+    size_t len = 0u;
+    unsigned n = 0u;
+
+    if (p == NULL) {
+        return 0u;
+    }
+    while (SdManifest_NextSegment(&p, &seg, &len)) {
+        n++;
+    }
+    return n;
+}
+
 static inline uint32_t SdManifest_PartIndexOf(const char *name,
                                                const char *dir,
                                                const char *file)
 {
     const char *np;
-    const char *dp;
+    const char *fp;
     const char *seg;
-    const char *leaf;
+    const char *leaf = NULL;
     size_t segLen = 0u;
-    size_t leafLen;
-    size_t fileLen;
+    size_t leafLen = 0u;
     size_t stemLen;
     size_t extLen;
+    const char *fileLeaf = NULL;
+    size_t fileLeafLen = 0u;
     const char *ext;
     const char *dot;
     const char *d;
     const char *digitsEnd;
-    bool inBucket = false;
+    unsigned nameSegs;
+    unsigned dirSegs;
+    unsigned fileSegs;
+    unsigned i;
+    bool bucketPresent;
     uint32_t idx = 0u;
 
     if (name == NULL || dir == NULL || file == NULL) {
         return SDMANIFEST_PART_NONE;
     }
 
-    /* ---- 1. every segment of `dir` must match, SEGMENT-WISE ---------------
-     * Walked with the SAME iterator the comparator uses, so "D//sub", "D/sub/"
-     * and "/D/sub" describe the same prefix here as they do there. r21 compared
-     * the directory as ONE STRING and therefore matched none of those -- which
-     * is the defect this rewrite closes. */
+    /* ---- 1. the SHAPE, counted before anything is compared ---------------
+     * ⛔⛔ #1124 r28 AUDIT HIGH (:469): THE CONFIGURED NAME MAY ITSELF CONTAIN
+     * SEPARATORS, and r27 treated it as ONE segment.
+     *
+     * SD:FILE accepts "P001/exp.csv" (the setter permits '/'), and
+     * generateFilename then derives baseFilename by stripping only the last
+     * extension -- "P001/exp" -- so the session writes
+     *
+     *     <dir> / [bucket] / <file's own directories> / <leaf>
+     *
+     * e.g. `D/P001/exp.csv` at index 0 and `D/P002/P001/exp-7.csv` for part 7
+     * in bucket 2. Note the BUCKET COMES FIRST, before the name's own
+     * subdirectory, because generateFilename joins onto bucketPath.
+     *
+     * Measured on r27: PartIndexOf("D/P001/exp.csv", "D", "P001/exp.csv") was
+     * NONE -- a name that session WRITES, unmatched, so no bit was set and the
+     * exact check never ran. Fail-OPEN, and independent of where the foreign
+     * manifest lived: this one fails even for a directory we DO scan.
+     *
+     * ⭐ ANCHORED AT BOTH ENDS, which is what makes it unambiguous. `dir`
+     * matches at the front and `file` matches at the back; whatever sits
+     * between them is zero or one bucket segment. Matching left-to-right could
+     * not tell the bucket `P001` from the name's own `P001`. */
+    nameSegs = SdManifest_CountSegments(name);
+    dirSegs  = SdManifest_CountSegments(dir);
+    fileSegs = SdManifest_CountSegments(file);
+    if (fileSegs == 0u) {
+        return SDMANIFEST_PART_NONE;    /* no name to write */
+    }
+    if (nameSegs == (dirSegs + fileSegs)) {
+        bucketPresent = false;
+    } else if (nameSegs == (dirSegs + fileSegs + 1u)) {
+        bucketPresent = true;           /* exactly one rotation bucket */
+    } else {
+        return SDMANIFEST_PART_NONE;    /* not a shape we ever write */
+    }
+
+    /* ---- 2. `dir` must match at the front, segment-wise ------------------ */
     np = name;
-    dp = dir;
-    for (;;) {
-        const char *dseg;
-        size_t dsegLen = 0u;
-        if (!SdManifest_NextSegment(&dp, &dseg, &dsegLen)) {
-            break;                          /* directory exhausted */
-        }
-        if (!SdManifest_NextSegment(&np, &seg, &segLen)) {
-            return SDMANIFEST_PART_NONE;    /* name shorter than its own dir */
-        }
-        if (!SdManifest_SegmentsEqual(seg, segLen, dseg, dsegLen)) {
-            return SDMANIFEST_PART_NONE;    /* a different directory */
-        }
-    }
-
-    /* ---- 2. what remains must be <leaf>, or <bucket>/<leaf> -------------- */
-    if (!SdManifest_NextSegment(&np, &seg, &segLen)) {
-        return SDMANIFEST_PART_NONE;        /* the directory itself, no file */
-    }
-    leaf = seg;
-    leafLen = segLen;
-    if (SdManifest_NextSegment(&np, &seg, &segLen)) {
-        inBucket = true;                    /* the first was a bucket */
-        leaf = seg;
-        leafLen = segLen;
-        if (SdManifest_NextSegment(&np, &seg, &segLen)) {
-            return SDMANIFEST_PART_NONE;    /* deeper than we ever write */
-        }
-    }
-
-    /* `file` is one segment, trimmed the way both sides always are. */
-    fileLen = SdManifest_SegmentTrimmedLen(file, strlen(file));
-    if (fileLen == 0u) {
-        return SDMANIFEST_PART_NONE;
-    }
-
-    /* ---- 3. index 0 is the configured name itself, IN THE DIRECTORY OR IN A
-     * BUCKET.
-     *
-     * ⛔⛔ #1124 r24 AUDIT HIGH (:479): I had this gated on `!inBucket`, with
-     * the reasoning "generateFilename's counter==0 arm runs exactly once,
-     * while bucket 0 IS the directory, so the configured name never appears
-     * inside a bucket". The first clause is true and the conclusion does not
-     * follow -- it conflates "the counter is 0 only once" with "the counter is
-     * 0 only in bucket 0".
-     *
-     * MEASURED at sd_card_manager.c: the bucket-advance `while` loop runs
-     * BEFORE generateFilename and advances whenever the current bucket is
-     * full, including on the session's FIRST file. So if the configured
-     * directory already holds MAX_DIR_FILES files, the session starts in P001
-     * and writes `D/P001/exp.csv` -- an UNSUFFIXED name inside a bucket.
-     *
-     * My restriction therefore rejected a name this firmware really does
-     * write, no bit was set, the exact check never ran, and the bucketed first
-     * file could overwrite a foreign record. Fail-OPEN.
-     *
-     * Dropping the restriction can only over-match: if a foreign record names
-     * `D/P001/exp.csv` while our first file lands in `D/exp.csv`, bit 0 is set
-     * and the exact comparison then declines it at the cost of one scan. */
-    if (SdManifest_SegmentsEqual(leaf, leafLen, file, fileLen)) {
-        return 0u;
-    }
-    (void)inBucket;     /* no longer a discriminator -- see above */
-
-    /* ---- 4. otherwise "<stem>-<N><ext>", N unpadded as "%u" emits -------- */
-    dot = NULL;
     {
-        size_t i;
-        for (i = 0u; i < fileLen; i++) {
-            if (file[i] == '.') {
-                dot = file + i;
+        const char *dp = dir;
+        for (i = 0u; i < dirSegs; i++) {
+            const char *dseg;
+            size_t dsegLen = 0u;
+            if (!SdManifest_NextSegment(&dp, &dseg, &dsegLen)
+                    || !SdManifest_NextSegment(&np, &seg, &segLen)
+                    || !SdManifest_SegmentsEqual(seg, segLen, dseg, dsegLen)) {
+                return SDMANIFEST_PART_NONE;
             }
         }
     }
-    stemLen = (dot != NULL) ? (size_t)(dot - file) : fileLen;
-    ext = (dot != NULL) ? dot : "";
-    extLen = (dot != NULL) ? (fileLen - stemLen) : 0u;
 
-    /* stem + '-' + at least one digit + ext */
+    /* ---- 3. skip the bucket, whatever it is called ----------------------- */
+    if (bucketPresent && !SdManifest_NextSegment(&np, &seg, &segLen)) {
+        return SDMANIFEST_PART_NONE;
+    }
+
+    /* ---- 4. `file`'s own directories must match, then its leaf is the
+     * pattern the last name segment has to satisfy. */
+    fp = file;
+    for (i = 0u; i < fileSegs; i++) {
+        const char *fseg;
+        size_t fsegLen = 0u;
+        if (!SdManifest_NextSegment(&fp, &fseg, &fsegLen)
+                || !SdManifest_NextSegment(&np, &seg, &segLen)) {
+            return SDMANIFEST_PART_NONE;
+        }
+        if (i + 1u < fileSegs) {
+            if (!SdManifest_SegmentsEqual(seg, segLen, fseg, fsegLen)) {
+                return SDMANIFEST_PART_NONE;
+            }
+        } else {
+            leaf = seg;
+            leafLen = segLen;
+            fileLeaf = fseg;
+            fileLeafLen = fsegLen;
+        }
+    }
+    if (leaf == NULL || fileLeaf == NULL || fileLeafLen == 0u) {
+        return SDMANIFEST_PART_NONE;
+    }
+
+    /* ---- 5. index 0 is the configured leaf itself ------------------------
+     * In the directory OR in a bucket (r24 :479): the bucket-advance loop runs
+     * before generateFilename, so a full directory puts the session's FIRST
+     * file inside a bucket. */
+    if (SdManifest_SegmentsEqual(leaf, leafLen, fileLeaf, fileLeafLen)) {
+        return 0u;
+    }
+
+    /* ---- 6. otherwise "<stem>-<N><ext>", N unpadded as "%u" emits -------- */
+    dot = NULL;
+    for (i = 0u; i < (unsigned)fileLeafLen; i++) {
+        if (fileLeaf[i] == '.') {
+            dot = fileLeaf + i;
+        }
+    }
+    stemLen = (dot != NULL) ? (size_t)(dot - fileLeaf) : fileLeafLen;
+    ext = (dot != NULL) ? dot : "";
+    extLen = (dot != NULL) ? (fileLeafLen - stemLen) : 0u;
+
     if (leafLen < (stemLen + 2u + extLen)) {
         return SDMANIFEST_PART_NONE;
     }
-    if (!SdManifest_SegmentEqualFolded(leaf, file, stemLen)) {
+    if (!SdManifest_SegmentEqualFolded(leaf, fileLeaf, stemLen)) {
         return SDMANIFEST_PART_NONE;
     }
     if (leaf[stemLen] != '-') {
@@ -535,9 +573,7 @@ static inline uint32_t SdManifest_PartIndexOf(const char *name,
         return SDMANIFEST_PART_NONE;
     }
     /* A leading zero is NOT our formatter's output ("%u" never pads), so such
-     * a name is one we can never open -- NONE, not a fault. Only an index we
-     * cannot REPRESENT is a fault, because then we cannot tell whether it is
-     * one of ours. */
+     * a name is one we can never open -- NONE, not a fault. */
     if ((d[0] == '0') && ((digitsEnd - d) > 1)) {
         return SDMANIFEST_PART_NONE;
     }
@@ -545,39 +581,15 @@ static inline uint32_t SdManifest_PartIndexOf(const char *name,
         if ((*d < '0') || (*d > '9')) {
             return SDMANIFEST_PART_NONE;
         }
-        /* ⛔⛔ #1124 r23 AUDIT MEDIUM (:424): AN OVERFLOWING INDEX IS NOT OUR
-         * PART, SO IT IS SKIPPED -- NOT A FAULT.
-         *
-         * This used to set *fault, which the caller turns into a refusal, so a
-         * foreign file called `exp-4294967296.csv` disarmed every capture in
-         * that directory. The reasoning in the comment I replaced was wrong:
-         * it said an unrepresentable index means "we cannot tell whether it is
-         * one of ours". We can tell, and the answer is NO -- the most parts one
-         * session can produce is bounded by SD_CARD_MANAGER_MAX_SPLIT_FILES (9999), so
-         * ANY value that does not even fit a uint32_t is far outside the set of
-         * names we will ever open. Nothing to check; do not set a bit.
-         *
-         * (r27: this said "(MAX_BUCKET + 1) * MAX_DIR_FILES = 4160", which was the
-         * WRONG ceiling -- rotation stops at MAX_SPLIT_FILES, not at bucket
-         * capacity. The conclusion is unaffected: an overflowing index is
-         * outside either figure.)
-         *
-         * ⭐ THIRD INSTANCE of one mistake in three rounds -- the manifest
-         * COUNT cap, the over-limit index, and now the overflowing index. All
-         * three were a fail-closed branch reasoning about SOMEONE ELSE'S name
-         * using OUR limits, and the rule is the one r22 recorded: "this cannot
-         * happen, so refuse" is only safe when the impossible thing is ours to
-         * produce. A foreign filename is an INPUT, and an input's size is never
-         * a fault. */
+        /* ⛔ r23 (:424): an index we cannot represent is SKIPPED, never a
+         * fault. A FOREIGN NAME CAN NEVER FAULT THE SCAN. */
         if (idx > ((0xFFFFFFFFu - (uint32_t)(*d - '0')) / 10u)) {
-            return SDMANIFEST_PART_NONE;        /* skipped, not faulted */
+            return SDMANIFEST_PART_NONE;
         }
         idx = (idx * 10u) + (uint32_t)(*d - '0');
     }
     if (idx == SDMANIFEST_PART_NONE) {
-        /* The sentinel value itself: indistinguishable from "no index", and
-         * likewise far beyond any index we produce, so the same answer. */
-        return SDMANIFEST_PART_NONE;
+        return SDMANIFEST_PART_NONE;    /* indistinguishable from "no index" */
     }
     return idx;
 }

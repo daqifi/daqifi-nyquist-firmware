@@ -115,6 +115,9 @@ typedef struct {
      * suppresses the bucket roll AND the count that feeds it, so the counter
      * is not bounded by bucket capacity. */
     bool     counterAboveLimit;
+    /* r28 (:2728): the target's name carries a PADDED suffix (exp-01.csv),
+     * which "%u" never emits, so it can never be one of our parts. */
+    bool     targetHasPaddedSuffix;
     /* observations */
     bool    opened;          /* the WRITE_PLUS open happened (truncating) */
     bool    manifestRemoved; /* something was unlinked */
@@ -177,65 +180,87 @@ typedef struct {
      * NEGATIVE in the core check, which is a silent miss rather than a loud
      * refusal and so strictly worse than the faults r22-r24 removed. */
     bool aboveLimitRoutesToExact;
+    /* r28 audit MEDIUM (:2728): a PADDED suffix is not a recorded part of
+     * ours, so it must not trip the recorded-part refusal. False reproduces
+     * r27, which stripped "-01" and refused over an unrelated exp.csv.mfst. */
+    bool paddedSuffixIsNotOurs;
+    /* r28 audit HIGH (:3234): up and down are NOT exclusive -- a bucket-named
+     * configured directory must scan BOTH its parent and its own children. */
+    bool scansBothDirections;
 } Shape;
 
 static const Shape SHAPE_R18 = { true,  false, false, false, false, false,
                                  false, false, false, false, false,
                                  false, false, 
-                                 false, false, false };
+                                 false, false, false,
+                                         false, false };
 /* r19 as shipped: refuse-by-default and the disarm, but the gate still derived
  * the manifest name independently, honoured an opt-in on a recorded set's
  * part, let an inspector fault read as permissive, and never consumed. */
 static const Shape SHAPE_R19 = { false, true,  false, false, false, false,
                                  false, false, false, false, false,
                                  false, false, 
-                                 false, false, false };
+                                 false, false, false,
+                                         false, false };
 /* r20 as shipped: everything r19 lacked, and none of r21's three. This is the
  * baseline every r21 test is differential against -- without it, "the fix
  * works" would be a claim about a shape nobody ever ran. */
 static const Shape SHAPE_R20 = { false, true,  true,  true,  true,  true,
                                  false, false, false, false, false,
                                  false, false, 
-                                 false, false, false };
+                                 false, false, false,
+                                         false, false };
 /* What the r21 audit BLOCKED: every r21 property, and neither audit fix. This
  * is the baseline the two arms below are differential against. */
 static const Shape SHAPE_R21_AUDITED = { false, true, true, true, true, true,
                                          true, true, true, false, false,
                                          false, false, 
-                                         false, false, false };
+                                         false, false, false,
+                                         false, false };
 /* What the r22 audit BLOCKED: every r21 fix plus both r21-audit fixes, and
  * neither r22-audit fix. The baseline the arms below are differential against. */
 /* What the r23 BLIND leg found at: every fix through r22's audit, and neither
  * r23 fix. (r23's steered leg failed on capacity, so that round is INCOMPLETE
  * coverage -- this baseline is named for what it contains, not for a clean
  * round.) */
+/* What r27's audit found at: every fix through r27, and none of r28's. */
+static const Shape SHAPE_R27_AUDITED = { false, true, true, true, true, true,
+                                         true, true, true, true, true,
+                                         true, true, true, true, true,
+                                         false, false };
 /* What r25's blind leg found at: every fix through r24, and not r25's. */
 static const Shape SHAPE_R24_AUDITED = { false, true, true, true, true, true,
                                          true, true, true, true, true,
-                                         true, true, true, true, false };
+                                         true, true, true, true, false,
+                                         false, false };
 static const Shape SHAPE_R23_AUDITED = { false, true, true, true, true, true,
                                          true, true, true, true, true,
-                                         true, true, false, false, false };
+                                         true, true, false, false, false,
+                                         false, false };
 static const Shape SHAPE_R22_AUDITED = { false, true, true, true, true, true,
                                          true, true, true, true, true,
                                          false, false, 
-                                         false, false, false };
+                                         false, false, false,
+                                         false, false };
 static const Shape SHAPE_C   = { false, true,  true,  true,  true,  true,
                                  true,  true,  true,  true,  true,
                                  true,  true,  
-                                 true,  true, true };
+                                 true,  true, true,
+                                         true,  true };
 /* r21 with the scan's fail-closed arm removed: the one-line mistake that makes
  * an unparseable manifest read as empty. Everything else intact. */
 static const Shape SHAPE_C_SCAN_SKIPS = { false, true, true, true, true, true,
                                           true, true, false, true, true,
                                           true, true, 
-                                          true, true, true };
+                                          true, true, true,
+                                         true, true };
 /* C's gate without the disarm: what this PR shipped before conv-ts asked
  * whether a refused session leaves the card usable. */
 static const Shape SHAPE_C_NO_DISARM = { false, false, true, true, true, true,
                                          true, true, true, true, true,
                                          true, true, 
-                                         true, true, true };
+                                         true, true, true,
+                                         true, true };
 
 static World world(FsState data, FsState mfst, bool ours, bool asked) {
     World w;
@@ -350,6 +375,15 @@ static void model_open_target(World *w, Shape s) {
         w->refusal = REFUSE_MANIFEST_UNPARSABLE;
         return;
     }
+    /* r28 audit MEDIUM (:2728): a PADDED suffix (exp-01.csv) is a name "%u"
+     * never emits, so it is not one of our parts and must not trip the
+     * recorded-part refusal. r27 stripped it and refused over an unrelated
+     * manifest -- a FOREIGN name tripping a refusal, the 4th of that class. */
+    if (s.refusePartOfRecordedSet && w->targetHasPaddedSuffix
+            && !s.paddedSuffixIsNotOurs) {
+        w->refusal = REFUSE_MANIFEST_NOT_OURS;
+        return;
+    }
     /* r23 audit MEDIUM (:424): a foreign record whose index overflows the
      * parse. Same answer as an over-limit one -- it cannot be a name we open,
      * so skip it. r22 faulted, i.e. refused. */
@@ -372,7 +406,13 @@ static void model_open_target(World *w, Shape s) {
     /* r23 audit HIGH (:2980): the record lives in a manifest INSIDE one of our
      * bucket children, written by a session configured there. The mirror of
      * the parent case, and it needs no opt-in for the same reason. */
-    if (s.refuseForeignRecord && w->bucketChildRecordsTarget) {
+    /* ⛔ r28 audit HIGH (:3234): the DOWNWARD scan is gated on more than
+     * scansBucketChildren. Through r27 the two directions were treated as
+     * EXCLUSIVE -- a bucket-named configured directory looked UP and returned
+     * -- so its own bucket CHILD went unread. The model has to carry that
+     * gating or the r27 baseline cannot reproduce the defect. */
+    if (s.refuseForeignRecord && w->bucketChildRecordsTarget
+            && (!w->dirIsBucket || s.scansBothDirections)) {
         if (s.scansBucketChildren) {
             w->refusal = REFUSE_FOREIGN_RECORD;
             return;
@@ -1241,6 +1281,78 @@ TEST(an_over_limit_record_still_arms_when_our_counter_is_in_range) {
     ASSERT_EQ(b.refusal, REFUSE_NONE);
 }
 
+/* ---- r28 audit MEDIUM (:2728): a padded suffix is not our part --------- */
+
+TEST(the_audited_r27_refused_a_fresh_file_with_a_padded_suffix) {
+    World w = world(FS_ABSENT, FS_ABSENT, false, true);
+    w.targetHasPaddedSuffix = true;
+    model_arm_session(&w, SHAPE_R27_AUDITED);
+    model_open_target(&w, SHAPE_R27_AUDITED);
+    ASSERT_FALSE(w.opened);
+    ASSERT_EQ(w.refusal, REFUSE_MANIFEST_NOT_OURS);
+}
+
+TEST(a_padded_suffix_does_not_trip_the_recorded_part_refusal) {
+    World w = world(FS_ABSENT, FS_ABSENT, false, true);
+    w.targetHasPaddedSuffix = true;
+    model_arm_session(&w, SHAPE_C);
+    model_open_target(&w, SHAPE_C);
+    model_finish_refusal(&w, SHAPE_C);
+    ASSERT_TRUE(w.opened);
+    ASSERT_EQ(w.refusal, REFUSE_NONE);
+    ASSERT_TRUE(model_is_busy(&w));
+}
+
+/* ⭐ CONTROL: an UNPADDED part of a recorded set must STILL be refused. That
+ * is r19 finding 2, and the padded-suffix fix must not weaken it. */
+TEST(an_unpadded_part_of_a_recorded_set_is_still_refused) {
+    World w = world(FS_ABSENT, FS_ABSENT, false, true);
+    w.part = PART_OF_RECORDED_SET;
+    model_arm_session(&w, SHAPE_C);
+    model_open_target(&w, SHAPE_C);
+    ASSERT_FALSE(w.opened);
+    ASSERT_EQ(w.refusal, REFUSE_MANIFEST_NOT_OURS);
+}
+
+/* ---- r28 audit HIGH (:3234): up and down are not exclusive ------------- */
+
+TEST(the_audited_r27_skipped_its_own_bucket_child_when_configured_in_a_bucket) {
+    World w = world(FS_ABSENT, FS_ABSENT, false, false);
+    w.dirIsBucket = true;                 /* SD:DIR "D/P001" */
+    w.bucketChildRecordsTarget = true;    /* a record in D/P001/P001 */
+    model_arm_session(&w, SHAPE_R27_AUDITED);
+    model_open_target(&w, SHAPE_R27_AUDITED);
+    ASSERT_TRUE(w.opened);                /* returned after the parent */
+    ASSERT_EQ(w.refusal, REFUSE_NONE);
+}
+
+TEST(a_bucket_named_directory_scans_both_its_parent_and_its_children) {
+    /* DOWN, from inside a bucket -- the case r27 missed */
+    World down = world(FS_ABSENT, FS_ABSENT, false, false);
+    down.dirIsBucket = true;
+    down.bucketChildRecordsTarget = true;
+    model_arm_session(&down, SHAPE_C);
+    model_open_target(&down, SHAPE_C);
+    model_finish_refusal(&down, SHAPE_C);
+    ASSERT_FALSE(down.opened);
+    ASSERT_EQ(down.refusal, REFUSE_FOREIGN_RECORD);
+    ASSERT_FALSE(model_is_busy(&down));
+
+    /* UP, from inside a bucket -- still works */
+    World up = world(FS_ABSENT, FS_ABSENT, false, false);
+    up.dirIsBucket = true;
+    up.parentRecordsTarget = true;
+    model_open_target(&up, SHAPE_C);
+    ASSERT_EQ(up.refusal, REFUSE_FOREIGN_RECORD);
+
+    /* ⭐ and an ordinary directory with neither still logs */
+    World plain = world(FS_ABSENT, FS_ABSENT, false, false);
+    plain.dirIsBucket = true;             /* bucket-named, nothing recorded */
+    model_open_target(&plain, SHAPE_C);
+    ASSERT_TRUE(plain.opened);
+    ASSERT_EQ(plain.refusal, REFUSE_NONE);
+}
+
 int main(void) {
     RUN(r18_truncates_an_existing_target_without_being_asked);
     RUN(c_refuses_an_existing_target);
@@ -1298,6 +1410,11 @@ int main(void) {
     RUN(the_audited_r23_missed_a_manifest_inside_a_bucket_child);
     RUN(a_manifest_inside_a_bucket_child_is_found_without_the_opt_in);
     RUN(the_scan_looks_up_from_a_bucket_and_down_from_its_parent);
+    RUN(the_audited_r27_refused_a_fresh_file_with_a_padded_suffix);
+    RUN(a_padded_suffix_does_not_trip_the_recorded_part_refusal);
+    RUN(an_unpadded_part_of_a_recorded_set_is_still_refused);
+    RUN(the_audited_r27_skipped_its_own_bucket_child_when_configured_in_a_bucket);
+    RUN(a_bucket_named_directory_scans_both_its_parent_and_its_children);
     RUN(the_audited_r24_missed_a_collision_above_the_bitset_range);
     RUN(an_index_above_the_bitset_range_routes_to_the_exact_check);
     RUN(an_over_limit_record_still_arms_when_our_counter_is_in_range);

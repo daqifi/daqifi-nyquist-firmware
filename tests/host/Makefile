@@ -1904,9 +1904,16 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	@#
 	@# Pinned as the ABSENCE of the conjunction, because that is the defect's
 	@# exact shape and it reads as a deliberate scoping choice.
+	@#
+	@# r28: the variable is `bucketPresent` since the configured name became
+	@# segment-walked, and the index-0 test compares the name's last segment
+	@# against the FILE'S LAST SEGMENT (fileLeaf) rather than the whole
+	@# configured name. Both spellings of the forbidden conjunction are listed,
+	@# old and new -- a negative arm keyed on a variable that no longer exists
+	@# is inert, which is how a guard quietly stops guarding.
 	@pp=`$(CC) -fpreprocessed -E $(FW_UTIL)/SdManifest.h 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
 	 case "$$pp" in \
-	   *"if (!inBucket && SdManifest_SegmentsEqual"*|*"if (inBucket == false"*) \
+	   *"if (!bucketPresent && SdManifest_SegmentsEqual"*|*"if (bucketPresent == false"*|*"if (!inBucket && SdManifest_SegmentsEqual"*) \
 	      echo "ERROR: #1124 r24 PIN 29: index 0 is gated on the bucket again"; \
 	      echo "       (audit :479). An unsuffixed FIRST file lands inside a"; \
 	      echo "       bucket whenever the configured directory is already full"; \
@@ -1916,7 +1923,7 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	      exit 1;; \
 	 esac; \
 	 case "$$pp" in \
-	   *"if (SdManifest_SegmentsEqual(leaf, leafLen, file, fileLen)) { return 0u; }"*) ;; \
+	   *"if (SdManifest_SegmentsEqual(leaf, leafLen, fileLeaf, fileLeafLen)) { return 0u; }"*) ;; \
 	   *) echo "ERROR: #1124 r24 PIN 29: the index-0 test is gone or reshaped."; \
 	      echo "       The configured name itself must map to index 0, in the"; \
 	      echo "       directory OR in a bucket."; \
@@ -2112,6 +2119,78 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	      echo "       suppresses the roll and the count that drives it, so the"; \
 	      echo "       counter passes 4161 in ordinary long sessions and every"; \
 	      echo "       open beyond it falls back to a per-open content scan."; \
+	      exit 1;; \
+	 esac
+	@# ⛔⛔ PIN 35 -- r28 AUDIT HIGH (:469): THE CONFIGURED NAME IS WALKED AS
+	@# SEGMENTS, AND THE MATCH IS ANCHORED AT BOTH ENDS.
+	@#
+	@# SD:FILE permits '/', and generateFilename strips only the last extension
+	@# for baseFilename, so a session writes <dir>/[bucket]/<file's own dirs>/
+	@# <leaf> -- the BUCKET FIRST, before the name's own subdirectory. r27 treated
+	@# `file` as one segment, so names the session WRITES went unmatched: no bit,
+	@# no exact check, fail-OPEN, and independent of where the manifest lived.
+	@#
+	@# Anchoring at both ends is what makes it decidable: left-to-right cannot
+	@# tell the bucket `P001` from the name's own `P001`. Pinned on the segment
+	@# COUNT arithmetic, which is where the shape is decided.
+	@pp=`$(CC) -fpreprocessed -E $(FW_UTIL)/SdManifest.h 2>/dev/null | grep -v '^#' | tr '\n' ' ' | tr -s ' '`; \
+	 for probe in \
+	   "fileSegs = SdManifest_CountSegments(file);" \
+	   "if (nameSegs == (dirSegs + fileSegs)) { bucketPresent = false; }" \
+	   "else if (nameSegs == (dirSegs + fileSegs + 1u)) { bucketPresent = true;" \
+	 ; do \
+	   case "$$pp" in \
+	     *"$$probe"*) ;; \
+	     *) echo "ERROR: #1124 r28 PIN 35: the configured name is no longer"; \
+	        echo "       walked as SEGMENTS with the shape anchored at both ends"; \
+	        echo "       (audit :469). Missing: $$probe"; \
+	        echo "       A name containing '/' then goes unmatched, which is"; \
+	        echo "       fail-OPEN even for a directory the scan does read."; \
+	        exit 1;; \
+	   esac; \
+	 done
+	@# ⛔⛔ PIN 36 -- r28 AUDIT HIGH (:3234): BOTH SCAN DIRECTIONS, NOT ONE.
+	@#
+	@# sd_BuildBucketPath formats `<CONFIGURED dir>/P%03u`, so a session
+	@# configured at D/P001 has #689 create D/P001/P001 for its OWN rotation. It
+	@# therefore needs the PARENT (whose session wrote into D/P001) AND its own
+	@# CHILDREN. r27 returned after the parent, and my "mutually exclusive" claim
+	@# was false -- it also made me document nested buckets as "a layout #689
+	@# never creates", which is why that residual is WITHDRAWN rather than
+	@# reworded.
+	@#
+	@# Pinned as the ABSENCE of the early return: the upward branch must fall
+	@# through to the downward loop, not return.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | grep -v '^#' | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"out = sd_ScanOneDirectory(parent, false, needle); if (out != SD_INSPECT_CLEAR) { return out; } } }"*) ;; \
+	   *) echo "ERROR: #1124 r28 PIN 36: the upward scan no longer falls through"; \
+	      echo "       to the downward one (audit :3234). A session configured in"; \
+	      echo "       a bucket must ALSO read its own bucket children, where"; \
+	      echo "       #689 is about to put its parts. Returning after the"; \
+	      echo "       parent skips them silently."; \
+	      exit 1;; \
+	 esac
+	@# ⛔ PIN 37 -- r28 AUDIT MEDIUM (:2728): ONLY A CANONICAL UNPADDED SUFFIX.
+	@#
+	@# generateFilename emits "%u", never padded, so `exp-01.csv` is a name this
+	@# firmware cannot produce -- and the recorded-part check stripped "-01",
+	@# found an unrelated exp.csv.mfst, and refused a fresh file even with the
+	@# opt-in. 4th instance of a FOREIGN name tripping a refusal.
+	@#
+	@# ⚠ The rule already existed in SdManifest_PartIndexOf since r21 and was
+	@# never propagated here. Enumerated this round by BEHAVIOUR: the part-suffix
+	@# rule has exactly two consumers, and the two other digit loops over names
+	@# (sd_DirLeafIsBucket, SD_DirHasBucketComponent) must do the OPPOSITE --
+	@# buckets are "P%03u" and `P001` is padded by design. Adding the rule to all
+	@# four would have broken bucket matching.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | grep -v '^#' | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"if ((dash[1] == '0') && ((end - dash) > 2)) {"*) ;; \
+	   *) echo "ERROR: #1124 r28 PIN 37: the recorded-part check no longer"; \
+	      echo "       rejects a PADDED suffix (audit :2728). It would then strip"; \
+	      echo "       exp-01 to exp, find an unrelated exp.csv.mfst, and refuse"; \
+	      echo "       a fresh file this firmware could never have written."; \
 	      exit 1;; \
 	 esac
 	$(CC) $(CFLAGS) -o $(GATE1124_BIN) test_1124_overwrite_gate.c

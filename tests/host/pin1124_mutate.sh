@@ -1258,6 +1258,46 @@ else
 fi
 restore
 
+echo "== R75 (PIN 35): treat the configured name as ONE segment again -- the   =="
+echo "==      r28 audit HIGH. A name containing '/' then goes unmatched, so no =="
+echo "==      bit is set and the exact check never runs. Fail-OPEN even for a  =="
+echo "==      directory the scan DOES read, and every single-segment test      =="
+echo "==      still passes.                                                    =="
+if sub "$U" '    fileSegs = SdManifest_CountSegments(file);' \
+            '    fileSegs = 1u;'; then
+    expect "R75 the configured name is segment-walked" "no longer"
+else
+    echo "  FAIL R75 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R76 (PIN 36): return after the UPWARD scan, so a session configured   =="
+echo "==      in a bucket never reads its own bucket children -- where #689 is =="
+echo "==      about to put its parts. The parent scan still works, so PIN 28a  =="
+echo "==      passes.                                                          =="
+if sub "$F" '            out = sd_ScanOneDirectory(parent, false, needle);
+            if (out != SD_INSPECT_CLEAR) {
+                return out;
+            }' \
+            '            return sd_ScanOneDirectory(parent, false, needle);'; then
+    expect "R76 the upward scan falls through to the downward" \
+           "no longer falls through"
+else
+    echo "  FAIL R76 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R77 (PIN 37): accept a PADDED suffix again, so exp-01.csv strips to   =="
+echo "==      exp, finds an unrelated exp.csv.mfst, and refuses a fresh file   =="
+echo "==      this firmware could never have written.                          =="
+if sub "$F" """    if ((dash[1] == '0') && ((end - dash) > 2)) {""" \
+            '    if (false) {'; then
+    expect "R77 a padded suffix is not a part" "no longer"
+else
+    echo "  FAIL R77 anchor absent."; fail=$((fail+1))
+fi
+restore
+
 echo "== restored =="
 expect "post-restore baseline" CLEAN
 

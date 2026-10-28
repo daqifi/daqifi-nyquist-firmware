@@ -1642,6 +1642,76 @@ TEST(an_unsuffixed_first_file_inside_a_bucket_is_index_zero) {
                                                      "DAQiFi/P001/exp.csv"));
 }
 
+/* ⛔⛔ #1124 r28 AUDIT HIGH (:469): THE CONFIGURED NAME MAY CONTAIN SEPARATORS.
+ *
+ * SD:FILE accepts "P001/exp.csv" (the setter permits '/'), and generateFilename
+ * strips only the last extension for baseFilename, so the session writes
+ *     <dir> / [bucket] / <file's own directories> / <leaf>
+ * -- note the BUCKET COMES FIRST, before the name's own subdirectory, because
+ * generateFilename joins onto bucketPath.
+ *
+ * r27 treated `file` as ONE segment, so every one of these was NONE: names the
+ * session WRITES, unmatched, no bit set, exact check never run. Fail-OPEN, and
+ * independent of where the foreign manifest lived -- this failed even for a
+ * directory the scan DOES read, which is why it is a bug and not the
+ * subdirectory residual. */
+TEST(a_configured_name_containing_separators_is_matched) {
+    ASSERT_EQ(SdManifest_PartIndexOf("D/P001/exp.csv", "D", "P001/exp.csv"), 0u);
+    ASSERT_EQ(SdManifest_PartIndexOf("D/P001/exp-1.csv", "D", "P001/exp.csv"), 1u);
+    /* the bucket sits BEFORE the name's own directory */
+    ASSERT_EQ(SdManifest_PartIndexOf("D/P002/P001/exp-7.csv", "D", "P001/exp.csv"), 7u);
+    /* deeper configured names, and a two-level one */
+    ASSERT_EQ(SdManifest_PartIndexOf("D/a/b/exp-3.csv", "D", "a/b/exp.csv"), 3u);
+    ASSERT_EQ(SdManifest_PartIndexOf("D/P005/a/b/exp.csv", "D", "a/b/exp.csv"), 0u);
+    /* and the normalised spellings still agree */
+    ASSERT_EQ(SdManifest_PartIndexOf("D//P001/exp-1.csv", "D", "P001/exp.csv"), 1u);
+    ASSERT_EQ(SdManifest_PartIndexOf("D/P001/exp-1.csv", "D", "P001//exp.csv"), 1u);
+}
+
+/* ⭐ THE CONTROLS. Without these the fix above is satisfied by a matcher that
+ * ignores the directory part of the name entirely. */
+TEST(a_configured_name_with_separators_still_rejects_near_misses) {
+    /* right leaf, WRONG intermediate directory */
+    ASSERT_EQ(SdManifest_PartIndexOf("D/P002/exp-1.csv", "D", "P001/exp.csv"),
+              SDMANIFEST_PART_NONE);
+    /* the name's directory missing altogether */
+    ASSERT_EQ(SdManifest_PartIndexOf("D/exp-1.csv", "D", "P001/exp.csv"),
+              SDMANIFEST_PART_NONE);
+    /* a different leaf under the right directory */
+    ASSERT_EQ(SdManifest_PartIndexOf("D/P001/other.csv", "D", "P001/exp.csv"),
+              SDMANIFEST_PART_NONE);
+    /* TWO intermediate segments where only one bucket is possible */
+    ASSERT_EQ(SdManifest_PartIndexOf("D/P002/P003/P001/exp-1.csv", "D", "P001/exp.csv"),
+              SDMANIFEST_PART_NONE);
+    /* ⚠ AND THE ROW THAT WAS HERE WAS WRONG, caught by its own failure.
+     * I asserted PartIndexOf("D/P001/exp-1.csv", "D", "exp.csv") == NONE on
+     * the idea that a single-segment configured name admits no intermediate
+     * directory. It admits exactly one -- the ROTATION BUCKET -- so that name
+     * IS our part 1 in P001, and the code was right.
+     *
+     * Second time this round's lesson has caught me: a test asserting that a
+     * real behaviour cannot happen (r24 :479 was the first). Keeping the
+     * correct expectation here, and the genuine near-miss below it. */
+    ASSERT_EQ(SdManifest_PartIndexOf("D/P001/exp-1.csv", "D", "exp.csv"), 1u);
+    /* TWO intermediate segments, where only one bucket is possible */
+    ASSERT_EQ(SdManifest_PartIndexOf("D/P002/P003/exp-1.csv", "D", "exp.csv"),
+              SDMANIFEST_PART_NONE);
+}
+
+/* ⛔ #1124 r28 AUDIT MEDIUM (:2728): A PADDED SUFFIX IS NOT OUR PART.
+ * generateFilename uses "%u", which never pads, so `exp-01.csv` is a name this
+ * firmware cannot produce. PartIndexOf has rejected it since r21; this asserts
+ * it stays rejected, because the sibling consumer in sd_card_manager.c did NOT
+ * have the rule and refused a fresh exp-01.csv over an unrelated exp.csv.mfst. */
+TEST(a_padded_index_is_never_one_of_our_parts) {
+    ASSERT_EQ(SdManifest_PartIndexOf("D/exp-01.csv", "D", "exp.csv"), SDMANIFEST_PART_NONE);
+    ASSERT_EQ(SdManifest_PartIndexOf("D/exp-007.csv", "D", "exp.csv"), SDMANIFEST_PART_NONE);
+    ASSERT_EQ(SdManifest_PartIndexOf("D/P001/exp-01.csv", "D", "exp.csv"), SDMANIFEST_PART_NONE);
+    /* ...but a bare 0 and ordinary indices are fine */
+    ASSERT_EQ(SdManifest_PartIndexOf("D/exp-0.csv", "D", "exp.csv"), 0u);
+    ASSERT_EQ(SdManifest_PartIndexOf("D/exp-10.csv", "D", "exp.csv"), 10u);
+}
+
 int main(void)
 {
     printf("=== #924 SD session integrity manifest ===\n");
@@ -1698,5 +1768,8 @@ int main(void)
     RUN(normalisation_does_not_make_unrelated_names_match);
     RUN(a_doubled_separator_inside_the_directory_is_recognised);
     RUN(an_unsuffixed_first_file_inside_a_bucket_is_index_zero);
+    RUN(a_configured_name_containing_separators_is_matched);
+    RUN(a_configured_name_with_separators_still_rejects_near_misses);
+    RUN(a_padded_index_is_never_one_of_our_parts);
     return TEST_SUMMARY();
 }
