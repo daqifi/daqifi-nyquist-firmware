@@ -90,6 +90,22 @@ question and must never be used as evidence for it (see above) — but
 timing component, so the post-parse answer is the complete one. Nothing else is
 taken from that dump.
 
+⛔ **And the `value` scan was then defeated by a continuation too** —
+`$(call \` + newline + ` value,LATE)`, where the joined form genuinely *is* the
+builtin (measured: `joined=[x.c] direct=[x.c]`) while neither physical line
+matches on its own. That is the **third** time a physical-line scan has been
+beaten by a continuation in this one tool: r1's parser read only a rule's first
+line, r3 missed `include\` + newline, r4 missed this. So the scan no longer
+looks at physical lines at all — continuations are joined **once**, up front,
+and every scan runs over the joined text.
+
+Joined with a single **space**, which is what make does, and that is also the
+safe direction: joining with nothing could glue two fragments into a keyword
+make never saw. `$(va\` + newline + `lue LATE)` is the variable `va lue LATE`
+to make — *not* a `value` call — and `--warn-undefined-variables` catches it as
+an ordinary finding. The self-test pins that case at exit **1**, so a join that
+glued the fragments would answer 2 and fail the arm.
+
 ⚠ **Irreducible residue, stated rather than discovered later:** a function name
 *assembled* at runtime (`V := val$(nothing)ue`, then `$(call $(V),LATE)`)
 contains the word nowhere and no text scan can see it. That is accepted,

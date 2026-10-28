@@ -239,6 +239,53 @@ def gather_sources(makefile, goal="run"):
     return files, problems
 
 
+def logical_lines(text):
+    """[(first physical line number, the LOGICAL line)] -- continuations joined.
+
+    ⛔ SCAN LOGICAL LINES, NEVER PHYSICAL ONES. make joins a trailing backslash
+    with the next line BEFORE it interprets anything, and a physical-line scan
+    has now been defeated by that three separate times in this one tool:
+
+      r1  the Makefile parser read only a rule's FIRST line, so five
+          prerequisite variables on a continuation line were invisible.
+      r3  `include\\` + newline + ` inc.mk` matched neither physical line, so
+          the included file was never scanned and never reported.
+      r4  `$(call \\` + newline + ` value,LATE)` splits the function name from
+          `call`, so VALUE_RE matched neither line -- and the joined form is
+          genuinely the builtin (measured: `joined=[x.c] direct=[x.c]`).
+
+    Three spellings of one mistake, so this joins ONCE, here, and every scan
+    runs over the result. The line number reported is the FIRST physical line
+    of the logical line, which is where a reader has to go to edit it.
+
+    Joined with a single SPACE, which is what make does (the backslash-newline
+    and the next line's leading whitespace collapse to one space). That is also
+    the safe direction: joining with nothing could GLUE two fragments into a
+    keyword make never saw -- `$(va\\` + `lue X)` is `$(va lue X)` to make, not
+    a `value` call at all.
+    """
+    def joined(parts):
+        """First part as it stands; each continuation adds exactly one space."""
+        out = parts[0]
+        for part in parts[1:]:
+            out += " " + part.lstrip()
+        return out
+
+    lines, buf, start = [], [], None
+    for lineno, ln in enumerate(text.splitlines(), 1):
+        if start is None:
+            start = lineno
+        if ln.endswith("\\"):
+            buf.append(ln[:-1])
+            continue
+        buf.append(ln)
+        lines.append((start, joined(buf)))
+        buf, start = [], None
+    if buf:                              # a trailing backslash at end of file
+        lines.append((start, joined(buf)))
+    return lines
+
+
 def find_evasions(makefile, goal="run"):
     """[(file, line, text)] for every `value` call, plus list-integrity problems.
 
@@ -249,7 +296,9 @@ def find_evasions(makefile, goal="run"):
     files, problems = gather_sources(makefile, goal)
     hits = []
     for path, text in files:
-        for lineno, ln in enumerate(text.splitlines(), 1):
+        # LOGICAL lines -- see logical_lines() for the three times a
+        # physical-line scan was defeated by a continuation.
+        for lineno, ln in logical_lines(text):
             if VALUE_RE.search(ln):
                 hits.append((path, lineno, ln.strip()[:120]))
     return hits, problems
@@ -406,6 +455,18 @@ guard: $(value LATE)
 LATE := guarded.c
 """
 
+# A continuation SPLITTING `call` from `value`. The joined form really is the
+# builtin -- measured, `joined=[x.c] direct=[x.c]` -- and neither physical line
+# matches on its own. The third continuation defeat of a physical-line scan in
+# this tool, which is why logical_lines() exists.
+SELFTEST_VALUE_CONTINUED = "ok: base.c $(call \\\n value,LATE)\n\t@true\nLATE := late.c\n"
+
+# ⛔ THE CONTROL FOR THE JOIN ITSELF. make replaces a backslash-newline with a
+# SPACE, so a word cannot be split across one: `$(va\\` + `lue X)` is
+# `$(va lue X)` to make and is no `value` call at all. A join that glued the
+# fragments would invent a refusal for a Makefile make reads as clean.
+SELFTEST_SPLIT_WORD = "ok: base.c $(va\\\nlue LATE)\n\t@true\nLATE := late.c\n"
+
 
 def _fixture_exit(files, goal="ok"):
     """(exit code, captured output) from the REAL report() over a fixture tree.
@@ -484,6 +545,18 @@ def self_test():
             ("CONTROL   a clean INCLUDED file still exits 0",
              {"Makefile": "include inc.mk\nok: base.c $(FROM_INC)\n\t@true\n",
               "inc.mk": "FROM_INC := inc.c\n"}, 0),
+            # r4: a continuation SPLITTING `call` from `value`.
+            ("REFUSE    a CONTINUED $(call value,X) is still that call",
+             {"Makefile": SELFTEST_VALUE_CONTINUED}, 2),
+            # ⛔ And the control for the JOIN: make turns a backslash-newline
+            # into a SPACE, so `$(va\ / lue X)` is the variable `va lue X` --
+            # which --warn-undefined-variables CATCHES (exit 1, a real
+            # finding), and which is NOT a `value` call. A join that glued the
+            # fragments would answer 2 here, inventing a refusal for a file
+            # make reads perfectly well. Measured:
+            #   Makefile:1: warning: undefined variable 'va lue LATE'
+            ("CONTROL   a word split by a continuation is NOT a value call",
+             {"Makefile": SELFTEST_SPLIT_WORD}, 1),
         ]
         for name, files, want_rc in refusal_arms:
             got, out = _fixture_exit(files)
