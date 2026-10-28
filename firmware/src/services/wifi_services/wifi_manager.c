@@ -815,7 +815,19 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
         }
         case SOCKET_MSG_SEND:
         {
-            if (gStateMachineContext.pTcpServerContext != NULL && pMessage != NULL) {
+            // #956 hardening (defense in depth — NOT a proven live bug): only
+            // the streaming client's own socket may move the in-flight ring or
+            // the send counters.  Today nothing else can reach here — iperf2 and
+            // the mDNS responder claim their sockets at the top of this callback
+            // and UDP discovery arrives as SOCKET_MSG_SENDTO, a different message
+            // type — so this has never been observed to fire.  But nothing
+            // structurally prevents a future socket from aliasing the handler,
+            // and if one did it would pop a ring slot it never pushed, which is
+            // precisely the mis-pairing #956 exists to eliminate.  Note this also
+            // skips for clientSocket == -1 (no client), where a completion cannot
+            // belong to us by definition.
+            if (gStateMachineContext.pTcpServerContext != NULL && pMessage != NULL &&
+                socket == gStateMachineContext.pTcpServerContext->client.clientSocket) {
                 int16_t sentBytes = *(int16_t*)pMessage;
                 wifi_tcp_server_clientContext_t* client = &gStateMachineContext.pTcpServerContext->client;
 
@@ -856,8 +868,35 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                         client->wifiPartialBytesMissing +=
                             (uint32_t)(sendSize - (uint16_t)sentBytes);
                         isPartial = true;
+                    } else if ((uint16_t)sentBytes > sendSize) {
+                        // #956: the arithmetically-impossible direction.  A
+                        // completion cannot confirm more bytes than its own send
+                        // offered, so any accrual here means this completion was
+                        // paired with the wrong ring slot (or, at sendSize == 0,
+                        // with no slot at all — either the ring was reset out from
+                        // under an outstanding send, or tcpInFlight was 0 so
+                        // nothing was popped).
+                        //
+                        // Deliberately NOT guarded on sendSize > 0, unlike the
+                        // partial arm above.  That guard is a no-op there anyway
+                        // (an unsigned `sentBytes < 0` can never hold), while here
+                        // it would discard exactly the not-in-flight case — and
+                        // discarding it would break the identity this counter
+                        // exists to restore:
+                        //     BytesSent - BytesConfirmed
+                        //         == PartialBytesMissing - OverBytesExtra
+                        // which needs every confirmed byte to be matched against
+                        // whatever sendSize was popped, zero included.
+                        client->wifiTcpOverBytesExtra +=
+                            (uint32_t)((uint16_t)sentBytes - sendSize);
                     }
                 } else {
+                    // The popped sendSize is deliberately charged to NOTHING
+                    // here, so it stays in wifiTcpBytesSent with nothing on the
+                    // other side.  That is why the identity above holds only
+                    // when wifiTcpSendErrors == 0.  See wifiTcpOverBytesExtra in
+                    // wifi_tcp_server.h for the full statement and for why it
+                    // is not charged to wifiPartialBytesMissing.
                     client->wifiTcpSendErrors++;
                     isError = true;
                 }
@@ -1230,9 +1269,28 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                                 // whose DAT0 driver never tri-states crushes the
                                 // WINC's replies to mid-rail - invisible to every
                                 // probe, cured only by removal.
-                                LOG_E("WiFi unreachable and an SD card IS present on the shared bus - the card is likely bus-incompatible; remove it (wiki: SD-Card-Compatibility)");
+                                /* #1039 (#1000 class): 139 fixed bytes with NO
+                                 * substitutions against Logger's 125-byte
+                                 * effective ceiling (LOG_MESSAGE_SIZE 128,
+                                 * minus vsnprintf's 2-byte and the clamp's
+                                 * 3-byte reservation in LogMessageFormatImpl).
+                                 * With nothing interpolated there is no input
+                                 * that makes it fit, so it truncated
+                                 * IDENTICALLY on every firing, always cutting
+                                 * the "(wiki: SD-Card-Compatibility)" pointer
+                                 * that tells the operator where to check the
+                                 * card. Now 120 fixed bytes, worst case 120,
+                                 * margin 5. */
+                                LOG_E("WiFi down and an SD card IS present on the shared bus - likely bus-incompatible; remove it (wiki: SD-Card-Compatibility)");
                             } else {
-                                LOG_E("WiFi unreachable but SPI4 probes read CLEAR - if an SD card is inserted, try removing it (transfer-speed interference is not probe-visible)");
+                                /* #1039 twin of the arm above: also 139 fixed
+                                 * bytes with no substitutions, so also cut
+                                 * every firing -- losing the clause that says
+                                 * the interference is invisible to the probe,
+                                 * i.e. the reason to pull a card the probe
+                                 * just called clean. Now 107 fixed bytes,
+                                 * worst case 107, margin 18. */
+                                LOG_E("WiFi down but SPI4 probes read CLEAR - remove any SD card; transfer-speed interference is not probe-visible");
                             }
                         }
                         if (busState == SPI_BUS_JAMMED) {
@@ -1947,13 +2005,25 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                         }
                         if ((WDRV_WINC_STATUS_OK != discStatus) &&
                             (WDRV_WINC_STATUS_REQUEST_ERROR != discStatus)) {
-                            /* Shortened deliberately: the REMEDY is written
-                             * last, so the remedy is what a 125-byte clamp
-                             * eats. 122 bytes left only 3 to spare. */
-                            LOG_E("WiFi: AP->STA disconnect failed, %u tries "
-                                  "(status=%d) - DHCP refused until a reinit "
-                                  "clears isConnected (#1060)",
-                                  (unsigned)(WIFI_MANAGER_APSTA_SETTLE_SLICES + 1u),
+                            /* ⛔ SHORTENED TWICE, AND THE SECOND TIME BY THE
+                             * GATE RATHER THAN BY ME. log_budget computes the
+                             * worst case from each specifier's MAXIMUM WIDTH
+                             * (10 for %u, 11 for %d), not from the values
+                             * actually passed -- which is correct, and is why
+                             * my own arithmetic said 111 while the real worst
+                             * case was 127. Dropping the attempt count removed
+                             * a 10-byte specifier whose value is a
+                             * compile-time constant anyway; it is in the
+                             * source, in this comment and in the pin, so the
+                             * log is the one place it adds nothing.
+                             *
+                             * The remedy is written LAST, so the remedy is
+                             * what a 125-byte clamp eats -- which is the whole
+                             * reason this message is kept short rather than
+                             * waived. */
+                            LOG_E("WiFi: AP->STA disconnect failed (status=%d)"
+                                  " - DHCP refused until a reinit clears "
+                                  "isConnected (#1060)",
                                   (int)discStatus);
                         }
                     }

@@ -108,6 +108,31 @@ _Static_assert(offsetof(SYS_FS_FSTAT, lfname) >= sizeof(FILINFO),
  * more than the time it saves (see the fileCounter==0 branch for the three
  * ways the stale one went wrong). */
 #define SD_CARD_MANAGER_BUCKET_ADVANCE_MAX (SD_CARD_MANAGER_MAX_BUCKET + 1u)
+/* #958: names the scratch walk tries before settling for the last one. */
+/* #958: how many scratch-name candidates the collision walk will examine.
+ *
+ * TIED TO THE BUCKET CEILING, not a number of its own, on an operator ruling
+ * (2026-10-15). It was 16u -- an arbitrary quarter of what a bucket holds --
+ * and that bound was the ENTIRE source of the exhaustion argument this fix
+ * spent four designs on: with 17 same-stem files the walk ran out of names it
+ * was willing to try and had to choose between truncating one and refusing the
+ * operation (which reopens the `mode` double-duty teardown race). Raising it
+ * dissolves the choice for any realistic card.
+ *
+ * ⚠ WHAT THIS DOES NOT DO, stated because the stronger claim is tempting and
+ * false: it does NOT make exhaustion unreachable. MAX_DIR_FILES is the
+ * threshold at which the firmware's OWN writer rolls to a new bucket -- not a
+ * cap on what the directory can hold, since a card can be populated
+ * externally. So this raises the population required to exhaust the walk from
+ * 17 files to 65; it does not reduce it to zero. The fallback below still
+ * exists and is still reachable in principle.
+ *
+ * COST: each candidate is one SYS_FS_FileStat, i.e. a FatFs dir_find, which is
+ * O(directory size) like every other lookup here -- so the walk is bounded by
+ * (candidates x directory size) and runs ONCE per benchmark, not per write.
+ * #689's bucketing is what keeps the directory small enough for that to be
+ * cheap; the two mechanisms are deliberately sized off the same constant. */
+#define SD_CARD_MANAGER_UNIQUE_TARGET_MAX  SD_CARD_MANAGER_MAX_DIR_FILES
 /* #780: how long the pumped wait blocks between USB write pumps. Small enough
  * that a filling circular buffer is serviced promptly, large enough that the
  * wait is not a busy-spin against the SD task.
@@ -261,6 +286,143 @@ static volatile bool gSdRotating = false;
  * plain aligned bool -- atomic on PIC32MZ. volatile because the arming task
  * and the SD task are different contexts. */
 static volatile bool gWriteSessionIsStreamingLog = false; /* latched at arm */
+/* #981: TEST/BENCH HOOK -- force the NEXT real SD write to fail, once.
+ *
+ * WHY THIS EXISTS. Every accounting path in this file that runs when a write
+ * fails (#825/#838/#915's Streaming_ReportSdDiscard() calls in the rotation
+ * drain and the unmount drain, and #979's teardown fixes) can be reviewed from
+ * source but could not be PROVEN by a bench regression test, because nothing
+ * could make a real write fail on demand. The only other way is to run the card
+ * out of space, which at the measured ~300-500 KB/s SD write rate costs one to
+ * two hours per run on the bench card -- disproportionate for a test meant to
+ * re-run on every future PR touching this path. Arming this instead lets a test
+ * stream briefly and observe the drain's failure accounting without touching
+ * real card capacity.
+ *
+ * WHY IT SHIPS IN EVERY BUILD rather than behind a compile-time gate. There is
+ * no build variant to hook into: tools/release/check_build_config.py asserts
+ * only (a) exactly one linker script is selected and (b) no per-file
+ * optimization override is inert, and tools/release/cut_release.sh carries no
+ * -D / preprocessor handling at all. Release and bench hexes are the same
+ * source built from the same <conf name="default">, differing only in linker
+ * script. Inventing a `#ifndef RELEASE_BUILD` for this one feature would add a
+ * safety mechanism that NOTHING verifies at release-cut time, whose failure
+ * mode is "somebody cut a release without defining it and nobody noticed" --
+ * strictly worse than rails that are checkable from source. Shipping it is
+ * also what makes it useful: the regression test then runs against the same
+ * image that ships, so a release candidate can be validated rather than a
+ * debug build nobody flashes.
+ *
+ * WHY "INJECTS A FAILURE" IS NOT THE ESCALATION IT LOOKS LIKE. The obvious
+ * objection is that the three switches this firmware already ships -- SYST:STR:
+ * BENCHmark, SYST:STR:TEST:PATtern, SYST:STOR:SD:BENCHmark -- only bypass a cap
+ * or write throwaway data, while this one breaks something. Compared against
+ * the nearest of them the comparison actually runs the other way.
+ * SYST:STR:BENCHmark raises the streaming admission limit to 100 kHz
+ * (SCPIInterface.c, `freqLimit = ... ? 100000 : STREAMING_ISR_MAX_HZ`), which
+ * lets a caller drive the ADC past the FRM-documented #539 scan-busy bound, for
+ * the whole session, with no self-limit. This hook makes exactly ONE call
+ * return -1 -- the identical value SYS_FS_FileWrite returns on a real transient
+ * failure, i.e. an input every caller in this file is already required to
+ * handle, and whose handling is the property under test. One is an unbounded
+ * excursion OUTSIDE the envelope the firmware claims to handle; this is a
+ * single stimulus INSIDE it.
+ *
+ * THE REAL BLAST RADIUS, stated plainly because the consume GATE below exists
+ * only because of it -- and stated in full, because two earlier revisions of
+ * this paragraph each understated it in the unsafe direction ("one write
+ * fails", then "the session ends"). A -1 is handled by five call sites, and
+ * THREE of them -- the ordinary WRITE_TO_FILE write AND BOTH rotation drains
+ * -- respond by setting currentProcessState = ERROR. That does not merely end
+ * the session. ERROR falls through to UNMOUNT_DISK; UNMOUNT_DISK's cleanup
+ * resets fileCounter to 0, zeroes baseFilename and clears fileSplittingEnabled
+ * before going to INIT; nothing on that path clears `enable` or `mode`, so INIT
+ * re-mounts and OPEN_FILE -- at fileCounter 0 again -- re-opens the SAME base
+ * filename with SYS_FS_FILE_OPEN_WRITE_PLUS, which TRUNCATES it. Everything
+ * already recorded in that file is destroyed, and since the restarted session
+ * re-rotates from counter 0 it goes on to overwrite "<base>-1", "<base>-2" ...
+ * in turn as it grows. Consumed at a ROTATION drain the loss is largest of all,
+ * because the base file is by definition at MAXSize and earlier parts already
+ * exist. "Recoverable" is true only of the SESSION (SYST:STOR:SD:ENAble re-arms
+ * logging); the bytes are gone.
+ *
+ * That truncate-on-remount is PRE-EXISTING behaviour -- reachable today by a
+ * real transient SYS_FS_FileWrite failure with no hook in the tree, and worth
+ * its own ticket rather than a drive-by change here. What an ungated hook adds
+ * is a deliberate, SCPI-armable, network-reachable TRIGGER for it. Worse, the
+ * destructive outcome was also the LIKELY one, and the one that proves nothing:
+ * ordinary writes run continuously throughout a stream while a rotation drain
+ * needs a MAXSize crossing in the same state-machine pass, so an arm placed
+ * "mid-stream" is overwhelmingly caught by the ordinary site -- which truncates
+ * the file and leaves SdDroppedBytes UNCHANGED.
+ *
+ * SO THE CONSUME IS GATED on currentProcessState == UNMOUNT_DISK: the arm can
+ * be taken only by one of the two drains that run inside a teardown ALREADY in
+ * progress. Neither of those sets ERROR and neither starts a remount, so no arm
+ * can cause the truncation above. The price is real and is named at the consume
+ * site: the rotation drains' accounting (#825/#838) is no longer exercisable by
+ * this hook.
+ *
+ * REJECTED ALTERNATIVE, recorded so it is not re-proposed: gating the arm on
+ * SYST:STR:BENCHmark already being non-zero. It fails on three counts. (1) It
+ * inverts the safety argument -- reaching the mild hook would first require
+ * entering the more dangerous cap-bypassed state, making combined exposure
+ * worse. (2) It is unreachable in the window that matters: SCPI_SetBenchmarkMode
+ * REFUSES while streaming (#844's `||` guard), whereas this must be armable
+ * mid-stream because the drains it exercises only run during and at the end of
+ * a live session -- so the precondition would have to be set before
+ * SYST:STR:START and would force every SD failure-accounting test to run
+ * cap-bypassed, contaminating the very SdDroppedBytes the test reads. (3) It
+ * couples two orthogonal concerns, so a future change to benchmark-mode
+ * semantics would silently change whether this can arm. And it does not
+ * address the actual hazard: the hazard is "armed and forgotten", which is a
+ * question of PERSISTENCE, and a gate on arming does nothing about it. The
+ * rails below do.
+ *
+ * SAFETY RAILS, all of which are load-bearing:
+ *   - ONE-SHOT. The consume in SDCardWrite() clears the flag inside the same
+ *     critical section that tests it, before any caller sees the -1, so there
+ *     is no way to leave a device failing writes for whoever uses it next.
+ *   - CLEARED BY ANY RESET, via the explicit #409 scrub in
+ *     sd_card_manager_Init() -- see there for why the `= false` initializer
+ *     alone is not enough, and why a power-cycle therefore always clears this.
+ *   - NO OTHER WRITER. This flag is written in exactly three places: the #409
+ *     scrub, the test-and-clear in SDCardWrite(), and
+ *     sd_card_manager_SetFailNextWrite(). Only the last is reachable from
+ *     outside this file, and only SCPI_StorageSDFailNextSet calls it. Nothing
+ *     can re-arm it behind a user's back.
+ *   - LOGGED LOUDLY, on arm, on disarm, and every time it fires, naming itself
+ *     as the cause, so a SYST:LOG? can never be read as a genuine card fault.
+ *     Deliberately LOG_E and NOT LOG_E_ONCE/LOG_E_SESSION: this firing at all
+ *     in the field is a red flag and must never be suppressed as a duplicate.
+ *   - READABLE BACK. SYST:STOR:SD:FAILNext? reports whether an arm is still
+ *     outstanding, so "is this device armed?" is answerable without guessing.
+ *   - CONSUMED ONLY INSIDE A TEARDOWN, per the gate above -- the rail that puts
+ *     the truncation out of reach. SDCardWrite() carries the call-site analysis
+ *     showing that currentProcessState == UNMOUNT_DISK selects exactly the two
+ *     non-destructive sites. Note the one trade the gate makes WORSE: an arm
+ *     placed at any other moment is neither consumed nor logged (a skip-log
+ *     would fire on every ordinary write, hundreds per second at 1 kHz), so it
+ *     stays outstanding until a teardown drain issues a write. That is a longer
+ *     "armed and forgotten" window than an ungated hook has, accepted because
+ *     what it is waiting to do is now harmless, and it stays visible through
+ *     SYST:STOR:SD:FAILNext? and cleared by any reset.
+ *
+ * NOT restricted by transport, deliberately: it is reachable over both USB and
+ * WiFi SCPI. There is no per-command transport gate anywhere in this firmware
+ * to reuse -- scpi_commands[] is one flat table shared by both interfaces --
+ * so restricting this one would mean inventing a mechanism, and it would be
+ * the only command so restricted while SYSTem:STORage:SD:FORmat, which erases
+ * the entire card, stays reachable from the same table. This hook is not the
+ * marginal network risk on a LAN-connected device.
+ *
+ * CONCURRENCY. Armed by an SCPI callback (USB SCPI task pri 7, or WiFi SCPI on
+ * app_WifiTask pri 2), consumed by app_SDCardTask (pri 5) inside SDCardWrite().
+ * The arm is a plain aligned store (atomic on PIC32MZ); the consume is a
+ * test-and-clear, i.e. a read-modify-write across two tasks, so it takes a
+ * critical section -- same reasoning as the gWriteSessionIsStreamingLog latch
+ * above. volatile because the writing and reading contexts differ. */
+static volatile bool gFailNextWrite = false;
 
 /* #824: what a sd_UpdateSettingsImpl() caller is doing. See the three public
  * wrappers in sd_card_manager.h for why this is a parameter and not something
@@ -409,6 +571,151 @@ typedef struct {
 sd_card_manager_context_t gSDCardData;
 sd_card_manager_settings_t *gpSDCardSettings;
 
+/* #914: file-scope so the open-failure path (below) and the READ_FROM_FILE
+ * paths (further down) send the identical literal instead of each carrying its
+ * own copy. Flash-resident string literals; safe to hand out from either site
+ * because the reply path COPIES (DataReadyCB hands the pointer to
+ * sd_reply_write_usb/_tcp, which write into their own buffers rather than
+ * DMA-ing from the caller's) -- same reasoning as the SD:LISt? end markers
+ * above.
+ *
+ * eofMarker ends every SD:GET reply that sent either all of its content or
+ * none: a complete file, a genuinely empty file, and -- see the open-failure
+ * block below -- a file that never opened. */
+static const char eofMarker[] = "__END_OF_FILE__";
+/* #725: the MID-TRANSFER failure terminator, and only that. It exists for the
+ * one case where a plain EOF would be a lie with consequences: content has
+ * already streamed, so EOF would hand the host a TRUNCATED file that looks
+ * complete -- on a data-acquisition product, the tail of a measurement lost
+ * silently. It is deliberately NOT sent for an open failure, where nothing has
+ * gone out and that argument has no purchase; see the open-failure block for
+ * why sending it there is actively harmful. WHICH failure occurred is carried
+ * by the SCPI error queue (sd_card_manager_LatchAsyncError) and SYST:LOG?, not
+ * by the marker. */
+static const char transferErrorMarker[] = "__TRANSFER_ERROR__";
+
+/* #914: per-transport, one-deep latch for a failure the SD TASK detects AFTER
+ * the SCPI handler that armed the operation has already returned SCPI_RES_OK
+ * (e.g. a GET whose file will not open). The SD task owns no scpi_t and must
+ * not touch one directly: SCPI_ErrorPush is two things at once -- an UNLOCKED
+ * mutation of the transport context's error fifo (libscpi/src/fifo.c has no
+ * locking anywhere), and a TRANSPORT WRITE (SCPI_ErrorEmit -> interface->error
+ * -> SCPI_WriteWithRetry's ~1 s retry budget). Called from here that would
+ * race the owning transport task's own queue pushes/pops (the #999 hazard
+ * class) and interleave "**ERROR: ..." into the SD reply this task is itself
+ * streaming.
+ *
+ * So this task only RECORDS the code plus who asked; the transport task drains
+ * it into its OWN context at the next command boundary via
+ * SCPI_DrainDeferredSdError (SCPIInterface.c), called from its UsbCdc.c /
+ * wifi_tcp_server.c command-complete handler, before SCPI_Input.
+ *
+ * ONE SLOT PER TRANSPORT, not one globally. #829 makes the SD manager
+ * single-owner, so only one GET is ever in flight -- but a latched failure
+ * lives until ITS transport's next command boundary, and `mode = NONE` on the
+ * failure path releases the claim immediately, so the other transport is free
+ * to arm and fail its own GET inside that window. A single slot let the second
+ * failure overwrite the first, and the first transport then drained nothing
+ * and read "No error" -- not the wrong code, NO code, which is the exact
+ * silence #914 exists to remove, reintroduced one level down. Two slots make
+ * the transports independent. Newest-wins is still right WITHIN a slot: a
+ * client asks about the failure it just provoked.
+ *
+ * Each slot also carries the TCP connection generation the operation was armed
+ * for (#599's replyGeneration; 0 and meaningless for USB). A client that
+ * disconnects before its next command leaves its slot loaded, and disconnect
+ * clears nothing that would help: wifi_tcp_server_CloseClientSocket() resets
+ * buffers only -- it does not bump the generation, does not reset
+ * client->scpiContext, and does not clear the SCPI error queue (microrl_init /
+ * CreateSCPIContext run once, behind isInitDone). So without the generation
+ * the NEXT client to take the single TCP slot drains the previous client's
+ * error on its first command. This is the same invariant, by the same
+ * mechanism, that sd_card_manager_DataReadyCB already applies to the streamed
+ * reply itself (app_freertos.c).
+ *
+ * Concurrency. Writer: app_SDCardTask ONLY -- sd_card_manager_ProcessState()
+ * is called from exactly two places, app_freertos.c (inside
+ * app_SDCard_GracefulShutdown, "we ARE the SD task") and the task loop, both
+ * on that task. Readers: app_USBDeviceTask (pri 7) for [SD_CARD_REPLY_USB],
+ * app_WifiTask (pri 2) for [SD_CARD_REPLY_WIFI_TCP] -- one reader per slot,
+ * and a reader never touches the other's slot. The critical section stays
+ * anyway, because the take is a read-modify-write over a TWO-field struct:
+ * `volatile` would make each aligned 32-bit field's own load/store atomic
+ * (docs/MCU_REFERENCE.md) and still let a reader pair a new code with an old
+ * generation. */
+#define SD_ASYNC_ERR_SLOT_COUNT  ((int)SD_CARD_REPLY_WIFI_TCP + 1)
+
+typedef struct {
+    int32_t  code;        /* 0 = nothing pending */
+    uint32_t generation;  /* conn generation it was latched for; 0 = USB */
+} sd_async_error_slot_t;
+
+/* Funded by the 512 B #914 trim in StreamingBufferPool.c's STATIC_POOL_SIZE
+ * (16 B of actual BSS; paid at the established 512 B quantum). */
+static sd_async_error_slot_t gSdAsyncError[SD_ASYNC_ERR_SLOT_COUNT];
+
+void sd_card_manager_LatchAsyncError(int32_t scpiError,
+                                     sd_card_manager_reply_target_t target,
+                                     uint32_t generation) {
+    if (((int)target < 0) || ((int)target >= SD_ASYNC_ERR_SLOT_COUNT)) {
+        return;   /* unreachable today; costs nothing and cannot corrupt BSS */
+    }
+    taskENTER_CRITICAL();
+    gSdAsyncError[target].code = scpiError;
+    gSdAsyncError[target].generation = generation;
+    taskEXIT_CRITICAL();
+}
+
+int32_t sd_card_manager_TakeAsyncError(sd_card_manager_reply_target_t target,
+                                       uint32_t generation) {
+    int32_t err = 0;
+    if (((int)target < 0) || ((int)target >= SD_ASYNC_ERR_SLOT_COUNT)) {
+        return 0;
+    }
+    taskENTER_CRITICAL();
+    if (gSdAsyncError[target].code != 0) {
+        if (gSdAsyncError[target].generation == generation) {
+            err = gSdAsyncError[target].code;
+        }
+        /* Cleared either way. A mismatch means the connection that provoked
+         * the failure is gone and this caller is its successor on the single
+         * TCP slot: the error is not ours to report, and it can never match
+         * again (the generation only increases), so holding it would just park
+         * dead state in BSS for the life of the boot. */
+        gSdAsyncError[target].code = 0;
+        gSdAsyncError[target].generation = 0;
+    }
+    taskEXIT_CRITICAL();
+    return err;
+}
+
+/* #914: SYS_FS_Error() -> a SCPI code the host can act on.
+ *
+ * Deliberately three-way, not a FatFs taxonomy. The only distinction a client
+ * can act on is "the name you asked for is not there" (fix the name) vs "the
+ * storage is not usable" (fix the card or the mount); everything else collapses
+ * into the second, and SYST:LOG? still carries the exact SYS_FS_ERROR for
+ * anyone who needs to tell NOT_READY from NO_FILESYSTEM.
+ *
+ * SYS_FS_FileOpen sets errorValue on every path that can return
+ * HANDLE_INVALID -- including `errorValue = (SYS_FS_ERROR)fileStatus` for the
+ * native-FS result (sys_fs.c) -- so the default arm is never reached with a
+ * stale OK in practice; it is defensive. */
+static int32_t SdAsyncErrorForFsError(SYS_FS_ERROR fsErr) {
+    switch (fsErr) {
+    case SYS_FS_ERROR_NO_FILE:      /* FR_NO_FILE  -- the name is not there  */
+    case SYS_FS_ERROR_NO_PATH:      /* FR_NO_PATH  -- the directory is not   */
+        return SD_ASYNC_ERR_FILE_NOT_FOUND;
+    case SYS_FS_ERROR_INVALID_NAME: /* FR_INVALID_NAME / bad volume prefix   */
+        return SD_ASYNC_ERR_FILE_NAME_ERROR;
+    default:
+        /* NOT_READY (no card), NO_FILESYSTEM (unmounted/unformatted),
+         * DISK_ERR, DENIED, LOCKED, TOO_MANY_OPEN_FILES, NOT_ENOUGH_CORE:
+         * the storage, not the name, is the problem. */
+        return SD_ASYNC_ERR_MASS_STORAGE;
+    }
+}
+
 void __attribute__((weak)) sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff, size_t dataLen) {
 
 }
@@ -416,6 +723,117 @@ void __attribute__((weak)) sd_card_manager_DataReadyCB(sd_card_manager_mode_t mo
 static int SDCardWrite() {
     int writeLen = -1;
     if (gSDCardData.fileHandle == SYS_FS_HANDLE_INVALID) {
+        goto __exit;
+    }
+
+    /* #981: test/bench hook -- see gFailNextWrite above. Consume the arm and
+     * fail, WITHOUT issuing the real write: the point is to exercise the
+     * callers' failure accounting, not to put the card in a novel state.
+     *
+     * Placed AFTER the handle check on purpose. A call with no open file
+     * already returns -1 without touching the card, so consuming the arm there
+     * would burn it on a write that never was, and a test arming while the log
+     * is between files would silently get no injected failure at all. Here the
+     * arm can only be consumed by a call that was about to write real bytes.
+     *
+     * Test-and-clear under a critical section (read-modify-write across the
+     * arming SCPI task and this one); the LOG_E is outside it, because logging
+     * with interrupts masked is exactly what #525 cost us. -1 is the value
+     * SYS_FS_FileWrite itself reports a failure with, so every caller's
+     * existing error arm is reached unchanged.
+     *
+     * WHICH CALLER MAY CONSUME THE ARM, AND WHY IT IS NOT ALL FIVE. An earlier
+     * revision of this comment sorted the five call sites on ONE axis --
+     * "the drain sites report, the ordinary site does not" -- and drew the
+     * safety conclusion from that sort. It is the wrong axis to draw it from:
+     * two of the four "drain" sites are exactly as destructive as the ordinary
+     * one. The sites differ on two INDEPENDENT axes:
+     *
+     *   axis 1, ACCOUNTING -- does the failure arm call
+     *     Streaming_ReportSdDiscard() for the chunk it abandons?
+     *   axis 2, SESSION INTEGRITY -- does the failure arm set
+     *     currentProcessState = ERROR, i.e. does it ITSELF start the
+     *     ERROR -> UNMOUNT_DISK -> INIT -> OPEN_FILE(WRITE_PLUS) remount that
+     *     TRUNCATES the log file? (Full chain in gFailNextWrite's block
+     *     comment; it destroys already-recorded data, it is not "the session
+     *     ends".)
+     *
+     *   call site                      reports?  starts a truncating teardown?
+     *   ---------------------------------------------------------------------
+     *   ordinary WRITE_TO_FILE write      no       YES
+     *   rotation pending-flush            yes      YES
+     *   rotation buffer drain             yes      YES
+     *   UNMOUNT_DISK pending-flush        yes      no -- already tearing down
+     *   UNMOUNT_DISK buffer drain         yes      no -- already tearing down
+     *
+     * Only the last two are safe, and currentProcessState == UNMOUNT_DISK
+     * separates them EXACTLY: both run at the top of that case before anything
+     * reassigns the field, while the other three run under WRITE_TO_FILE. So
+     * the test-and-clear below is gated on it -- no new parameter threaded
+     * through five callers, and no way for a future sixth caller to opt itself
+     * in by accident. A concurrent SCPI teardown (pri 7, preempting this pri-5
+     * task) can only force the field to DEINIT, never to UNMOUNT_DISK, so that
+     * race can only make the gate REFUSE -- never admit at an unsafe site.
+     *
+     * WHAT A TEST PROVES WITH THIS. Arm at any time, including mid-stream (the
+     * arm is simply not taken while ordinary writes run), then stop the
+     * session. An unmount drain consumes it, reports the abandoned chunk via
+     * Streaming_ReportSdDiscard(), and SdDroppedBytes moves -- deterministic,
+     * with no race to win. Those are the #915/#979 paths. If
+     * SYST:STOR:SD:FAILNext? still reads 1 afterwards, no teardown write had
+     * data to issue; the arm is intact, so just retry.
+     *
+     * Be precise about what the gate guarantees, since overclaiming here is
+     * what this comment is a correction of: it guarantees the hook cannot
+     * CAUSE a truncating teardown, not that no truncation can accompany one.
+     * An UNMOUNT_DISK reached from a REAL error while `mode` is still WRITE
+     * remounts and truncates on the pre-existing path regardless -- that was
+     * already in motion before the arm was taken, and the arm neither started
+     * it nor changed its outcome. On the ordinary stop this test uses, SCPI
+     * has cleared `mode`, so INIT does not remount and nothing is truncated.
+     * What the arm DOES cost, every time, is the in-flight chunk it abandons
+     * (up to one writeBufferSize of the session's tail) -- reported, never
+     * silent, and the same cost a genuine transient failure there would have.
+     *
+     * WHAT IT CANNOT PROVE, recorded so the gap is never mistaken for
+     * coverage: the ROTATION drains' textually identical #825/#838 reporting,
+     * and the ordinary site's deliberate NON-reporting. Both stay
+     * source-review-only. That is a "fixed one site, left the twin" shape and
+     * it is accepted knowingly, because the only way to reach those sites is
+     * to let an arm start a teardown that truncates the operator's log -- and
+     * the coverage was never reliable even then: ordinary writes run
+     * continuously while a rotation flush needs a MAXSize crossing in the same
+     * pass, so which site caught the arm was a coin flip whose losing side
+     * destroyed data. Closing that gap needs a mechanism that cannot be armed
+     * on a shipped device; it is not a reason to widen this gate.
+     *
+     * The hook stays a PURE STIMULUS either way: it returns -1, the value
+     * SYS_FS_FileWrite itself reports a real failure with, and accounts for
+     * nothing on its own -- the callers' accounting IS the thing under test. */
+    bool injectWriteFailure = false;
+    taskENTER_CRITICAL();
+    if (gFailNextWrite &&
+            gSDCardData.currentProcessState ==
+                    SD_CARD_MANAGER_PROCESS_STATE_UNMOUNT_DISK) {
+        gFailNextWrite = false;
+        injectWriteFailure = true;
+    }
+    taskEXIT_CRITICAL();
+    if (injectWriteFailure) {
+        /* Worst case 118 bytes (108 literal + 10 for an unbounded %u), 7 under
+         * Logger's 125-byte ceiling. Was 174 worst case and truncated MID-WORD
+         * at "This is NOT a card fau", destroying exactly the clause the wiki
+         * row promises -- that SYST:LOG? never reads as a genuine card fault.
+         * "teardown-drain" now carries what "the session was already tearing
+         * down" spelled out, so the remedy survives in full. No max= bound is
+         * asserted on the %u: writeBufferLength is bounded by
+         * SD_CARD_MANAGER_CONF_WBUFFER_SIZE (65536, 5 digits), but the message
+         * fits the unbounded 10-digit worst case anyway, so the fit does not
+         * rest on a bound that would have to be proved and re-proved. */
+        LOG_E("[SD] TEST HOOK SYST:STOR:SD:FAILNext consumed - %u-byte "
+              "teardown-drain write forced to FAIL. NOT a card fault.",
+              (unsigned)gSDCardData.writeBufferLength);
+        writeLen = -1;
         goto __exit;
     }
 
@@ -932,8 +1350,8 @@ done:
      * SD lockout #754 was filed for. An aborted listing therefore ends with
      * no marker at all, and that absence is the signal. */
     /* The marker is a flash-resident string literal, like the SD:GET path's
-     * __END_OF_FILE__ a few hundred lines below. That is safe here because
-     * the reply path COPIES: DataReadyCB hands the pointer to
+     * eofMarker / transferErrorMarker at file scope above. That is safe here
+     * because the reply path COPIES: DataReadyCB hands the pointer to
      * sd_reply_write_usb / _tcp, which write into their own buffers rather
      * than DMA-ing from the caller's. */
     if (sendChunk && result != SD_LISTDIR_ABORTED) {
@@ -964,12 +1382,13 @@ bool sd_card_manager_Init(sd_card_manager_settings_t *pSettings) {
      * places OUTSIDE [_bss_begin,_bss_end] -- so the compile-time `= false`
      * initializers below are NOT honoured across MCLR or an IPE flash.
      *
-     * These two are the ones that decide a FILE'S CONTENT since #824, which
-     * is why they are scrubbed and the file's other statics (pre-existing, and
-     * only affecting behaviour after they are written) are left alone: a
-     * stale gSdRotating plus a stale gWriteSessionIsStreamingLog would put a
-     * header at the front of the first file of the first session after a
-     * flash, which no rotation had asked for.
+     * The first two are the ones that decide a FILE'S CONTENT since #824,
+     * which is why they are scrubbed and the file's other statics
+     * (pre-existing, and only affecting behaviour after they are written) are
+     * left alone: a stale gSdRotating plus a stale gWriteSessionIsStreamingLog
+     * would put a header at the front of the first file of the first session
+     * after a flash, which no rotation had asked for. The third (#981) decides
+     * whether a write FAILS, which is a stronger reason again -- see below.
      *
      * OUTSIDE the isInitDone guard deliberately -- that flag is a retained
      * static too, so a scrub placed under it is skipped in exactly the case
@@ -977,6 +1396,13 @@ bool sd_card_manager_Init(sd_card_manager_settings_t *pSettings) {
      * section needed. */
     gWriteSessionIsStreamingLog = false;
     gSdRotating = false;
+    /* #981: and the fault-injection arm, for the same reason plus a stronger
+     * one -- this is the line that makes "a reboot always clears it" TRUE.
+     * SYST:REBoot is RCON_SoftwareReset(), the same reset class #409 is about,
+     * so relying on the `= false` initializer would leave the one rail a user
+     * can always reach depending on where the linker happened to place the
+     * flag. Scrubbed here, a reset of any kind disarms it. */
+    gFailNextWrite = false;
 
     static bool isInitDone = false;
     if (!isInitDone) {
@@ -1103,8 +1529,25 @@ static bool sd_EnterBucket(const char* dir, uint32_t bucket) {
             memset(&st, 0, sizeof(st));
             if (SYS_FS_FileStat(gSDCardData.bucketPath, &st) != SYS_FS_RES_SUCCESS ||
                 (st.fattrib & SYS_FS_ATTR_DIR) == 0) {
-                LOG_E("[SD] #689 bucket name '%s' is taken by a non-directory - "
-                      "rename or remove it, or use a different directory",
+                /* #1029 (#1000's twin): this was "[SD] #689 bucket name '%s' is
+                 * taken by a non-directory - rename or remove it, or use a
+                 * different directory" -- 104 fixed bytes + bucketPath, whose
+                 * worst case is 45 (a 40-char SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX
+                 * directory + "/P" + 3 digits, sd_BuildBucketPath() above), for a
+                 * worst case of 149 against Logger's 125-byte effective ceiling
+                 * (LOG_MESSAGE_SIZE 128, minus vsnprintf's 2-byte and the clamp's
+                 * 3-byte reservation) -- the remedy half was cut once the
+                 * directory name was long. Shortened text below: 71 fixed bytes,
+                 * worst case 71+45=116, margin 9.
+                 *
+                 * log_budget: max=45 -- the same 45 this comment already
+                 * derived, made machine-readable so log_budget.py charges
+                 * the bound instead of reporting the %s unbounded. It holds
+                 * because SD_CARD_MANAGER_MAX_BUCKET is 64, so the "%03u"
+                 * in sd_BuildBucketPath() emits exactly 3 digits -- that
+                 * clamp, not the format, is what makes 45 a bound. */
+                LOG_E("[SD] #689 bucket '%s' not a dir - rename/remove it "
+                      "or use a different dir",
                       gSDCardData.bucketPath);
                 gSDCardData.writeRefuseReason = SD_REFUSE_BUCKET_NOT_DIR;
                 return false;
@@ -2064,6 +2507,29 @@ void sd_card_manager_ProcessState() {
                  * both shapes with one mechanism; a newly created bucket is
                  * empty, so nothing the roll creates can hold the part. */
                 bool reopenExisting = false;
+                /* #958: never REOPEN a scratch name -- the pre-walk exists to
+                 * find an existing part and reopen it, which is right for a
+                 * split log and pointless for scratch.
+                 *
+                 * ⛔ SUPPRESS THE REOPEN, NOT THE WALK. An earlier revision
+                 * of this fix gated the whole branch on `!uniqueTargetAtOpen`,
+                 * which also removed its FAULT handling: both probes below
+                 * refuse the open when the card cannot ANSWER (probeFsError /
+                 * targetFsError -> SD_REFUSE_BUCKET_UNREADABLE), and a
+                 * benchmark open silently lost that refusal. An adversarial
+                 * audit found it in both legs (high/data_loss): a stat fault
+                 * in this window refused BEFORE the open at the previous head,
+                 * and afterwards fell through to the truncating WRITE_PLUS.
+                 *
+                 * The shape to recognise: the feature I wanted off (reopen)
+                 * and a guard I wanted kept (fault refusal) shared one block,
+                 * so turning the block off turned the guard off with it. Gate
+                 * the ASSIGNMENT instead -- the probes still run, so their
+                 * refusal paths still apply to a scratch open. */
+                bool uniqueTargetAtOpen;
+                taskENTER_CRITICAL();
+                uniqueTargetAtOpen = gpSDCardSettings->uniqueTarget;
+                taskEXIT_CRITICAL();
                 if (bucketOk) {
                     uint32_t reuseBucket = gSDCardData.curBucket;
                     char probePath[SD_CARD_MANAGER_FILE_PATH_LEN_MAX + 1];
@@ -2104,8 +2570,13 @@ void sd_card_manager_ProcessState() {
                             break;
                         }
                         if (found) {
-                            reopenExisting = true;
-                            reuseBucket = probe;
+                            /* #958: a scratch open never reopens. The probe
+                             * still RAN, so the fault arms above still refuse;
+                             * only the reuse is suppressed. */
+                            if (!uniqueTargetAtOpen) {
+                                reopenExisting = true;
+                                reuseBucket = probe;
+                            }
                             break;
                         }
                     }
@@ -2152,15 +2623,349 @@ void sd_card_manager_ProcessState() {
                 // to IDLE with startupDirFull set, so SCPI_StartStreaming reports a
                 // precise error rather than a silent wedge — mirrors the #503
                 // disk-full clean-stop pattern.
+                // #689: create into the ACTIVE BUCKET, not the raw configured
+                // directory. For bucket 0 these are the same string, which is why
+                // short sessions keep their existing on-card layout exactly.
+                generateFilename(gSDCardData.filePath, sizeof(gSDCardData.filePath),
+                               gSDCardData.fileCounter, gSDCardData.bucketPath,
+                               gSDCardData.baseFilename, gpSDCardSettings->file);
+
+                /* #958: SD:BENCHmark's name carries only a post-boot tick and a
+                 * RAM sequence, both of which restart at boot, so a run after a
+                 * reboot can land on a name an earlier run left behind -- and
+                 * the open below truncates. Advance the discriminator past names
+                 * that are taken.
+                 *
+                 * This must happen HERE and not where the name is built: the FAT
+                 * volume is mounted only inside a session
+                 * (SYS_FS_AUTOMOUNT_ENABLE is false), so every SYS_FS_FileStat()
+                 * in that SCPI callback fails NO_FILESYSTEM -- which cannot be
+                 * told apart from "the name is free".
+                 *
+                 * BEST EFFORT, and deliberately NOT a refusal -- but read the
+                 * correction below before relying on the reason.
+                 *
+                 * ⛔ THE ORIGINAL JUSTIFICATION HERE WAS FALSE AND IS RETRACTED.
+                 * It said `benchmark_*` has exactly one producer in the firmware,
+                 * so a collision could only truncate a stale scratch file that is
+                 * "throwaway by construction". THREE INDEPENDENT SOURCE READS
+                 * DISPROVE THAT: `SCPI_StorageSDLoggingSet` accepts a
+                 * benchmark-shaped name for an ordinary recording, and
+                 * `SD_ValidatePathParam` rejects only an empty name, a leading
+                 * separator, control characters, '\', ':' and '.'/'..' segments
+                 * -- there is NO reserved prefix. Files can also be placed on the
+                 * card externally. So the bytes a collision destroys may be a
+                 * USER RECORDING, not a disposable scratch file. (I argued the
+                 * false version myself and used it to deflate this finding's
+                 * severity; it survived because nobody had read the accept path.)
+                 *
+                 * WHAT STILL ARGUES AGAINST A REFUSAL, on its own merits rather
+                 * than on that premise: `mode` means both "armed" and "busy", so
+                 * a terminal refusal has to say one without the other. Three
+                 * audit rounds died arguing how to order that teardown, and an
+                 * earlier revision of this fix shipped the race. There is also no
+                 * bucket-advance available at this point to sidestep it.
+                 *
+                 * So the current behaviour is: if no candidate is verified ABSENT
+                 * within the bound -- now 65 candidates rather than 17, see the
+                 * UNIQUE_TARGET_MAX definition -- or the card cannot answer, open
+                 * the last EXAMINED candidate and say so in the log. That is a knowing
+                 * trade of a possible user file against reopening a concurrency
+                 * defect, and it is the OPERATOR's call rather than this comment's
+                 * -- which is why the reason is stated plainly instead of being
+                 * dressed up as harmless. An adversarial audit asks for the
+                 * refusal (both legs, `high`/data_loss); that request is live and
+                 * unresolved, not dismissed. */
+                if (bucketOk && uniqueTargetAtOpen) {
+                    /* WALK THE CANDIDATES. A codex audit found TWO defects here
+                     * -- in BOTH legs independently, the blind one running with
+                     * no brief at all -- after an earlier version of this guard
+                     * shipped them:
+                     *
+                     * 1. It stopped at the last candidate it had STAT'ED, so
+                     *    with candidates 0..MAX-1 occupied it truncated MAX-1
+                     *    **while candidate MAX was free**. The code it replaced
+                     *    advanced to MAX and CREATED it -- no loss at all. So
+                     *    that guard REGRESSED the MAX-occupied case and merely
+                     *    tied in the MAX+1 case: worse in one, better in none.
+                     * 2. ANY stat failure set scratchNameFree, so one transient
+                     *    SYS_FS_ERROR_DISK_ERR on a directory-sector read read
+                     *    as "absent" and the WRITE_PLUS open then truncated a
+                     *    file that does exist -- silently, because the fallback
+                     *    log is skipped whenever the name reads free.
+                     *
+                     * THE INVARIANT, which #1 got backwards: never open a
+                     * candidate this loop did not examine, AND never stop while
+                     * an unexamined candidate is still within budget. So the
+                     * budget is MAX advances = MAX+1 candidates EXAMINED, and
+                     * the loop leaves only on a genuine absence or after
+                     * examining the last one.
+                     *
+                     * Absence vs fault follows sd_TargetExistsInBucketPath's
+                     * existing idiom above: only NO_FILE / NO_PATH mean absent.
+                     * Anything else is the card failing to ANSWER, which is not
+                     * permission to truncate. Here that distinction buys a
+                     * SEPARATE LOG LINE and nothing more: the open below still
+                     * happens and can still truncate. The refusal lives at the
+                     * PRE-WALK instead (see the block above it) -- that site
+                     * exits before the open through the established #689
+                     * clean-stop, which this one cannot reach.
+                     *
+                     * ⛔ THIS PARAGRAPH CLAIMED "it REFUSES the operation"
+                     * UNTIL 2026-10-16. Reverting attempt 3 took the code out
+                     * and left the claim standing, which reinstated the exact
+                     * defect the sentence that followed it criticised -- a
+                     * comment promising a guarantee the code does not have. An
+                     * adversarial audit found it in both legs. A comment is a
+                     * claim: when the code it describes is reverted, the
+                     * comment is part of what has to be reverted. */
+                    bool scratchNameFree = false;
+                    bool statFault = false;
+                    uint32_t probes = 0u;  /* advances; EXAMINED = probes + 1 */
+                    for (;;) {
+                        SYS_FS_FSTAT st;
+                        memset(&st, 0, sizeof(st));
+                        if (SYS_FS_FileStat(gSDCardData.filePath, &st)
+                                != SYS_FS_RES_SUCCESS) {
+                            SYS_FS_ERROR e = SYS_FS_Error();
+                            if (e == SYS_FS_ERROR_NO_FILE
+                                    || e == SYS_FS_ERROR_NO_PATH) {
+                                scratchNameFree = true;   /* genuinely absent */
+                            } else {
+                                statFault = true;         /* could not answer */
+                            }
+                            break;
+                        }
+                        /* Occupied. Stop only once every candidate we are
+                         * willing to open has been examined, the last
+                         * included. */
+                        if (probes >= SD_CARD_MANAGER_UNIQUE_TARGET_MAX) {
+                            break;
+                        }
+                        probes++;
+                        gSDCardData.fileCounter++;
+                        generateFilename(gSDCardData.filePath,
+                                       sizeof(gSDCardData.filePath),
+                                       gSDCardData.fileCounter,
+                                       gSDCardData.bucketPath,
+                                       gSDCardData.baseFilename,
+                                       gpSDCardSettings->file);
+                        if (gSDCardData.filePath[0] == '\0') {
+                            break;   /* name unbuildable; NOT free */
+                        }
+                    }
+                    /* NOT silent, and logged SEPARATELY because the remedies
+                     * differ: one means the card is full of these names, the
+                     * other means the card did not answer. Collapsing them was
+                     * how defect 2 above stayed invisible.
+                     *
+                     * The LEAF goes first in both, at a fixed low offset, so a
+                     * long bucket path cannot push the one identifying field
+                     * past Logger's tail-truncating vsnprintf (Logger.c:398).
+                     * The leaf is bounded by CONF_FILE_NAME_LEN_MAX (40) + '-'
+                     * + 10 digits = 51, so %.51s cannot truncate it. Worst
+                     * cases MEASURED: 111 and 107 bytes against the 125-byte
+                     * ceiling (margins 14 and 18). */
+                    const char *lostLeaf = strrchr(gSDCardData.filePath, '/');
+                    lostLeaf = (lostLeaf != NULL) ? (lostLeaf + 1)
+                                                  : gSDCardData.filePath;
+                    /* ⛔ A REFUSAL WAS ATTEMPTED AT THIS SITE THREE TIMES
+                     * AND WITHDRAWN BEFORE THE ONE BELOW SHIPPED. The attempts
+                     * are recorded because the next reader will have the same
+                     * idea and should know which shapes are already dead, and
+                     * why the surviving one is not one of them. All three were
+                     * found by an independent adversary, in both its steered
+                     * and unsteered legs.
+                     *
+                     * 1. Logged the fault and opened anyway, while the comment
+                     *    claimed an unanswered stat "is not permission to
+                     *    truncate" -- a guarantee the code did not have.
+                     * 2. Refused by MIRRORING the #689 bucket-unusable exit.
+                     *    A copy of that exit releases the manager while the
+                     *    benchmark's readiness poll is still sleeping, so a
+                     *    concurrent STR:START claims it and the abandoned
+                     *    benchmark writes its zero pattern into THAT session's
+                     *    recording and tears it down.
+                     * 3. Added startupDirFull to wake the caller. Fails twice
+                     *    over: the flag is SHARED and an accepted START CLEARS
+                     *    it (SCPIInterface.c:5836) before the failed poll
+                     *    reads it; and when the caller does wake, its cleanup
+                     *    (SCPIStorageSD.c:2148-2149) clears `mode` and calls
+                     *    UpdateSettings UNCONDITIONALLY -- cancelling whatever
+                     *    operation had legitimately claimed the manager
+                     *    meanwhile. An in-flight SD:GET dies without
+                     *    delivering its file.
+                     *
+                     * ⛔ A FOURTH CLAIM WAS WRONG HERE, AND THIS IS IT
+                     * CORRECTED. The fault branch below reaches the EXISTING
+                     * #689 clean-stop instead of building an exit, and the
+                     * comment that shipped with it claimed that this "avoids
+                     * the ownership race because the exit already has a
+                     * caller-side arm". IT DOES NOT. Both audit legs showed
+                     * why: that arm (SCPIStorageSD.c:2148-2149) clears `mode`
+                     * and calls UpdateSettings UNCONDITIONALLY, so it tears
+                     * down whatever claimed the manager while the benchmark
+                     * slept -- an accepted SD:GET dies mid-download. The arm
+                     * is not a mitigation; the arm IS the bug, and it is the
+                     * same one attempt 3 hit from the other side.
+                     *
+                     * ⭐⭐ WHAT ACTUALLY DIFFERS, stated as a measurement
+                     * rather than a mechanism: the race is PRE-EXISTING and
+                     * this branch is a FOURTH DOOR INTO IT, not a new race.
+                     * At the pre-#958 head the same clean-stop was already
+                     * reachable by a benchmark through three other conditions
+                     * -- buckets exhausted, bucket mkdir failed, bucket
+                     * unreadable -- with no mode gating anywhere near it, and
+                     * the unconditional teardown is base code
+                     * (SCPIStorageSD.c:506, :1149, :1642). Attempts 1-3 each
+                     * added a NEW defect; this one adds an entry condition to
+                     * an old one.
+                     *
+                     * So reverting it does NOT buy a race-free benchmark --
+                     * three doors stay open and the data loss comes back. On
+                     * this path the trade is: an aborted SD:GET the operator
+                     * can retry, against a destroyed recording they cannot.
+                     * That is why it stays, and why the race is carried as a
+                     * residual against #1161 rather than patched here: the fix
+                     * is session identity, which is a structural change and
+                     * not this PR's to make.
+                     *
+                     * WHAT THIS STILL COSTS, stated because the branch below
+                     * is not symmetric: a stat fault REFUSES, but EXHAUSTION
+                     * still opens and can truncate. That asymmetry is
+                     * deliberate. A fault means the card could not answer and
+                     * the candidate is UNKNOWN; exhaustion means every
+                     * candidate was examined and found to be a file this
+                     * feature itself wrote. Refusing the known case would wedge
+                     * SD:BENCHmark on any card holding 65 old benchmark files
+                     * until the operator cleared them by hand -- trading a
+                     * scratch overwrite for a dead feature. Refuse what you
+                     * cannot verify; proceed on what you can. */
+                    if (!scratchNameFree) {
+                        /* Exhaustion, not a fault: every candidate within the
+                         * bound was EXAMINED and found occupied. Reusing one is
+                         * a decision taken on evidence, and the bound is now
+                         * the bucket ceiling, so this needs 65 same-stem files
+                         * rather than 17. */
+                        if (statFault) {
+                            /* REFUSE. The card could not ANSWER, so this name
+                             * is unverified and must not reach the truncating
+                             * open -- that is the whole of both audit legs'
+                             * request, and the distinction this branch already
+                             * drew was previously worth only a log line.
+                             *
+                             * ⭐ NO NEW MECHANISM. It sets the same two
+                             * fields every other refusal here sets and falls
+                             * into the EXISTING #689 clean-stop a few lines
+                             * below, which closes the rotation window, clears
+                             * mode, returns to IDLE and signals
+                             * opCompleteSemaphore -- and whose arrival the
+                             * benchmark's readiness poll already has an arm
+                             * for (#690/#988 arm 3). Reaching it is why
+                             * generateFilename and this walk were moved ABOVE
+                             * that block; nothing between them needed the
+                             * order they had.
+                             *
+                             * Three earlier attempts BUILT an exit at this
+                             * site and each introduced a defect -- a released
+                             * manager mid-poll, then a shared flag an accepted
+                             * START clears. This one builds nothing, which is
+                             * the entire difference.
+                             *
+                             * Leaf first, as the sibling below: it is the one
+                             * identifying field and Logger truncates the tail
+                             * (Logger.c:398). 57 fixed + 51 leaf = 108 B worst
+                             * case against the 125-byte ceiling, margin 17 --
+                             * measured, and this time actually measured: the
+                             * figures were 56/107/18 until #1110's audit
+                             * checked them. The literal
+                             * "[SD] #958 '%.51s' unverifiable - refusing,
+                             * retry or clear card" is 62 chars, less the
+                             * 5-char "%.51s" = 57 fixed, so the worst case is
+                             * 108 and the margin 17. One byte, and the margin
+                             * is still positive so nothing truncates -- but
+                             * the sentence asserting "measured, not
+                             * estimated" was the wrong one to be wrong in,
+                             * which is why the derivation is spelled out here
+                             * rather than just corrected. */
+                            gSDCardData.writeRefuseReason =
+                                    SD_REFUSE_BUCKET_UNREADABLE;
+                            bucketOk = false;
+                            LOG_E("[SD] #958 '%.51s' unverifiable"
+                                  " - refusing, retry or clear card", lostLeaf);
+                        } else {
+                            LOG_E("[SD] #958 lost '%.51s'"
+                                  " - all %u candidate names taken",
+                                  lostLeaf, (unsigned)probes + 1u);
+                        }
+                    }
+                }
                 if (!bucketOk) {
-                    LOG_E("[SD] WRITE refused: no writable bucket under '%s' "
-                          "(active '%s', bucket %u, %u per bucket, max %u) - FatFs "
-                          "file-create wedges large directories (#689). Use a "
-                          "larger SD:MAXSize, a different directory, or clear the "
-                          "card.", gpSDCardSettings->directory,
-                          gSDCardData.bucketPath, (unsigned)gSDCardData.curBucket,
-                          (unsigned)SD_CARD_MANAGER_MAX_DIR_FILES,
-                          (unsigned)SD_CARD_MANAGER_MAX_BUCKET);
+                    /* #1029: this was a 5-substitution message (directory,
+                     * bucketPath, curBucket, MAX_DIR_FILES, MAX_BUCKET) whose
+                     * fixed text alone was already 207 bytes -- worst case
+                     * ~298 against Logger's 125-byte ceiling, cut every time,
+                     * always losing the remedy. `directory` was also
+                     * redundant with `bucketPath`: sd_BuildBucketPath() builds
+                     * the latter FROM the former, so it reads either
+                     * "<directory>" (bucket 0) or "<directory>/P<NNN>" and
+                     * carries the directory either way.
+                     *
+                     * An earlier draft of this comment justified that by
+                     * claiming the arm is reached only after the roll advanced
+                     * curBucket to SD_CARD_MANAGER_MAX_BUCKET. It is not --
+                     * that is one of four paths here; the others are the
+                     * initial sd_EnterBucket(dir, 0) above, the
+                     * reopen-existing re-enter, and the probe loop's
+                     * SD_REFUSE_BUCKET_UNREADABLE. On the first of those
+                     * bucketPath is the bare directory with no "/P<NNN>" at
+                     * all. The redundancy holds on all four paths; the
+                     * reachability claim did not, and neither the worst-case
+                     * length (the "/P<NNN>" form is the longer) nor this
+                     * message depends on it.
+                     *
+                     * The one case bucketPath carries nothing is after the
+                     * FORMAT reset further down, which clears it deliberately.
+                     * Fall back to `directory` there (Qodo /improve on this
+                     * PR, importance 8) rather than naming an empty string --
+                     * it does not cost budget: `directory` is bounded to
+                     * SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX (40), strictly
+                     * shorter than bucketPath's own 45-byte worst case, which
+                     * the budget below already accounts for.
+                     *
+                     * The three numeric
+                     * fields are compile-time constants (SD_CARD_MANAGER_
+                     * MAX_DIR_FILES == SD_CARD_MANAGER_MAX_BUCKET == 64) or a
+                     * bounded 2-digit counter -- diagnostic, not remedial;
+                     * a runtime SYST:DIAG query is the natural place for them
+                     * if ever needed (#1000's own follow-up, #1001, is the
+                     * nearest precedent for a dedicated diagnostic path).
+                     * Shortened text below: 77 fixed bytes + bucketPath's
+                     * 45-byte worst case = 122, margin 3. The remedy names the
+                     * REGISTERED path in its legal short form
+                     * (SYSTem:STORage:SD:MAXSize -> SYST:STOR:SD:MAXS): the
+                     * bare "SD:MAXSize" printed before is not a registered
+                     * command and answers -113, so the remedy was unusable.
+                     * "new dir" pays the 7 bytes the real path costs.
+                     *
+                     * log_budget: max=45 -- as at the not-a-dir refusal
+                     * above, and it covers BOTH arms of the ternary below:
+                     * bucketPath's worst case is 45, and the fallback
+                     * gpSDCardSettings->directory is at most
+                     * SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX (40).
+                     *
+                     * THIS IS THE TIGHTEST OF THE THREE -- 77+45=122,
+                     * margin 3 -- and the margin is held up by
+                     * SD_CARD_MANAGER_MAX_BUCKET. "%03u" is a MINIMUM
+                     * width: an unbounded uint32 bucket prints 10 digits,
+                     * i.e. a 52-byte path and a 129-byte message, 4 OVER
+                     * the ceiling. Raising MAX_BUCKET past 999999 re-opens
+                     * exactly the truncation #1029 closed here. */
+                    LOG_E("[SD] #689 bucket '%s' unusable - grow "
+                          "SYST:STOR:SD:MAXS, new dir, or clear card",
+                          gSDCardData.bucketPath[0] != '\0'
+                              ? gSDCardData.bucketPath
+                              : gpSDCardSettings->directory);
                     gSDCardData.startupDirFull = true;
                     gSDCardData.lastOperationSuccess = false;
                     if (gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
@@ -2178,12 +2983,6 @@ void sd_card_manager_ProcessState() {
                     break;
                 }
 
-                // #689: create into the ACTIVE BUCKET, not the raw configured
-                // directory. For bucket 0 these are the same string, which is why
-                // short sessions keep their existing on-card layout exactly.
-                generateFilename(gSDCardData.filePath, sizeof(gSDCardData.filePath),
-                               gSDCardData.fileCounter, gSDCardData.bucketPath,
-                               gSDCardData.baseFilename, gpSDCardSettings->file);
                 // Count the attempt, not the success: a failed create still costs
                 // a directory entry scan, and over-counting only rolls us to a
                 // fresh bucket sooner, which is the safe direction.
@@ -2442,6 +3241,20 @@ void sd_card_manager_ProcessState() {
 
                 gSDCardData.fileHandle = SYS_FS_FileOpen(gSDCardData.filePath,
                         (SYS_FS_FILE_OPEN_READ));
+                /* #914: read the FS error HERE, immediately, before anything
+                 * else can run a filesystem operation. SYS_FS_Error() returns
+                 * sys_fs.c's file-scope `errorValue` -- one global written from
+                 * every FS call in the system -- and the failure path below
+                 * calls sd_card_manager_DataReadyCB, which yields
+                 * (vTaskDelay(1) on a partial write and on every retry, up to
+                 * USB_TRANSFER_MAX_RETRIES on a stalled peer). Reading it after
+                 * that can report another task's fault as this open's: worse
+                 * than no code at all, because it looks authoritative. Same
+                 * rule the SYS_FS_DirectoryMake branch above already states.
+                 * Conditional so a successful open costs nothing. */
+                const SYS_FS_ERROR openFsError =
+                        (gSDCardData.fileHandle == SYS_FS_HANDLE_INVALID)
+                        ? SYS_FS_Error() : SYS_FS_ERROR_OK;
                 if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_COMPUTE_CRC) {
                     /* #306: invalidate prior result, arm the accumulator */
                     taskENTER_CRITICAL();
@@ -2466,19 +3279,142 @@ void sd_card_manager_ProcessState() {
                      * SYST:STOR:SD:CRC "missing" wedge and the pre-existing
                      * latent SD:GET open-fail wedge. */
                     /* #703: for a READ (SD:GET) the host is blocked waiting for
-                     * the file bytes + __END_OF_FILE__ terminator; without a
-                     * terminator it hangs on a missing/unopenable file. Emit the
-                     * marker so the GET terminates as an empty transfer. (CRC has
-                     * no streamed terminator — its result is queried via SD:CRC?
-                     * — so only send it for READ.) */
+                     * the file bytes + a terminator; without one it hangs on a
+                     * missing/unopenable file. (CRC has no streamed terminator
+                     * — its result is queried via SD:CRC? — so only send one
+                     * for READ.)
+                     *
+                     * #914: that terminator STAYS __END_OF_FILE__. What #914
+                     * adds is the deferred SCPI error below, which is where
+                     * this project puts errors ("All errors go through the
+                     * error logging function and are never sent out in the
+                     * stream", CLAUDE.md Standing Rules).
+                     *
+                     * ⚠ That rule is satisfied by the DRAIN BEING QUEUE-ONLY,
+                     * which it was not when first written: the push emitted
+                     * "**ERROR:" through the transport callback, so this
+                     * comment cited the rule while the code broke it one
+                     * command later (audit HIGH, both legs). The invariant is
+                     * load-bearing, not stylistic -- see
+                     * SCPI_DrainDeferredSdError in SCPIInterface.c before
+                     * changing how the error is pushed.
+                     *
+                     * An earlier revision of this fix sent __TRANSFER_ERROR__
+                     * here so an open failure and a mid-transfer read error
+                     * would share one wire vocabulary. That is wrong for THIS
+                     * call site, for three reasons:
+                     *
+                     * 1. It converts a wrong answer into a HANG for every
+                     *    Python client. daqifi-python-core contains no
+                     *    "__TRANSFER_ERROR__" literal anywhere: device.py's
+                     *    sd_get_file() / sd_get_file_binary() and sdcard.py's
+                     *    SdCardFileReceiver.receive() each block scanning for
+                     *    __END_OF_FILE__ alone, so the other marker unblocks
+                     *    nothing -- 30 s for the first two, 30 MINUTES for the
+                     *    receiver. Before #914 this path already sent a
+                     *    terminator all of them recognise. Replacing it breaks
+                     *    the very property #914 is for ("the host is not left
+                     *    waiting"). The mid-transfer site is NOT in that
+                     *    position: its only alternatives are silence or a lie,
+                     *    so its marker stays.
+                     * 2. Nothing has been sent yet. The mid-transfer marker
+                     *    exists because a plain EOF AFTER partial data makes a
+                     *    truncated file look complete. Here the reply is zero
+                     *    bytes long: there is no tail to lose.
+                     * 3. It is the wrong channel, and it carries less. The
+                     *    marker is framing; the deferred error below separates
+                     *    a bad name (-256/-257) from unusable storage (-250),
+                     *    which no second marker could express.
+                     *
+                     * So the wire for an open failure is byte-for-byte what it
+                     * was before #914 -- one bare __END_OF_FILE__, no content
+                     * -- and the #747 ambiguity ("empty file, or no file?") is
+                     * closed one layer up: the owning transport announces
+                     * `**ERROR: -256, "File name not found"` unprompted at its
+                     * next command boundary (SCPI_DrainDeferredSdError,
+                     * SCPIInterface.c), where pre-#914 firmware left SYST:ERR?
+                     * reading 0,"No error". A zero-length reply is not silent
+                     * on the wire either, to a client that knows the listed
+                     * size: daqifi-core's SdCardFileReceiver throws
+                     * SdCardEmptyTransferException on an EOF with no preceding
+                     * bytes unless the listing says the file really is empty.
+                     *
+                     * Do NOT "fix" this by sending BOTH markers. A receiver
+                     * that scans for both stops at the FIRST one and does not
+                     * consume the rest (daqifi-core returns or throws the
+                     * moment FindTerminalMarker hits), so the second marker is
+                     * either left in the transport to corrupt the NEXT reply or
+                     * silently dropped, depending on how the two writes land in
+                     * the peer's read chunks -- nondeterministic corruption.
+                     * And EOF first is worse still: earliest-match then reports
+                     * a clean empty transfer, and #747 is back. */
+
+                    /* #914: name the exact FS error in the log, and do it
+                     * BEFORE the marker goes out. The SCPI code below now
+                     * separates "the name is not there" from "the storage is
+                     * not usable", but only the log separates NOT_READY from
+                     * NO_FILESYSTEM from TOO_MANY_OPEN_FILES inside that second
+                     * class -- and a transport stalling on its full retry
+                     * budget must not delay the diagnosis. */
+                    LOG_E("[%s:%d]Failed to open SD Card file for reading: '%s' (fs err=%d)",
+                          __FILE__, __LINE__, gSDCardData.filePath, (int)openFsError);
+
                     if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_READ) {
+                        /* #914: LATCH FIRST, THEN send the marker.
+                         *
+                         * DataReadyCB is not a store -- it drives a real
+                         * transport write and yields, and on USB the draining
+                         * task OUTRANKS this one (app_USBDeviceTask pri 7 vs
+                         * app_SDCardTask pri 5, docs/MCU_REFERENCE.md). With
+                         * the latch second, a host that saw the terminator
+                         * and immediately asked SYST:ERR? could be answered
+                         * "No error" -- marker out, latch not yet written --
+                         * which is the #747 signature this fix exists to
+                         * remove, reintroduced through a narrower window.
+                         * Latching first makes the marker's visibility imply
+                         * the error is already recorded.
+                         *
+                         * ⛔ AN EARLIER REVISION OF THIS PARAGRAPH SAID a host
+                         * that pipelines its next command "may see the
+                         * '**ERROR:' line ahead of the marker. That is ordering
+                         * noise, not loss." BOTH HALVES WERE WRONG, and the
+                         * audit found the consequence as a HIGH: there is no
+                         * ordering to reason about, because the drain must not
+                         * put an "**ERROR:" line on the wire AT ALL. It used
+                         * to, and because the drain runs at a command boundary
+                         * the line landed immediately before the NEXT
+                         * command's response -- prefixing a subsequent
+                         * successful SD:GET with error text, which a
+                         * marker-delimited receiver stores as file content.
+                         * Not noise: corruption, and it needed no pipelining.
+                         *
+                         * SCPI_DrainDeferredSdError is now queue-only (see its
+                         * comment in SCPIInterface.c), so the error reaches the
+                         * client through SYSTem:ERR? and the log, never as
+                         * bytes in a reply -- which is the project rule this
+                         * paragraph had been quietly describing an exception
+                         * to. The latch-before-marker ordering above still
+                         * matters and is unchanged; binding the push to this
+                         * task remains unsafe for the reason
+                         * sd_card_manager_LatchAsyncError documents.
+                         *
+                         * Both operands are read into locals before the call
+                         * for the same reason. The #829 claim is still held
+                         * here so they cannot change -- but reading them across
+                         * a yielding call would make this code's correctness a
+                         * fact about #829's timing rather than about itself. */
+                        const sd_card_manager_reply_target_t replyTarget =
+                                gpSDCardSettings->replyTarget;
+                        const uint32_t replyGeneration =
+                                gpSDCardSettings->replyGeneration;
+                        sd_card_manager_LatchAsyncError(
+                                SdAsyncErrorForFsError(openFsError),
+                                replyTarget, replyGeneration);
                         sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
-                                (uint8_t*)"__END_OF_FILE__",
-                                sizeof("__END_OF_FILE__") - 1);
+                                (uint8_t*)eofMarker, sizeof(eofMarker) - 1);
                     }
                     gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
                     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
-                    LOG_E("[%s:%d]Failed to open SD Card file for reading: '%s'", __FILE__, __LINE__, gSDCardData.filePath);
                 }
             } else if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_LIST_DIRECTORY) {
                 // LIST mode doesn't need to open a file, just list the directory
@@ -3068,14 +4004,10 @@ void sd_card_manager_ProcessState() {
             TickType_t lastYieldTime = xTaskGetTickCount();
             const TickType_t yieldInterval = pdMS_TO_TICKS(1000);
 
-            // EOF marker as literal constant (safer than sprintf).
-            // Declared before the buffer-size check so the terminal bail
-            // below (#703) can also emit it.
-            static const char eofMarker[] = "__END_OF_FILE__";
-            /* #725: mid-transfer failure terminator. Distinct from the EOF
-             * marker so a host can tell "complete" from "aborted with partial
-             * data" -- see the read-error path below. */
-            static const char transferErrorMarker[] = "__TRANSFER_ERROR__";
+            // eofMarker / transferErrorMarker: file-scope now (#914), so the
+            // open-failure path above can send eofMarker without a second copy
+            // of the literal. transferErrorMarker is used only here, in the
+            // mid-transfer read-error case.
 
             // Calculate safe read size based on buffer capacity
             size_t maxRead = gSdSharedBufferSize;
@@ -3151,9 +4083,23 @@ void sd_card_manager_ProcessState() {
                         sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
                                 (uint8_t*)eofMarker, sizeof(eofMarker) - 1);
                     } else {
-                        LOG_E("[SD] aborted after %u bytes - no terminator sent "
-                              "(a plain EOF would look like a complete file; "
-                              "#725 tracks a distinguishable one)",
+                        /* #1039: the old form measured 137 bytes against the 125-byte
+                         * ceiling, so the TAIL 12 bytes were cut: "ishable one)", leaving
+                         * the message ending "...#725 tracks a distingu". Note what that
+                         * does and does not cost -- the clause explaining WHY a missing
+                         * terminator matters ("a plain EOF would look like a complete
+                         * file") survived in full; the truncation destroyed the end of the
+                         * #725 cross-reference. An earlier revision of this comment said
+                         * the whole parenthetical was truncated away, which overstates a
+                         * 12-byte tail cut by a factor of six.
+                         *
+                         * 103 bytes now (tools/lint/log_budget.py, worst case: %u of a
+                         * uint32 is 10 digits), so nothing is cut. #725 still tracks the
+                         * distinguishable terminator.
+                         */
+                        LOG_E("[SD] aborted after %u bytes - no terminator "
+                              "sent; a plain EOF looks like a complete "
+                              "file (#725)",
                               (unsigned)totalBytesRead);
                     }
                     if (gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
@@ -3926,9 +4872,14 @@ bool sd_card_manager_WaitForCompletion(uint32_t timeoutMs) {
         //       refuses before this point, so if you see this, check dir size.
         // #589: a genuinely SPI-mode-incompatible card (e.g. some A2/SDXC) whose
         //       writes hang from power-up regardless of directory size.
-        LOG_E("[SD] operations hanging while reads work - likely (a) target "
-              "directory too large (#689: larger SD:MAXSize / clear the card) "
-              "or (b) an SPI-mode-incompatible card (wiki: SD-Card-Compatibility)"
+        // #1029: the message below used to be 192 fixed bytes (no substitutions,
+        // so it truncated identically on every firing) against Logger's 125-byte
+        // effective ceiling -- both remedies (the #689 fix and the wiki pointer
+        // for #589) were cut. Shortened to 123 bytes total (margin 2), keeping
+        // both remedies; the narrative that used to live in the message text now
+        // lives only in the two comment lines above, which never reach the wire.
+        LOG_E("[SD] writes hang, reads OK - dir full (#689: grow "
+              "SYST:STOR:SD:MAXS/clear card) or bad card (wiki: SD-Card-Compatibility)"
               "\r\n");
         return false;  // Timeout
     }
@@ -4026,6 +4977,44 @@ void sd_card_manager_ClearStartupDirFull(void) {
      * (pairs with ClearStartupDiskFull), so the STR:START poll observes only the
      * current request's outcome and a stale `true` can't reject a later start. */
     gSDCardData.startupDirFull = false;
+}
+
+void sd_card_manager_SetFailNextWrite(bool arm) {
+    /* #981: bench/test-only -- see gFailNextWrite's block comment near the top
+     * of this file for what this is for, why it ships in every build, and the
+     * rails that bound it. Reached only from SYST:STOR:SD:FAILNext.
+     *
+     * Deliberately NOT refused while streaming, unlike SYST:STR:BENCHmark's
+     * guard: the accounting path this exercises (the unmount drain) runs at
+     * the END of a live session, so a test has to be able to arm mid-stream
+     * and then stop. Arming mid-stream is also harmless now -- ordinary writes
+     * cannot take the arm; see the gate at the consume site. Nothing here
+     * feeds a frequency cap or a buffer partition, so there is no admitted-rate
+     * invariant for a mid-session change to break -- which is the whole reason
+     * those other guards exist.
+     *
+     * A PLAIN STORE, and that is the whole justification: the atomicity rule
+     * is about the OPERATION, not about the variable. This writes a value it
+     * did not first read, so it is not a read-modify-write and needs no
+     * critical section -- a single aligned bool store is one instruction on
+     * PIC32MZ and cannot tear. That the CONSUMER does an RMW on the same flag
+     * changes nothing here: the consumer's own taskENTER_CRITICAL masks
+     * interrupts, so this task cannot be scheduled inside its test-and-clear,
+     * and the two can therefore never interleave. The only orderings possible
+     * are "arm lands before the test" (consumed) and "arm lands after the
+     * clear" (survives to the next write) -- both correct one-shot semantics.
+     * Same shape as sd_card_manager_ClearStartupDirFull above; a critical
+     * section here would buy nothing and cost interrupt latency. */
+    gFailNextWrite = arm;
+}
+
+bool sd_card_manager_FailNextWriteArmed(void) {
+    /* #981: true only while an arm is outstanding. It self-clears the moment a
+     * teardown-drain write consumes it (the only writes that may -- see the
+     * gate in SDCardWrite), so a test can read this back to confirm the
+     * injection actually fired rather than inferring it. A 1 after a stop means
+     * no such write had data to issue, not that it fired silently. */
+    return gFailNextWrite;
 }
 
 void sd_card_manager_InvalidateCrcResult(void) {

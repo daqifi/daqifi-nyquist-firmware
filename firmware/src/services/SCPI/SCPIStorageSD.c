@@ -31,6 +31,7 @@
 #include "../wifi_services/wifi_tcp_server.h"  /* #598 ContextIsTcp */
 #include "../wifi_services/wifi_manager.h"     /* #589 FW-update owner */
 #include "app_freertos.h"                       /* #589 live SPI-owner test */
+#include "state/data/BoardData.h"                /* #756 round 3: WAIT_POWER_UP gate */
 #include "../../state/runtime/BoardRuntimeConfig.h"
 #include "system/fs/sys_fs_media_manager.h"
 #include "system/fs/sys_fs.h"
@@ -72,6 +73,17 @@ bool __attribute__((weak)) DRV_SDSPI_GetCID(uint8_t* cidBuffer, size_t bufLen) {
  * than one. */
 #define SCPI_SD_BENCH_STALL_TIMEOUT_MS 10000U
 #define SCPI_SD_BENCH_STALL_POLL_MS    5U
+
+/* #756 item 4 -> A (operator 2026-10-25): the bounded presence-recheck WAIT and
+ * its USB pump cadence are WITHDRAWN, so SD_PRESENCE_RECHECK_BOUND_MS,
+ * SD_PRESENCE_RECHECK_POLL_MS, SD_PRESENCE_PUMP_MS and the derived
+ * SD_PRESENCE_PUMPS_PER_SAMPLE are gone with them rather than left defined and
+ * unused -- a dead constant reads as a live one, and these four carried a long
+ * justification that would have outlived the mechanism it justified.
+ *
+ * The reasoning they held is not lost: it is on the call site in
+ * SCPI_CheckSDCardPresent(), stated as why the wait went, and the Makefile pins
+ * that the function can no longer block. */
 
 /* ************************************************************************** */
 /* ************************************************************************** */
@@ -366,15 +378,80 @@ static bool SD_RefuseIfSuspended(scpi_t *context, const char *cmd)
  * @brief Check if SD card media is present
  * @param context SCPI context for error reporting
  * @return true if present, false if not (error already pushed to context)
+ *
+ * #756 Part A: a negative read here can be STALE, not just false. The SDSPI
+ * detect FSM polls at a fast 1 s cadence normally, but backs off to as much as
+ * 5 s after DRV_SDSPI_DETECT_BACKOFF_AFTER_POLLS (10) consecutive no-card
+ * polls, so a card inserted during the backoff can read DETACHED for seconds.
+ *
+ * SO THIS KICKS THE DETECT POLL AND DOES NOT WAIT. The kick
+ * (DRV_SDSPI_DetectPollExpireNow) expires the backoff immediately, so the next
+ * query sees the true state; this call answers from what is known NOW.
+ *
+ * ⛔ A BOUNDED RE-CHECK WAIT WAS TRIED HERE OVER THREE ROUNDS AND WITHDRAWN --
+ * operator ruling 2026-10-25 (item 4 -> A), recorded on PR #1094 and on #756.
+ * It is worth saying why, because "just wait a bit for the card" is the obvious
+ * design and it is wrong:
+ *
+ *   - Over USB this function runs ON the USB task, so every tick waited is a
+ *     tick not spent draining the CDC. With SD enabled, no card, and a USB
+ *     stream running, SD:LISt?/SPACe? parked that task: the ring filled, the
+ *     encoder blocked, and the sample pool overflowed. ACQUIRED SAMPLES LOST.
+ *     Pumping USB inside the wait reduced the window 20x and did not change
+ *     the kind of defect -- a smaller permanent loss is still permanent, which
+ *     is what the round-3 HIGH said.
+ *   - The wait re-entered the SCPI layer, so SD:FILE ownership had to be
+ *     revalidated after it: the wait created the invariant it then had to
+ *     defend (round-4 HIGH).
+ *   - It was gated to exclude TCP, and #756's originally reported symptom came
+ *     in over TCP -- and the issue's own first line records that symptom as not
+ *     reproducible on main. The wait never covered the case that motivated it.
+ *
+ * The client retries both SDKs already perform (SD_LIST_MAX_RETRIES,
+ * SdCardOperations.cs:53) are what cover a slow init, not a longer bound here.
+ *
+ * ⚠ The remaining question -- "is this answer FRESH?" -- is deliberately NOT
+ * answered by this call, and is not meant to be. It belongs to the two tickets
+ * this ruling filed: one for a free-space reading during an SD logging run, one
+ * for a status query that reports the AGE of its presence answer. A caller that
+ * needs freshness should use that, not a call that blocks to manufacture it.
+ *
+ * Pinned in tests/host/Makefile: this function must contain no delay, no USB
+ * pump and no loop, checked on COMMENT-STRIPPED source -- so that explaining
+ * the withdrawal here cannot trip the pin that enforces it.
  */
 static bool SCPI_CheckSDCardPresent(scpi_t *context) {
-    if (!SYS_FS_MEDIA_MANAGER_MediaStatusGet(SD_CARD_MANAGER_DISK_DEV_NAME)) {
-        LOG_E("SD - No SD card detected\r\n");
-        context->interface->write(context, SD_CARD_NOT_PRESENT_ERROR_MSG, strlen(SD_CARD_NOT_PRESENT_ERROR_MSG));
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-        return false;
+    if (SYS_FS_MEDIA_MANAGER_MediaStatusGet(SD_CARD_MANAGER_DISK_DEV_NAME)) {
+        return true;
     }
-    return true;
+
+    /* ⛔ #756 item 4 -> A, OPERATOR RULING 2026-10-25 (recorded on this PR and
+     * on #756): the bounded re-check WAIT is WITHDRAWN. The kick stays; nothing
+     * blocks. A negative answer may therefore be the last-known state, and the
+     * NEXT query sees the kicked result.
+     *
+     * Why the wait went, in the order the evidence arrived:
+     *   - r3 HIGH, both legs: the pump REDUCES the stale window; the finding was
+     *     that the loss is PERMANENT, and a smaller permanent window is still
+     *     permanent. Shrinking it was never the fix.
+     *   - r4 HIGH, both legs: the wait re-entered the SCPI layer, so SD:FILE
+     *     ownership had to be revalidated after it -- the wait created the
+     *     invariant it then had to defend.
+     *   - #756's own first line records the originally reported symptom as NOT
+     *     reproducible on main, and it was reported over WiFi/TCP, which the
+     *     wait had already excluded. So the wait was never covering the case it
+     *     was asked to cover.
+     *
+     * This also makes USB and TCP behave identically, which they did not while
+     * the withdrawn gate excluded only TCP. "Is it fresh?" is a question for
+     * the two follow-up tickets this ruling filed, not a property of this call:
+     * one for a free-space reading during a logging run, one for a status query
+     * that reports the AGE of its presence answer. */
+    DRV_SDSPI_DetectPollExpireNow(0);
+    LOG_E("SD - No SD card detected\r\n");
+    context->interface->write(context, SD_CARD_NOT_PRESENT_ERROR_MSG, strlen(SD_CARD_NOT_PRESENT_ERROR_MSG));
+    SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+    return false;
 }
 
 
@@ -416,11 +493,22 @@ static bool SD_ValidatePathParam(const char *p, size_t len)
 
 /* #747: SYST:STOR:SD:LISt? prints every entry as "<directory>/<name>", but the
  * operand sites below prepend the configured directory themselves — so handing
- * back the exact string the device just printed builds "DAQiFi/DAQiFi/<name>",
- * the open fails, and for SD:GET the host receives a bare __END_OF_FILE__ with
- * SYST:ERR? still reading "No error". That is indistinguishable from an empty
- * file, which is what made #747 read as a device fault rather than a rejected
- * path.
+ * back the exact string the device just printed builds "DAQiFi/DAQiFi/<name>"
+ * and the open fails. Before #914, ANY open failure on this path answered
+ * SD:GET with a bare __END_OF_FILE__ and left SYST:ERR? reading "No error" —
+ * indistinguishable from an empty file, which is what made #747 read as a
+ * device fault rather than a rejected path. Since #914 the TERMINATOR is
+ * unchanged — still a bare __END_OF_FILE__, the marker every shipped client
+ * recognises, so the reply still ends promptly — but the failure is no longer
+ * silent: the SD task latches -256 "File name not found" and the owning
+ * transport announces it at its next command boundary (also readable via
+ * SYST:ERR?; SYST:LOG? names the underlying filesystem error) — loud, but
+ * still a failure. This function is what makes the double-prefixed case above
+ * actually OPEN instead: it strips the redundant "<directory>/" so the
+ * round-trip succeeds outright. An operand this function does NOT recognize
+ * (e.g. SD:LISt? "OTHER" then SD:GET "OTHER/f.csv", where OTHER is not the
+ * configured directory) still hits the #914 loud-failure path, not this one —
+ * restoring that round-trip is #914 Part B, tracked separately.
  *
  * Accept the round-trip form by dropping ONE leading "<directory>/". Traversal
  * stays impossible: the prefix must match the device's own configured
@@ -515,6 +603,137 @@ scpi_result_t SCPI_StorageSDEnableGet(scpi_t * context){
     return SCPI_RES_OK;
 }
 
+/* #981: SYSTem:STORage:SD:FAILNext <0|1> -- BENCH/TEST-ONLY fault injection.
+ *
+ * Arms a ONE-SHOT that makes ONE SD write fail, so an automated test can
+ * exercise the write-failure accounting (Streaming_ReportSdDiscard) without
+ * running the bench card out of space -- the only other way to make a write
+ * fail, and one to two hours per run at the card's ~300-500 KB/s write rate.
+ *
+ * IT IS NOT "THE NEXT WRITE", AND THE DIFFERENCE IS A SAFETY PROPERTY, not a
+ * detail. sd_card_manager.c consumes the arm ONLY on a write issued while the
+ * manager is already in UNMOUNT_DISK -- i.e. by one of the two drains that run
+ * inside a teardown that is already happening. The other three SDCardWrite()
+ * call sites (the ordinary WRITE_TO_FILE write and BOTH rotation drains)
+ * answer a failed write by setting currentProcessState = ERROR, and the
+ * pre-existing ERROR -> UNMOUNT_DISK -> INIT -> OPEN_FILE(WRITE_PLUS) path
+ * then re-opens the SAME base filename with fileCounter reset to 0, which
+ * TRUNCATES it -- destroying already-recorded data, not merely ending the
+ * session. Letting an SCPI-armable, network-reachable command trigger that on
+ * a shipped device is the thing the gate exists to prevent. The full argument,
+ * the per-call-site table and the coverage this gate gives up (the rotation
+ * drains' #825/#838 twins, which stay source-review-only) are in
+ * gFailNextWrite's block comment and at the consume site in sd_card_manager.c.
+ *
+ * PRACTICAL CONSEQUENCE FOR A TEST: arm whenever you like, including
+ * mid-stream -- ordinary writes will not take it -- then STOP the session. An
+ * unmount drain consumes it, reports the abandoned chunk, and SdDroppedBytes
+ * moves. Arming and merely streaming injects nothing; SYST:STOR:SD:FAILNext?
+ * still reading 1 means the arm is intact, not that it fired silently.
+ *
+ * Deliberately a NEW command rather than another value on an existing one, on
+ * CLAUDE.md's own rule-4 exemption ("genuinely orthogonal ... can't be
+ * expressed as a value/arg"). SYST:STOR:SD:BENCHmark PERFORMS a write now and
+ * takes <size_kb>,<pattern>; this ARMS a latch consumed later by somebody
+ * else's write, and folding it in would tangle it with that command's
+ * testInProgress claim. SYST:STR:BENCHmark is an ordered level enum about the
+ * streaming pipeline (cap bypass, ADC bypass) and -- decisively -- refuses to
+ * change while streaming, which is exactly when this must be armable.
+ *
+ * It ships in every build for the same reason SYST:STR:BENCHmark and
+ * SYST:STR:TEST:PATtern do; the full argument is in gFailNextWrite's comment
+ * block in sd_card_manager.c, alongside the rails (one-shot, reset-scrubbed,
+ * single-writer, loudly logged, readable back) that bound it, the rejected
+ * alternative of gating it on benchmark mode, and the reason it is not
+ * restricted by transport.
+ *
+ * IT IS PUBLISHED, and that is accepted rather than overlooked. SCPI_Help
+ * enumerates every scpi_commands[] entry whose callback is not
+ * SCPI_NotImplemented, so HELP lists this; and tools/lint/scpi_wiki_sync.py
+ * FAILS CI for any registered command with no wiki row -- its only escape
+ * hatch is a "NOT IMPLEMENTED" row for an UNregistered command, which this is
+ * not. So it must get a wiki row, marked bench/test-only, exactly as
+ * SYST:STR:BENCHmark and SYST:STOR:SD:BENCHmark already are. Hiding a shipped
+ * command from its own reference would be worse than documenting it: the
+ * command would still be reachable, just undiscoverable by the support
+ * engineer trying to explain a customer's log. (The wiki is a separate repo,
+ * so that edit cannot ride in this PR and must be pushed before merge.) */
+scpi_result_t SCPI_StorageSDFailNextSet(scpi_t * context) {
+    int32_t param1;
+
+    /* #1013: ARMING is USB-ONLY. SCPI over TCP has no authentication for any
+     * command, so this is not a new hole in an otherwise-closed surface --
+     * what is new is a command whose entire PURPOSE is to make a write fail.
+     * Every other SCPI command over TCP asks the device to do its job; this
+     * one asks it to break. Anyone who can reach the soft AP could arm a
+     * silent SD write failure on a logging device, and the only trace is a
+     * LOG_E nobody reads until the data is already missing. Requiring
+     * physical USB makes arming cost presence at the bench, which is where
+     * the hook is meant to be used and is a property no password would add.
+     *
+     * Reuses #598's transport predicate -- already used twice in this file,
+     * at SCPI_StorageSDGetData and the LISt handler -- rather than inventing
+     * a gate. A compile-time gate was the alternative and is not available:
+     * there is no release/bench build-variant distinction in this project to
+     * hook into, which is exactly why this hook ships in the release binary
+     * in the first place.
+     *
+     * BEFORE the parameter is read, deliberately: a command that will not be
+     * honoured should do no work and leave no state. libscpi discards the
+     * rest of the command line once the handler returns an error.
+     *
+     * The QUERY (SCPI_StorageSDFailNextGet) is deliberately NOT gated. It is
+     * read-only, and it answers "is a fault injector armed on this device?"
+     * -- health visibility that a remote operator has every reason to want.
+     * Hiding it would satisfy the letter of a transport restriction while
+     * concealing the hazard, which inverts this project's stated SCPI rule:
+     * error on config problems, inform on state. */
+    if (wifi_tcp_server_ContextIsTcp(context)) {
+        LOG_E("[SD] SYST:STOR:SD:FAILNext refused over TCP - USB only. "
+              "Arming a write failure requires bench presence.");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+
+    if (!SCPI_ParamInt32(context, &param1, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    /* Range-checked rather than the usual "non-zero means true", because a
+     * typo in a test script that silently armed a write failure is a worse
+     * outcome here than an error the script can see. */
+    if (param1 < 0 || param1 > 1) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+    sd_card_manager_SetFailNextWrite(param1 != 0);
+    /* Log BOTH edges. Logging only the arm would leave an arm-then-disarm
+     * sequence reading, in SYST:LOG?, as a device that is still armed -- which
+     * is the scarier half of the truth and the half a support engineer would
+     * act on. LOG_E (not LOG_E_ONCE/LOG_E_SESSION) on purpose: this appearing
+     * in a field log at all is the signal, and must never be deduplicated. */
+    if (param1 != 0) {
+        /* 121 bytes, 4 under Logger's 125-byte ceiling. Was 135 and therefore
+         * truncated with no error and no marker, losing "use only." -- the
+         * bench-only caveat, i.e. the remedy. Kept short per #1025/#1039:
+         * the full SCPI spelling stays (it is the grep token) and so does
+         * "NOT a card fault"'s counterpart "Bench use only". */
+        LOG_E("[SD] TEST HOOK SYST:STOR:SD:FAILNext ARMED - one write in the "
+              "next teardown drain will be forced to fail. Bench use only.");
+    } else {
+        LOG_E("[SD] TEST HOOK SYST:STOR:SD:FAILNext DISARMED - no write "
+              "failure is pending.");
+    }
+    return SCPI_RES_OK;
+}
+
+/* #981: 1 while the one-shot above is still outstanding, 0 once a write has
+ * consumed it (or it was never armed) -- so a test can confirm the injection
+ * fired instead of inferring it from downstream counters. */
+scpi_result_t SCPI_StorageSDFailNextGet(scpi_t * context) {
+    SCPI_ResultInt32(context, sd_card_manager_FailNextWriteArmed() ? 1 : 0);
+    return SCPI_RES_OK;
+}
+
 // Global variables for benchmark results.
 // Defined here rather than beside SCPI_StorageSDBenchmark because
 // SCPI_StorageSDLoggingSet below reads testInProgress to reject an SD:FILE
@@ -534,6 +753,27 @@ typedef struct {
  * it in a register. volatile does NOT make the read-modify-write atomic —
  * the claim still takes a critical section (#736). */
 static volatile SDBenchmarkResults_t gSDBenchmarkResults = {0};
+
+/* #958: what actually makes the benchmark's scratch filename unique within
+ * one boot. The FreeRTOS tick alone cannot -- it is 32-bit and wraps after
+ * 49.7 days of uptime -- so the name carries a counter that is never reset
+ * while the board is up.
+ *
+ * Not volatile, and not shared: every read and write happens on whichever
+ * SCPI task holds the `testInProgress` claim, and that claim admits one
+ * runner at a time. It is incremented under a critical section regardless,
+ * because an increment is a read-modify-write and CLAUDE.md's atomicity
+ * rule prescribes one for those. The alternative is a reachability argument
+ * -- 'only the claim holder can reach this line' -- and reachability
+ * arguments have a poor record in this repo (see #896). One critical
+ * section per benchmark command is not a cost worth reasoning about.
+ *
+ * PAID FOR: StreamingBufferPool.c's STATIC_POOL_SIZE was trimmed 512 B for
+ * these four bytes, the third payment in that comment's list after #824
+ * and #925. Note the link SUCCEEDED without it -- 504 bytes of stack slack
+ * on this branch base -- and the payment was made anyway, for the reason
+ * stated there. */
+static uint32_t gBenchNameSeq = 0;
 
 scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
     /* #747: NULL, not indeterminate. SCPI_ParamCharacters(..., mandatory=false)
@@ -737,7 +977,22 @@ scpi_result_t SCPI_StorageSDCrcStart(scpi_t * context) {
      * reads, so a card inserted during a WiFi stream still reads DETACHED --
      * and answering "No SD Card Detected" sends the user after a card that is
      * sitting in the slot. "SD suspended" is both true and actionable; the
-     * stale probe is neither. */
+     * stale probe is neither.
+     *
+     * #756: this USED to hold the #829 claim across
+     * SCPI_CheckSDCardPresent's bounded re-check, so every other SD command
+     * from either transport saw a spurious "SD card busy" for up to 500 ms.
+     *
+     * The re-check was WITHDRAWN (operator ruling 2026-10-25, item 4 -> A),
+     * so the presence check no longer blocks and the claim is now held only
+     * for the work itself. The hazard this paragraph described is retired.
+     *
+     * The ordering it was accepted under is UNCHANGED and still deliberate:
+     * the #829 claim-before-operand ordering this file depends on makes
+     * checking presence before the claim its own hazard (a malformed request
+     * would then also disturb a cached CRC, which is exactly what the comment
+     * above this block exists to avoid). That stands on its own merits, not
+     * because a blocking window forced it. */
     if (!SCPI_CheckSDCardPresent(context)) {
         sd_card_manager_ReleaseClaim();  /* #829 release */
         return SCPI_RES_ERR;
@@ -1111,6 +1366,7 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     char savedLogFile[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX + 1];
     char benchLogFile[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX + 1] = {0};
     bool logFileClobbered = false;
+    uint32_t benchNameSeq = 0;    /* #958: this run's name discriminator */
     bool ownsBenchFlag = false;   /* #736: did THIS call claim testInProgress? */
     /* Size MUST match the struct field, which is [LEN_MAX + 1] — LEN_MAX (40)
      * is the longest ACCEPTED name and the field carries a 41st byte for the
@@ -1294,13 +1550,117 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
      * accepted. The exit compare would then match and silently revert the
      * user's accepted target. Seeding from our own string instead makes the
      * sentinel un-poisonable, and makes this the fourth symmetric `file` site
-     * (#736 audit round 6). */
+     * (#736 audit round 6).
+     *
+     * #958: the tick is used WHOLE. It used to be masked to 16 bits, so the
+     * name repeated every 65536 ticks -- 65.5 s at the 1 kHz tick -- and the
+     * open this name is about to be armed against TRUNCATES
+     * (SYS_FS_FILE_OPEN_WRITE_PLUS, sd_card_manager.c OPEN_FILE). Two
+     * benchmarks 65.5 s apart on one board therefore targeted the same file
+     * and the second destroyed the first's, with no error, no log line and
+     * nothing a client could have done about it. The three python tests that
+     * snapshot `benchmark_*.dat` before a run and delete only the set
+     * difference (test_728 / test_851 / test_943) cannot defend against that:
+     * their protection is about which files they REMOVE, and this loss happens
+     * inside the open.
+     *
+     * WITHIN ONE BOOT THE NAME CANNOT REPEAT, and what guarantees that is the
+     * SEQUENCE field, not the tick. gBenchNameSeq is incremented once per
+     * named run and never reset while the board is up, so two runs of one boot
+     * cannot produce the same name however long that boot has lasted.
+     *
+     * The tick alone does NOT give that, and the first revision of this
+     * comment claimed it did. TickType_t is 32-bit here
+     * (configTICK_TYPE_WIDTH_IN_BITS is TICK_TYPE_WIDTH_32_BITS,
+     * FreeRTOSConfig.h:125), so it wraps after 49.7 days of uptime and two
+     * runs exactly one wrap apart would share a value. What that first
+     * revision actually established is narrower and still true: CONSECUTIVE
+     * runs cannot share a tick, because this callback cannot run to completion
+     * in under a tick. Its LAST step is the drain-and-close wait below
+     * (`while (!sd_card_manager_IsIdle() && idleWait < 500) vTaskDelay(10)`),
+     * and the close it waits for happens in the SD task. The loop cannot exit
+     * without entering: the `mode = MODE_NONE` +
+     * sd_card_manager_UpdateSettings() immediately above it forces
+     * currentProcessState = DEINIT, and sd_card_manager_IsIdle() is IDLE-or-
+     * INIT only (sd_card_manager.c:3801), so the first test is false and the
+     * body runs -- one vTaskDelay(10) is ten ticks. The re-entrancy interlock
+     * (`testInProgress`, claimed above) means the next run's name is not built
+     * until this one has returned, so two names built on the SUCCESS PATH are
+     * >= 10 ticks apart, whichever transport calls it -- USB SCPI at priority 7
+     * or WiFi SCPI at 2 -- because it comes from the wait, not from who
+     * preempts whom.
+     *
+     * SUCCESS PATH is the operative qualifier, and an earlier revision of this
+     * comment left it out. The name is published a few lines below, and six
+     * `goto __exit_point` paths between there and the drain wait return without
+     * ever reaching it -- the claim failure, the #854 arm-time re-check, the
+     * SD_ArmOrRefuse failure, a suspend during the arm, and both
+     * response-buffer failures. Each of those has already published a name and
+     * pays none of the ten ticks, so two runs a few ticks apart is reachable.
+     * The pre-merge audit on #1027 found this stated as a flat guarantee.
+     *
+     * It no longer matters for uniqueness -- that is the sequence's job, and the
+     * sequence advances on every one of those paths too, because it advances
+     * before the name is built. It is corrected because a comment that
+     * overstates a guarantee is what the next reader relies on instead of the
+     * code. None of it says anything about two runs a WRAP apart, which is the
+     * gap Qodo found on this PR's first review.
+     *
+     * The tick stays as the LEADING field because it is the half a human and
+     * the companion test can read: test_958_benchmark_scratch_name_unique.py
+     * asserts it advances by roughly the elapsed wall clock, and that is the
+     * arm which actually discriminates pre-#958 firmware from post. The
+     * sequence makes the name unique; the tick makes it legible.
+     *
+     * WHAT THIS DOES NOT FIX, and it is the other half of #958: a reboot
+     * restarts the sequence at 1 (it is pre-incremented, so 0 is never
+     * produced) and the tick at 0, so NEITHER field distinguishes one boot
+     * from another, and a run after a reboot can land on the name of a file
+     * left on the card before it and truncate it silently.
+     *
+     * Precisely when, because the first revision of this paragraph was not
+     * precise: it is NOT that every boot's first run shares one name. The
+     * tick above is sampled HERE, at naming time, not at boot -- so two
+     * first-runs collide only when they arrive at the same post-boot offset,
+     * and benchmark_5000_1.dat and benchmark_10000_1.dat are different names.
+     * A coincidence nothing prevents rather than a certainty, which is all the
+     * defect needs. No counter kept in RAM can fix that half; only asking the
+     * card can. The
+     * issue's preferred shape -- stat the candidate, advance a discriminator
+     * when it exists, refuse after a bounded number of attempts -- is the fix
+     * for that and it CANNOT be implemented at this site: the FAT volume is
+     * not mounted here. The SD task mounts it only inside a session
+     * (sd_card_manager.c:1457, reached only when `mode != MODE_NONE`, :1398)
+     * and unmounts it at the end of one (:1715); SYS_FS_AUTOMOUNT_ENABLE is
+     * false (configuration.h:98). A SYS_FS_FileStat() from this callback --
+     * which runs with the manager IDLE, i.e. unmounted -- therefore fails.
+     * `directory` (default "DAQiFi", CommonRuntimeDefaults.h:160) carries no
+     * "/mnt/" prefix, so SYS_FS_GetDisk() takes its "assume the default
+     * volume" branch (sys_fs.c:196-206) rather than its named-mount-point
+     * branch, and finds `gSYSFSCurrentMountPoint.inUse == false` --
+     * SYS_FS_ERROR_NO_FILESYSTEM (sys_fs.c:205), not NO_PATH / NO_FILE. That
+     * error is also what a `directory` written WITH a "/mnt/" prefix would
+     * get here, by the sibling branch (sys_fs.c:191, SYS_FS_ERROR_INVALID_NAME
+     * for a `/mnt/` path matching no in-use volume) -- same conclusion either
+     * way: neither is the "genuinely absent" NO_PATH / NO_FILE that
+     * sd_BucketDirExists() treats as free. Failing safe on it (the required
+     * convention) would refuse EVERY benchmark; reading it as "name is free"
+     * would be a probe that answers nothing. The existence question can only
+     * be asked where the volume is mounted, which is the SD task -- see the
+     * follow-up on #958 for the shape that does it there, at the point the
+     * final path is resolved, without touching the shared truncating open. */
+    taskENTER_CRITICAL();
+    benchNameSeq = ++gBenchNameSeq;
+    taskEXIT_CRITICAL();
     snprintf(benchLogFile, SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX,
-             "benchmark_%d.dat", (int)(xTaskGetTickCount() & 0xFFFF));
+             "benchmark_%lu_%lu.dat", (unsigned long)xTaskGetTickCount(),
+             (unsigned long)benchNameSeq);
     benchLogFile[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX] = '\0';
     taskENTER_CRITICAL();
     memcpy(pSDCardRuntimeConfig->file, benchLogFile, sizeof(benchLogFile));
     pSDCardRuntimeConfig->file[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX] = '\0';
+    /* #958: set with the name it qualifies, in the same critical section. */
+    pSDCardRuntimeConfig->uniqueTarget = true;
     taskEXIT_CRITICAL();
     logFileClobbered = true;   /* #728: restore the logging target on exit */
 
@@ -1560,47 +1920,205 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     // Wait for file to be open and ready before writing
     {
         int readyWait = 0;
-        /* A suspension that starts AND ENDS inside this wait is NOT covered
-         * here, and the gap is deliberate rather than unnoticed.
-         * app_SDCard_GracefulShutdown() stores MODE_NONE over this benchmark's
-         * MODE_WRITE arm on its way into APP_SD_STATE_SUSPENDED
-         * (app_freertos.c), nothing restores it, and
-         * sd_card_manager_IsWriteReady() requires MODE_WRITE -- so the arm is
-         * dead for the rest of the wait and the cascade below reaches the card
-         * advisory with SD_SuspendReasonText() already back to NULL.
+        /* #988: did THIS request's arm die while we were waiting for it?
          *
-         * Three rounds of this PR tried to close it by latching what was
-         * observed during the poll, and every round found the same thing from a
-         * new angle: an ambient condition is not evidence about THIS request.
-         * A live WiFi owner can be sampled and then vanish without the SD task
-         * ever suspending (the streaming auto-stop beats it to the check), and
-         * the latch then blames a suspension for a genuine card fault -- worse
-         * than the advisory it replaced, because it is confidently wrong. The
-         * fix is to latch that this arm's MODE_WRITE was torn down, which is
-         * true of every teardown cause including the power-state path, and
-         * that is a design change with its own ticket: #988. Left undone here
-         * rather than half-done. */
+         * The benchmark published `mode = MODE_WRITE` a few lines above and
+         * nothing in this callback touches it again before the cascade below,
+         * so any OTHER value observed during the wait is proof that something
+         * outside this callback destroyed the arm. That is a fact about THIS
+         * request. It is what #983 could not get out of the poll, and it is the
+         * whole of #988.
+         *
+         * WHAT #983 TRIED AND WITHDREW, written down so it is not tried again.
+         * Three rounds latched what the poll OBSERVED -- a live suspend reason
+         * -- and each found the same defect from a new angle: an ambient
+         * condition is not evidence about this request. A live WiFi owner can
+         * be sampled and then vanish without the SD task ever suspending (the
+         * streaming task's dead-transport auto-stop runs at priority 6 and
+         * beats the SD task at 5 to its own ownership check), and a latch set
+         * from that blames a suspension for what may be a genuine card fault.
+         * `mode` has no such problem: this callback is the only thing that put
+         * WRITE there, so a transition AWAY from it cannot be someone else's
+         * weather.
+         *
+         * WHO ELSE CAN MOVE `mode` WHILE THIS ARM IS IN FLIGHT -- established,
+         * not assumed:
+         *
+         *   app_freertos.c's app_SDCard_GracefulShutdown() -- ONE function,
+         *     called from BOTH teardown branches of app_SDCardTask's
+         *     APP_SD_STATE_PROCESS case: "power state dropped" (->
+         *     APP_SD_STATE_WAIT_POWER_UP) and the WiFi / FW-update /
+         *     quarantine case (-> APP_SD_STATE_SUSPENDED). It stores MODE_NONE
+         *     directly, with no claim, and calls UpdateSettings(). Only the
+         *     SECOND publishes anything SD_SuspendReasonText() can see, which
+         *     is exactly why the first was invisible to #953.
+         *   sd_card_manager.c's OPEN_FILE bucket refusal (:2164-2170) -- sets
+         *     startupDirFull AND clears `mode`, so on the #690 path this latch
+         *     and that recorded verdict are BOTH true. Arm 1 of the cascade
+         *     below is what keeps the verdict.
+         *   sd_card_manager.c's two MOUNT_DISK failures (:1483 mount failed,
+         *     :1510 unsupported filesystem) and the CHECK_DISK_FULL free-space
+         *     floor (:1866) -- WRITE-mode paths that clear `mode` after logging
+         *     their own precise cause.
+         *   SCPI_StorageSDEnableSet (this file, :506) -- `SD:ENAble 1` from the
+         *     other transport clears `mode` with no busy check, by design: it
+         *     is the #589 manual escape hatch.
+         *   The remaining ELEVEN of sd_card_manager.c's sixteen direct
+         *     `gpSDCardSettings->mode = MODE_NONE` stores are terminal steps of
+         *     a READ / LIST / DELETE / FORMAT / GET_SPACE / CRC operation and
+         *     are reachable only when `mode` already IS that operation, i.e.
+         *     only once this arm is already gone. (Sixteen re-counted against
+         *     the current file rather than taken from that file's own #871
+         *     comment.)
+         *
+         * The other SCPI transport cannot reach its own `mode` store while this
+         * arm stands. Every other SD entry point here runs SD_ClaimOrRefuse ->
+         * operands -> `mode` LAST (the claim protocol in sd_card_manager.h),
+         * and sd_card_manager_TryClaim() fails while IsBusyLocked() is true,
+         * which `mode != MODE_NONE` alone makes true. SD:ENAble is the
+         * documented exception listed above.
+         *
+         * NO CRITICAL SECTION, deliberately. `mode` is a plain enum, and the
+         * size and alignment were MEASURED rather than assumed: compiled by
+         * xc32-gcc v4.60 for 32MZ2048EFM144 at -O3, sizeof is 4 and its offset
+         * inside a `{bool enable; <the enum> mode; ...}` struct is 4 (this
+         * project passes no -fshort-enums). An aligned 32-bit load is atomic on
+         * PIC32MZ. The project's rule reserves a critical section for a
+         * read-modify-write or a multi-word object; this is one aligned load
+         * compared against one constant. There is nothing to make
+         * CONSISTENT either: it is a single variable, and `armTornDown` is a
+         * stack local of this task that no other context can see. Nor can the
+         * load be hoisted out of the loop -- each iteration calls three
+         * functions in other translation units and this project builds without
+         * -flto, so the compiler must assume any of them may write through a
+         * pointer that escaped via BoardRunTimeConfig_Get(). The
+         * sd_card_manager_IsWriteReady() call in the loop condition already
+         * reads this same field under exactly that assumption.
+         *
+         * IT LATCHES BUT DOES NOT `break`, unlike the #690 early-exit above it,
+         * and the difference is load-bearing. Breaking would end the wait at
+         * the instant the teardown becomes visible -- which is also the instant
+         * at which whatever caused it is still visible -- so the cascade would
+         * never reach the case #988 exists for: a suspension that starts AND
+         * ENDS inside the wait, leaving a dead arm and no owner left to name.
+         * Waiting out the rest of the poll costs this request nothing it could
+         * have had (nothing restores MODE_WRITE for it) and is what the code
+         * did before #988 anyway.
+         *
+         * THE LOOP IS NOT THE ONLY READ. Its sample point and its exit are
+         * different instants -- the body samples `mode` and then yields 10 ms
+         * before the condition is re-tested -- so a teardown in that last delay
+         * would be latched by nobody. A reconciliation read at the head of the
+         * `!IsWriteReady()` block below ORs one final sample in; its own comment
+         * has the two exits that reach it. Read them together: this latch is
+         * "torn down, observed during the wait", that one is "torn down, and the
+         * wait ended before the loop could see it".
+         *
+         * RESIDUAL, pre-existing and unchanged -- stated so it is not mistaken
+         * for something this latch introduced. The loop's exit condition is
+         * still sd_card_manager_IsWriteReady(), which asks whether SOME write
+         * is ready, not whether THIS one is. If the arm is torn down and a
+         * different caller then arms a WRITE whose file opens inside the
+         * remaining wait, the loop exits "ready" and the benchmark writes into
+         * that session's file. That is the #728 hazard from the other
+         * direction, it belongs to #739's family (closed won't-fix), and the
+         * condition here is byte-identical before and after #988 -- the latch
+         * neither opens nor widens it. */
+        bool armTornDown = false;
         while (!sd_card_manager_IsWriteReady() && readyWait < 500) {
             if (sd_card_manager_StartupDirFull()) {   /* #690: early-exit */
                 break;
+            }
+            if (pSDCardRuntimeConfig->mode != SD_CARD_MANAGER_MODE_WRITE) {
+                armTornDown = true;                   /* #988: latch, keep waiting */
             }
             vTaskDelay(pdMS_TO_TICKS(10));
             readyWait++;
         }
         if (!sd_card_manager_IsWriteReady()) {
-            /* #953: three arms, and the ORDER is the substance of this fix.
+            /* #988: RECONCILIATION READ -- one last sample of `mode`, because
+             * the loop above cannot have taken it.
              *
-             * Reaching here means the file never opened. Three different
-             * things cause that and each wants a different next action from
-             * the operator, so the cascade is ordered by how much each arm
-             * actually KNOWS -- recorded verdict first, live condition second,
+             * The loop samples `mode` at the TOP of its body and then yields for
+             * 10 ms before re-testing its condition, so its last observation and
+             * its exit are not the same instant. Two exits land in that gap:
+             *
+             *   the bound. On the iteration where readyWait is 499 the body
+             *     samples `mode`, delays 10 ms, increments to 500 -- and
+             *     `readyWait < 500` is now false, so the body never runs again.
+             *     A teardown inside that final delay is sampled by nobody.
+             *   a readiness flip. The sd_card_manager_IsWriteReady() in the
+             *     `while` condition and the one in this `if` are two separate
+             *     calls, and this task can be preempted between them, so the
+             *     loop can exit "ready" and this `if` still find it false --
+             *     again with the teardown unobserved.
+             *
+             * Both leave a genuinely dead arm with armTornDown false, and the
+             * cascade below then walks past arm 3 into the card advisory: the
+             * exact mis-diagnosis #988 exists to stop, at the one timing
+             * boundary the in-loop latch alone cannot see. A read here is as
+             * late as the information can be taken: no vTaskDelay separates it
+             * from the cascade, which is the next statement. (A preemption can
+             * still land between the two -- nothing short of a critical section
+             * over the whole cascade would change that, and the cascade calls
+             * into two other modules. What is closed is the 10 ms hole, not
+             * every instruction boundary.)
+             *
+             * THE `||` IS LOAD-BEARING; this must not become a plain assignment.
+             * The loop's latch is a FACT already established ("mode left the
+             * MODE_WRITE this callback published"), and nothing makes it untrue
+             * later. `mode` can read WRITE again at this instant if a different
+             * caller armed its own operation after the teardown -- an
+             * assignment would erase the loop's finding on exactly the
+             * interleaving that most needs it. Only ever OR.
+             *
+             * AFTER THE LOOP, NOT BEFORE IT. A read taken before the wait
+             * describes the arm this callback just published and can say
+             * nothing about a teardown that has not happened yet; the whole
+             * defect is that the wait's last 10 ms are unobserved, and only a
+             * read downstream of them observes anything.
+             *
+             * THE ARM ORDER IS UNTOUCHED. This changes only WHEN armTornDown
+             * may become true, never which arm consumes it. Arm 1 still re-reads
+             * sd_card_manager_StartupDirFull() itself, first, so the recorded
+             * #690 verdict still outranks this; arm 2 still outranks it for the
+             * reason set out below. And it cannot fire falsely: this callback
+             * published MODE_WRITE and never touches `mode` again before here,
+             * so any other value is proof that something outside the callback
+             * destroyed the arm -- the same inference the in-loop latch makes,
+             * one sample later.
+             *
+             * WHAT IT STILL DOES NOT CLOSE, so the next reader does not mistake
+             * it for a general fix: a teardown whose ENTIRE mode-is-NONE window
+             * falls between two samples -- another caller claiming and arming
+             * its own WRITE in the gap -- is invisible to the loop AND to this
+             * read, which would see the re-armed WRITE. That is the same
+             * "IsWriteReady() asks whether SOME write is ready" interleaving the
+             * RESIDUAL note above the loop already scopes out (#728, #739
+             * closed won't-fix), seen from the diagnosis side; the outcome is an
+             * execution error either way and only the message is imprecise.
+             * Naming it properly needs a per-request arm generation owned by the
+             * SD manager -- new shared state with its own writers and orderings
+             * -- which is a design, not this reconciliation. */
+            armTornDown = armTornDown ||
+                          (pSDCardRuntimeConfig->mode != SD_CARD_MANAGER_MODE_WRITE);
+
+            /* #953/#988: FOUR arms, and the ORDER is still the substance.
+             *
+             * Reaching here means the file never opened. Four different things
+             * cause that and each wants a different next action from the
+             * operator, so the cascade is ordered by what each arm can TELL
+             * THEM: a named request-specific cause first, a named ambient
+             * cause second, an unnamed request-specific fact third, an
              * inference last.
              *
              * 1. StartupDirFull is a RECORDED VERDICT, and it is necessarily
              *    THIS request's. sd_card_manager_ClearStartupDirFull() ran
              *    synchronously a few lines above the mode=WRITE write, and the
              *    only writer is the SD task's own OPEN_FILE refusal
-             *    (sd_card_manager.c:2070) -- which cannot run while that task
+             *    (sd_card_manager.c:2164 -- this citation read :2070 until
+             *    #988 re-checked it against the current file) -- which cannot
+             *    run while that task
              *    is suspended, and which no other SD command can reach in this
              *    window because `mode` is WRITE and keeps IsBusy() true. So a
              *    `true` here PROVES the SD task ran, attempted the open, and
@@ -1614,8 +2132,20 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
              *    for a card that will refuse the open identically once
              *    streaming stops. That is the same mis-diagnosis this issue is
              *    about, pointed the other way, and it would have silently
-             *    narrowed #690. Ordered as below, #953 changes exactly one
-             *    quadrant of (suspended x dirFull): the one it was filed for.
+             *    narrowed #690. Ordered as below, each fix moves exactly one
+             *    cell of its own input space and no more: #953 one quadrant of
+             *    (suspended x dirFull), #988 one cell of (suspended x dirFull
+             *    x tornDown) -- each the one it was filed for.
+             *
+             *    #988 MAKES THIS ARM'S PRIMACY LOAD-BEARING TWICE OVER. That
+             *    same OPEN_FILE refusal clears `mode` as part of itself
+             *    (sd_card_manager.c:2164-2170 raises startupDirFull and then
+             *    stores MODE_NONE), so arm 3's latch is ALSO set on every #690
+             *    path. Re-reading the flag HERE rather than inferring anything
+             *    from the loop's exit is what keeps the refusal reported as
+             *    the cause and the teardown as merely how the SD task carried
+             *    it out -- whichever of the two the poll happened to see
+             *    first.
              *
              * 2. Otherwise, a live suspend reason -- THIS is #953. The
              *    `!benchArmed` branch above already reports a suspend that was
@@ -1627,9 +2157,55 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
              *    end at its full 5 s -- blaming the card for a task that
              *    stopped running.
              *
-             * 3. Only with neither of the above is the card diagnosis honest:
-             *    the SD task was running, recorded no refusal, and the open
-             *    still never completed.
+             *    #988 DELIBERATELY LEFT THIS ABOVE ARM 3, even though arm 3
+             *    knows the stronger FACT. Arm 3 proves the arm is dead; this
+             *    one only observes who owns SPI4 now. But the arms are ranked
+             *    by what the operator can DO with the message, and this is the
+             *    only arm that can name an owner AND the command that clears
+             *    it ("SYST:STR:STOP first", "reseat the card, then
+             *    SYST:STOR:SD:ENAble 1"). Where both fire they almost always
+             *    describe one event: the WiFi / FW-update / quarantine
+             *    teardown kills the arm and publishes the suspension through
+             *    the SAME app_SDCard_GracefulShutdown() call. So putting arm 3
+             *    first would silence this one in precisely the case #953
+             *    shipped for -- that path stores MODE_NONE on its way into
+             *    APP_SD_STATE_SUSPENDED, so the latch is ALWAYS set there --
+             *    and would have reverted #953 while claiming to extend it.
+             *    The residual this arm carries (naming an owner that did not
+             *    cause the teardown) is the shipped #953 behaviour, unchanged
+             *    by #988, and its recommended action stays correct either way.
+             *
+             * 3. Otherwise, THIS request's arm was torn down and nothing names
+             *    a cause -- #988. Its input has TWO writers, the poll loop's
+             *    latch and the reconciliation read immediately above this
+             *    cascade, and both set it on the same evidence: a transition
+             *    away from the MODE_WRITE this callback itself published. So
+             *    unlike arm 2 it cannot be someone else's weather; what it
+             *    cannot do is say who. Its domain is what is left after arm 2:
+             *    the power-state teardown, which publishes no suspension at
+             *    all (app_SDCardTask goes to APP_SD_STATE_WAIT_POWER_UP, and
+             *    the flag it publishes is `state == SUSPENDED ||
+             *    app_SDCard_SpiOwnedByWifi()`, false in both terms) -- that is
+             *    the gap #988 was filed for; a teardown by SD:ENAble from the
+             *    other transport; a mount or filesystem failure; and the
+             *    transient case where the owner has already gone again.
+             *
+             *    The message claims only the fact, and prints the manager's
+             *    state/mode as breadcrumbs -- the #782 pattern, and what
+             *    separates "torn down to NONE" from "another command has it
+             *    now". Those two are a third, later sample, descriptive only:
+             *    they do not steer the branch, and `mode` can even read WRITE
+             *    again if a different caller re-armed meanwhile, which is why
+             *    the wording says SD is NOW in that state rather than that it
+             *    was.
+             *
+             * 4. Only with none of the above is the card diagnosis honest: the
+             *    SD task was running, recorded no refusal, nothing owned the
+             *    bus, and this request's arm was still standing -- and the
+             *    open still never completed. A genuinely SPI-incompatible card
+             *    lands here and nowhere else: its WRITE open failure goes to
+             *    PROCESS_STATE_ERROR WITHOUT clearing `mode`
+             *    (sd_card_manager.c:2358-2365), so arm 3 cannot swallow it.
              *
              * Sampled ONCE, before the cascade, rather than called again
              * inside the arm that logs it: a second call could observe a
@@ -1646,6 +2222,18 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
                       sd_card_manager_WriteRefuseText());
             } else if (why != NULL) {
                 LOG_E("SD:BENCH - could not complete the arm: %s\r\n", why);
+            } else if (armTornDown) {
+                /* #988/#986: 109 bytes at worst against Logger's usable 125
+                 * (LOG_MESSAGE_SIZE 128, clamped at LOG_MESSAGE_SIZE - 3 in
+                 * Logger.c) -- 93 of literal, plus the longest state name
+                 * ("CURDRIVE", 8) and the longest mode name ("GETSPACE", 8).
+                 * Measured over every string those two switches can return,
+                 * not eyeballed; 16 bytes of margin. */
+                /* log_budget: max=8,8 */
+                LOG_E("SD:BENCH - the write arm was torn down before the file "
+                      "opened (SD now state=%s mode=%s) - retry\r\n",
+                      sd_card_manager_GetStateName(),
+                      sd_card_manager_GetModeName());
             } else {
                 LOG_E("SD:BENCH - File not ready after timeout\r\n");
                 LOG_E("SD:BENCH - if reads/LIST work but writes hang, the card is "
@@ -1757,8 +2345,13 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
              * differ. This one means a peer SCPI callback held the shared
              * response buffer, NOT that the card is slow -- so it must not
              * point at the SD-card-compatibility page. */
-            LOG_E("SD:BENCH - shared SCPI response buffer not free within %u ms "
-                  "at %u/%u bytes (a concurrent SCPI command held it)\r\n",
+            /* #1039: was 137 bytes against the 125-byte ceiling. The CAUSE --
+             * that another SCPI command held the buffer, which is what stops
+             * this being read as a slow card -- sat in the truncated tail, so
+             * it leads now. 120 bytes.
+             */
+            LOG_E("SD:BENCH - a concurrent SCPI command held the response "
+                  "buffer; not free in %u ms at %u/%u bytes\r\n",
                   (unsigned int)SCPI_SD_BENCH_STALL_TIMEOUT_MS,
                   bytesWritten, bytesToWrite);
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
@@ -1981,6 +2574,10 @@ __exit_point:
             memcpy(pSDCardRuntimeConfig->file, savedLogFile, sizeof(savedLogFile));
             pSDCardRuntimeConfig->file[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX] = '\0';
         }
+        /* #958: cleared unconditionally -- the rule belongs to the scratch
+         * name, not to whatever replaced it, so a target someone else set on
+         * the other transport must not inherit it. */
+        pSDCardRuntimeConfig->uniqueTarget = false;
         taskEXIT_CRITICAL();
         /* Deliberately NOT sd_card_manager_UpdateSettings(): it unconditionally
          * forces currentProcessState = DEINIT, so publishing here would kick the
@@ -2655,15 +3252,44 @@ scpi_result_t SCPI_StorageSDInfo(scpi_t * context) {
     uint16_t mdt_year = 2000 + ((mdt_raw >> 4) & 0xFF);
     uint8_t mdt_month = mdt_raw & 0x0F;
 
-    char result[80];
-    int len = snprintf(result, sizeof(result),
+    /* #1098: format the reply into the shared SCPI response scratch buffer
+     * (#347) instead of a stack-local char[80]. The CID line is ~40 B, so the
+     * same bytes go out either way -- this changes only where they are built.
+     *
+     * Take/Give contract (SCPIInterface.h): a non-NULL Take MUST be matched by
+     * exactly one Give on every exit path; a NULL Take by none. Note that the
+     * format-error branch below is now one of those paths -- before this change
+     * it returned with no buffer held and so had nothing to release. The
+     * DRV_SDSPI_GetCID failure above still returns before any take, and
+     * correctly does NOT give.
+     *
+     * oid[], pnm[] and cid[] stay on the stack deliberately: they are a driver
+     * output buffer and two short field fragments consumed as %s arguments
+     * below, not response-sized reply buffers, which is what #347's shared
+     * buffer exists to displace. */
+    char* result = (char*)SCPI_ResponseBuf_Take();
+    if (result == NULL) {
+        /* #1098: report it, matching the format-error branch below and the
+         * project rule that every error reaches the log and the SCPI error
+         * queue (CLAUDE.md). Nothing is held on this path -- the take failed --
+         * so the push costs no held-mutex time. */
+        LOG_E("[SD] Card info: response buffer unavailable");
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        return SCPI_RES_ERR;
+    }
+
+    int len = snprintf(result, SCPI_RESPONSE_BUF_SIZE,
                        "%u,\"%s\",\"%s\",%u.%u,%lu,%u-%02u",
                        mid, oid, pnm,
                        prv_major, prv_minor,
                        (unsigned long)psn,
                        mdt_year, mdt_month);
 
-    if (len < 0 || (size_t)len >= sizeof(result)) {
+    if (len < 0 || (size_t)len >= SCPI_RESPONSE_BUF_SIZE) {
+        /* Released before the log/push: nothing below reads `result`, and
+         * holding the shared buffer across LOG_E buys other callbacks' latency
+         * for no benefit (#947). */
+        SCPI_ResponseBuf_Give();
         LOG_E("[SD] CID format error (len=%d)", len);
         SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
         return SCPI_RES_ERR;
@@ -2672,6 +3298,7 @@ scpi_result_t SCPI_StorageSDInfo(scpi_t * context) {
     context->interface->write(context, result, (size_t)len);
     context->interface->write(context, "\r\n", 2);
 
+    SCPI_ResponseBuf_Give();
     return SCPI_RES_OK;
 }
 

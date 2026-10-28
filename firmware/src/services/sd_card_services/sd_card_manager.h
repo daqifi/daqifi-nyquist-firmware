@@ -93,6 +93,12 @@ extern "C" {
         // and rejects with SCPI -200 if the card has fewer than this
         // many bytes free.  0 = no pre-start check (legacy behavior).
         uint64_t minFreeBytes;
+        /* #958: the WRITE target is SD:BENCHmark's scratch name. Prefer a name
+         * no file already uses, instead of truncating whatever is there.
+         * Not a rule for every WRITE: ordinary logging opens an existing
+         * target DELIBERATELY (the #689 pre-walk reopens a split part in
+         * place). Default false. */
+        bool uniqueTarget;
     } sd_card_manager_settings_t;
 
 
@@ -327,6 +333,66 @@ extern "C" {
     /** @brief #689: synchronously clear the directory-full flag before a new
      *         WRITE attempt (pairs with sd_card_manager_ClearStartupDiskFull). */
     void sd_card_manager_ClearStartupDirFull(void);
+
+    /**
+     * @brief #981: BENCH/TEST-ONLY fault injection -- force ONE SD write,
+     *        issued during the NEXT teardown drain, to fail.
+     *
+     * This is a diagnostic, in the same category as SYSTem:STReam:BENCHmark
+     * and SYSTem:STORage:SD:BENCHmark: it deliberately changes device
+     * behaviour, it ships in every build, and it is documented for bench use
+     * only. Production code must never call it. It exists because the SD
+     * failure-accounting paths (Streaming_ReportSdDiscard in the unmount
+     * drain, #915/#979) were otherwise unprovable on the bench without
+     * filling a ~2 GB card at ~300-500 KB/s -- one to two hours per
+     * regression run.
+     *
+     * NOT "whichever write comes next" -- an earlier revision of this comment
+     * said that, and it was wrong in the unsafe direction. SDCardWrite() has
+     * five call sites, and three of them (the ordinary WRITE_TO_FILE write
+     * and both rotation-splitting drains) answer a failed write by setting
+     * currentProcessState = ERROR, and the pre-existing (not introduced by
+     * this hook) ERROR -> UNMOUNT_DISK -> INIT -> OPEN_FILE(WRITE_PLUS) path
+     * then re-opens the SAME base filename with fileCounter reset to 0, which
+     * TRUNCATES it -- destroying already-recorded data, not merely ending the
+     * session. Letting an SCPI-armable, network-reachable command reach that
+     * on a shipped device is exactly what this API must not do, so the
+     * consume site in SDCardWrite() gates on currentProcessState ==
+     * UNMOUNT_DISK: the arm can be taken ONLY by one of the two drains that
+     * run inside a teardown that is already happening (a session STOP, or a
+     * teardown already in flight for some other reason), never by the
+     * ordinary write or a rotation drain. Neither of those two safe sites
+     * sets ERROR or starts a remount, so no arm taken through this API can
+     * cause the truncation above. The full call-site table, the axis this
+     * corrects (accounting vs session-integrity are independent properties --
+     * an earlier revision conflated them), and the coverage given up (the
+     * rotation drains' #825/#838 twins stay source-review-only) are in
+     * gFailNextWrite's block comment and at the consume site, both in
+     * sd_card_manager.c.
+     *
+     * PRACTICAL CONSEQUENCE: arm whenever you like, including mid-stream --
+     * ordinary writes will not take it, so streaming continues unaffected --
+     * then STOP the session (or otherwise let a teardown happen). An unmount
+     * drain consumes it, logs LOG_E naming this hook, reports the abandoned
+     * chunk via Streaming_ReportSdDiscard, and returns -1 so its caller takes
+     * its ordinary write-failure path. It is a ONE-SHOT: the arm is gone the
+     * instant a qualifying write consumes it, whether or not the caller
+     * recovers. It is also cleared by every reset (an explicit #409 scrub in
+     * sd_card_manager_Init), so SYST:REBoot or a power cycle always disarms
+     * it. If SYST:STOR:SD:FAILNext? still reads 1 after a stop, no teardown
+     * write had data to issue this time -- the arm is intact; retry rather
+     * than treat it as failed.
+     *
+     * SCPI: SYSTem:STORage:SD:FAILNext <0|1>
+     *
+     * @param arm true to arm the one-shot, false to disarm without consuming.
+     */
+    void sd_card_manager_SetFailNextWrite(bool arm);
+
+    /** @brief #981: true while a SetFailNextWrite arm is still outstanding;
+     *         false once a write has consumed it (or it was never armed).
+     *         Bench/test diagnostic only -- see above. */
+    bool sd_card_manager_FailNextWriteArmed(void);
 
     /**
      * @brief Checks if the SD card manager is busy with an active operation.
@@ -590,6 +656,47 @@ bool sd_card_manager_WriteIsStreamingLog(void);
      * @brief Reset SD write metrics (for session start / ClearStats).
      */
     void sd_card_manager_ResetWriteMetrics(void);
+
+    /* #914: libscpi error codes, kept as plain ints here so this header needs
+     * no SCPI dependency. SCPIInterface.c static-asserts each against the real
+     * libscpi value. Three, not one: an open failure that is really a storage
+     * outage must not be reported to the host as a missing file NAME -- that
+     * is not coarse, it is a specific wrong answer, and it undercuts the point
+     * of #914 (be MORE specific than the -200 every other SD refusal uses, not
+     * differently wrong). The mapping is SdAsyncErrorForFsError() in
+     * sd_card_manager.c. */
+    #define SD_ASYNC_ERR_FILE_NOT_FOUND   (-256)  /* SCPI_ERROR_FILE_NAME_NOT_FOUND */
+    #define SD_ASYNC_ERR_FILE_NAME_ERROR  (-257)  /* SCPI_ERROR_FILE_NAME_ERROR */
+    #define SD_ASYNC_ERR_MASS_STORAGE     (-250)  /* SCPI_ERROR_MASS_STORAGE_ERROR */
+
+    /**
+     * @brief Record a SCPI error code for a failure this task detected AFTER
+     *        the SCPI handler that armed the operation already returned OK
+     *        (e.g. a GET whose file will not open). ONE SLOT PER REPLY TARGET,
+     *        one-deep and newest-wins within a slot — see the definition in
+     *        sd_card_manager.c for why the SD task cannot push into a scpi_t's
+     *        error queue directly, and why the slots are per-transport.
+     * @param scpiError   A negative libscpi error code (SD_ASYNC_ERR_*).
+     * @param target      Which transport's reply this failure belongs to.
+     * @param generation  The TCP connection generation the operation was armed
+     *                    for (settings->replyGeneration, #599); 0 for USB.
+     */
+    void sd_card_manager_LatchAsyncError(int32_t scpiError,
+                                         sd_card_manager_reply_target_t target,
+                                         uint32_t generation);
+
+    /**
+     * @brief Take and clear the pending deferred error for `target`, if any.
+     *        Called once per command boundary by SCPI_DrainDeferredSdError.
+     * @param target      The caller's transport.
+     * @param generation  The caller's CURRENT connection generation
+     *                    (wifi_tcp_server_GetConnGeneration()); 0 for USB.
+     * @return The latched code, or 0 if nothing is pending for `target` or the
+     *         pending one belongs to a previous connection — in which case it
+     *         is DISCARDED, not held, since it can never match again.
+     */
+    int32_t sd_card_manager_TakeAsyncError(sd_card_manager_reply_target_t target,
+                                           uint32_t generation);
 
     /* Provide C++ Compatibility */
 #ifdef __cplusplus

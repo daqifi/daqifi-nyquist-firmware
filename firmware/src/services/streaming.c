@@ -22,6 +22,9 @@
 #if PB_PROFILE_COUNTERS
 #include <xc.h>  // for _CP0_GET_COUNT() — coprocessor 0 cycle counter
 #endif
+#if READ_LOOP_PROFILE
+#include "peripheral/coretimer/plib_coretimer.h"  // #251: CORETIMER_CounterGet()
+#endif
 
 #include "HAL/ADC.h"
 #include "HAL/DIO.h"
@@ -1139,6 +1142,14 @@ void _Streaming_Deferred_Interrupt_Task(void) {
             const uint32_t framePattern = gTestPattern;      /* both are volatile uint32_t */
             const uint32_t frameBenchMode = gBenchmarkMode;
             uint32_t clipMask = 0;   /* #814: rails seen in THIS sample */
+#if READ_LOOP_PROFILE
+            /* #251: time this loop and nothing else -- it is the per-channel
+             * term of the cap model, which is what the probe exists to size.
+             * Pure integer (this task has no FPU context, #368/#369) and no
+             * LOG_*: the probe must not change what it measures. Accumulated
+             * just after the loop's closing brace. */
+            const uint32_t readLoopStart = CORETIMER_CounterGet();
+#endif
             for (uint8_t j = 0; j < mapping->count; j++) {
                 uint8_t cfgIdx = mapping->configIndices[j];
 
@@ -1318,6 +1329,30 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                     }
                 }
             }
+#if READ_LOOP_PROFILE
+            {
+                /* #251: unsigned subtraction is exact across one wrap of the
+                 * 32-bit counter (~34 s at 126 MHz), far beyond any loop.
+                 *
+                 * One critical section for all three fields. This task is
+                 * their only writer and nothing preempts it but ISRs, which
+                 * never touch them, so the guard is not what keeps the writes
+                 * from interleaving. It is what makes the three land together:
+                 * the 64-bit sum and count are not atomic on PIC32MZ, and the
+                 * project rule for a 64-bit RMW is a critical section, as
+                 * totalSamplesStreamed++ below also follows. O(1) -- three
+                 * field updates, no call, no loop, so the time the timer ISR
+                 * is masked stays trivially short. */
+                const uint32_t readLoopTime = CORETIMER_CounterGet() - readLoopStart;
+                taskENTER_CRITICAL();
+                gStreamStats.readLoopCycles += readLoopTime;
+                gStreamStats.readLoopCount++;
+                if (readLoopTime > gStreamStats.readLoopMaxCycles) {
+                    gStreamStats.readLoopMaxCycles = readLoopTime;
+                }
+                taskEXIT_CRITICAL();
+            }
+#endif
 
 
             // #717: every emitted packet already carries the deterministic
@@ -1679,10 +1714,13 @@ uint32_t Streaming_GetEncoderBufferSize(void) {
  * 0 (buffer full). This prevents the "convoy effect" where tiny partial
  * writes burn CPU on mutex lock/unlock without letting the output task drain.
  *
- * @param writeFn   All-or-nothing write function
- * @param buf       Encoded packet to write
- * @param len       Packet size in bytes
- * @return          len on success, 0 on 10s timeout (interface dead)
+ * @param writeFn      All-or-nothing write function
+ * @param buf          Encoded packet to write
+ * @param len          Packet size in bytes
+ * @param ringCapacity TOTAL capacity of the ring writeFn feeds, in bytes
+ *                     (NOT its free space).  0 = unknown, skip the check.
+ * @return             len on success, 0 on give-up (interface dead, or a
+ *                     packet the ring can never accept — see below)
  */
 typedef size_t (*StreamWriteFn)(const char* buf, size_t len);
 
@@ -1699,7 +1737,11 @@ static size_t Streaming_UsbWrite(const char* buf, size_t len) {
  * branch on the return alone without racing IsEnabled.
  *
  *   TIMEOUT = 0      (matches "wrote 0 bytes" — also a real backpressure
- *                     failure that bumps drop counters)
+ *                     failure that bumps drop counters.  #1021 widened the
+ *                     causes it covers from "the interface did not drain in
+ *                     10 s" to that OR "the packet is larger than the ring,
+ *                     so no drain could ever help"; both mean "give up and
+ *                     count the drop", which is all any caller does with it.)
  *   STOPPED = SIZE_MAX  (impossible-to-write count — explicit
  *                     stop-abort, no counter bumps, no log)
  *
@@ -1711,11 +1753,64 @@ static size_t Streaming_UsbWrite(const char* buf, size_t len) {
 #define STREAM_WRITE_RETURN_TIMEOUT   ((size_t)0)
 #define STREAM_WRITE_RETURN_STOPPED   (SIZE_MAX)
 
+/* #1021: the largest write a ring can EVER accept, given only a partition
+ * bookkeeping figure and a free-space reading taken from the ring itself.
+ *
+ * `poolSize` is authoritative in principle -- every one of the three rings is
+ * bound to its StreamingBufferPool partition and nothing else (UsbCdc.c
+ * `UsbCdc_SetWriteBuffer`, wifi_tcp_server.c `wifi_tcp_server_SetWriteBuffer`,
+ * sd_card_manager.c `sd_card_manager_SetCircularBuffer`, all driven from the
+ * one partition site in SCPIInterface.c).  But a "never fits" verdict DELETES
+ * data, so it must not rest on that correspondence alone: `observedFree` is a
+ * reading of the live ring, and free can never exceed capacity, so taking the
+ * larger of the two makes a stale or wrong partition figure unable to condemn a
+ * packet the ring demonstrably has room for right now.  It only ever widens the
+ * bound, never narrows it. */
+static size_t Streaming_RingCapacity(uint32_t poolSize, size_t observedFree) {
+    return (observedFree > (size_t)poolSize) ? observedFree : (size_t)poolSize;
+}
+
 static size_t Streaming_WriteWithRetry(StreamWriteFn writeFn,
-                                        const uint8_t* buf, size_t len) {
+                                        const uint8_t* buf, size_t len,
+                                        size_t ringCapacity) {
     /* Cache the runtime config pointer locally so all phases use a
      * consistent NULL-checked view (Qodo pass-3 /improve). */
     StreamingRuntimeConfig *cfg = gpRuntimeConfigStream;
+
+    /* #1021: a packet larger than the ring's TOTAL capacity can never be
+     * accepted, however long the consumer drains.  All three writeFn are
+     * all-or-nothing against CircularBuf_NumBytesFree(), whose maximum is
+     * buf_size (CircularBuffer.c: free = buf_size - available), so
+     * `len > buf_size` fails identically on an empty ring and a full one.
+     * Retrying one costs the FULL 10 s budget below, and the cost is not the
+     * packet: the encoder task is blocked for that whole window, so the sample
+     * queue and pool behind it overflow and the loss cascades far past the one
+     * batch that could not be written.  Give up at once instead; the caller's
+     * existing drop bookkeeping is unchanged, it just runs ~10 s sooner.
+     *
+     * Returning the existing TIMEOUT sentinel rather than a new one is
+     * deliberate.  It is (size_t)0 -- byte-identical to "writeFn wrote nothing"
+     * -- so every present and future caller that branches on it already treats
+     * this correctly, whereas a fourth sentinel would be silently mistaken for
+     * a byte count by any site that did not learn about it.  The diagnostic
+     * that distinguishes the two causes is logged by the caller, which knows
+     * which transport this is. */
+    if (ringCapacity != 0u && len > ringCapacity) {
+        /* #486 precedence, preserved rather than newly asserted. On the
+         * unmodified path an undeliverable write reached the stop check only
+         * after its ten phase-1 attempts had all failed -- which they always
+         * do, for the reason above -- and was then reported as STOPPED, with
+         * no counters and no log. Returning TIMEOUT unconditionally here would
+         * book a drop and set a QUES bit for a packet the caller abandoned
+         * because streaming had already stopped: the #484 miscount this loop
+         * guards against everywhere else. Same `cfg &&` form as the phases
+         * below, deliberately -- a NULL cfg means "cannot tell", which keeps
+         * the existing fall-through rather than inventing a stop. */
+        if (cfg && !cfg->IsEnabled) {
+            return STREAM_WRITE_RETURN_STOPPED;
+        }
+        return STREAM_WRITE_RETURN_TIMEOUT;
+    }
 
     // Phase 1: quick spin — catch in-progress DMA completions
     for (int i = 0; i < 10; i++) {
@@ -2312,6 +2407,41 @@ void Streaming_ReportSdDiscard(size_t bytes) {
 }
 
 /**
+ * @brief Book samples an encoder DESTROYED -- consumed from a sample queue and
+ *        then not emitted.
+ *
+ * #970. The encoders' caller cannot compute this. An encode call returns a BYTE
+ * count; zero is the only "nothing written" value it has and carries no
+ * cardinality, so the batch loop books only the EVENT (encoderFailures) and an
+ * encoder that knows it destroyed a sample books the sample here. See the
+ * encoded == 0 arm below for the per-encoder truth table.
+ *
+ * Deliberately narrow and purpose-named -- the Streaming_ReportSdDiscard shape.
+ * Only a site that has ALREADY consumed the queue entry and knows it will not
+ * be emitted may call it. A site that merely RETAINS a sample (buffer full this
+ * tick, re-encoded next call) must NOT: nothing was lost.
+ *
+ * Runs on streaming_Task (pri 6) from inside the encoder. O(1) inside one
+ * critical section so a concurrent SYST:STR:STATS? snapshot sees total and
+ * Steady coherently (Steady never > total). No QUES bit: QUES_BIT_ENCODER_FAIL
+ * belongs to the zero-return event, which the caller still raises.
+ */
+void Streaming_ReportEncoderSampleLoss(uint32_t samples) {
+    if (samples == 0u) {
+        return;
+    }
+    bool pastGrace = Streaming_PastStartupGrace();
+    taskENTER_CRITICAL();
+    gStreamStats.encoderDroppedSamples += samples;
+    if (pastGrace) {
+        gStreamStats.encoderDroppedSamplesSteady += samples;
+    }
+    taskEXIT_CRITICAL();
+    LOG_E_SESSION(LOG_SESSION_ENCODER_SAMPLE_LOSS,
+        "Streaming: encoder destroyed queued sample(s) - see EncoderDroppedSamples");
+}
+
+/**
  * #533: drain both per-session sample queues (AIN + DIO) so no sample
  * captured by one session can be encoded into the next.  Called from
  * Streaming_Stop (the session is over — discard) and Streaming_Start
@@ -2389,13 +2519,67 @@ static void Streaming_Stop(void) {
         // gLossGraceSec, default 3 s) don't produce misleading end-of-
         // session error logs.  Total counters are still available via
         // SYST:STR:STATS? for forensic diagnostic.
-        bool hadDrops = gStreamStats.queueDroppedSamplesSteady > 0 ||
-                        gStreamStats.usbDroppedBytesSteady > 0 ||
-                        gStreamStats.wifiDroppedBytesSteady > 0 ||
-                        gStreamStats.sdDroppedBytesSteady > 0 ||
-                        gStreamStats.encoderFailuresSteady > 0 ||
-                        gStreamStats.dioDroppedSamplesSteady > 0 ||
-                        gStreamStats.eosOverruns > 0;  // no Steady variant — hw staleness, not a grace-window false flag
+        /* #970: ONE coherent snapshot, not ~13 separate unsynchronised reads.
+         * Every field below is written from another context -- the pri-6
+         * encoder books encoderDroppedSamples via
+         * Streaming_ReportEncoderSampleLoss, the deferred task books the queue
+         * and scan counters -- and Streaming_Stop runs on the pri-7 SCPI task,
+         * ABOVE the encoder. So a writer could land between any two of these
+         * reads and the one line an operator actually reads could disagree with
+         * SYST:STReam:STATS? about the same session, or even with itself
+         * (hadDrops computed from one set of values, the totals from another).
+         *
+         * Streaming_GetStats() is the existing atomic-snapshot helper the SCPI
+         * path already uses -- one critical section, O(1) struct copy, and it
+         * folds in the volatile ISR counters (net of dry ticks, #707/#745) and
+         * gScanStaleDropped the same way. Reusing it DELETES the coordination
+         * problem rather than adding a second way to read these counters. */
+        StreamingStats snap;
+        Streaming_GetStats(&snap);
+
+        bool hadDrops = snap.queueDroppedSamplesSteady > 0 ||
+                        snap.usbDroppedBytesSteady > 0 ||
+                        snap.wifiDroppedBytesSteady > 0 ||
+                        snap.sdDroppedBytesSteady > 0 ||
+                        snap.encoderFailuresSteady > 0 ||
+                        snap.dioDroppedSamplesSteady > 0 ||
+                        /* #970: these two are summed by totalSampleLoss below, so
+                         * the GATE must cover them or the summary is skipped for a
+                         * session that DOES report loss through STATS?.
+                         *
+                         * encoderDroppedSamplesSteady used to be implied by
+                         * encoderFailuresSteady, because its only increment sat
+                         * beside encoderFailures++ in the encoded == 0 arm. THIS PR
+                         * deliberately unpaired them: NanoPB_Encoder.c books
+                         * destroyed samples and then returns a NON-ZERO
+                         * bufferOffset, so the encoded == 0 arm is never reached and
+                         * encoderFailures never moves. The omission became reachable
+                         * the moment that pairing went away.
+                         *
+                         * scanStaleDropped is DELIBERATELY NOT gated on, and the
+                         * asymmetry with totalSampleLoss is the point. It has no
+                         * Steady variant, and this gate exists precisely to keep
+                         * startup-window transients out of the summary (see the
+                         * comment above it). A scan that goes stale inside the grace
+                         * window is an expected startup transient -- the first scan
+                         * has not completed yet, which is the same condition #707 and
+                         * #745 introduced dry-tick netting for -- so gating on it
+                         * printed an "all post-grace" loss line for a session whose
+                         * every steady counter was zero. An earlier revision of THIS
+                         * comment added it to the gate and caused exactly that.
+                         *
+                         * eosOverruns is in the gate without a Steady variant because
+                         * it is hardware staleness rather than a grace-window false
+                         * flag; scanStaleDropped is the opposite case, which is why
+                         * the two are treated differently.
+                         *
+                         * Residual, tracked separately: a session whose ONLY loss is
+                         * post-grace frozen scans still prints nothing, because there
+                         * is no Steady variant to gate on. Fixing that needs a
+                         * grace-filtered scan-stale counter, which is a change to the
+                         * counter itself, not to this gate. */
+                        snap.encoderDroppedSamplesSteady > 0 ||
+                        snap.eosOverruns > 0;  // no Steady variant — hw staleness, not a grace-window false flag
         // Clear runtime overflow / data-loss condition bits — they refer to
         // the live session that just ended.  Preserve QUES_BIT_TRANSPORT_DOWN
         // (#397) because it captures the REASON streaming stopped; clearing
@@ -2411,8 +2595,8 @@ static void Streaming_Stop(void) {
         taskEXIT_CRITICAL();
 
         if (hadDrops) {
-            uint64_t totalAttempted = gStreamStats.totalSamplesStreamed +
-                                     gStreamStats.queueDroppedSamples;
+            uint64_t totalAttempted = snap.totalSamplesStreamed +
+                                     snap.queueDroppedSamples;
             // EOS coalescing is data staleness (ADC register overwrite),
             // not a dropped sample — exclude from loss total/percentage.
             // Steady counters for the loss math: startup-window transients
@@ -2420,10 +2604,10 @@ static void Streaming_Stop(void) {
             // #557: scan-stale ticks are genuine dropped samples (the prior
             // scan never completed — its data is stale), so include them in the
             // loss total, unlike eosOverruns (task-behind-but-fresh, excluded).
-            uint32_t totalSampleLoss = gStreamStats.queueDroppedSamplesSteady +
-                                      gStreamStats.encoderDroppedSamplesSteady +
-                                      gStreamStats.dioDroppedSamplesSteady +
-                                      gScanStaleDropped;
+            uint32_t totalSampleLoss = snap.queueDroppedSamplesSteady +
+                                      snap.encoderDroppedSamplesSteady +
+                                      snap.dioDroppedSamplesSteady +
+                                      snap.scanStaleDropped;
             uint32_t lossPercent = totalAttempted > 0
                 ? (uint32_t)((totalSampleLoss * 100ULL) / totalAttempted)
                 : 0;
@@ -2431,13 +2615,13 @@ static void Streaming_Stop(void) {
                   (unsigned)totalSampleLoss,
                   (unsigned long long)totalAttempted,
                   (unsigned)lossPercent,
-                  (unsigned)gStreamStats.usbDroppedBytesSteady,
-                  (unsigned)gStreamStats.wifiDroppedBytesSteady,
-                  (unsigned)gStreamStats.sdDroppedBytesSteady,
-                  (unsigned)gStreamStats.encoderFailuresSteady,
-                  (unsigned)gStreamStats.encoderDroppedSamplesSteady,
-                  (unsigned)gStreamStats.dioDroppedSamplesSteady,
-                  (unsigned)gStreamStats.eosOverruns);
+                  (unsigned)snap.usbDroppedBytesSteady,
+                  (unsigned)snap.wifiDroppedBytesSteady,
+                  (unsigned)snap.sdDroppedBytesSteady,
+                  (unsigned)snap.encoderFailuresSteady,
+                  (unsigned)snap.encoderDroppedSamplesSteady,
+                  (unsigned)snap.dioDroppedSamplesSteady,
+                  (unsigned)snap.eosOverruns);
         }
     }
 }
@@ -2803,14 +2987,14 @@ void Streaming_ClearStats(void) {
     //   - gStreamStats:     written by deferred ISR task (sample/drop counters)
     //                       and streaming task (encoder/output drop counters)
     //   - gTimerISRCalls:   written by timer ISR (priority 1)
-    //   - gFlowWindow:      written by deferred ISR task (priority 8)
+    //   - gFlowWindow:      written by deferred ISR task (priority 9)
     //   - gFlowWindowCount: written by deferred ISR task
     //   - gQuesBits:        written by streaming task on threshold cross
     //   - Logger session one-shots: reset alongside so observers don't see
     //                       half-cleared session state across the boundary
     //
     // SCPI:STR:CLEARSTATS can be invoked mid-session from USB (priority 7).
-    // The deferred task at priority 8 can preempt the SCPI handler at any
+    // The deferred task at priority 9 can preempt the SCPI handler at any
     // time, so without a single atomic clear a concurrent reader could see
     // half-reset state. taskENTER_CRITICAL raises syscall priority to 4,
     // blocking the timer ISR (priority 1) — and since the deferred task
@@ -2946,7 +3130,7 @@ uint32_t Streaming_GetQuesBits(void) {
 void Streaming_IncrDioDropped(void) {
     bool pastGrace = Streaming_PastStartupGrace();
     taskENTER_CRITICAL();
-    gStreamStats.dioDroppedSamples++;  // Single writer (deferred ISR task, pri 8)
+    gStreamStats.dioDroppedSamples++;  // Single writer (deferred ISR task, pri 9)
     if (pastGrace) {
         gStreamStats.dioDroppedSamplesSteady++;
     }
@@ -2954,7 +3138,7 @@ void Streaming_IncrDioDropped(void) {
 }
 
 void Streaming_IncrEosOverruns(uint32_t missed) {
-    gStreamStats.eosOverruns += missed;  // Single writer (EOS task, pri 8)
+    gStreamStats.eosOverruns += missed;  // Single writer (EOS task, pri 9)
 }
 
 // #557: called from the ADC EOS ISR (ADC_EOSInterruptCB) each time the shared
@@ -3267,23 +3451,84 @@ void streaming_Task(void) {
         // ACTIVE transport ring's free space (#686 review): the transport writes
         // below are all-or-nothing, and a single write larger than a ring's
         // capacity can NEVER succeed (even on an empty ring), so an over-large
-        // batch would retry to the 10 s timeout and drop the whole batch — total
-        // loss on a small ring (e.g. WiFi min 1400). Free size is a safe bound:
-        // nothing writes these rings until after this loop, so the snapshot only
-        // grows. The FIRST message is always encoded (drain the queue; one framed
-        // message fits any legal ring, exactly as pre-#662); ADDITIONAL messages
-        // are added only while packetSize keeps MIN_ROOM within every active ring.
+        // batch is total loss on a small ring (e.g. WiFi min 1400). Free size is
+        // a safe bound: nothing writes these rings until after this loop, so the
+        // snapshot only grows.
+        //
+        // #1021 corrects what this comment used to claim about the first
+        // message: that the FIRST message is always safe to encode because
+        // "one framed message fits any legal ring". It does not, for two
+        // reasons, and the audit of PR #991 reproduced the consequence -- a
+        // 1,563 B raw-JSON message offered to a 1,400 B WiFi ring, unwritable
+        // at any point in the future, retried for the full 10 s timeout and
+        // then discarded, with the encoder stalled for that whole window.
+        //   1. "One message" is not one sample. All three encoders loop
+        //      INTERNALLY until the room they were handed runs out
+        //      (csv_encoder.c `while (1)`, NanoPB_Encoder.c
+        //      `while (queueSize > 0)`, JSON_Encoder.c's AIN loop), and at
+        //      batchIdx == 0 the room handed over is the WHOLE encoder buffer.
+        //      So any queue backlog makes a single encode return thousands of
+        //      bytes -- a property of the backlog, not of the channel count.
+        //   2. The smallest LEGAL ring is smaller than the encoder buffer:
+        //      STREAMING_WIFI_MIN is 1,400 and STREAMING_SD_CIRCULAR_MIN 4,096
+        //      (StreamingBufferPool.h) against an 8,192 B default encoder
+        //      buffer, and SYSTem:MEMory:{WIFI,SD,ENCoder}:BUFfer let an
+        //      operator select exactly that pairing.
+        // The first message is still always encoded -- that is what keeps the
+        // queue draining -- and its room cannot be bounded away: capping it
+        // would defeat JSON_Encoder.c's `fullCapacityCall` test (#164/#961),
+        // which recognises a sample that fits NO buffer ONLY when it was
+        // offered the real full buffer, and without that recognition such a
+        // sample is retained forever at the queue head. That is the deadlock
+        // this bypass exists to prevent. What #1021 changes is the FAILURE:
+        // an undeliverable first message is dropped at once with a diagnostic
+        // instead of stalling the encoder for 10 s first, and ADDITIONAL
+        // messages are bounded so they can never build one.
         size_t batchXportFree = bufferSize;
+        /* #1021: each active ring's capacity, computed once. Read here rather
+         * than at the four places that want one, because the write sites below
+         * need the SAME figure the batch was bounded against -- recomputing it
+         * per site invites the two drifting apart on a later edit. */
+        size_t usbCap = Streaming_RingCapacity(
+                StreamingBufferPool_UsbSize(), usbSize);
+        size_t wifiCap = Streaming_RingCapacity(
+                StreamingBufferPool_WifiSize(), wifiSize);
+        size_t sdCap = Streaming_RingCapacity(
+                StreamingBufferPool_SdCircularSize(), sdSize);
+        /* The same min taken over ring CAPACITY, which is what decides
+         * "can never be written" as opposed to "cannot be written just yet".
+         * Free space is the wrong test for that, and dangerously so: a
+         * momentarily-full-but-draining ring reads free == 0, and condemning a
+         * packet on that would discard exactly the data the #520 backpressure
+         * path exists to hold. Capacity changes only when the pool is
+         * re-partitioned, which SYSTem:MEMory:* refuses while streaming. */
+        size_t batchXportCap = bufferSize;
         switch (pRunTimeStreamConf->ActiveInterface) {
-            case StreamingInterface_USB:      batchXportFree = usbSize; break;
-            case StreamingInterface_WiFi:     batchXportFree = wifiSize; break;
-            case StreamingInterface_SD:       batchXportFree = sdSize; break;
+            case StreamingInterface_USB:
+                batchXportFree = usbSize;
+                batchXportCap = usbCap;
+                break;
+            case StreamingInterface_WiFi:
+                batchXportFree = wifiSize;
+                batchXportCap = wifiCap;
+                break;
+            case StreamingInterface_SD:
+                batchXportFree = sdSize;
+                batchXportCap = sdCap;
+                break;
             case StreamingInterface_UsbAndSd:
-                batchXportFree = (usbSize < sdSize) ? usbSize : sdSize; break;
+                batchXportFree = (usbSize < sdSize) ? usbSize : sdSize;
+                batchXportCap = (usbCap < sdCap) ? usbCap : sdCap;
+                break;
             default: break;
         }
-        if (hasSD && sdSize < batchXportFree) {
-            batchXportFree = sdSize;         // SD-logging override also writes SD
+        if (hasSD) {                         // SD-logging override also writes SD
+            if (sdSize < batchXportFree) {
+                batchXportFree = sdSize;
+            }
+            if (sdCap < batchXportCap) {
+                batchXportCap = sdCap;
+            }
         }
         packetSize = 0;
         for (uint32_t batchIdx = 0; batchIdx < STREAMING_BATCH_MAX; batchIdx++) {
@@ -3292,17 +3537,48 @@ void streaming_Task(void) {
             if (!ainNow && !dioNow) {
                 break;                       // queue drained — normal batch end
             }
-            // First message always encoded (drain the queue); additional
-            // messages must keep MIN_ROOM within the encoder buffer AND the
-            // smallest active transport ring, so the single all-or-nothing write
-            // below always fits its ring. Addition (not subtraction) avoids
-            // size_t underflow when a transport ring is momentarily full (free=0).
+            uint8_t *encPtr = (uint8_t *) buffer + packetSize;
+            size_t encRoom = bufferSize - packetSize;
+            // First message always encoded (drain the queue); an additional
+            // message is attempted only while MIN_ROOM still fits inside both
+            // the encoder buffer and the smallest active transport ring's free
+            // space. Addition (not subtraction) avoids size_t underflow when a
+            // transport ring is momentarily full (free=0).
+            /* #1021: those two tests are a floor on the room OFFERED, not a
+             * ceiling on what comes back -- the encoders fill whatever room they
+             * are given, so passing them was never enough to keep the batch
+             * inside the ring: an ADDITIONAL message could still push the
+             * accumulated packet past it and make the whole batch, earlier
+             * messages included, undeliverable. Capping the room is what bounds
+             * the result rather than the opening position, and is what makes the
+             * single all-or-nothing write below actually fit.
+             *
+             * Only for batchIdx > 0, and that restriction is load-bearing:
+             * `encRoom` is already `bufferSize - packetSize` here with
+             * packetSize > 0, so JSON_Encoder.c's `fullCapacityCall` test is
+             * ALREADY false on this path and narrowing the room further cannot
+             * change its verdict. At batchIdx == 0 it would, which is why the
+             * first message keeps the whole buffer (see above).
+             *
+             * The floor is preserved: the two break tests that open the block
+             * below guarantee packetSize + MIN_ROOM <= batchXportFree, and
+             * batchXportFree <= batchXportCap by construction (each is a min
+             * over the same active rings, and a ring's free space never exceeds
+             * its capacity -- min is monotone, so the relation survives the
+             * min). The capped room is therefore never below
+             * STREAMING_BATCH_MIN_ROOM: the same 1,024 B floor an encode on
+             * this path is given today. */
             if (batchIdx > 0) {
-                if ((bufferSize - packetSize) < STREAMING_BATCH_MIN_ROOM) {
+                if (encRoom < STREAMING_BATCH_MIN_ROOM) {
                     break;                   // no encoder-buffer room
                 }
                 if ((packetSize + STREAMING_BATCH_MIN_ROOM) > batchXportFree) {
                     break;                   // would overflow the smallest active ring
+                }
+                size_t ringRoom = (batchXportCap > packetSize)
+                                ? (batchXportCap - packetSize) : 0;
+                if (ringRoom < encRoom) {
+                    encRoom = ringRoom;
                 }
             }
 
@@ -3316,8 +3592,6 @@ void streaming_Task(void) {
                 nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_digital_port_dir_tag;
             }
 
-            uint8_t *encPtr = (uint8_t *) buffer + packetSize;
-            size_t encRoom = bufferSize - packetSize;
             size_t encoded = 0;
             DioProbe_PulseStart(8);  /* probe 8: encode duration */
             if (Streaming_EncodingIsCsv(pRunTimeStreamConf->Encoding)) {
@@ -3351,26 +3625,54 @@ void streaming_Task(void) {
             DioProbe_PulseEnd(8);
 
             if (encoded == 0) {
-                // The queue was non-empty (checked above) with guaranteed room,
-                // yet the encoder produced nothing → a real encoder failure OR
-                // the #484 shutdown race (Streaming_Stop ran mid-iteration and
-                // the encoder saw partially torn-down state — verified empirically
-                // to fire at Stop, not mid-stream). Account exactly one lost
-                // sample (each encode pops exactly one, #297) and stop the batch.
-                // #483: bump the Steady subset when past the 3 s startup grace.
+                /* The queue was non-empty (checked above) with guaranteed room,
+                 * yet the encoder produced nothing -> a real encoder failure OR
+                 * the #484 shutdown race (Streaming_Stop ran mid-iteration and
+                 * the encoder saw partially torn-down state -- verified
+                 * empirically to fire at Stop, not mid-stream).
+                 *
+                 * #970: book the EVENT, never a sample count. This return is a
+                 * BYTE count (`packetSize += encoded` below), so zero is
+                 * structurally the only "nothing written" value it has and
+                 * cannot also carry cardinality. How many samples the call
+                 * consumed is 0..N and differs per encoder AND per branch:
+                 *   csv_Encode           -- 0 pops before EVERY one of its zero
+                 *                           returns; nothing is ever lost, the
+                 *                           row is simply retried next call.
+                 *   Json_Encode          -- 0 pops (buffer full, retried), N
+                 *                           (all-invalid validMask: consumed,
+                 *                           carried no channel data, not a
+                 *                           loss), or 1 (its oversize-sample
+                 *                           drop arm -- genuinely lost, and the
+                 *                           only case that is a loss).
+                 *   Nanopb_Encode...Fast -- 0..N AIN pops plus up to one DIO
+                 *                           pop, with losses that can also
+                 *                           accompany a NON-zero return.
+                 *
+                 * The comment here used to assert "each encode pops exactly
+                 * one, #297" and booked one encoderDroppedSamples on that
+                 * basis. It is false for two of the three encoders, and for the
+                 * common CSV/JSON buffer-full case it re-booked a STILL-QUEUED
+                 * sample as a fresh loss on every tick -- inflating both
+                 * EncoderDroppedSamples and the session-end loss percentage
+                 * without bound. The #745 note at the dry-tick gate above
+                 * already records one instance of that fabrication ("why every
+                 * clean session reported one phantom drop"); this removes the
+                 * class.
+                 *
+                 * An encoder that KNOWS it destroyed a sample now books it
+                 * itself via Streaming_ReportEncoderSampleLoss(). Nothing is
+                 * inferred from the zero here.
+                 * #483: bump the Steady subset when past the 3 s startup grace. */
                 if (pRunTimeStreamConf->IsEnabled) {
                     bool pastGrace = Streaming_PastStartupGrace();
                     taskENTER_CRITICAL();
                     gStreamStats.encoderFailures++;
-                    gStreamStats.encoderDroppedSamples++;
                     if (pastGrace) {
                         gStreamStats.encoderFailuresSteady++;
-                        gStreamStats.encoderDroppedSamplesSteady++;
                     }
                     gQuesBits |= QUES_BIT_ENCODER_FAIL;
                     taskEXIT_CRITICAL();
-                    LOG_E_SESSION(LOG_SESSION_ENCODER_SAMPLE_LOSS,
-                        "Streaming: encoder failure lost 1 sample");
                     LOG_E_SESSION(LOG_SESSION_ENCODER_FAIL, "Streaming: Encoder failure detected");
                 }
                 break;
@@ -3381,6 +3683,39 @@ void streaming_Task(void) {
             taskENTER_CRITICAL();
             gStreamStats.totalBytesStreamed += packetSize;
             taskEXIT_CRITICAL();
+        }
+        /* #1021: name the cause while the sizes are still in hand.
+         *
+         * The byte loss itself is already counted by the per-transport blocks
+         * below -- Usb/Wifi/SdDroppedBytes plus the matching QUES bit, exactly
+         * as before this change; what those counters could never say is WHY,
+         * and "buffer overflow" is actively misleading here because the ring is
+         * not overflowing, it is too small to ever hold this packet. Emitted
+         * from the loop rather than from Streaming_WriteWithRetry so it also
+         * covers the no-retry write sites (UsbAndSd, and the multi-output SD
+         * write), which never call that helper and so would otherwise report
+         * this as an ordinary overflow with no hint that draining cannot fix
+         * it. One-shot per session, like every other per-sample error here.
+         *
+         * batchXportCap is the min over the ACTIVE rings, so the wording says
+         * "smallest": a packet above the min but below a larger ring's capacity
+         * is still delivered to that larger ring (USB keeps its data while a
+         * smaller co-active SD ring drops it), and the per-transport blocks
+         * below decide that individually.
+         *
+         * The `!= 0` term mirrors Streaming_WriteWithRetry's, on purpose. A
+         * zero capacity means the partition bookkeeping AND the live free-space
+         * reading were both zero, which is the degenerate "Pool too small"
+         * bail-out rather than a real ring size; the helper declines to condemn
+         * a packet on that, so this must not announce that it did. */
+        if (batchXportCap != 0u && packetSize > batchXportCap) {
+            /* Kept under LOG_MESSAGE_SIZE (128, Logger.h -- vsnprintf is given
+             * 126) so neither size is truncated away; the remedy is spelled out
+             * in docs/STREAMING_AND_ADC.md rather than here. */
+            LOG_E_SESSION(LOG_SESSION_XPORT_UNDELIVERABLE,
+                "Streaming: packet %u B exceeds smallest active ring %u B - "
+                "dropped, no drain fits it (#1021)",
+                (unsigned)packetSize, (unsigned)batchXportCap);
         }
         DIO_TIMING_TEST_WRITE_STATE(1);
         if (packetSize > 0) {
@@ -3410,7 +3745,7 @@ void streaming_Task(void) {
                 // (below) — multi-output backpressure pacing is a separate
                 // ticket (SD would pace USB).
                 size_t usbWr = Streaming_WriteWithRetry(
-                    Streaming_UsbWrite, buffer, packetSize);
+                    Streaming_UsbWrite, buffer, packetSize, usbCap);
                 if (usbWr == STREAM_WRITE_RETURN_TIMEOUT) {
                     bool pastGrace = Streaming_PastStartupGrace();
                     taskENTER_CRITICAL();
@@ -3420,7 +3755,8 @@ void streaming_Task(void) {
                     }
                     gQuesBits |= QUES_BIT_USB_OVERFLOW;
                     taskEXIT_CRITICAL();
-                    LOG_E_SESSION(LOG_SESSION_USB_DROP, "Streaming: USB interface dead (10s timeout)");
+                    LOG_E_SESSION(LOG_SESSION_USB_DROP,
+                        "Streaming: USB write gave up - interface dead (10 s) or packet larger than the USB ring (#1021)");
                 }
                 // else: usbWr == packetSize (success) or STOPPED (stop-abort).
             } else if (pRunTimeStreamConf->ActiveInterface == StreamingInterface_UsbAndSd) {
@@ -3475,7 +3811,7 @@ void streaming_Task(void) {
                 // streaming was stopped mid-retry, so STR:START quiescence isn't
                 // blocked.
                 size_t wifiWr = Streaming_WriteWithRetry(
-                    wifi_manager_WriteToBuffer, buffer, packetSize);
+                    wifi_manager_WriteToBuffer, buffer, packetSize, wifiCap);
                 if (wifiWr == STREAM_WRITE_RETURN_TIMEOUT) {
                     bool pastGrace = Streaming_PastStartupGrace();
                     taskENTER_CRITICAL();
@@ -3485,7 +3821,8 @@ void streaming_Task(void) {
                     }
                     gQuesBits |= QUES_BIT_WIFI_OVERFLOW;
                     taskEXIT_CRITICAL();
-                    LOG_E_SESSION(LOG_SESSION_WIFI_DROP, "Streaming: WiFi interface dead (10s timeout)");
+                    LOG_E_SESSION(LOG_SESSION_WIFI_DROP,
+                        "Streaming: WiFi write gave up - interface dead (10 s) or packet larger than the WiFi ring (#1021)");
                 }
                 // else: wifiWr == packetSize (success) or
                 //       STREAM_WRITE_RETURN_STOPPED (stop-abort, no bookkeeping).
@@ -3525,12 +3862,14 @@ void streaming_Task(void) {
                     }
                 } else {
                     size_t wr = Streaming_WriteWithRetry(
-                        sd_card_manager_WriteToBuffer, buffer, packetSize);
+                        sd_card_manager_WriteToBuffer, buffer, packetSize,
+                        sdCap);
                     if (wr == STREAM_WRITE_RETURN_TIMEOUT) {
                         /* True 10 s interface-dead timeout (pass-5 Qodo
                          * refinement): bump drop counters + QUES bit + log. */
                         Streaming_CountSdDrop(packetSize);
-                        LOG_E_SESSION(LOG_SESSION_SD_DROP, "Streaming: SD interface dead (10s timeout)");
+                        LOG_E_SESSION(LOG_SESSION_SD_DROP,
+                            "Streaming: SD write gave up - interface dead (10 s) or packet larger than the SD ring (#1021)");
                     }
                     /* else: wr == packetSize (success) or
                      *       wr == STREAM_WRITE_RETURN_STOPPED (stop-abort,
@@ -3710,6 +4049,85 @@ void Streaming_RestoreRateConfigured(bool configured) {
  */
 static volatile uint32_t gCfgChangeBusy = 0u;
 
+/* #977: the session-start claim's flag, DEFINED HERE rather than beside its own
+ * Begin/End below, because the two Begins now read BOTH flags and C needs the
+ * declaration first. Its rationale block still lives with its functions; only
+ * the definition and the retained-RAM note moved up.
+ *
+ * uint32_t for the same reason as gCfgChangeBusy: a 32-bit load/store is atomic
+ * on PIC32MZ. Here that matters only for the release, which is a plain
+ * unconditional store outside any section; the test-and-take is a read-modify-
+ * write and is inside one, because `if (!busy) busy = 1` is exactly the
+ * non-atomic sequence two transports must not interleave.
+ *
+ * NOT in Streaming_Init's #409 retained-RAM reset list, and that is checked
+ * rather than assumed. The hazard #409 describes is a file-static landing in
+ * its own `.bss.<name>` section placed by the best-fit allocator OUTSIDE
+ * [_bss_begin,_bss_end], where crt0 never zeroes it. This one is small enough
+ * to be GP-relative, so it lands in `.sbss.gSessionStartBusy` INSIDE that
+ * window and is zeroed on every reset including MCLR and an IPE flash --
+ * re-verified in the .map on this build at 0x800003a4, against _bss_begin
+ * 0x80000090 / _bss_end 0x80002ec0. gCfgChangeBusy sits at 0x800003a8 with the
+ * same property, which is why it is absent from that list too.
+ *
+ * Worth stating because the consequence of being wrong is asymmetric, and #977
+ * WIDENED it: a flag that survived a reset set would refuse every streaming
+ * command until a power cycle -- and since the interlock, either flag stuck
+ * refuses BOTH families, not just its own. If a future change grows either past
+ * the GP-relative threshold or moves it out of that window, it must join the
+ * reset list.
+ */
+static volatile uint32_t gSessionStartBusy = 0u;
+
+/* --- #977: the two claims INTERLOCK --------------------------------------
+ *
+ * Both Begins test BOTH flags, inside the one critical section they already
+ * had, so a config change and a session start are mutually exclusive in both
+ * directions. Before this they were not: each tested only its own flag, and
+ * BOTH families reach SCPIInterface.c's PrepareStreamingBuffers, which
+ * re-carves the single gPoolStorage (StreamingBufferPool_Partition) and then
+ * installs the resulting pointers into seven subsystems. A SYST:MEM:AUTO on
+ * one transport could therefore re-partition while SYST:STR:WIFI:FINd? or
+ * SYST:STR:THRoughput was midway through installing the previous partition's
+ * pointers -- the whole function was the window, and the config claim's
+ * `IsEnabled || Running` test passes throughout it precisely because neither
+ * flag is armed yet during preparation.
+ *
+ * TWO FLAGS, NOT ONE OWNER VARIABLE, and the choice is not cosmetic.
+ * Streaming_ConfigChangeInProgress() must keep answering "a CONFIG change is
+ * in flight" and nothing else: the three arm sites call it WHILE HOLDING the
+ * session-start claim, so an owner variable tested as `owner != NONE` there
+ * would make every START, THRoughput and FINd? refuse itself. Keeping the
+ * flags separate makes that mistake unavailable rather than merely documented.
+ * The cost -- two conditions that must be kept in step -- is what
+ * tools/lint/scpi_claim_path.py now gates (property 5): it fails the tree if
+ * either Begin stops reading the other flag inside its critical section.
+ *
+ * NOT a unification of the two claims into one, which was the other option on
+ * #977. Streaming_BeginConfigChange cannot be the shared claim: it refuses on
+ * `IsEnabled || Running`, and a START is expressly allowed to restart a live
+ * session, so START would refuse itself on every restart -- and START's
+ * arm-time critical section OBSERVES that same claim (#847), so taking it
+ * would make START read its own claim and refuse itself unconditionally. Both
+ * reasons predate this change and are written out on StreamingStartClaim in
+ * streaming.h; the interlock leaves them true.
+ *
+ * WHAT THE REFUSAL COSTS. The newly-refused pairings are narrow. A config
+ * setter is refused for the length of a session start it could not safely
+ * overlap anyway -- and once that start ARMS, `IsEnabled || Running` refused it
+ * already, so the new exposure is only the start's pre-arm and post-disarm
+ * windows. A session start is refused for the length of a config change, whose
+ * longest body is SYST:MEM:AUTO -> PrepareStreamingBuffers (bounded ~1.6 s of
+ * vTaskDelay, and a straight fall-through on an idle device).
+ *
+ * THE ERROR CODE DOES NOT MOVE. Both new refusals answer -200, which is what
+ * the pre-existing refusals on both paths already answered -- including the
+ * arm-time `cfgChanging` refusal a START used to hit AFTER re-partitioning the
+ * pool. The interlock moves that refusal to the front door, so a START now
+ * declines before touching the pool rather than after. WHICH claim refused is
+ * in SYSTem:LOG?, from the two LOG_E calls below.
+ */
+
 StreamingCfgClaim Streaming_BeginConfigChange(void) {
     /* Fetched OUTSIDE the section: it is a switch over a compile-time constant
      * returning the address of a member of one static struct, so it neither
@@ -3728,6 +4146,10 @@ StreamingCfgClaim Streaming_BeginConfigChange(void) {
     StreamingRuntimeConfig* pStreamCfg = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
     StreamingCfgClaim result;
+    /* #977: which of the two BUSY reasons fired. Logged after the section, not
+     * inside it -- a LOG_E formats and writes to the log buffer, and nothing
+     * with interrupts disabled may do either. */
+    bool startHeld = false;
 
     taskENTER_CRITICAL();
     if (pStreamCfg->IsEnabled || pStreamCfg->Running) {
@@ -3740,11 +4162,33 @@ StreamingCfgClaim Streaming_BeginConfigChange(void) {
          * not what #847 is about, but the claim makes it visible instead of
          * letting them interleave, and refusing costs the loser a retry. */
         result = STREAM_CFG_CLAIM_BUSY;
+    } else if (gSessionStartBusy != 0u) {
+        /* #977: the interlock. A session start holds the other claim, and both
+         * families reach PrepareStreamingBuffers -- see the block comment above
+         * the flags. Reported as BUSY rather than STREAMING because nothing is
+         * armed yet; what the caller must do is the same as for the arm above,
+         * which is retry. */
+        result = STREAM_CFG_CLAIM_BUSY;
+        startHeld = true;
     } else {
         gCfgChangeBusy = 1u;
         result = STREAM_CFG_CLAIM_OK;
     }
     taskEXIT_CRITICAL();
+
+    if (startHeld) {
+        /* No format arguments: the whole message is a static string, so this
+         * costs no vsnprintf frame on the calling SCPI task's stack.
+         *
+         * 114 characters, against the 125 Logger.c leaves usable
+         * (LOG_MESSAGE_SIZE - 3). Counted rather than eyeballed: the first
+         * draft was 127 and lost "Retry." -- the remedy -- which is the #1000
+         * class of defect this project keeps finding. The marker sits at the
+         * FRONT so a future overrun truncates the explanation, never the
+         * identifier a test or an operator greps for. */
+        LOG_E("Streaming config change refused (#977): a session start holds "
+              "the interlocked claim on the other transport. Retry.");
+    }
 
     return result;
 }
@@ -3756,6 +4200,25 @@ void Streaming_EndConfigChange(void) {
     gCfgChangeBusy = 0u;
 }
 
+/* Answers "is a CONFIG CHANGE in flight?" -- and, since #977, that is a
+ * narrower question than "is the interlocked claim held?".
+ *
+ * DO NOT widen this to `gCfgChangeBusy || gSessionStartBusy`. Its three callers
+ * are the arm-time critical sections of SCPI_StartStreaming, SYST:STR:THRoughput
+ * and the WiFi rate finder (SCPIInterface.c), and every one of them calls it
+ * WHILE HOLDING the session-start claim. A widened form would have each of them
+ * read its own claim and refuse itself, unconditionally -- no START would ever
+ * arm again. #850's block comment in streaming.h makes the same point about
+ * START taking the config claim; this is the same trap reached from the other
+ * side, and it is why #977 interlocked two flags instead of collapsing them
+ * into one owner variable.
+ *
+ * Since the interlock, these three reads are also belt-and-braces: a config
+ * change can no longer BEGIN while the session-start claim is held, so the flag
+ * reads false at every arm. They are kept because they cost a 32-bit load and
+ * they are the second line of defence if the interlock is ever weakened -- and
+ * because streaming.h's #847 comment states, as an invariant, that all three
+ * arm sites observe this claim. */
 bool Streaming_ConfigChangeInProgress(void) {
     return (gCfgChangeBusy != 0u);
 }
@@ -3766,40 +4229,42 @@ bool Streaming_ConfigChangeInProgress(void) {
  * claim above, and why all three arm sites take it: see the block comment on
  * StreamingStartClaim in streaming.h.
  *
- * uint32_t for the same reason as gCfgChangeBusy: a 32-bit load/store is
- * atomic on PIC32MZ. Here that matters only for the release, which is a plain
- * unconditional store outside any section; the test-and-take is a read-modify-
- * write and is inside one, because `if (!busy) busy = 1` is exactly the
- * non-atomic sequence two transports must not interleave.
- *
- * NOT in Streaming_Init's #409 retained-RAM reset list, and that is checked
- * rather than assumed. The hazard #409 describes is a file-static landing in
- * its own `.bss.<name>` section placed by the best-fit allocator OUTSIDE
- * [_bss_begin,_bss_end], where crt0 never zeroes it. This one is small enough
- * to be GP-relative, so it lands in `.sbss.gSessionStartBusy` INSIDE that
- * window and is zeroed on every reset including MCLR and an IPE flash --
- * verified in the .map at 0x80000394, against _bss_begin 0x80000090 /
- * _bss_end 0x800030c0. gCfgChangeBusy sits at 0x80000398 with the same
- * property, which is why it is absent from that list too.
- *
- * Worth stating because the consequence of being wrong is asymmetric: a flag
- * that survived a reset set would refuse EVERY streaming command until a
- * power cycle. If a future change grows this past the GP-relative threshold
- * or moves it out of that window, it must join the reset list.
+ * gSessionStartBusy itself is DEFINED further up, beside gCfgChangeBusy, with
+ * its atomicity and retained-RAM notes -- #977 made both Begins read both
+ * flags, and C wants the declaration first.
  */
-static volatile uint32_t gSessionStartBusy = 0u;
 
 StreamingStartClaim Streaming_BeginSessionStart(void) {
     StreamingStartClaim result;
+    /* #977: see the twin in Streaming_BeginConfigChange -- the log call must
+     * be outside the critical section. */
+    bool cfgHeld = false;
 
     taskENTER_CRITICAL();
     if (gSessionStartBusy != 0u) {
         result = STREAM_START_CLAIM_BUSY;
+    } else if (gCfgChangeBusy != 0u) {
+        /* #977: the interlock. A guarded config change holds the other claim,
+         * and both families reach PrepareStreamingBuffers.
+         *
+         * This refusal is not new so much as MOVED: the three arm sites already
+         * refused on Streaming_ConfigChangeInProgress() with -200, but only
+         * after PrepareStreamingBuffers had re-carved the pool. Refusing at the
+         * front door means the pool is not touched at all. */
+        result = STREAM_START_CLAIM_BUSY;
+        cfgHeld = true;
     } else {
         gSessionStartBusy = 1u;
         result = STREAM_START_CLAIM_OK;
     }
     taskEXIT_CRITICAL();
+
+    if (cfgHeld) {
+        /* 114 characters; see the length note on the twin in
+         * Streaming_BeginConfigChange. */
+        LOG_E("Streaming session start refused (#977): a config change holds "
+              "the interlocked claim on the other transport. Retry.");
+    }
 
     return result;
 }
