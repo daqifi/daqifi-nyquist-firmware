@@ -182,10 +182,11 @@ THE RESIDUAL CLASS, AND WHY IT IS DOCUMENTED RATHER THAN CHASED
     ⛔⛔ AND THAT LIST IS NOT EXHAUSTIVE OVER MAKE. It is exhaustive over this
     tool's own RULES -- a self-test arm asserts every POLICY rule is exercised
     by some row -- which is a different and far weaker claim. Round 13 found
-    SEVEN constructs the predicates do not recognise. They are stated as five
-    classes in the RESIDUAL CLASSES block above `POLICY_NEAR_MISSES`:
-    call-indirection to a refused builtin, BOM or recipe-prefix lexing,
-    shell-keyword or non-wrapper recursion, file/eval text loading, and
+    SEVEN constructs the predicates do not recognise, and r14 raised six more.
+    They are stated as SIX classes in the RESIDUAL CLASSES block above
+    `POLICY_NEAR_MISSES`: call-indirection to a refused builtin, BOM or
+    recipe-prefix lexing, shell-keyword or non-wrapper recursion, file/eval
+    text loading, definedness tests other than origin/ifdef (`$(flavor)`), and
     includes outside the workflow's path filter. Those classes carry
     ACCEPTED-RESIDUAL dispositions on this PR; each is a false negative of a
     check `main` does not have, not a regression.
@@ -487,9 +488,17 @@ REFUSED_EXAMPLES = (
 
 # ⛔⛔ WHAT THIS GATE DOES NOT CATCH, stated because an undocumented residual
 # invites exactly the trust this tool must not be given. Round 13 found seven
-# constructs the predicates do not recognise; they fall into five classes, and
-# the classes are the durable statement -- enumerating members one round at a
-# time is the treadmill this tool's whole design rejects.
+# constructs the predicates do not recognise and r14 found six more; they fall
+# into SIX classes, and the classes are the durable statement -- enumerating
+# members one round at a time is the treadmill this tool's whole design
+# rejects. Class 5 was added in r14 after I mis-filed its member under class 1
+# in r13; the count moved because a class was MISSING, not because a member
+# was.
+#
+# ⛔ SEPARATE AND *NOT* IN THIS LIST: the tool EXECUTES part of the Makefile it
+# audits, because `-n` does not suppress `+`-prefixed or `$(MAKE)` recipe
+# lines. That is not a scanner false negative -- it was a false SAFETY CLAIM in
+# run_make's docstring, and it is corrected there rather than accepted here.
 #
 # ⛔ A MISS IN ANY OF THESE IS A FALSE NEGATIVE OF A CHECK `main` DOES NOT
 # HAVE. The comparison for "is this safe to land" is against ZERO coverage,
@@ -515,7 +524,18 @@ REFUSED_EXAMPLES = (
 #      `$(eval ...)`/`$(file ...)` never enters MAKEFILE_LIST, so no
 #      file-list-driven scan can reach it -- and a token assembled from
 #      fragments is invisible to a token scan by construction.
-#   5. INCLUDES OUTSIDE THE WORKFLOW'S PATH FILTER. The audit measures every
+#   5. DEFINEDNESS TESTS OTHER THAN `origin`/`ifdef` -- `$(flavor X)` is the
+#      measured member. It reports whether and how a name is defined without
+#      referencing it, so --warn-undefined-variables stays silent exactly as
+#      with `$(origin X)`, and it is NOT refused.
+#      ⛔ THIS CLASS EXISTS BECAUSE I MIS-FILED IT. In r13 I dispositioned the
+#      `$(flavor X)` finding under class 1, call-indirection -- which is wrong:
+#      the finding was a DIRECT `$(flavor X)`, with no `call` in it at all. The
+#      five classes as first written therefore did not name it, and r14 raised
+#      it again. The family is "a builtin that queries definedness", and
+#      `origin` is refused by name while its siblings are not; enumerating
+#      them one per round is the treadmill, so the CLASS is named instead.
+#   6. INCLUDES OUTSIDE THE WORKFLOW'S PATH FILTER. The audit measures every
 #      file in make's MAKEFILE_LIST, but CI only RUNS on the paths
 #      `.github/workflows/make-prereq.yml` names. An include whose path or
 #      extension falls outside them (anything not `tests/host/Makefile`,
@@ -611,8 +631,40 @@ def run_make(makefile, goal="run"):
     """(warnings, stderr, returncode). Asks make; parses no Makefile syntax.
 
     `env -i` so an exported variable cannot define the defect away. `-n` so
-    nothing is built: the warnings happen at parse time, before any recipe
-    would run.
+    that ALMOST nothing is built: the warnings happen at parse time, before
+    most recipes would run.
+
+    ⛔⛔ `-n` DOES NOT MEAN NOTHING EXECUTES, AND AN EARLIER VERSION OF THIS
+    DOCSTRING SAID IT DID. GNU make deliberately runs two kinds of recipe line
+    even under `-n`:
+
+      * a line prefixed with `+`, which means "run this even with -n"; and
+      * a line invoking `$(MAKE)`, because make passes `-n` down and lets the
+        sub-make really run.
+
+    That is documented GNU behaviour, not a quirk, and THIS FILE ALREADY
+    MEASURED IT -- see the comment in `gather_sources` about the child's
+    database printing before the parent's, which only happens because the
+    sub-make ran. The docstring claimed the opposite fifty lines away, so the
+    file both knew and denied the fact (#1174 r14, raised HIGH by both legs).
+
+    ⛔ SO THIS TOOL EXECUTES PART OF THE MAKEFILE IT AUDITS, and it cannot do
+    otherwise: the policy needs make's own MAKEFILE_LIST, which only running
+    make can produce. `report()` invokes make at least twice per run (here and
+    in `gather_sources`), so such a line runs more than once.
+
+    ⚠ THE OPERATIONAL RULE THAT FOLLOWS: point this only at a Makefile you
+    would be willing to BUILD. That is not a new hazard in CI, where the
+    `tests/host` job already builds and runs this Makefile, and the audited
+    Makefile carries 0 `+` lines and 0 `$(MAKE)` lines today. The defect was
+    the false safety claim, not a new capability.
+
+    ⚠ NOT fixed by pre-scanning for `+`/`$(MAKE)` before invoking make. A text
+    pre-scan is evadable by the very classes this PR accepted as residual --
+    `.RECIPEPREFIX` moves what counts as a recipe line, and a BOM defeats an
+    anchored rule -- so it would buy a safety CLAIM rather than a safety
+    PROPERTY, which is the exact defect being fixed here. Stating the truth is
+    worth more than a guard that can be walked around.
     """
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
     proc = subprocess.run(
@@ -649,6 +701,19 @@ def gather_sources(makefile, goal="run"):
 
     A missing or unparseable MAKEFILE_LIST is a REASON, never an empty list:
     an audit over zero files would otherwise be the cleanest result there is.
+
+    ⛔⛔ AND THIS IS THE CALL THAT EXECUTES PART OF THE MAKEFILE. Asking make
+    means RUNNING make, and `-pn` does not stop a `+`-prefixed recipe line or
+    a `$(MAKE)` line -- GNU make runs both even under `-n`. The comment below
+    about the child's database printing first is the measured PROOF of it: the
+    sub-make really ran.
+
+    ⛔ So the execution is UNAVOIDABLE here, not an ordering bug. The policy
+    needs the file list, the file list comes from make, and make runs those
+    lines on the way to producing it. There is no arrangement of this function
+    that applies the policy before make has already run. See `run_make` for
+    the operational rule that follows (audit only a Makefile you would build)
+    and for why a pre-scan is not the fix. #1174 r14, HIGH on both legs.
     """
     root = os.path.dirname(os.path.abspath(makefile)) or "."
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
@@ -856,6 +921,15 @@ def report(makefile, goal="run"):
     print(f"goal     : {goal}  (warnings are goal-independent -- prerequisite "
           f"lists expand when each rule is READ)")
 
+    # ⚠ "FIRST" HERE MEANS BEFORE THE WARNINGS LEG, *NOT* BEFORE MAKE RUNS.
+    # The very next statement calls gather_sources, which invokes make -- and
+    # `-n` does not suppress a `+`-prefixed or `$(MAKE)` recipe line. So by the
+    # time any policy rule is evaluated, make has already run and those lines
+    # with it. That ordering cannot be improved: the policy's input IS make's
+    # MAKEFILE_LIST. Read this comment as "the policy gates the VERDICT", not
+    # "the policy gates EXECUTION" -- an earlier reading of it as the latter is
+    # what made run_make's "nothing is built" claim look consistent (r14).
+    #
     # ⛔ THE POLICY RUNS FIRST, AND OVER EVERY DISCOVERED SOURCE -- not just
     # the root. Applying it to the root alone left the narrowing with a hole
     # the exact size of an `include`: an included file carrying nested defines

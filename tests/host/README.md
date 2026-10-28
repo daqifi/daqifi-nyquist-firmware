@@ -125,16 +125,55 @@ measured record on that bet is **0 for 5**.
 So the burden is inverted. **The scanner is correct over a subset of Make, and
 this Makefile must stay inside it** — anything outside is `exit 2`, NO VERDICT.
 
+### ⛔⛔ `-n` does not mean nothing runs: this audit EXECUTES part of the Makefile
+
+**Point `make_prereq_audit.py` only at a Makefile you would be willing to
+build.** GNU make deliberately runs two kinds of recipe line even under `-n`:
+
+- a line prefixed with **`+`**, which means "run this even with `-n`"; and
+- a line invoking **`$(MAKE)`**, because make passes `-n` down and lets the
+  sub-make really run.
+
+So `rm -rf build; $(MAKE) …` or `+rm -f x` executes when the audit runs, and
+`report()` invokes make at least twice per run (once in `gather_sources` for
+`MAKEFILE_LIST`, once in `run_make` for the warnings), so such a line runs more
+than once.
+
+**This is unavoidable, not an ordering bug.** The policy's input *is* make's
+own `MAKEFILE_LIST`, so the policy cannot be applied before make has run. The
+comment on `report()` reading "the policy runs first" means the policy gates
+the **verdict**, not **execution**.
+
+Found in r14, raised HIGH by both audit legs. The defect was the **claim**:
+`run_make`'s docstring said "`-n` so nothing is built", while a comment fifty
+lines away in `gather_sources` recorded the measured opposite — the child's
+database prints before the parent's precisely *because* the sub-make ran. The
+file both knew and denied it.
+
+Exposure today is nil and that is why this is documented rather than
+re-engineered: `tests/host/Makefile` carries **0** `+` lines and **0**
+`$(MAKE)` lines, and CI's `tests/host` job already builds and runs this
+Makefile anyway.
+
+⚠ **Not fixed by pre-scanning for `+`/`$(MAKE)` before invoking make.** A text
+pre-scan is evadable by the very classes this PR accepts as residual —
+`.RECIPEPREFIX` changes what counts as a recipe line, a BOM defeats an anchored
+rule — so it would buy a safety *claim* rather than a safety *property*, which
+is the exact defect being corrected. Stating the truth is worth more than a
+guard that can be walked around.
+
 ⛔ **`REFUSED_EXAMPLES` is authoritative on what the code *does* refuse — it is
 NOT a claim that nothing else *should* be refused.** It is exhaustive over the
 tool's own rules (a self-test arm asserts every `POLICY` rule is exercised by
 some row), which is a far weaker claim than being exhaustive over Make. Round
-13 found **seven** constructs the predicates do not recognise, stated as five
-classes in the `RESIDUAL CLASSES` block in `make_prereq_audit.py`:
-call-indirection to a refused builtin, BOM or recipe-prefix lexing,
-shell-keyword or non-wrapper recursion, file/eval text loading, and includes
-outside the workflow's path filter. Each is a false negative of a check `main`
-does not have at all, so none is a regression — they carry ACCEPTED-RESIDUAL
+13 found **seven** constructs the predicates do not recognise and r14 found six
+more, stated as **six** classes in the `RESIDUAL CLASSES` block in
+`make_prereq_audit.py`: call-indirection to a refused builtin, BOM or
+recipe-prefix lexing, shell-keyword or non-wrapper recursion, file/eval text
+loading, definedness tests other than `origin`/`ifdef` (`$(flavor X)`), and
+includes outside the workflow's path filter. Each is a false negative of a
+check `main` does not have at all, so none is a regression — they carry
+ACCEPTED-RESIDUAL
 dispositions rather than fixes.
 
 ⛔ **The list of refused constructs lives in `REFUSED_EXAMPLES` in
