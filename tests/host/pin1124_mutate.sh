@@ -238,7 +238,7 @@ restore
 echo "== R21 (#1124 r18): drop the invalidation call, keeping the open. Counts  =="
 echo "==        are unchanged and the manifest still opens fine; only PIN A sees =="
 echo "==        that a truncated data file keeps a previous session's record.    =="
-if sub "$F" '                if (!sd_InvalidateManifestForTarget(gSDCardData.filePath)) {
+if sub "$F" '                if (!sd_TargetSafeToOpenForWrite(gSDCardData.filePath)) {
                     gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
                 } else {
                     // Use WRITE_PLUS to create/truncate file (overwrite mode)
@@ -256,7 +256,7 @@ echo "== R22: MOVE the invalidation AFTER the truncating open. Still present,   
 echo "==      still reached, still keyed on the target -- a presence check reads =="
 echo "==      it as healthy. It would delete the record of data just written, so =="
 echo "==      only the ORDER arm of PIN A can see it.                            =="
-if sub "$F" '                if (!sd_InvalidateManifestForTarget(gSDCardData.filePath)) {
+if sub "$F" '                if (!sd_TargetSafeToOpenForWrite(gSDCardData.filePath)) {
                     gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
                 } else {
                     // Use WRITE_PLUS to create/truncate file (overwrite mode)
@@ -264,7 +264,7 @@ if sub "$F" '                if (!sd_InvalidateManifestForTarget(gSDCardData.fil
                             (SYS_FS_FILE_OPEN_WRITE_PLUS));
                 }' '                    gSDCardData.fileHandle = SYS_FS_FileOpen(gSDCardData.filePath,
                             (SYS_FS_FILE_OPEN_WRITE_PLUS));
-                if (!sd_InvalidateManifestForTarget(gSDCardData.filePath)) {
+                if (!sd_TargetSafeToOpenForWrite(gSDCardData.filePath)) {
                     gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
                 }'; then
     expect "R22 invalidation ORDER" "is not invalidated BEFORE the data file"
@@ -277,9 +277,9 @@ echo "== R26: keep the invalidation but DROP THE REFUSAL -- the r17 fail-OPEN.  
 echo "==      A .mfst that cannot be removed is logged and the data truncated    =="
 echo "==      anyway. The call is present and correctly ordered, so PIN A and    =="
 echo "==      PIN A2 both pass; only PIN F sees it.                              =="
-if sub "$F" '                if (!sd_InvalidateManifestForTarget(gSDCardData.filePath)) {
+if sub "$F" '                if (!sd_TargetSafeToOpenForWrite(gSDCardData.filePath)) {
                     gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
-                } else {' '                if (!sd_InvalidateManifestForTarget(gSDCardData.filePath)) {
+                } else {' '                if (!sd_TargetSafeToOpenForWrite(gSDCardData.filePath)) {
                     /* mutant: refusal removed */
                 }
                 {'; then
@@ -293,9 +293,9 @@ echo "== R24: put a FIRST-OPEN GATE back on the invalidation. That is exactly   
 echo "==      r17's defect: rotation reaches the same open, and its target can    =="
 echo "==      be a previous session's first file with a manifest of its own.      =="
 echo "==      Order and presence both still pass; only PIN A2 sees the gate.      =="
-if sub "$F" '                if (!sd_InvalidateManifestForTarget(gSDCardData.filePath)) {' \
+if sub "$F" '                if (!sd_TargetSafeToOpenForWrite(gSDCardData.filePath)) {' \
             '                if (isSessionFirstOpen)
-                if (!sd_InvalidateManifestForTarget(gSDCardData.filePath)) {'; then
+                if (!sd_TargetSafeToOpenForWrite(gSDCardData.filePath)) {'; then
     expect "R24 no first-open gate" "is not keyed on the TARGET path"
 else
     echo "  FAIL R24 anchor absent -- source drifted from this harness."; fail=$((fail+1))
@@ -597,6 +597,84 @@ if sub "$F" '                            gSDCardData.fileRecordIsPrefix = true;
     expect "R20 header arm marks the record" "r10 finding 3 --"
 else
     echo "  FAIL R20 anchor absent -- source drifted."; fail=$((fail+1))
+fi
+restore
+
+echo "== R28: drop the DISARM from the refusal branch -- the wedge conv-ts     =="
+echo "==      asked about. The refusal is still reported, so every other arm   =="
+echo "==      passes; only PIN 6 can see that the card is left BUSY for ever.  =="
+if sub "$F" '                    gSDCardData.lastOperationSuccess = false;
+                    gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
+                    gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;' \
+            '                    gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;'; then
+    expect "R28 refusal disarms the session" "no longer disarms the session"
+else
+    echo "  FAIL R28 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R29: make the gate ignore the opt-in, so it refuses unconditionally.  =="
+echo "==      ⭐ GUARDS THE RULING, not just the code: C without a way through =="
+echo "==      is A2, which the operator REJECTED because default.bin has no    =="
+echo "==      uniquifier and every second recording would be refused.          =="
+if sub "$F" '    taskENTER_CRITICAL();
+    overwriteAsked = gpSDCardSettings->overwriteExisting;
+    taskEXIT_CRITICAL();' \
+            '    overwriteAsked = false;'; then
+    expect "R29 gate reads the opt-in" "no longer reads overwriteExisting"
+else
+    echo "  FAIL R29 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R30: read ONE of the two inspection faults as an absence -- r18        =="
+echo "==      finding 3, reintroduced on the manifest side only. The count arm  =="
+echo "==      is what catches it: the data-file guard is still there.           =="
+if sub "$F" '        if (e != SYS_FS_ERROR_NO_PATH && e != SYS_FS_ERROR_NO_FILE) {
+            gSDCardData.writeRefuseReason = SD_REFUSE_TARGET_UNREADABLE;
+            LOG_E("[SD1124] mfst stat e=%d: '"'"'%s'"'"'", (int)e, target);
+            return false;
+        }
+        return true;                    /* no manifest at that name */' \
+            '        return true;                    /* mutant: fault read as absence */'; then
+    expect "R30 both inspections fail closed" "fail-closed inspection guard"
+else
+    echo "  FAIL R30 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R31: move the [SD1124] tag off the FRONT of a refusal message. The     =="
+echo "==      logger truncates the TAIL, so a tag that is not first is what     =="
+echo "==      gets lost on the longest paths -- and it is the only thing        =="
+echo "==      telling this refusal from any other -200 in SYSTem:LOG?.          =="
+if sub "$F" 'LOG_E("[SD1124] refuse overwrite:' \
+            'LOG_E("refuse overwrite [SD1124]:'; then
+    expect "R31 the tag leads every message" "do not START with the"
+else
+    echo "  FAIL R31 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R32: delete one refuse reason's case from the text function. It then   =="
+echo "==      falls into default: and reports \"no refusal recorded\" about a     =="
+echo "==      refusal that DID happen, and no compiler can warn.               =="
+if sub "$F" '        case SD_REFUSE_TARGET_EXISTS:
+            return "the target file already exists - it is not overwritten "
+                   "unless SYSTem:STORage:SD:FILE asked for it";' \
+            ''; then
+    expect "R32 every reason has a case" "with no case in"
+else
+    echo "  FAIL R32 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R33: default the overwrite parameter to 1. A one-argument client would =="
+echo "==      then inherit an authorisation it never asked for.                 =="
+if sub "$S" '    int overwriteParam = 0;' \
+            '    int overwriteParam = 1;'; then
+    expect "R33 the opt-in defaults to withdrawn" "no longer defaults to 0"
+else
+    echo "  FAIL R33 anchor absent."; fail=$((fail+1))
 fi
 restore
 

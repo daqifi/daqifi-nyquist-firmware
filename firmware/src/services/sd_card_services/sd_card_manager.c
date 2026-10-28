@@ -4335,6 +4335,39 @@ void sd_card_manager_ProcessState() {
                  * rather than a second one written here. The generic "Failed to open"
                  * line fires too, and that is accurate: we did not open the file. */
                 if (!sd_TargetSafeToOpenForWrite(gSDCardData.filePath)) {
+                    /* ⛔ #1124 L=C: A POLICY REFUSAL IS TERMINAL, NOT
+                     * TRANSIENT, AND MUST END THE SESSION.
+                     *
+                     * Leaving the handle INVALID alone routes this into the
+                     * generic failed-open arm below, which is built for a
+                     * TRANSIENT I/O error: it goes to ERROR, which unmounts
+                     * and re-INITs with `mode` still WRITE, so the session
+                     * re-arms and re-enters OPEN_FILE. For an I/O glitch that
+                     * retry is right. For "the file exists and you did not ask
+                     * to overwrite it" it can NEVER succeed, and the cost is
+                     * not just a log loop:
+                     * sd_card_manager_IsBusyLocked() tests `mode !=
+                     * MODE_NONE` FIRST, so IsBusy() stays true for ever and
+                     * every SD command is refused -- including the SD:DELete
+                     * that would remove the file and the SD:FILE that would
+                     * grant the opt-in. The refusal would wedge the card
+                     * against its own remedy.
+                     *
+                     * So clear `mode` the way the #498 disk-full refusal does
+                     * a few hundred lines up: that makes `openAborted` true in
+                     * the #782 check below, which routes into the existing
+                     * DEINIT teardown and breaks before the retry arm. One
+                     * refusal path, reusing the teardown SCPI itself uses,
+                     * rather than a second one written here.
+                     *
+                     * A blind 32-bit store needs no critical section on
+                     * PIC32MZ (the read-decide-write below has one because it
+                     * spans two variables). The reason reached the user before
+                     * this point: the gate logged it with the [SD1124] tag,
+                     * and writeRefuseReason carries it to
+                     * SYSTem:STORage:SD:INFO?. */
+                    gSDCardData.lastOperationSuccess = false;
+                    gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
                     gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
                 } else {
                     // Use WRITE_PLUS to create/truncate file (overwrite mode)
@@ -6452,6 +6485,9 @@ const char* sd_card_manager_WriteRefuseText(void) {
         case SD_REFUSE_BUCKET_NOT_DIR:
             return "a file is occupying a directory-bucket name - rename or "
                    "remove it, or log to a different directory";
+        case SD_REFUSE_NAME_NOT_A_FILE:
+            return "the configured logging name ends in a path separator, so "
+                   "it names a directory and cannot be opened as a file";
         case SD_REFUSE_TARGET_EXISTS:
             return "the target file already exists - it is not overwritten "
                    "unless SYSTem:STORage:SD:FILE asked for it";

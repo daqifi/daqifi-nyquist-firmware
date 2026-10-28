@@ -596,6 +596,7 @@ RECIPES := Makefile
 # has" failure the guards elsewhere in this file exist for, so they fail the
 # BUILD rather than being left to the bench.
 MANIFEST_BIN := run_924_tests
+GATE1124_BIN := run_1124_tests
 # #1124 r11 finding 4: the bucket-name prefix the test's guard must match, read
 # out of the REAL sd_card_manager.h at parse time. A hand-copied constant that
 # drifts keeps PASSING while checking nothing -- and this guard's correctness is
@@ -868,6 +869,121 @@ $(AD7609_BIN): test_ad7609_scale.c test_framework.h $(FW_ADC)/AD7609Scale.h $(RE
 $(JSONESC_BIN): test_json_string_escape.c test_framework.h $(FW_SVC)/JSON_StringEscape.h $(RECIPES)
 	$(CC) $(CFLAGS) -I$(FW_SVC) -o $(JSONESC_BIN) test_json_string_escape.c
 
+$(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
+                 $(SD_MANAGER_SRC) $(SD_MGR_HDR) $(SD_BENCH_SRC) $(RECIPES)
+	@# ⛔ #1124 L=C PIN 1 -- the gate exists and the opt-in is what it reads.
+	@# The model's entire premise: nothing is destroyed unless the client asked
+	@# for THIS target, so if the gate stops consulting overwriteExisting the
+	@# model is describing firmware that no longer exists.
+	@$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null \
+	   | awk '/^static bool sd_TargetSafeToOpenForWrite\(const char \*dataPath\) \{/{f=1} f{print} f&&/^\}/{exit}' \
+	   > /tmp/.g1124.$$$$; \
+	 test -s /tmp/.g1124.$$$$ \
+	  || { echo "ERROR: sd_TargetSafeToOpenForWrite() not found in"; \
+	       echo "       $(SD_MANAGER_SRC) (#1124 L=C). test_1124_overwrite_gate.c"; \
+	       echo "       models THAT function; with it renamed or gone this pin"; \
+	       echo "       measures nothing and must not report a pass."; \
+	       rm -f /tmp/.g1124.$$$$; exit 1; }; \
+	 grep -q 'overwriteExisting' /tmp/.g1124.$$$$ \
+	  || { echo "ERROR: the #1124 gate no longer reads overwriteExisting."; \
+	       echo "       Operator ruling L=C requires an EXPLICIT opt-in; a gate"; \
+	       echo "       that does not consult it either refuses every second"; \
+	       echo "       recording (no way through, which is why A2 was rejected)"; \
+	       echo "       or destroys without being asked."; \
+	       rm -f /tmp/.g1124.$$$$; exit 1; }; \
+	 rm -f /tmp/.g1124.$$$$
+	@# ⛔ PIN 2 -- FAIL CLOSED ON AN UNREADABLE PATH, TWICE: once for the data
+	@# file and once for the manifest. r18 finding 3 was exactly the conflation
+	@# of "cannot inspect" with "absent", and a two-valued existence test lands
+	@# on the PERMISSIVE value when the third state appears. Counted, not merely
+	@# present, because one of the two inspections having the guard tells you
+	@# nothing about the other.
+	@$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null \
+	   | awk '/^static bool sd_TargetSafeToOpenForWrite\(const char \*dataPath\) \{/{f=1} f{print} f&&/^\}/{exit}' \
+	   > /tmp/.g1124b.$$$$; \
+	 n=`grep -c 'SYS_FS_ERROR_NO_PATH && e != SYS_FS_ERROR_NO_FILE' /tmp/.g1124b.$$$$`; \
+	 test "$$n" -eq 2 \
+	  || { echo "ERROR: the #1124 gate has $$n fail-closed inspection guard(s),"; \
+	       echo "       expected 2 -- one for the data file and one for the"; \
+	       echo "       manifest. A stat failure that is not NO_FILE/NO_PATH is"; \
+	       echo "       a FAULT, not an absence (r18 finding 3). Reading it as"; \
+	       echo "       absence truncates a file that could not even be looked"; \
+	       echo "       at, beside a manifest that still describes it."; \
+	       rm -f /tmp/.g1124b.$$$$; exit 1; }; \
+	 rm -f /tmp/.g1124b.$$$$
+	@# ⛔ PIN 3 -- EVERY refuse reason has a case in the text function.
+	@# A reason with no case falls into its `default:` arm and reports "no
+	@# refusal recorded" -- a silent WRONG answer about a refusal that did
+	@# happen, and the compiler cannot warn because that default exists. The
+	@# enum is the authority, so the list is DERIVED from the header rather
+	@# than written out here, where it would drift the same way.
+	@miss=''; \
+	 for r in `sed -n '/typedef enum {/,/} SdWriteRefuseReason;/p' $(SD_MGR_HDR) \
+	            | grep -oE 'SD_REFUSE_[A-Z_]+'`; do \
+	   grep -q "case $$r:" $(SD_MANAGER_SRC) || miss="$$miss $$r"; \
+	 done; \
+	 test -z "$$miss" \
+	  || { echo "ERROR: SdWriteRefuseReason value(s) with no case in"; \
+	       echo "       sd_card_manager_WriteRefuseReasonText():$$miss"; \
+	       echo "       They fall into its default: arm and report \"no refusal"; \
+	       echo "       recorded\" -- telling a caller nothing happened while a"; \
+	       echo "       refusal did. The default exists for SD_REFUSE_NONE, so"; \
+	       echo "       the compiler cannot warn about the gap."; exit 1; }
+	@# ⛔ PIN 4 -- the #1124 tag LEADS every refusal message. SYSTem:LOG? is the
+	@# only way a client can tell this refusal from any other -200, and the
+	@# logger clamps at 125 bytes by truncating the TAIL -- so a tag written
+	@# anywhere but first can be the part that is lost. conv-ts matches on it.
+	@bad=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null \
+	       | grep -oE 'LOG_E\("[^"]*SD1124[^"]*"' | grep -vcE 'LOG_E\("\[SD1124\]'`; \
+	 test "$$bad" -eq 0 \
+	  || { echo "ERROR: $$bad #1124 LOG_E message(s) do not START with the"; \
+	       echo "       [SD1124] tag. The logger truncates at 125 bytes from the"; \
+	       echo "       TAIL, so a tag that is not first is exactly what gets"; \
+	       echo "       lost on the longest paths -- and the tag is the only"; \
+	       echo "       thing distinguishing this refusal from every other -200"; \
+	       echo "       in SYSTem:LOG?."; exit 1; }
+	@# ⛔ PIN 5 -- the opt-in DEFAULTS TO WITHDRAWN on every SD:FILE. If the
+	@# parameter stops defaulting to 0, an authorisation granted for one target
+	@# silently carries onto the next name the client sets -- and the whole
+	@# reason it rides SD:FILE rather than being a standing mode is that it is
+	@# bound to the name it authorises.
+	@$(CC) -fpreprocessed -E $(SD_BENCH_SRC) 2>/dev/null \
+	   | tr '\n' ' ' | tr -s ' ' \
+	   | grep -q 'int overwriteParam = 0;' \
+	  || { echo "ERROR: SD:FILE's overwrite parameter no longer defaults to 0"; \
+	       echo "       (#1124 L=C). A one-argument client would then inherit"; \
+	       echo "       whatever the last caller asked for, and a bare SD:FILE"; \
+	       echo "       would carry a previous authorisation onto a new target."; \
+	       exit 1; }
+	@# ⛔ PIN 6 -- A REFUSAL MUST DISARM THE SESSION, and this is a WEDGE guard,
+	@# not a tidiness one. sd_card_manager_IsBusyLocked() tests
+	@# `mode != MODE_NONE` BEFORE any state, so a refusal that leaves mode ==
+	@# WRITE keeps IsBusy() true for ever: the generic failed-open arm unmounts,
+	@# re-INITs with the session still armed, re-enters OPEN_FILE and refuses
+	@# again. Every SD command is then rejected -- INCLUDING the SD:DELete that
+	@# would remove the file and the SD:FILE that would grant the opt-in. The
+	@# refusal would wedge the card against its own remedy.
+	@# Scoped to the refusal branch itself, because `mode = MODE_NONE` appears
+	@# at ten other sites in this file and a file-wide grep could not tell them
+	@# apart.
+	@awk '/if \(!sd_TargetSafeToOpenForWrite\(gSDCardData.filePath\)\)/{f=1} f{print} f&&/\} else \{/{exit}' \
+	     $(SD_MANAGER_SRC) > /tmp/.g1124c.$$$$; \
+	 test -s /tmp/.g1124c.$$$$ \
+	  || { echo "ERROR: could not extract the #1124 refusal branch from"; \
+	       echo "       $(SD_MANAGER_SRC) -- this pin measures nothing."; \
+	       rm -f /tmp/.g1124c.$$$$; exit 1; }; \
+	 grep -q 'mode = SD_CARD_MANAGER_MODE_NONE' /tmp/.g1124c.$$$$ \
+	  || { echo "ERROR: the #1124 refusal no longer disarms the session"; \
+	       echo "       (mode -> MODE_NONE). IsBusyLocked() tests mode BEFORE"; \
+	       echo "       any state, so the card stays BUSY for ever and every SD"; \
+	       echo "       command is refused -- including the SD:DELete and the"; \
+	       echo "       SD:FILE opt-in that are the only ways out. A refusal"; \
+	       echo "       that wedges the card against its own remedy is worse"; \
+	       echo "       than the truncation it prevents."; \
+	       rm -f /tmp/.g1124c.$$$$; exit 1; }; \
+	 rm -f /tmp/.g1124c.$$$$
+	$(CC) $(CFLAGS) -o $(GATE1124_BIN) test_1124_overwrite_gate.c
+
 $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h \
                  $(FW_UTIL)/CRC32.h $(FW_UTIL)/CRC32.c $(SD_MANAGER_SRC) \
                  $(SD_BENCH_SRC) $(SD_MGR_HDR) $(RECIPES)
@@ -925,7 +1041,7 @@ $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h
 	@# totals coincide and the sites do not:
 	@#   -1 r17  the FALLBACK name construction went with the two-candidate
 	@#           scheme.
-	@#   +1 r18  sd_InvalidateManifestForTarget() builds TWO names, not one: the
+	@#   +1 r18  sd_TargetSafeToOpenForWrite() builds TWO names, not one: the
 	@#           TARGET's manifest and this session's LIVE manifest, so it can
 	@#           tell them apart and never delete its own.
 	@# Both join through the same accessor and the same "%.*s/" format, which is
@@ -1719,7 +1835,7 @@ test "$$raw" -eq 0 && test "$$canon" -eq 9 && test "$$acc" -eq 9 \
 	@# PIN A -- the invalidation is called, and BEFORE the truncating open. A
 	@# position pin, because calling it afterwards would delete the record of data
 	@# this session just wrote. Scoped to the OPEN_FILE write arm.
-	@awk '/\(SYS_FS_FILE_OPEN_WRITE_PLUS\)\)/{print NR": MARK_OPEN"} /sd_InvalidateManifestForTarget\(gSDCardData.filePath\)/{print NR": MARK_INV"}' \
+	@awk '/\(SYS_FS_FILE_OPEN_WRITE_PLUS\)\)/{print NR": MARK_OPEN"} /sd_TargetSafeToOpenForWrite\(gSDCardData.filePath\)/{print NR": MARK_INV"}' \
 	     $(SD_MANAGER_SRC) > /tmp/.sd1124_ord.$$$$; \
 	 inv=`grep -m1 MARK_INV /tmp/.sd1124_ord.$$$$ | cut -d: -f1`; \
 	 opn=`grep -m1 MARK_OPEN /tmp/.sd1124_ord.$$$$ | cut -d: -f1`; \
@@ -1727,7 +1843,7 @@ test "$$raw" -eq 0 && test "$$canon" -eq 9 && test "$$acc" -eq 9 \
 	 test -n "$$inv" && test -n "$$opn" && test "$$inv" -lt "$$opn" \
 	  || { echo "ERROR: the session manifest is not invalidated BEFORE the data file"; \
 	       echo "       is truncated (#1124 r17 PIN A)."; \
-	       echo "         sd_InvalidateManifestForTarget() at line $$inv"; \
+	       echo "         sd_TargetSafeToOpenForWrite() at line $$inv"; \
 	       echo "         the WRITE_PLUS open at line        $$opn"; \
 	       echo "       The open is FA_CREATE_ALWAYS, so from that instant any"; \
 	       echo "       manifest describing this name is wrong. Invalidating after it"; \
@@ -1742,8 +1858,8 @@ test "$$raw" -eq 0 && test "$$canon" -eq 9 && test "$$acc" -eq 9 \
 	@# existing-target search can land on a previous session's first file, which
 	@# has a manifest of its own. So the gate is GONE and this pin now asserts its
 	@# ABSENCE plus the real discriminator -- IDENTITY, keyed on the target path.
-	@n=`grep -c 'sd_InvalidateManifestForTarget(gSDCardData.filePath)' $(SD_MANAGER_SRC)`; \
-	 g=`grep -B6 'sd_InvalidateManifestForTarget(gSDCardData.filePath)' $(SD_MANAGER_SRC) \
+	@n=`grep -c 'sd_TargetSafeToOpenForWrite(gSDCardData.filePath)' $(SD_MANAGER_SRC)`; \
+	 g=`grep -B6 'sd_TargetSafeToOpenForWrite(gSDCardData.filePath)' $(SD_MANAGER_SRC) \
 	    | grep -c 'if (isSessionFirstOpen)'`; \
 	 test "$$n" -eq 1 && test "$$g" -eq 0 \
 	  || { echo "ERROR: the manifest invalidation is not keyed on the TARGET path, or"; \
@@ -1759,7 +1875,7 @@ test "$$raw" -eq 0 && test "$$canon" -eq 9 && test "$$acc" -eq 9 \
 	@# a stale record. The refusal works by leaving the handle INVALID so the
 	@# existing failed-open arm runs, so what is pinned is that the INVALID
 	@# assignment sits between the check and the open.
-	@awk '/if \(!sd_InvalidateManifestForTarget/{a=NR} \
+	@awk '/if \(!sd_TargetSafeToOpenForWrite/{a=NR} \
 	      /gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;/{if(a&&!b)b=NR} \
 	      /\(SYS_FS_FILE_OPEN_WRITE_PLUS\)\)/{if(a&&!c)c=NR} \
 	      END{print a" "b" "c}' $(SD_MANAGER_SRC) > /tmp/.sd1124_ref.$$$$; \
@@ -5106,7 +5222,7 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
      $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) \
      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) \
      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(USECALTYPE_BIN) $(ARM_BIN) $(NAME_BIN) \
-     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(MANIFEST_BIN)
+     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(MANIFEST_BIN) $(GATE1124_BIN)
 	./$(SEQ908_BIN)
 	./$(TEAR904_BIN)
 	./$(BIN)
@@ -5130,6 +5246,7 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
 	./$(STARTARM_BIN)
 	./$(START_BIN)
 	./$(MANIFEST_BIN)
+	./$(GATE1124_BIN)
 	./$(REPLYBUF_BIN)
 	./$(HEXWIN_BIN)
 	./$(LOGONCE_BIN)
@@ -5150,6 +5267,6 @@ clean:
 	      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(GEN_1125) \
 	      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(SDLOG1029_GEN).tmp \
 	      $(USECALTYPE_BIN) $(NAME_BIN) $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(ARM_BIN) $(SCPIDAC_RAILGATE_BIN) \
-	      $(FORCEGATE_BIN) $(LOG1039_BIN) $(LOG1039_GEN) $(MANIFEST_BIN)
+	      $(FORCEGATE_BIN) $(LOG1039_BIN) $(LOG1039_GEN) $(MANIFEST_BIN) $(GATE1124_BIN)
 
 .PHONY: run clean
