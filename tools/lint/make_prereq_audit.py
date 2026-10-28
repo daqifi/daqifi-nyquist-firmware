@@ -167,20 +167,34 @@ THE RESIDUAL CLASS, AND WHY IT IS DOCUMENTED RATHER THAN CHASED
     fall into four families, and the list is recorded because an undocumented
     residual invites exactly the trust this tool must not be given:
 
-      1. DEFERRED EVALUATION -- `$(eval ...)`, `$(file ...)`, and text built at
-         expansion time. Refused where the token appears; a name assembled from
-         fragments cannot be seen at all.
-      2. INDIRECTION THROUGH A COMPUTED NAME -- `$(call $(F),X)`, `$(call $F,X)`,
-         `$(call call,...)`, and an `origin()`-based definedness test. Refused
-         by requiring a literal identifier as `call`'s first argument; a name
-         composed at runtime remains invisible.
-      3. RECURSION -- `$(MAKE)`, `gmake`, `/usr/bin/make`, `command make`,
-         `then $(MAKE)`, and any of them behind a variable assignment or `env`.
-         Refused in command position; a submake invoked through a shell
-         variable or a script is not distinguishable from any other command.
-      4. CONDITIONAL DEFINEDNESS -- `ifdef`/`ifndef`/`ifeq`/`ifneq`. Refused
-         wholesale, because resolving whether each tested name is assigned
-         later is the Make model this tool exists not to be.
+      1. DEFERRED EVALUATION -- text loaded or evaluated at expansion time.
+      2. INDIRECTION THROUGH A COMPUTED NAME -- a function name assembled at
+         runtime, which no token scan can resolve.
+      3. RECURSION -- a submake, whose own makefiles this audit never reads.
+      4. DEFINEDNESS WITHOUT REFERENCE -- asking whether a name is defined
+         rather than using it, which emits no warning to see.
+
+    ⛔ THE CONSTRUCTS THEMSELVES ARE NOT LISTED HERE. They are in
+    `REFUSED_EXAMPLES`, with a near-miss control for each family in
+    `POLICY_NEAR_MISSES`, and the self-test asserts every row against the
+    named rule.
+
+    That indirection is the fix for a defect this docstring HAD. Until r12 it
+    listed `/usr/bin/make`, `command make` and an `origin()` definedness test
+    as refused, and the policy refused none of the three -- prose ahead of
+    code, for the second time in this PR. A hand-maintained list beside the
+    predicates is a second copy of the claim, and a second copy can drift; the
+    durable fix is to have one copy and assert it. Add a row to
+    `REFUSED_EXAMPLES` without the matching predicate and the self-test fails
+    on that row, so the claim and the behaviour cannot separate.
+
+    What the four families BOUND, rather than enumerate: a construct that
+    assembles the refused token out of fragments, or reaches it through a shell
+    variable, is invisible to a token scan by construction. The recursion
+    rule's wrapper set (`env`, `command`, `exec`, `nice`, `time`, `sudo`,
+    `stdbuf`) is likewise a list, so a submake behind some other wrapper reads
+    as an ordinary command. These are the residual, and they are the reason the
+    paragraph below is stated rather than implied.
 
     ⭐ A MISS IN ANY OF THESE IS A FALSE NEGATIVE OF A NEW CHECK, NOT A
     REGRESSION. `main` has no such gate at all, so the comparison for "is this
@@ -272,6 +286,25 @@ ENDEF_RE = re.compile(r"^\s*endef\b")
 #
 # So is_recipe_line() and strip_make_comment() are GONE, and with them both r8
 # findings. The policy reads logical lines exactly as they are written.
+# ⛔ THE TWO HALVES OF A SUBMAKE INVOCATION, named so the recursion rule and
+# its near-miss pins read against the same text rather than two copies of it.
+#
+# _MAKE_PREFIX: what may stand between the tab (or a shell operator) and the
+# make token -- recipe sigils, variable assignments, and wrapper words. The
+# wrapper set is a LIST, which means it is also a residual: a submake behind a
+# wrapper nobody named here, or behind a shell variable, is not distinguishable
+# from any other command. That bound is stated in the module docstring.
+_MAKE_PREFIX = (r"[\s@+-]*(?:\w+=\S*\s+"
+                r"|(?:env|command|exec|nice|time|sudo|stdbuf)\s+"
+                r"(?:-\S+\s+)*)*")
+
+# _MAKE_TOKEN: the make program itself. The path alternative must end in a
+# slash, which is what keeps `cmake`, `/usr/bin/cmake` and `./cmake` out while
+# admitting `/usr/bin/make`; `\b` after `make` is what keeps `makefile` out.
+# `$(MAKE` carries NO trailing boundary, deliberately, so `$(MAKE_COMMAND)` is
+# caught -- that `\b` was the whole hole in r9.
+_MAKE_TOKEN = r"(?:(?:[\w.+-]*/)+g?make\b|g?make\b|\$[({]\s*MAKE)"
+
 POLICY = (
     ("define body", DEFINE_RE,
      "a `define` body -- bodies hold real newlines, nest, and take prefix "
@@ -316,13 +349,43 @@ POLICY = (
     # past it. The prefix set is now variable assignments and `env` as well,
     # and `$(MAKE` is matched WITHOUT a trailing word boundary so
     # `$(MAKE_COMMAND)` is caught too -- the `\b` was what let it through.
+    # ⛔ RECURSION BY PATH OR BY WRAPPER WORD. r12 walked two more spellings
+    # past r9's form, and the DOCSTRING had already claimed both were refused:
+    # `/usr/bin/make` failed because the pattern required `make` at the start
+    # of the token, and `command make` failed because the only wrapper forms
+    # accepted were `VAR=value` and bare `env`. Both are now in the prefix.
+    #
+    # ⚠ The directory prefix is `(?:[\w.+-]*/)+`, which must end in a SLASH.
+    # That is what keeps `cmake` out: with no slash the alternative cannot
+    # apply at all, and `g?make\b` then has to match from the token's first
+    # character, where it meets `c`. `/usr/bin/cmake` fails the same way after
+    # backtracking. Pinned in POLICY_NEAR_MISSES.
     ("recursive make",
-     re.compile(r"^\t[\s@+-]*(?:\w+=\S*\s+|env\s+)*(?:g?make\b|\$[({]\s*MAKE)"
-                r"|[;&|]\s*[\s@+-]*(?:\w+=\S*\s+|env\s+)*"
-                r"(?:g?make\b|\$[({]\s*MAKE)"),
-     "a recipe invoking make (any of `make`, `gmake`, `$(MAKE...)`, after any "
-     "prefix) -- the child's own makefiles are not scanned, so this audit "
-     "cannot speak for the whole build"),
+     re.compile(r"^\t" + _MAKE_PREFIX + _MAKE_TOKEN
+                + r"|[;&|]\s*" + _MAKE_PREFIX + _MAKE_TOKEN),
+     "a recipe invoking make (any of `make`, `gmake`, `$(MAKE...)`, a "
+     "path-qualified `/usr/bin/make`, or one behind a wrapper word such as "
+     "`command`, after any prefix) -- the child's own makefiles are not "
+     "scanned, so this audit cannot speak for the whole build"),
+    # ⛔ `$(origin X)` IS A DEFINEDNESS TEST, and it is the same hole as a
+    # conditional reached by a different route: it reports whether and how a
+    # variable is defined, and --warn-undefined-variables does NOT warn for
+    # it, because asking about a name is not referencing it. So
+    # `ifeq ($(origin LATE),undefined)` -- or a bare `X := $(origin LATE)` --
+    # branches on a late definition with nothing on stderr.
+    #
+    # ⚠ The conditional rule already covered the `ifeq` spelling, but only
+    # INCIDENTALLY: it fires on the `ifeq` token, not because `origin` was
+    # recognised, so the assignment form was unrefused. Measured on
+    # 55ac3485d: `X := $(origin LATE)` scored NO POLICY HIT.
+    #
+    # Case-sensitive on purpose -- make's builtins are lowercase, so a
+    # variable named `$(ORIGIN)` is not this, and neither is `$(origin_dir)`,
+    # where `\b` fails against the underscore. Both pinned as near-misses.
+    ("origin definedness test", re.compile(r"[$][({]\s*origin\b"),
+     "an `$(origin ...)` definedness test -- it reports whether a name is "
+     "defined without referencing it, so --warn-undefined-variables stays "
+     "silent and a late definition can be branched on unseen"),
     # ⛔ $(file ...) and $(eval ...) BOTH LOAD TEXT MAKE_FILE_LIST NEVER SEES.
     # `$(eval $(file <rules.mk))` reads a file and evaluates it as makefile
     # text without ever being an `include`, so it appears in no file list and
@@ -344,6 +407,101 @@ POLICY = (
      "a conditional (ifdef/ifndef/ifeq/ifneq) -- `ifdef LATE` before LATE is "
      "defined drops the prerequisite silently and make does not warn, and "
      "resolving that per-name would mean modelling Make again"),
+)
+
+# ⛔⛔ THE REFUSAL LIST LIVES HERE, AND NOWHERE ELSE. This is the only
+# enumeration of what the policy refuses; the module docstring points at it
+# instead of repeating it, and the self-test asserts every row.
+#
+# WHY IT IS A TUPLE AND NOT PROSE. r12 found two constructs the DOCSTRING
+# listed as refused -- `/usr/bin/make` and `command make` -- which the code did
+# not refuse, plus an `origin()` test the docstring named in the same breath.
+# That was the SECOND prose-ahead-of-code finding in this PR. Fixing the two
+# instances while keeping a hand-maintained prose list would have produced a
+# third, because a second copy of a claim is a thing that can drift; the only
+# durable fix is to stop having one. A row added here without the matching
+# predicate fails the self-test immediately, so the claim and the code cannot
+# separate: the check's failure co-occurs with the thing it guards.
+#
+# Each row is (sample line, the POLICY name that must refuse it). Naming the
+# RULE rather than just "something refused it" is deliberate -- `$(origin X)`
+# inside an `ifeq` is refused by the conditional rule whether or not the origin
+# rule exists, so a test that only asked "refused?" would have passed on
+# 55ac3485d and proved nothing about the gap.
+REFUSED_EXAMPLES = (
+    ("\tmake -C sub all", "recursive make"),
+    ("\tgmake -C sub all", "recursive make"),
+    ("\t$(MAKE) -C sub all", "recursive make"),
+    ("\t+$(MAKE_COMMAND) -f child.mk all", "recursive make"),
+    ("\tCC=cc make all", "recursive make"),
+    ("\t+env make all", "recursive make"),
+    # The two r12 found, both previously claimed in prose and unrefused.
+    ("\t/usr/bin/make -C sub all", "recursive make"),
+    ("\tcommand make -C sub all", "recursive make"),
+    # Same family, same route, so they are pinned rather than left to a later
+    # round to re-find one at a time.
+    ("\t/bin/make all", "recursive make"),
+    ("\t./make all", "recursive make"),
+    ("\tcommand -p make all", "recursive make"),
+    ("\texec make all", "recursive make"),
+    ("\tcd sub && make all", "recursive make"),
+    ("\ttest -d sub && $(MAKE) -C sub", "recursive make"),
+    # The origin family -- the assignment form is the one that was open.
+    ("X := $(origin LATE)", "origin definedness test"),
+    ("X := $(origin  LATE)", "origin definedness test"),
+    ("X := ${origin LATE}", "origin definedness test"),
+    ("ifeq ($(origin LATE),undefined)", "origin definedness test"),
+    # Pre-existing families, pinned here so the list is the WHOLE claim and a
+    # rule deleted elsewhere cannot pass by being absent from this table.
+    ("define body\n", "define body"),
+    ("endef", "endef"),
+    ("X := $(value LATE)", "value call"),
+    ("X := $(call value,LATE)", "value call"),
+    ("X := $(call $(FN),LATE)", "call with a non-literal function name"),
+    ("X := $(call call,value,LATE)", "call with a non-literal function name"),
+    ("X := $(file <rules.mk)", "file/eval text loading"),
+    ("$(eval include rules.mk)", "file/eval text loading"),
+    ("ifdef LATE", "conditional"),
+    ("ifndef LATE", "conditional"),
+    ("else ifeq ($(A),$(B))", "conditional"),
+)
+
+# ⛔ EVERY REFUSAL NEEDS A NEAR-MISS, or a rule that refuses everything
+# satisfies every row above. These must match NO policy rule at all.
+#
+# ⚠ `make-dist` is NOT here: `make\b` finds the boundary before the hyphen, so
+# it IS refused today. That is a false positive, and it is left standing on
+# purpose -- a refusal is this gate's loud direction, and narrowing the token
+# to exclude it would risk admitting a real submake spelled with a suffix. It
+# is pinned as a KNOWN false positive below so a future round does not read it
+# as a fresh defect.
+POLICY_NEAR_MISSES = (
+    ("\tcmake -B build", "cmake is not make -- the path alternative needs a "
+                         "slash, so it cannot apply, and g?make\\b then meets "
+                         "the leading `c`"),
+    ("\t/usr/bin/cmake -B build", "a path-qualified cmake fails the same way "
+                                  "after backtracking"),
+    ("\t./cmake -B build", "and so does a relative one"),
+    ("\techo makefile", "`makefile` has no word boundary after `make`"),
+    ("\techo 'run make later'", "the word make in an echo string is not a "
+                                "command position"),
+    ("X := $(ORIGIN)", "a variable named ORIGIN is not the lowercase builtin"),
+    ("X := $(origin_dir)/f.c", "`origin_dir` fails \\b against the "
+                               "underscore"),
+    ("X := $(wildcard *.c)", "an ordinary function call is not refused"),
+    ("EARLY := base.c", "a correctly-ordered assignment is the common case "
+                        "and must stay silent"),
+    ("\t$(CC) -o $@ $^", "an ordinary recipe line is not a submake"),
+)
+
+# Pinned as a KNOWN false positive, in the refusal (safe) direction. Asserted
+# refused so that if a future narrowing of the make token lets it through, the
+# self-test says so and the author has to decide deliberately.
+POLICY_KNOWN_FALSE_POSITIVES = (
+    ("\tmake-dist --all", "recursive make",
+     "`make\\b` matches before the hyphen. Refusing a non-submake costs a "
+     "NO VERDICT on a file nobody has; admitting a real submake costs the "
+     "audit's whole claim, so the token is not narrowed to exclude it"),
 )
 
 # Backslash PARITY, which only a physical line can answer: `\\` at end of line
@@ -1184,6 +1342,63 @@ def self_test():
             ok = ok and good
             print(f"  {'PASS' if good else 'FAIL'}  CLASSIFY  {name}: "
                   f"got {actual!r}, wanted {want!r}")
+
+        # ⛔ THE REFUSAL LIST IS ASSERTED, NOT DESCRIBED. These arms are what
+        # makes REFUSED_EXAMPLES the single copy of the claim: a construct
+        # named there and not refused by the named rule fails here, so the
+        # docstring (which now points at the tuple) cannot run ahead of the
+        # code again. ALL THE /usr/bin/make, `command make` AND $(origin ...)
+        # ROWS FAIL ON 55ac3485d, where the docstring claimed all three and
+        # the policy refused none.
+        #
+        # The rule NAME is asserted, not merely "something refused it":
+        # `$(origin X)` in an `ifeq` is refused by the conditional rule
+        # regardless, so a looser arm would have passed before the fix.
+        for sample, want_rule in REFUSED_EXAMPLES:
+            hits = [kind for kind, rx, _why in POLICY if rx.search(sample)]
+            good = want_rule in hits
+            ok = ok and good
+            print(f"  {'PASS' if good else 'FAIL'}  REFUSE-LIST "
+                  f"{sample.strip()!r}: wanted rule {want_rule!r}, "
+                  f"hits={hits}")
+
+        # And the controls, without which a rule that refused every line would
+        # satisfy every arm above.
+        for sample, why in POLICY_NEAR_MISSES:
+            hits = [kind for kind, rx, _why in POLICY if rx.search(sample)]
+            good = not hits
+            ok = ok and good
+            print(f"  {'PASS' if good else 'FAIL'}  NEAR-MISS "
+                  f"{sample.strip()!r}: must match nothing ({why}), "
+                  f"hits={hits}")
+
+        # A known false positive, pinned in the direction it already fails, so
+        # a later narrowing of the token cannot silently admit a real submake.
+        for sample, want_rule, why in POLICY_KNOWN_FALSE_POSITIVES:
+            hits = [kind for kind, rx, _why in POLICY if rx.search(sample)]
+            good = want_rule in hits
+            ok = ok and good
+            print(f"  {'PASS' if good else 'FAIL'}  KNOWN-FP "
+                  f"{sample.strip()!r}: still refused by {want_rule!r} "
+                  f"({why[:60]}...), hits={hits}")
+
+        # ⛔ AND EVERY RULE MUST BE EXERCISED BY THE LIST. Without this, a rule
+        # could be deleted from POLICY and no arm above would fail -- the
+        # refusal rows name rules, so a missing rule makes its own rows fail,
+        # but a rule that NO row names could vanish unnoticed. This is the arm
+        # that makes the table a complete claim rather than a sample.
+        _named = {want for _s, want in REFUSED_EXAMPLES}
+        _defined = {kind for kind, _rx, _why in POLICY}
+        _unexercised = _defined - _named
+        good = not _unexercised
+        ok = ok and good
+        print(f"  {'PASS' if good else 'FAIL'}  REFUSE-LIST covers every "
+              f"POLICY rule: unexercised={sorted(_unexercised)}")
+        _phantom = _named - _defined
+        good = not _phantom
+        ok = ok and good
+        print(f"  {'PASS' if good else 'FAIL'}  REFUSE-LIST names no rule "
+              f"that does not exist: phantom={sorted(_phantom)}")
 
         # A finding without file:line is not actionable.
         located = all(w["file"] and w["line"].isdigit() for w in warnings)

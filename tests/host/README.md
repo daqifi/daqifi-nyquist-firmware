@@ -124,6 +124,16 @@ measured record on that bet is **0 for 5**.
 
 So the burden is inverted. **The scanner is correct over a subset of Make, and
 this Makefile must stay inside it** — anything outside is `exit 2`, NO VERDICT.
+
+⛔ **The authoritative list of refused constructs is `REFUSED_EXAMPLES` in
+`tools/lint/make_prereq_audit.py`, and the self-test asserts every row against
+the rule that must refuse it. Do not restate that list here or in the module
+docstring.** The docstring used to carry its own copy, and in r12 that copy was
+found naming three constructs — `/usr/bin/make`, `command make`, and an
+`$(origin …)` definedness test — that the code did **not** refuse. Prose beside
+a predicate is a second copy of a claim, and a second copy drifts; this file
+explains *why* each family is refused and leaves *what* is refused to the one
+place a test can check.
 The refusal names the construct and why. What that buys is the *direction of
 failure*: a policy predicate that mis-fires refuses a legal Makefile, which is
 loud and fixable, where a lexer that mis-parses passes an evasion silently —
