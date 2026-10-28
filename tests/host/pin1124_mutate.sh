@@ -1223,7 +1223,7 @@ echo "==      that directory. The byte bound still works, so the read is still =
 echo "==      bounded and nothing else notices.                                =="
 if sub "$F" '            lines++;    /* counted for the diagnostics below, never a cap */' \
             '            if (++lines > 4161u) { out = SD_INSPECT_FAULT; break; }'; then
-    expect "R72 no manifest line cap" "the manifest LINE count is compared"
+    expect "R72 no manifest line cap" "the line counter is no longer a plain"
 else
     echo "  FAIL R72 anchor absent."; fail=$((fail+1))
 fi
@@ -1237,6 +1237,24 @@ if sub "$F" '        if (got > (size_t)(SD_FOREIGN_SCAN_MAX_BYTES - bytesRead)) 
     expect "R73 the read is bounded by bytes" "the byte bound on the manifest read is"
 else
     echo "  FAIL R73 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R74 (PIN 33, the COMPARISON arm): keep the plain `lines++` AND add a  =="
+echo "==      cap beside it. Arm 1 is satisfied -- the increment still stands   =="
+echo "==      alone -- so only the arm forbidding a relational test on the      =="
+echo "==      counter can see the refusal come back.                            =="
+echo "==      \u26a0 SECOND time this pair has been needed (PIN 25/R49/R55 was the   =="
+echo "==      first): a pin with a plain-increment arm AND a never-compared arm =="
+echo "==      needs TWO mutants, because removing the increment answers arm 1   =="
+echo "==      and never reaches arm 2.                                          =="
+if sub "$F" '            lines++;    /* counted for the diagnostics below, never a cap */' \
+            '            lines++;    /* counted for the diagnostics below, never a cap */
+            if (lines > 4161u) { out = SD_INSPECT_FAULT; break; }'; then
+    expect "R74 the manifest line count is never compared" \
+           "the manifest LINE count is compared"
+else
+    echo "  FAIL R74 anchor absent."; fail=$((fail+1))
 fi
 restore
 
