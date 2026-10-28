@@ -1084,10 +1084,13 @@ else
 fi
 restore
 
-echo "== R79 (PIN 23d): accept a name ending in the MANIFEST EXTENSION, so a   =="
-echo "==      session named exp.csv.mfst writes exp.csv.mfst.mfst and leaves   =="
-echo "==      its data file occupying a later exp.csv session's manifest name. =="
-if sub "$S" "        if (SdManifest_NameHasManifestExtLen(pBuff, fileLen)) {" \
+echo "== R79 (PIN 23d): accept a name RESERVED for manifests, so a session    =="
+echo "==      named exp.csv.mfst writes exp.csv.mfst.mfst and leaves its data  =="
+echo "==      file occupying a later exp.csv session's manifest name -- and    =="
+echo "==      the bare \".mfst\" targets '-1.mfst' with an empty stem (r29).     =="
+echo "==      Anchor renamed at r29: the setter now asks the WRITE-path        =="
+echo "==      question, not the SCAN's. See R85 for the other direction.       =="
+if sub "$S" "        if (SdManifest_NameReservedForManifestsLen(pBuff, fileLen)) {" \
             "        if (false) {"; then
     expect "R79 the setter refuses a .mfst name" "the FILE setter no longer refuses a name"
 else
