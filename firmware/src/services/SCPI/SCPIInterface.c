@@ -1854,10 +1854,29 @@ static scpi_result_t SCPI_SetPowerState(scpi_t * context) {
     switch (param1) {
         case 0:  // STANDBY
             pPowerData->requestedPowerState = DO_POWER_DOWN;
-            // #454: latch the per-VBUS-session auto-promote suppression
-            // so the Standby handler doesn't immediately re-promote.
-            // The latch already clears when VBUS goes away.
-            pPowerData->autoPromotedThisVbusSession = true;
+            /* #454: latch the per-VBUS-session auto-promote suppression so the
+             * Standby handler doesn't immediately re-promote.
+             *
+             * ⛔ #1092 r6: FROM A FRESH PHY READ, THE SAME RULE AS THE BUTTON.
+             * It was an unconditional `true`, and the asymmetry was not
+             * defensible once the button path had a better rule: both commands
+             * mean "go to STANDBY", and the question each needs answered is the
+             * same one -- was VBUS present when the power-off was asked for?
+             * One rule is also one thing to reason about when the next
+             * poster appears, which is how #1084 happened (a poster that
+             * forgot the latch entirely).
+             *
+             * The observable delta is small and in the safe direction: on
+             * battery this used to latch, and the standby re-arm then cleared
+             * it on the next pass anyway, so the only behaviour that changes is
+             * within that one window -- where NOT latching is what #454 asks
+             * for. With USB present, which is the case this latch exists for
+             * and the case a USB-CDC client is in by definition, the fresh read
+             * returns true and nothing changes at all.
+             *
+             * The latch also still clears when VBUS goes away. */
+            pPowerData->autoPromotedThisVbusSession =
+                    Power_IsVbusPresentFresh();
             break;
         case 1:  // POWERED_UP
             pPowerData->requestedPowerState = DO_POWER_UP;

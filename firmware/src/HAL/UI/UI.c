@@ -79,6 +79,95 @@ void Button_Tasks( void )
                     gpPowerData->shutdownNotified = true;   
                     // Signal board to power off
                     gpPowerData->requestedPowerState = DO_POWER_DOWN;
+                    // #454/#1084: with USB present, latch the per-VBUS-session
+                    // auto-promote suppression, as SYSTem:POWer:STATe 0 does,
+                    // so with AUTOOn on the STANDBY pass that runs this
+                    // power-down does not promote the board straight back up.
+                    //
+                    // ⛔ SET ONLY, NEVER CLEAR. An earlier revision of this
+                    // assigned pgStat directly:
+                    //
+                    //   autoPromotedThisVbusSession = BQ24297Data.status.pgStat;
+                    //
+                    // which also WRITES FALSE on a stale-false reading, and
+                    // that clear cancels the very shutdown this fix exists to
+                    // make stick (audit on #1092, blind leg, INTRODUCED):
+                    //
+                    //   boot on USB      -> auto-promote sets the latch true
+                    //   unplug           -> still POWERED_UP, so nothing clears
+                    //                       it, but cached pgStat goes false
+                    //   USB back during  -> this site wrote FALSE from the
+                    //   the ~1.1 s hold     stale reading, dropping a valid
+                    //                       suppression
+                    //   Power_Tasks      -> refreshes pgStat true, consumes
+                    //                       DO_POWER_DOWN -> STANDBY
+                    //   next pass        -> vbusPresent && !latch -> AUTO-PROMOTE
+                    //
+                    // i.e. the user held the button with USB connected and the
+                    // board came back up: #1084's own symptom, reached through
+                    // the cache instead of through the missing latch. A
+                    // previous revision of this comment called that window
+                    // acceptable ("that plug-in then counts as a new
+                    // session"); it is not, because the cost is the shutdown.
+                    //
+                    // Clearing is NOT this path's job and never needed to be.
+                    // Power_HandleStandbyState() owns the VBUS-session
+                    // lifecycle and re-arms on any STANDBY pass without VBUS
+                    // (PowerApi.c, "VBUS gone -- re-arm auto-promote for next
+                    // plug-in"), reading pgStat in its own fresh context. So a
+                    // genuine battery-only press leaves the latch alone here,
+                    // that pass clears it, and a later plug-in still
+                    // auto-promotes -- the round-1 battery-only gap stays
+                    // closed without this site deciding anything.
+                    //
+                    // This also makes it the only writer of this latch that
+                    // writes a CONSTANT, like every other one (PowerApi.c,
+                    // SCPIInterface.c): a stale cache can now delay the
+                    // suppression, never undo it.
+                    /* ⛔ #1092 r3: SET UNCONDITIONALLY. This was gated on
+                     * the cached pgStat, which left the r2 residual: a
+                     * stale-FALSE reading at press time means the latch is not
+                     * set, Power_Tasks then refreshes pgStat to true, and the
+                     * next STANDBY pass auto-promotes the board back up --
+                     * #1084's own symptom, reached through the cache rather
+                     * than through a missing fix.
+                     *
+                     * r2 framed that as unfixable from here ("you cannot set a
+                     * latch you do not know you need"). You can: set it
+                     * ALWAYS, because the two errors are not symmetric.
+                     * ⛔ #1092 r6: DECIDED HERE, FROM A FRESH PHY READ, rather
+                     * than set unconditionally and corrected later.
+                     *
+                     * r2 set it only `if (pgStat)` -- the CACHED reading -- and
+                     * a stale FALSE then let the next pass undo the shutdown.
+                     * r3/r4b set it unconditionally and leaned on
+                     * Power_HandleStandbyState re-arming on the first STANDBY
+                     * pass that OBSERVED VBUS absent. r5 found that no such
+                     * pass is guaranteed: hold the button on battery, plug USB
+                     * in before the handler's next ~1 s pass, release, and
+                     * every pass from then on sees VBUS -- so the latch is
+                     * never cleared and the board sits in STANDBY. A rule
+                     * keyed on an observation that may never happen cannot be
+                     * fixed by ordering it better.
+                     *
+                     * The press is the moment the user's intent exists, so the
+                     * question is answered at the press: latch = "is VBUS
+                     * present RIGHT NOW". Battery-only presses set nothing, so
+                     * a later plug-in auto-promotes (#454) with no re-arm pass
+                     * required; a press with USB present latches, which is
+                     * #1084. Power_IsVbusPresentFresh() reads the PHY directly,
+                     * so the cache cannot be stale in either direction -- r2's
+                     * residual is gone at its source instead of compensated
+                     * for. The standby re-arm is KEPT, and is now belt and
+                     * braces for the one case this cannot see: VBUS cycled
+                     * while already in STANDBY.
+                     *
+                     * Still never a CLEAR of a latch someone else set: the only
+                     * way this writes false is VBUS genuinely absent at the
+                     * press, and a press on battery is exactly when no
+                     * suppression is wanted. */
+                    gpPowerData->autoPromotedThisVbusSession =
+                            Power_IsVbusPresentFresh();
                     oneShot = true;
                 }
                 break;
