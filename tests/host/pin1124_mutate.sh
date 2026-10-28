@@ -202,6 +202,8 @@ if a not in t:
 open(p, "w").write(t.replace(a, b, 1))' "$1" "$2" "$3"
 }
 
+GATE_LINE="                if (!sd_TargetSafeToOpenForWrite(gSDCardData.filePath)) {"
+
 echo "== setup: the baseline must be clean, or every result below is noise =="
 expect "baseline" CLEAN
 if [ "$fail" -ne 0 ]; then
@@ -238,14 +240,7 @@ restore
 echo "== R21 (#1124 r18): drop the invalidation call, keeping the open. Counts  =="
 echo "==        are unchanged and the manifest still opens fine; only PIN A sees =="
 echo "==        that a truncated data file keeps a previous session's record.    =="
-if sub "$F" '                if (!sd_TargetSafeToOpenForWrite(gSDCardData.filePath)) {
-                    gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
-                } else {
-                    // Use WRITE_PLUS to create/truncate file (overwrite mode)
-                    gSDCardData.fileHandle = SYS_FS_FileOpen(gSDCardData.filePath,
-                            (SYS_FS_FILE_OPEN_WRITE_PLUS));
-                }' '                    gSDCardData.fileHandle = SYS_FS_FileOpen(gSDCardData.filePath,
-                            (SYS_FS_FILE_OPEN_WRITE_PLUS));'; then
+if sub "$F" "$GATE_LINE" '                if (false) {'; then
     expect "R21 invalidation present" "is not invalidated BEFORE the data file"
 else
     echo "  FAIL R21 anchor absent -- source drifted from this harness."; fail=$((fail+1))
@@ -256,17 +251,9 @@ echo "== R22: MOVE the invalidation AFTER the truncating open. Still present,   
 echo "==      still reached, still keyed on the target -- a presence check reads =="
 echo "==      it as healthy. It would delete the record of data just written, so =="
 echo "==      only the ORDER arm of PIN A can see it.                            =="
-if sub "$F" '                if (!sd_TargetSafeToOpenForWrite(gSDCardData.filePath)) {
-                    gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
-                } else {
-                    // Use WRITE_PLUS to create/truncate file (overwrite mode)
-                    gSDCardData.fileHandle = SYS_FS_FileOpen(gSDCardData.filePath,
-                            (SYS_FS_FILE_OPEN_WRITE_PLUS));
-                }' '                    gSDCardData.fileHandle = SYS_FS_FileOpen(gSDCardData.filePath,
-                            (SYS_FS_FILE_OPEN_WRITE_PLUS));
-                if (!sd_TargetSafeToOpenForWrite(gSDCardData.filePath)) {
-                    gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
-                }'; then
+if sub "$F" "$GATE_LINE" '                gSDCardData.fileHandle = SYS_FS_FileOpen(gSDCardData.filePath,
+                        (SYS_FS_FILE_OPEN_WRITE_PLUS));
+                if (!sd_TargetSafeToOpenForWrite(gSDCardData.filePath)) {'; then
     expect "R22 invalidation ORDER" "is not invalidated BEFORE the data file"
 else
     echo "  FAIL R22 anchors absent -- source drifted from this harness."; fail=$((fail+1))
@@ -277,10 +264,8 @@ echo "== R26: keep the invalidation but DROP THE REFUSAL -- the r17 fail-OPEN.  
 echo "==      A .mfst that cannot be removed is logged and the data truncated    =="
 echo "==      anyway. The call is present and correctly ordered, so PIN A and    =="
 echo "==      PIN A2 both pass; only PIN F sees it.                              =="
-if sub "$F" '                if (!sd_TargetSafeToOpenForWrite(gSDCardData.filePath)) {
-                    gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
-                } else {' '                if (!sd_TargetSafeToOpenForWrite(gSDCardData.filePath)) {
-                    /* mutant: refusal removed */
+if sub "$F" '                    gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
+                } else {' '                    /* mutant: refusal discarded */
                 }
                 {'; then
     expect "R26 refusal on failure" "no longer refuses the"
@@ -632,6 +617,7 @@ echo "==      finding 3, reintroduced on the manifest side only. The count arm  
 echo "==      is what catches it: the data-file guard is still there.           =="
 if sub "$F" '        if (e != SYS_FS_ERROR_NO_PATH && e != SYS_FS_ERROR_NO_FILE) {
             gSDCardData.writeRefuseReason = SD_REFUSE_TARGET_UNREADABLE;
+            /* log_budget: max=88 */
             LOG_E("[SD1124] mfst stat e=%d: '"'"'%s'"'"'", (int)e, target);
             return false;
         }
