@@ -2070,6 +2070,50 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	      echo "       it can refuse a session over its length (audit :2862)."; \
 	      exit 1;; \
 	 esac
+	@# ⛔⛔⛔ PIN 34 -- r27: THE BITSET'S RANGE IS DERIVED FROM EVERY WRITER OF
+	@# fileCounter, NOT FROM BUCKET CAPACITY.
+	@#
+	@# It was ((MAX_BUCKET + 1) * MAX_DIR_FILES) + 1 = 4161. r25 showed bucket
+	@# capacity does not bound the counter (the reopen path suppresses the roll),
+	@# and I then reported "no ceiling below 2^32" -- WRONG. The r25/r26 findings'
+	@# 9999 was right: rotation is gated on
+	@#     willRotate = (fileCounter < SD_CARD_MANAGER_MAX_SPLIT_FILES)
+	@# so the counter stops there. I missed it because I enumerated the counter's
+	@# WRITES and the bucket arithmetic, while the ceiling lives in a READ against
+	@# a differently-named macro -- the very enumeration failure I had just named
+	@# as r26's lesson.
+	@#
+	@# ⭐ NOT COSMETIC: at 4161 a LEGITIMATE long session reaches indices the
+	@# bitset cannot hold, so r25's above-limit route fires and every open past
+	@# part 4161 does an exact content scan -- the per-open re-read that option B
+	@# existed to remove. Correctness was never at risk; the COST guarantee was.
+	@#
+	@# Pinned on BOTH terms, so a future edit cannot quietly re-derive the range
+	@# from one writer again, and pinned AGAINST the bucket arithmetic by name.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 for probe in \
+	   "SD_CARD_MANAGER_MAX_SPLIT_FILES" \
+	   "SD_CARD_MANAGER_UNIQUE_TARGET_MAX" \
+	 ; do \
+	   case "$$pp" in \
+	     *"$$probe"*) ;; \
+	     *) echo "ERROR: #1124 r27 PIN 34: the bitset range no longer mentions"; \
+	        echo "       $$probe. It must be derived from EVERY writer of"; \
+	        echo "       fileCounter -- the rotation ceiling AND the discriminator"; \
+	        echo "       probe loop -- not from bucket capacity, which r25 showed"; \
+	        echo "       does not bound it."; \
+	        exit 1;; \
+	   esac; \
+	 done; \
+	 case "$$pp" in \
+	   *"SD_FOREIGN_PART_LIMIT (((SD_CARD_MANAGER_MAX_BUCKET"*) \
+	      echo "ERROR: #1124 r27 PIN 34: the bitset range is derived from BUCKET"; \
+	      echo "       CAPACITY again. r25 disproved that premise: the reopen path"; \
+	      echo "       suppresses the roll and the count that drives it, so the"; \
+	      echo "       counter passes 4161 in ordinary long sessions and every"; \
+	      echo "       open beyond it falls back to a per-open content scan."; \
+	      exit 1;; \
+	 esac
 	$(CC) $(CFLAGS) -o $(GATE1124_BIN) test_1124_overwrite_gate.c
 
 $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h \

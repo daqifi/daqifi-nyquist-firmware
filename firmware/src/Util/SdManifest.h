@@ -553,9 +553,14 @@ static inline uint32_t SdManifest_PartIndexOf(const char *name,
          * that directory. The reasoning in the comment I replaced was wrong:
          * it said an unrepresentable index means "we cannot tell whether it is
          * one of ours". We can tell, and the answer is NO -- the most parts one
-         * session can produce is (MAX_BUCKET + 1) * MAX_DIR_FILES = 4160, so
+         * session can produce is bounded by SD_CARD_MANAGER_MAX_SPLIT_FILES (9999), so
          * ANY value that does not even fit a uint32_t is far outside the set of
          * names we will ever open. Nothing to check; do not set a bit.
+         *
+         * (r27: this said "(MAX_BUCKET + 1) * MAX_DIR_FILES = 4160", which was the
+         * WRONG ceiling -- rotation stops at MAX_SPLIT_FILES, not at bucket
+         * capacity. The conclusion is unaffected: an overflowing index is
+         * outside either figure.)
          *
          * ⭐ THIRD INSTANCE of one mistake in three rounds -- the manifest
          * COUNT cap, the over-limit index, and now the overflowing index. All

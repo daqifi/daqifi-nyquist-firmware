@@ -241,6 +241,14 @@ _Static_assert(offsetof(SYS_FS_FSTAT, lfname) >= sizeof(FILINFO),
  * capacity: at SD_MANIFEST_LINE_MAX (136) bytes per record this is over 61,000
  * records, and a file that long is not terminating.
  *
+ * ⚠ r27 CORRECTION to the reasoning above, not to the bound: I justified
+ * dropping the line cap partly by "the record count is effectively unbounded".
+ * It is NOT -- rotation stops at SD_CARD_MANAGER_MAX_SPLIT_FILES (9999), so a
+ * manifest holds at most about that many records. The old 4161 cap was still
+ * wrong, which is the finding's point, and a byte bound on the READ is still
+ * the right shape; but the record count is bounded and I should not have said
+ * otherwise.
+ *
  * ⚠ DISCLOSED, not hidden: exceeding it still refuses. That is unavoidable for
  * an unbounded quantity -- the work has to stop somewhere -- but it is now a
  * bound on how much we will READ rather than on how much the user may have
@@ -284,13 +292,63 @@ _Static_assert(offsetof(SYS_FS_FSTAT, lfname) >= sizeof(FILINFO),
  * Sized to the most parts one session can produce, so an index beyond it
  * cannot be one of ours. Static, not on app_SDCardTask's stack (1024 words,
  * 468 profiled peak -- app_freertos.c). 4161 bits = 522 bytes. */
-/* ⛔ r26: this used to be SD_FOREIGN_SCAN_MAX_LINES, which coupled the bitset's
- * RANGE to a read cap that r26 retired. They answer different questions -- how
- * many indices we can record, versus how much of a file we will read -- so the
- * range is now stated in its own terms. The value is unchanged, and r25's
- * above-limit route is what makes an index beyond it safe. */
+/* #958: how many scratch-name candidates the collision walk will examine.
+ *
+ * TIED TO THE BUCKET CEILING, not a number of its own, on an operator ruling
+ * (2026-10-15). It was 16u -- an arbitrary quarter of what a bucket holds --
+ * and that bound was the ENTIRE source of the exhaustion argument this fix
+ * spent four designs on: with 17 same-stem files the walk ran out of names it
+ * was willing to try and had to choose between truncating one and refusing the
+ * operation (which reopens the `mode` double-duty teardown race). Raising it
+ * dissolves the choice for any realistic card.
+ *
+ * ⚠ WHAT THIS DOES NOT DO, stated because the stronger claim is tempting and
+ * false: it does NOT make exhaustion unreachable. MAX_DIR_FILES is the
+ * threshold at which the firmware's OWN writer rolls to a new bucket -- not a
+ * cap on what the directory can hold, since a card can be populated
+ * externally. So this raises the population required to exhaust the walk from
+ * 17 files to 65; it does not reduce it to zero. The fallback below still
+ * exists and is still reachable in principle.
+ *
+ * COST: each candidate is one SYS_FS_FileStat, i.e. a FatFs dir_find, which is
+ * O(directory size) like every other lookup here -- so the walk is bounded by
+ * (candidates x directory size) and runs ONCE per benchmark, not per write.
+ * #689's bucketing is what keeps the directory small enough for that to be
+ * cheap; the two mechanisms are deliberately sized off the same constant. */
+#define SD_CARD_MANAGER_UNIQUE_TARGET_MAX  SD_CARD_MANAGER_MAX_DIR_FILES
+
+/* ⛔⛔⛔ #1124 r27: THE BITSET'S RANGE, DERIVED FROM EVERY WRITER OF
+ * fileCounter -- WHICH IS WHAT I FAILED TO DO TWICE.
+ *
+ * This was ((MAX_BUCKET + 1) * MAX_DIR_FILES) + 1 = 4161, from bucket capacity.
+ * r25 showed bucket capacity does not bound the counter (the reopen path
+ * suppresses the roll), and I then told the reviewer there was "no ceiling
+ * below 2^32". ⚠ THAT WAS WRONG, and the r25/r26 findings' figure of 9999 was
+ * right: rotation is gated on
+ *     willRotate = (fileCounter < SD_CARD_MANAGER_MAX_SPLIT_FILES)   // 9999
+ * so the counter stops advancing there. I missed it because I enumerated the
+ * counter's WRITES and the bucket arithmetic, while the ceiling lives in a READ
+ * compared against a differently-named macro -- the exact enumeration failure I
+ * had just finished naming as the lesson of r26.
+ *
+ * Derived now from BOTH writers, so it tracks either one moving:
+ *   - the rotation path advances it to at most MAX_SPLIT_FILES; and
+ *   - the #958 discriminator probe loop can add up to UNIQUE_TARGET_MAX more
+ *     within a single open, and is NOT gated by the split limit.
+ *
+ * ⭐ WHY THIS MATTERS AND IS NOT COSMETIC. At 4161 a LEGITIMATE long session
+ * reaches indices the bitset cannot hold, so r25's above-limit route fires and
+ * every open past part 4161 does an exact content scan -- which is precisely
+ * the per-open re-read that option B existed to remove. The r21 cost fix
+ * silently stopped working past 4161. Correctness was never at risk (the route
+ * is sound); the COST guarantee was.
+ *
+ * 10064 bits = 1260 bytes static, against 163 KB of free data RAM in the clean
+ * build -- 0.45% of headroom, which is what makes this the cheap option the
+ * finding said it was. The above-limit route STAYS as the backstop, so if
+ * either macro moves the result is a cost change, never a missed collision. */
 #define SD_FOREIGN_PART_LIMIT \
-        (((SD_CARD_MANAGER_MAX_BUCKET + 1u) * SD_CARD_MANAGER_MAX_DIR_FILES) + 1u)
+        (SD_CARD_MANAGER_MAX_SPLIT_FILES + SD_CARD_MANAGER_UNIQUE_TARGET_MAX + 1u)
 #define SD_FOREIGN_BITS_WORDS   ((SD_FOREIGN_PART_LIMIT + 31u) / 32u)
 static uint32_t gForeignPartBits[SD_FOREIGN_BITS_WORDS];
 
@@ -323,30 +381,6 @@ static inline bool sd_ForeignBitTest(uint32_t idx) {
 #define SD_MANIFEST_WRITE_TRIES            3u
 
 /* #958: names the scratch walk tries before settling for the last one. */
-/* #958: how many scratch-name candidates the collision walk will examine.
- *
- * TIED TO THE BUCKET CEILING, not a number of its own, on an operator ruling
- * (2026-10-15). It was 16u -- an arbitrary quarter of what a bucket holds --
- * and that bound was the ENTIRE source of the exhaustion argument this fix
- * spent four designs on: with 17 same-stem files the walk ran out of names it
- * was willing to try and had to choose between truncating one and refusing the
- * operation (which reopens the `mode` double-duty teardown race). Raising it
- * dissolves the choice for any realistic card.
- *
- * ⚠ WHAT THIS DOES NOT DO, stated because the stronger claim is tempting and
- * false: it does NOT make exhaustion unreachable. MAX_DIR_FILES is the
- * threshold at which the firmware's OWN writer rolls to a new bucket -- not a
- * cap on what the directory can hold, since a card can be populated
- * externally. So this raises the population required to exhaust the walk from
- * 17 files to 65; it does not reduce it to zero. The fallback below still
- * exists and is still reachable in principle.
- *
- * COST: each candidate is one SYS_FS_FileStat, i.e. a FatFs dir_find, which is
- * O(directory size) like every other lookup here -- so the walk is bounded by
- * (candidates x directory size) and runs ONCE per benchmark, not per write.
- * #689's bucketing is what keeps the directory small enough for that to be
- * cheap; the two mechanisms are deliberately sized off the same constant. */
-#define SD_CARD_MANAGER_UNIQUE_TARGET_MAX  SD_CARD_MANAGER_MAX_DIR_FILES
 /* #780: how long the pumped wait blocks between USB write pumps. Small enough
  * that a filling circular buffer is serviced promptly, large enough that the
  * wait is not a busy-spin against the SD task.
