@@ -270,6 +270,82 @@ static inline bool SdManifest_SegmentEqualFolded(const char *a, const char *b,
     return true;
 }
 
+/* ⛔⛔ #1124 r22 AUDIT FOLLOW-UP: ONE DEFINITION OF "THE NEXT PATH SEGMENT".
+ *
+ * These exist so SdManifest_PartIndexOf and
+ * SdManifest_PathsEqualCaseInsensitive normalise IDENTICALLY, because they are
+ * two stages of ONE gate and the cheaper stage decides whether the careful one
+ * runs at all.
+ *
+ * ⛔ WHY, measured: r21 put a once-per-session bitset prefilter in front of the
+ * exact comparison to cut cost. The comparator models five FatFs equivalences
+ * (E1-E5, enumerated against ff.c in its own header below). The prefilter
+ * modelled NONE of them -- it compared whole strings with a plain case-folded
+ * byte compare. Since a clear bit SKIPS the comparator, the guard's real
+ * strength silently became the prefilter's: a record spelled `D//exp-1.csv` or
+ * `D/exp-1.csv.` set no bit, the careful comparator was never consulted, and
+ * the collision was missed.
+ *
+ * ⭐ ADDING A CHEAP STAGE IN FRONT OF A CAPABLE ONE DOES NOT INHERIT ITS
+ * CAPABILITY -- IT CAPS IT. The guard is min(stages). It was invisible to every
+ * test, because the tests used names OUR code produces, which are canonical by
+ * construction; the gap only opens for a sidecar written by something else.
+ *
+ * Extracted rather than reimplemented, deliberately: a second normalisation
+ * would be the fifth naming rule, and this row has four consecutive rounds of
+ * evidence about what that costs. The comparator's behaviour is unchanged -- it
+ * calls these instead of inlining the same steps, and its existing equivalence
+ * tests are the proof. */
+
+/* Trailing SPACES and DOTS are not part of a segment (E1, ff.c:2895-2899). */
+static inline size_t SdManifest_SegmentTrimmedLen(const char *s, size_t len)
+{
+    while (len > 0u && (s[len - 1u] == ' ' || s[len - 1u] == '.')) {
+        len--;
+    }
+    return len;
+}
+
+/* Advance `*p` to the next path segment, FatFs-style: runs of '/' are skipped,
+ * covering LEADING (E4), DUPLICATED (E2) and TERMINATING (E3) separators in one
+ * step. `*seg`/`*len` describe the segment with E1 already applied.
+ *
+ * ⚠ A segment that trims to ZERO length (all dots/spaces) is RETURNED as such
+ * and not skipped, because that is what the comparator did before this
+ * extraction; changing it would be a silent behaviour edit riding along with a
+ * refactor. */
+static inline bool SdManifest_NextSegment(const char **p, const char **seg,
+                                           size_t *len)
+{
+    const char *s = *p;
+    size_t n = 0u;
+
+    while (*s == '/') {
+        s++;
+    }
+    if (*s == '\0') {
+        *p = s;
+        return false;
+    }
+    while (s[n] != '\0' && s[n] != '/') {
+        n++;
+    }
+    *seg = s;
+    *len = SdManifest_SegmentTrimmedLen(s, n);
+    *p = s + n;
+    return true;
+}
+
+/* Two segments equal, E1 + E5. Lengths are the TRIMMED ones. */
+static inline bool SdManifest_SegmentsEqual(const char *a, size_t la,
+                                             const char *b, size_t lb)
+{
+    if (la != lb) {
+        return false;
+    }
+    return SdManifest_SegmentEqualFolded(a, b, la);
+}
+
 /* ⛔⛔ #1124 r21 / THE PURE HALF OF THE FOREIGN-RECORD GUARD.
  *
  * Given a name RECORDED in some manifest, decide which part index of a session
@@ -319,16 +395,20 @@ static inline uint32_t SdManifest_PartIndexOf(const char *name,
                                                const char *file,
                                                bool *fault)
 {
-    const char *rest;
+    const char *np;
+    const char *dp;
+    const char *seg;
     const char *leaf;
-    const char *slash;
+    size_t segLen = 0u;
+    size_t leafLen;
+    size_t fileLen;
+    size_t stemLen;
+    size_t extLen;
+    const char *ext;
     const char *dot;
     const char *d;
     const char *digitsEnd;
-    size_t dirLen;
-    size_t stemLen;
-    size_t extLen;
-    size_t leafLen;
+    bool inBucket = false;
     uint32_t idx = 0u;
 
     if (fault != NULL) {
@@ -338,57 +418,70 @@ static inline uint32_t SdManifest_PartIndexOf(const char *name,
         return SDMANIFEST_PART_NONE;
     }
 
-    /* Must sit at or below the session's directory. */
-    dirLen = SdManifest_CanonicalDirLen(dir);
-    if (strlen(name) <= (dirLen + 1u)) {
-        return SDMANIFEST_PART_NONE;
+    /* ---- 1. every segment of `dir` must match, SEGMENT-WISE ---------------
+     * Walked with the SAME iterator the comparator uses, so "D//sub", "D/sub/"
+     * and "/D/sub" describe the same prefix here as they do there. r21 compared
+     * the directory as ONE STRING and therefore matched none of those -- which
+     * is the defect this rewrite closes. */
+    np = name;
+    dp = dir;
+    for (;;) {
+        const char *dseg;
+        size_t dsegLen = 0u;
+        if (!SdManifest_NextSegment(&dp, &dseg, &dsegLen)) {
+            break;                          /* directory exhausted */
+        }
+        if (!SdManifest_NextSegment(&np, &seg, &segLen)) {
+            return SDMANIFEST_PART_NONE;    /* name shorter than its own dir */
+        }
+        if (!SdManifest_SegmentsEqual(seg, segLen, dseg, dsegLen)) {
+            return SDMANIFEST_PART_NONE;    /* a different directory */
+        }
     }
-    if (!SdManifest_SegmentEqualFolded(name, dir, dirLen)
-            || name[dirLen] != '/') {
-        return SDMANIFEST_PART_NONE;
-    }
-    rest = name + dirLen + 1u;
 
-    /* At most ONE intermediate segment (a rotation bucket). */
-    slash = strchr(rest, '/');
-    if (slash == NULL) {
-        leaf = rest;
-    } else {
-        if (strchr(slash + 1, '/') != NULL) {
+    /* ---- 2. what remains must be <leaf>, or <bucket>/<leaf> -------------- */
+    if (!SdManifest_NextSegment(&np, &seg, &segLen)) {
+        return SDMANIFEST_PART_NONE;        /* the directory itself, no file */
+    }
+    leaf = seg;
+    leafLen = segLen;
+    if (SdManifest_NextSegment(&np, &seg, &segLen)) {
+        inBucket = true;                    /* the first was a bucket */
+        leaf = seg;
+        leafLen = segLen;
+        if (SdManifest_NextSegment(&np, &seg, &segLen)) {
             return SDMANIFEST_PART_NONE;    /* deeper than we ever write */
         }
-        leaf = slash + 1;
     }
 
-    /* Index 0 is the configured name itself, and ONLY directly in the
-     * directory: generateFilename's counter==0 arm joins onto the bucket path,
-     * and the counter is 0 exactly once, while bucket 0 IS the directory. */
-    if (slash == NULL) {
-        if (strlen(leaf) == strlen(file)
-                && SdManifest_SegmentEqualFolded(leaf, file, strlen(file))) {
-            return 0u;
+    /* `file` is one segment, trimmed the way both sides always are. */
+    fileLen = SdManifest_SegmentTrimmedLen(file, strlen(file));
+    if (fileLen == 0u) {
+        return SDMANIFEST_PART_NONE;
+    }
+
+    /* ---- 3. index 0 is the configured name itself, and ONLY directly in the
+     * directory: generateFilename's counter==0 arm runs exactly once, while
+     * bucket 0 IS the directory, so the configured name never appears inside a
+     * bucket. */
+    if (!inBucket && SdManifest_SegmentsEqual(leaf, leafLen, file, fileLen)) {
+        return 0u;
+    }
+
+    /* ---- 4. otherwise "<stem>-<N><ext>", N unpadded as "%u" emits -------- */
+    dot = NULL;
+    {
+        size_t i;
+        for (i = 0u; i < fileLen; i++) {
+            if (file[i] == '.') {
+                dot = file + i;
+            }
         }
     }
+    stemLen = (dot != NULL) ? (size_t)(dot - file) : fileLen;
+    ext = (dot != NULL) ? dot : "";
+    extLen = (dot != NULL) ? (fileLen - stemLen) : 0u;
 
-    /* Otherwise "<stem>-<N><ext>", with N unpadded decimal as "%u" emits. */
-    dot = strrchr(file, '.');
-    stemLen = (dot != NULL) ? (size_t)(dot - file) : strlen(file);
-    extLen = (dot != NULL) ? strlen(dot) : 0u;
-    leafLen = strlen(leaf);
-    /* ⛔ #1124 r21 AUDIT HIGH (:378): NO EMPTY-STEM SPECIAL CASE.
-     *
-     * This used to return NONE when the stem was empty, which broke the one
-     * property the function has to have: being the INVERSE of the generator.
-     * SD:FILE accepts ".csv" (the validator's segment checks only reject
-     * lengths 1 and 2, so a zero-length stem passes), and generateFilename
-     * then emits "-1.csv" for part 1. So a real part name was classified as
-     * "not one of ours", the bit was never set, the exact check never ran, and
-     * the collision went unnoticed -- the fail-OPEN direction.
-     *
-     * Nothing below needs the special case: with stemLen == 0 the prefix test
-     * is vacuously true and the separator test still requires a leading '-',
-     * which is exactly what the generator produces. Removing it makes the
-     * match structural rather than a set of cases I remembered to cover. */
     /* stem + '-' + at least one digit + ext */
     if (leafLen < (stemLen + 2u + extLen)) {
         return SDMANIFEST_PART_NONE;
@@ -399,11 +492,10 @@ static inline uint32_t SdManifest_PartIndexOf(const char *name,
     if (leaf[stemLen] != '-') {
         return SDMANIFEST_PART_NONE;
     }
-    if (extLen != 0u) {
-        if (!SdManifest_SegmentEqualFolded(leaf + (leafLen - extLen), dot,
-                                            extLen)) {
-            return SDMANIFEST_PART_NONE;
-        }
+    if (extLen != 0u
+            && !SdManifest_SegmentEqualFolded(leaf + (leafLen - extLen), ext,
+                                               extLen)) {
+        return SDMANIFEST_PART_NONE;
     }
     d = leaf + stemLen + 1u;
     digitsEnd = leaf + (leafLen - extLen);
@@ -621,53 +713,33 @@ static inline bool SdManifest_PathsEqualCaseInsensitive(const char *a,
      * a nested opener is -Wcomment, which is -Werror in the firmware build.)
      * FR_INVALID_NAME (ff.c:2901) applies only to a segment that is EMPTY
      * AFTER SNIPPING and is not merely a separator run, e.g. "foo/   /bar". */
+    /* ⛔ r22: E1-E5 now come from SdManifest_NextSegment / _SegmentsEqual, so
+     * SdManifest_PartIndexOf -- the prefilter that decides whether this
+     * comparison runs at all -- normalises by the SAME definition. The steps
+     * are unchanged; they moved. See the header on those helpers for the
+     * defect that forced the extraction.
+     *
+     * ⛔ LOOP TERMINATION still depends on the separator skip, which now lives
+     * inside NextSegment: it leaves `*p` past a segment of at least one
+     * character, so each iteration ADVANCES. That dependency was implicit
+     * until a mutation test HUNG for 200 s instead of failing -- on the SCPI
+     * task, which is worse than any wrong answer. Keep the guaranteed advance
+     * if you restructure either function. */
     for (;;) {
-        size_t na, nb, ea, eb, i;
-
-        /* E4: leading separators, and E2: any run between segments */
-        while (*a == '/') { a++; }
-        while (*b == '/') { b++; }
+        const char *sa;
+        const char *sb;
+        size_t la = 0u;
+        size_t lb = 0u;
+        const bool ga = SdManifest_NextSegment(&a, &sa, &la);
+        const bool gb = SdManifest_NextSegment(&b, &sb, &lb);
 
         /* E3: a run of separators at the very end terminates both sides */
-        if (*a == '\0' || *b == '\0') {
-            return *a == '\0' && *b == '\0';
+        if (!ga || !gb) {
+            return ga == gb;
         }
-
-        /* ⛔ LOOP TERMINATION DEPENDS ON THE SKIP ABOVE, and that dependency
-         * was implicit until a mutation test HUNG for 200 s instead of
-         * failing. After the separator skip, `*a` is neither '/' nor NUL, so
-         * na >= 1 and the `a += na` below ADVANCES. Remove or reorder the skip
-         * and na becomes 0 on a path like "a//b", `a += 0` spins, and this
-         * function never returns -- on the SCPI task, which is worse than any
-         * wrong answer it could give. If you restructure this loop, keep a
-         * guaranteed advance of at least one character per iteration. */
-        na = 0u; nb = 0u;
-        while (a[na] != '\0' && a[na] != '/') { na++; }
-        while (b[nb] != '\0' && b[nb] != '/') { nb++; }
-
-        /* E1: snip trailing ' ' and '.' exactly as create_name() does */
-        ea = na; eb = nb;
-        while (ea > 0u && (a[ea - 1u] == ' ' || a[ea - 1u] == '.')) { ea--; }
-        while (eb > 0u && (b[eb - 1u] == ' ' || b[eb - 1u] == '.')) { eb--; }
-
-        if (ea != eb) {
+        if (!SdManifest_SegmentsEqual(sa, la, sb, lb)) {   /* E1 + E5 */
             return false;
         }
-        for (i = 0u; i < ea; i++) {                 /* E5 */
-            char ca = a[i];
-            char cb = b[i];
-            if (ca >= 'A' && ca <= 'Z') {
-                ca = (char)(ca - 'A' + 'a');
-            }
-            if (cb >= 'A' && cb <= 'Z') {
-                cb = (char)(cb - 'A' + 'a');
-            }
-            if (ca != cb) {
-                return false;
-            }
-        }
-        a += na;
-        b += nb;
     }
 }
 

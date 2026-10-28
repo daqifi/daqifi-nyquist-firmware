@@ -1514,6 +1514,81 @@ TEST(part_index_treats_a_large_index_as_a_number_not_a_fault) {
     ASSERT_FALSE(f);
 }
 
+/* ⛔⛔ #1124 r22 FOLLOW-UP: THE TWO STAGES OF THE GATE MUST AGREE.
+ *
+ * The guard is bit-then-compare: SdManifest_PartIndexOf decides whether
+ * SdManifest_PathsEqualCaseInsensitive is ever consulted. So the prefilter must
+ * recognise every spelling the comparator considers equal, or the careful stage
+ * is simply skipped and the guard's strength collapses to the cheap one's.
+ *
+ * ⭐ THIS IS THE PROPERTY, not a list of cases: for each spelling the
+ * COMPARATOR calls equal to the canonical path, the PREFILTER must return the
+ * SAME index. Both halves are asserted on every row, so the test cannot pass by
+ * the comparator and the prefilter being wrong together -- and a future
+ * equivalence added to one and not the other fails here.
+ */
+TEST(the_prefilter_recognises_every_spelling_the_comparator_calls_equal) {
+    const char *canonical = "DAQiFi/exp-1.csv";
+    const char *spellings[] = {
+        "DAQiFi/exp-1.csv",         /* the canonical form itself */
+        "DAQiFi//exp-1.csv",        /* E2 duplicated separator */
+        "/DAQiFi/exp-1.csv",        /* E4 leading separator */
+        "DAQiFi/exp-1.csv/",        /* E3 terminating separator */
+        "DAQiFi/exp-1.csv.",        /* E1 trailing dot */
+        "DAQiFi/exp-1.csv ",        /* E1 trailing space */
+        "DAQiFi./exp-1.csv",        /* E1 on the DIRECTORY segment */
+        "DAQIFI/EXP-1.CSV",         /* E5 case */
+        "//DAQiFi///exp-1.csv//",   /* all of them at once */
+    };
+    unsigned i;
+    bool f;
+
+    for (i = 0; i < (sizeof(spellings) / sizeof(spellings[0])); i++) {
+        /* the comparator calls it the same path... */
+        ASSERT_TRUE(SdManifest_PathsEqualCaseInsensitive(spellings[i], canonical));
+        /* ...so the prefilter must give it the same index */
+        ASSERT_EQ(SdManifest_PartIndexOf(spellings[i], "DAQiFi", "exp.csv", &f), 1u);
+        ASSERT_FALSE(f);
+    }
+}
+
+/* The same agreement with the DIRECTORY spelled oddly, which is the half r21
+ * got wrong by comparing the configured directory as one string. */
+TEST(the_prefilter_agrees_however_the_configured_directory_is_spelled) {
+    const char *dirs[] = { "DAQiFi", "DAQiFi/", "DAQiFi//", "/DAQiFi", "DAQiFi." };
+    unsigned i;
+    bool f;
+    for (i = 0; i < (sizeof(dirs) / sizeof(dirs[0])); i++) {
+        ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-1.csv", dirs[i], "exp.csv", &f), 1u);
+        ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp.csv", dirs[i], "exp.csv", &f), 0u);
+        ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/P003/exp-9.csv", dirs[i], "exp.csv", &f), 9u);
+    }
+    /* and the configured NAME spelled with a trailing dot is the same name */
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-1.csv", "DAQiFi", "exp.csv.", &f), 1u);
+}
+
+/* ⭐ THE CONTROL. Normalising must not make UNRELATED names match -- otherwise
+ * the two arms above are satisfied by a prefilter that says "index 1" to
+ * everything, which would refuse ordinary sessions. Each row here is a name the
+ * comparator also calls DIFFERENT from the canonical one. */
+TEST(normalisation_does_not_make_unrelated_names_match) {
+    const char *canonical = "DAQiFi/exp-1.csv";
+    const char *others[] = {
+        "DAQiFi/other.csv.",
+        "DAQiFi//other-1.csv",
+        "OTHER/exp-1.csv",
+        "DAQiFi/sub/other/exp-1.csv",   /* deeper than we write */
+        "DAQiFi/exp-1.txt",
+    };
+    unsigned i;
+    bool f;
+    for (i = 0; i < (sizeof(others) / sizeof(others[0])); i++) {
+        ASSERT_FALSE(SdManifest_PathsEqualCaseInsensitive(others[i], canonical));
+        ASSERT_EQ(SdManifest_PartIndexOf(others[i], "DAQiFi", "exp.csv", &f),
+                  SDMANIFEST_PART_NONE);
+    }
+}
+
 int main(void)
 {
     printf("=== #924 SD session integrity manifest ===\n");
@@ -1565,5 +1640,8 @@ int main(void)
     RUN(part_index_inverts_the_generator_over_a_set_of_stems_and_extensions);
     RUN(part_index_says_none_to_a_near_miss);
     RUN(part_index_treats_a_large_index_as_a_number_not_a_fault);
+    RUN(the_prefilter_recognises_every_spelling_the_comparator_calls_equal);
+    RUN(the_prefilter_agrees_however_the_configured_directory_is_spelled);
+    RUN(normalisation_does_not_make_unrelated_names_match);
     return TEST_SUMMARY();
 }
