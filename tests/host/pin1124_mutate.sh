@@ -1089,7 +1089,7 @@ echo "==      session named exp.csv.mfst writes exp.csv.mfst.mfst and leaves   =
 echo "==      its data file occupying a later exp.csv session's manifest name. =="
 if sub "$S" "        if (SdManifest_NameHasManifestExtLen(pBuff, fileLen)) {" \
             "        if (false) {"; then
-    expect "R79 the setter refuses a .mfst name" "no longer refuses a name ending in the manifest extension"
+    expect "R79 the setter refuses a .mfst name" "the FILE setter no longer refuses a name"
 else
     echo "  FAIL R79 anchor absent."; fail=$((fail+1))
 fi
