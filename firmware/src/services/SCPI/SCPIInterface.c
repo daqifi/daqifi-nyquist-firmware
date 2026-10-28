@@ -10026,6 +10026,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:MEMory:STACk?", .callback = SCPI_GetStackStats,},
     //
     {.pattern = "SYSTem:STORage:SD:FILE", .callback = SCPI_StorageSDLoggingSet,},
+    {.pattern = "SYSTem:STORage:SD:FILE?", .callback = SCPI_StorageSDLoggingGet,},
     {.pattern = "SYSTem:STORage:SD:GET", .callback = SCPI_StorageSDGetData},
     {.pattern = "SYSTem:STORage:SD:CRC", .callback = SCPI_StorageSDCrcStart,},
     {.pattern = "SYSTem:STORage:SD:CRC?", .callback = SCPI_StorageSDCrcGet,},

@@ -2259,51 +2259,105 @@ static bool sd_RemoveStaleManifestAt(const char *path) {
     return true;
 }
 
-/* ⛔ #1124 r18: EVERY TRUNCATING OPEN OF FILE F INVALIDATES F's MANIFEST,
- * UNLESS THAT MANIFEST IS THIS SESSION'S LIVE ONE. Returns false when the data
- * file must NOT be truncated.
+/* ⛔ #1124 / OPERATOR RULING L=C: AN EXISTING TARGET IS REFUSED, NOT
+ * TRUNCATED, unless the client explicitly asked to overwrite THIS target.
+ * Returns false when the open must not proceed.
  *
- * r17 gated this on "the session's first open", and that was a PROXY for the
- * real rule rather than the rule. The proxy failed where the two come apart
- * (r18 finding 1): rotation's existing-target search can land on `exp-1.csv`,
- * which may be a PREVIOUS session's FIRST file and therefore have its own
- * `exp-1.csv.mfst`. WRITE_PLUS truncates it, and with a first-open-only gate
- * nothing invalidated that record -- the same defect r17 fixed, one open over.
+ * WHY THE SHAPE CHANGED. Rounds 16, 17 and 18 each closed one case of "which
+ * manifest describes the file I am about to destroy?" and each time the next
+ * round found another: a subdirectory target whose manifest name drops the
+ * directory, a split part belonging to a previous session's manifest, a
+ * stat fault read as an absence, an 8.3 alias resolving to a different file.
+ * They are not four bugs. They are one: THE CODE INFERS FILE IDENTITY FROM A
+ * NAME, AND THE FILESYSTEM DOES NOT. The map from data path to manifest name
+ * is not injective -- `DAQiFi/exp.csv`, `DAQiFi/sub/exp.csv` and
+ * `DAQiFi/0/exp.csv` all name `DAQiFi/exp.csv.mfst` -- so no naming rule can
+ * decide it, and three rounds of better naming rules is the evidence.
  *
- * ⭐ The discriminator is IDENTITY, not ordinality: "is this manifest the one
- * this session has open?", never "is this the first time round?". There is
- * exactly ONE truncating data-file open in this module and BOTH the first open
- * and every rotation reach it, which is why keying on ordinality could not
- * work -- the two cases are the same line of code.
+ * So the destructive default goes away. Nothing here deletes anything it
+ * cannot prove is its own:
+ *   - the target data file exists  -> REFUSE (it is never truncated);
+ *   - a manifest exists at the target's manifest name and is not this
+ *     session's live one -> REFUSE (it is never removed);
+ *   - either cannot be INSPECTED -> REFUSE, fail closed. A stat fault is not
+ *     an absence; r18 finding 3 was exactly that conflation.
+ * With no truncation and no deletion, there is no "which manifest describes
+ * the overwritten bytes" question left to get wrong, which is what closes the
+ * class rather than its fourth instance.
  *
- * The manifest for a data file is `<SD:DIR>/<basename of the file>.mfst`: the
- * basename, because a rotated part lives in a bucket while manifests live in
- * the parent, and that is the name a session whose SD:FILE was that part would
- * itself have created. So the name this computes for `exp-1.csv` is exactly the
- * name that collides.
+ * The overwrite opt-in is the single place destruction is still possible, and
+ * it is reached only by a client naming the target AND asking, in the same
+ * command. See `overwriteExisting` in sd_card_manager.h.
+ *
+ * ⭐ ONE RESOLVED PATH FOR BOTH. The data path and the manifest name are
+ * derived here from the SAME `dataPath` the caller is about to open, so the
+ * two cannot disagree about which file is in question -- which is how r18
+ * findings 1 and 4 arose (the creation path and the invalidation path each
+ * re-derived the name, differently).
  */
-static bool sd_InvalidateManifestForTarget(const char *dataPath) {
+static bool sd_TargetSafeToOpenForWrite(const char *dataPath) {
     char target[SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX
                 + SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX
                 + sizeof(SD_MANIFEST_EXT) + 2u];
     char live[sizeof(target)];
+    bool overwriteAsked;
+
+    taskENTER_CRITICAL();
+    overwriteAsked = gpSDCardSettings->overwriteExisting;
+    taskEXIT_CRITICAL();
+
+    /* ---- 1. the DATA file ------------------------------------------------
+     * Checked FIRST and for the actual target, so a rotation part gets the
+     * same treatment as a session's first file: both reach this one function
+     * through the module's single truncating open. */
+    SYS_FS_FSTAT dst;
+    memset(&dst, 0, sizeof(dst));
+    if (SYS_FS_FileStat(dataPath, &dst) == SYS_FS_RES_SUCCESS) {
+        if (!overwriteAsked) {
+            gSDCardData.writeRefuseReason = SD_REFUSE_TARGET_EXISTS;
+            /* The #1124 tag leads, so it survives the logger's 125-byte clamp
+             * truncating the tail, and a client can discriminate this refusal
+             * from every other -200 by SYSTem:LOG?. */
+            /* log_budget: max=90 */
+            LOG_E("[SD1124] refuse overwrite: '%s'", dataPath);
+            return false;
+        }
+    } else {
+        SYS_FS_ERROR e = SYS_FS_Error();
+        if (e != SYS_FS_ERROR_NO_PATH && e != SYS_FS_ERROR_NO_FILE) {
+            /* FAIL CLOSED (r18 finding 3): an unreadable target is not an
+             * absent one, and proceeding would truncate a file we could not
+             * even look at, beside a manifest that still describes it. */
+            gSDCardData.writeRefuseReason = SD_REFUSE_TARGET_UNREADABLE;
+            /* log_budget: max=90 */
+            LOG_E("[SD1124] stat err=%d: '%s'", (int)e, dataPath);
+            return false;
+        }
+        /* Genuinely absent: creating it destroys nothing. Fall through -- a
+         * stale manifest may still be sitting at its manifest name, which is
+         * the remaining case below. */
+    }
+
+    /* ---- 2. the MANIFEST name this target maps to ------------------------
+     * The basename, because a rotated part lives in a bucket while manifests
+     * live in the parent -- and that is also precisely why the map is not
+     * injective and why a collision here is REFUSED rather than resolved. */
     const char *slash = strrchr(dataPath, '/');
     const char *base = (slash != NULL) ? (slash + 1) : dataPath;
     const int w = snprintf(
         target, sizeof(target), "%.*s/%s" SD_MANIFEST_EXT,
         (int)SdManifest_CanonicalDirLen(gpSDCardSettings->directory),
         gpSDCardSettings->directory, base);
-
     if (w < 0 || (size_t)w >= sizeof(target)) {
         /* Cannot name it, so no session could have created it either: there is
-         * nothing at that name to go stale. Truncating is safe. */
+         * nothing at that name to go stale. */
         return true;
     }
 
-    /* THIS SESSION'S LIVE MANIFEST IS OFF LIMITS. Removing it mid-session would
-     * destroy the records of every file already logged -- the opposite of the
-     * protection this function provides. Compared the way the filesystem does,
-     * because FatFs's duplicate-open lock is case-insensitive. */
+    /* THIS SESSION'S LIVE MANIFEST IS OFF LIMITS, and is not a collision:
+     * removing it mid-session would destroy the records of every file already
+     * logged. Compared the way the filesystem does, because FatFs's
+     * duplicate-open lock is case-insensitive. */
     if (gSDCardData.manifestHandle != SYS_FS_HANDLE_INVALID) {
         const int lw = snprintf(
             live, sizeof(live), "%.*s/%s" SD_MANIFEST_EXT,
@@ -2314,6 +2368,32 @@ static bool sd_InvalidateManifestForTarget(const char *dataPath) {
             return true;                /* ours, and open: leave it alone */
         }
     }
+
+    SYS_FS_FSTAT mst;
+    memset(&mst, 0, sizeof(mst));
+    if (SYS_FS_FileStat(target, &mst) != SYS_FS_RES_SUCCESS) {
+        SYS_FS_ERROR e = SYS_FS_Error();
+        if (e != SYS_FS_ERROR_NO_PATH && e != SYS_FS_ERROR_NO_FILE) {
+            gSDCardData.writeRefuseReason = SD_REFUSE_TARGET_UNREADABLE;
+            /* log_budget: max=88 */
+            LOG_E("[SD1124] mfst stat e=%d: '%s'", (int)e, target);
+            return false;
+        }
+        return true;                    /* no manifest at that name */
+    }
+
+    /* A manifest exists at this target's manifest name and it is not ours.
+     * It may describe a DIFFERENT capture entirely -- that is the
+     * non-injective map -- so it is not ours to remove on a guess. */
+    if (!overwriteAsked) {
+        gSDCardData.writeRefuseReason = SD_REFUSE_MANIFEST_NOT_OURS;
+        /* log_budget: max=88 */
+        LOG_E("[SD1124] refuse prior mfst: '%s'", target);
+        return false;
+    }
+    /* Explicitly authorised: now the existing predicate applies, and its verb
+     * matches -- sd_RemoveStaleManifestAt unlinks, and it checks the content
+     * and refuses a non-manifest file. */
     return sd_RemoveStaleManifestAt(target);
 }
 
@@ -4254,7 +4334,7 @@ void sd_card_manager_ProcessState() {
                  * which also abandons the rotation window (#757) -- one refusal path
                  * rather than a second one written here. The generic "Failed to open"
                  * line fires too, and that is accurate: we did not open the file. */
-                if (!sd_InvalidateManifestForTarget(gSDCardData.filePath)) {
+                if (!sd_TargetSafeToOpenForWrite(gSDCardData.filePath)) {
                     gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
                 } else {
                     // Use WRITE_PLUS to create/truncate file (overwrite mode)
@@ -6372,6 +6452,15 @@ const char* sd_card_manager_WriteRefuseText(void) {
         case SD_REFUSE_BUCKET_NOT_DIR:
             return "a file is occupying a directory-bucket name - rename or "
                    "remove it, or log to a different directory";
+        case SD_REFUSE_TARGET_EXISTS:
+            return "the target file already exists - it is not overwritten "
+                   "unless SYSTem:STORage:SD:FILE asked for it";
+        case SD_REFUSE_TARGET_UNREADABLE:
+            return "the target could not be inspected - likely a card or "
+                   "filesystem fault; refused rather than assumed absent";
+        case SD_REFUSE_MANIFEST_NOT_OURS:
+            return "a previous session's manifest describes this name - it is "
+                   "not removed unless SYSTem:STORage:SD:FILE asked for it";
         case SD_REFUSE_NONE:
         default:
             /* The enum documents NONE as "not refused", so returning a refusal

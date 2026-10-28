@@ -893,6 +893,35 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
      * length check, so a max-length name is not rejected for the prefix. */
     pBuff = SD_StripConfiguredDir(pBuff, &fileLen, pSDCardRuntimeConfig->directory);
 
+    /* ⛔ #1124 L=C: the OPTIONAL OVERWRITE OPT-IN, read from every invocation
+     * and DEFAULTING TO 0 WHEN OMITTED.
+     *
+     * Defaulting to 0 is what makes this fail safe. An existing one-argument
+     * client keeps working and gets refuse-by-default, which is the ruling's
+     * intent; and a bare `SD:FILE` (no arguments at all) WITHDRAWS a previous
+     * authorisation rather than silently carrying it forward onto whatever the
+     * target happens to be by then.
+     *
+     * It rides this setter rather than being a standing mode because the
+     * authorisation is bound to the NAME it authorises: a global "overwrite
+     * anything" switch would still be in force when a later SD:FILE named a
+     * different file, and a user who authorised destroying scratch.csv never
+     * authorised destroying experiment.csv.
+     *
+     * Parsed here but APPLIED only after every validation below has passed, so
+     * a rejected command changes nothing. */
+    int overwriteParam = 0;
+    if (!SCPI_ParamInt32(context, &overwriteParam, FALSE)) {
+        overwriteParam = 0;
+    }
+    if (overwriteParam != 0 && overwriteParam != 1) {
+        LOG_E("SD:FILE - overwrite flag must be 0 or 1, got %d", overwriteParam);
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+    const bool overwriteAsked = (overwriteParam == 1);
+
     if (fileLen > 0) {
         if (fileLen > SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX) {
             LOG_E("SD:FILE - Filename too long: %zu bytes, max: %zu\r\n",
@@ -937,6 +966,10 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
         if (!benchOwnsTarget) {
             memcpy(pSDCardRuntimeConfig->file, pBuff, fileLen);
             pSDCardRuntimeConfig->file[fileLen] = '\0';
+            /* #1124: written under the SAME critical section as the name, so
+             * no reader can ever observe this name with the other name's
+             * authorisation. They are one decision and must be one write. */
+            pSDCardRuntimeConfig->overwriteExisting = overwriteAsked;
         }
         taskEXIT_CRITICAL();
         if (benchOwnsTarget) {
@@ -949,6 +982,12 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
         LOG_D("SD:FILE - Set filename to '%s' (%zu bytes) dir='%s'\r\n",
               pSDCardRuntimeConfig->file, fileLen, pSDCardRuntimeConfig->directory);
     } else {
+        /* #1124: no name given, so the authorisation still updates -- a bare
+         * SD:FILE withdraws it (overwriteAsked is false unless this call
+         * passed 1). Same critical section discipline as above. */
+        taskENTER_CRITICAL();
+        pSDCardRuntimeConfig->overwriteExisting = overwriteAsked;
+        taskEXIT_CRITICAL();
         LOG_D("SD:FILE - No filename provided, using existing: '%s'\r\n", pSDCardRuntimeConfig->file);
     }
 
@@ -2976,6 +3015,49 @@ __exit_point:
  * testable at all. Stopping SD:LISt? from writing the field (#799 part 3) is
  * a behaviour change that needs a client survey first and is NOT done here.
  */
+/**
+ * @brief Report the staged logging target and its overwrite authorisation
+ *
+ * Command: SYSTem:STORage:SD:FILE?
+ * Reply:   "<name>",<overwrite>      e.g.  "log.csv",0
+ *
+ * ⛔ #1124 L=C: THE SETTER GAINED STATE, SO IT GAINS A QUERY IN THE SAME PR.
+ * SD:FILE had no query form at all, which is #1176: the staged target could be
+ * set and never read back, so a client that wanted to restore it had to
+ * remember what it had sent and a test had to carry sentinel machinery to
+ * infer it. Adding an overwrite authorisation to a write-only setter would
+ * have doubled that: a client could not tell whether a destructive overwrite
+ * was armed. A query form of an existing command is not new command surface,
+ * and this one closes #1176 as a by-product.
+ *
+ * The reply shape is deliberately distinctive -- a quoted name followed by a
+ * comma and an integer -- so it cannot be confused with any other SD query's
+ * response. On firmware predating this command the header itself is
+ * unrecognised and the device answers -113, so a client can detect absence
+ * directly instead of having to parse a reply that might mean something else.
+ *
+ * Snapshotted under one critical section, so the pair is observed as it was
+ * WRITTEN. Reading them separately could report this name with the previous
+ * name's authorisation -- the setter writes both together for the same
+ * reason, and a reader that splits the pair would undo that.
+ */
+scpi_result_t SCPI_StorageSDLoggingGet(scpi_t * context) {
+    sd_card_manager_settings_t* pSDCardRuntimeConfig =
+            BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    char snapshot[sizeof(pSDCardRuntimeConfig->file)];
+    bool overwrite;
+
+    taskENTER_CRITICAL();
+    memcpy(snapshot, pSDCardRuntimeConfig->file, sizeof(snapshot));
+    overwrite = pSDCardRuntimeConfig->overwriteExisting;
+    taskEXIT_CRITICAL();
+    snapshot[sizeof(snapshot) - 1u] = '\0';
+
+    SCPI_ResultText(context, snapshot);
+    SCPI_ResultInt32(context, overwrite ? 1 : 0);
+    return SCPI_RES_OK;
+}
+
 scpi_result_t SCPI_StorageSDDirectoryGet(scpi_t * context) {
     sd_card_manager_settings_t* pSDCardRuntimeConfig =
             BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);

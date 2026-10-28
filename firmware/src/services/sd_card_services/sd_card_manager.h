@@ -112,6 +112,26 @@ extern "C" {
          * target DELIBERATELY (the #689 pre-walk reopens a split part in
          * place). Default false. */
         bool uniqueTarget;
+        /* ⛔ #1124 / OPERATOR RULING L=C: an existing data file is REFUSED, not
+         * truncated, unless the client has explicitly asked to overwrite THIS
+         * target. Staged by the optional second parameter of
+         * SYSTem:STORage:SD:FILE and reported by SYSTem:STORage:SD:FILE?.
+         *
+         * It is bound to the NAME it authorises, which is why it rides SD:FILE
+         * rather than being a global mode: a standing "overwrite anything"
+         * switch would still be in force when a later SD:FILE named a
+         * different file, and the user who authorised destroying `scratch.csv`
+         * never authorised destroying `experiment.csv`.
+         *
+         * Each SD:FILE invocation fully determines it -- omitting the
+         * parameter clears it -- so an existing one-argument client gets
+         * refuse-by-default, which is the ruling's intent.
+         *
+         * CONSUMED AT SESSION START (latched into the session, then cleared
+         * here), so one opt-in authorises one session. Session-scoped rather
+         * than single-file because the ruling extends the check to rotation
+         * parts, and a session rotates many times. */
+        bool overwriteExisting;
     } sd_card_manager_settings_t;
 
 
@@ -333,6 +353,21 @@ extern "C" {
         SD_REFUSE_BUCKET_UNREADABLE, /* a bucket could not be counted OR stat'd (FS fault) */
         SD_REFUSE_BUCKET_NOT_DIR,    /* a non-directory occupies the bucket name */
         SD_REFUSE_NAME_NOT_A_FILE,   /* #1124: the configured name ends in '/' */
+        /* #1124 L=C: the target already exists and no overwrite was asked for.
+         * Appended at the END -- these values cross the SCPI boundary through
+         * sd_card_manager_WriteRefuseReasonText(), so renumbering would change
+         * what an existing client is told. */
+        SD_REFUSE_TARGET_EXISTS,
+        /* #1124 L=C, FAIL CLOSED: the target could not be INSPECTED. A stat
+         * fault is not an absence; treating it as one is r18 finding 3, and it
+         * would let a truncation proceed beside a manifest that still
+         * describes the old bytes. */
+        SD_REFUSE_TARGET_UNREADABLE,
+        /* #1124 L=C: a manifest exists at this target's manifest name and this
+         * session cannot prove it is its own. Refused rather than deleted --
+         * r18 findings 1 and 4 are both wrong-DELETION bugs reached through a
+         * name, and C's answer to a destructive default is to refuse. */
+        SD_REFUSE_MANIFEST_NOT_OURS,
     } SdWriteRefuseReason;
 
     SdWriteRefuseReason sd_card_manager_WriteRefuseReason(void);
