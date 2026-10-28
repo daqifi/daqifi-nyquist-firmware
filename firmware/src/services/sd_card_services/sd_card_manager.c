@@ -146,6 +146,15 @@ _Static_assert(offsetof(SYS_FS_FSTAT, lfname) >= sizeof(FILINFO),
                                + 8u + 5u + 21u + 12u + 1u \
                                + (sizeof(SD_MANIFEST_PREFIX_MARK) - 1u))
 
+/* #1124 r21: ONE name for the manifest-path buffer size. Four buffers already
+ * spelled this sum out longhand and had to be kept in step by hand; a fifth
+ * (the r21 authorisation snapshot) is one too many. Expands to 87 for the
+ * current 40/40 maxima: dir + '/' + file + ".mfst" + NUL. */
+#define SD_SESSION_MANIFEST_PATH_MAX \
+        (SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX \
+         + SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX \
+         + sizeof(SD_MANIFEST_EXT) + 2u)
+
 /* #924: how many SYS_FS_FileWrite calls one manifest line may take. A short
  * write has already put bytes on the card, so abandoning the line leaves a
  * fragment the NEXT record concatenates onto -- see sd_AppendManifestLine.
@@ -692,6 +701,44 @@ typedef struct {
      * the other SCPI transport would otherwise move or revoke the
      * authorisation mid-rotation. */
     volatile bool overwriteAuthorizedForSession;
+    /* ⛔⛔ #1124 r21 / ITEM 1: THE RESOLVED PATH THE AUTHORISATION IS FOR.
+     *
+     * `overwriteAuthorizedForSession` above is a bare yes. A yes with no
+     * subject is a yes about whatever the configuration happens to say when
+     * the destructive step finally runs, and those are not the same thing:
+     * the opt-in arrives in ONE command naming ONE target, and the open that
+     * consumes it happens later, on another task, after an arbitrary number
+     * of rotations.
+     *
+     * So the grant records WHAT it was granted for -- this session's resolved
+     * manifest path, which is the identity of the whole part-name space (the
+     * configured directory plus name; rotation parts are derived from it and
+     * neither field is rewritten in-module, so it is stable for the session's
+     * life). The open recomputes it and refuses on any difference. Empty
+     * means "no authorisation", which is the fail-closed value.
+     *
+     * ⚠ This is DEFENCE IN DEPTH, not the primary guard -- see the SD:FILE /
+     * SD:DIR claim discussion at the compare site. A backstop is kept anyway
+     * because the primary guard is a property of every CURRENT writer, and
+     * "enumerate every writer" is exactly the assumption that has failed in
+     * this module four rounds running. */
+    char overwriteAuthorizedManifest[SD_SESSION_MANIFEST_PATH_MAX];
+    /* ⛔ #1124 r21 / ITEM 3: the foreign-record scan is OWED but not yet run.
+     *
+     * Set at arm (where the authorisation is granted) and consumed by the SD
+     * task at the session's first truncating open. The decision is made at
+     * arm; the I/O cannot be, because FF_FS_REENTRANT is 0 (ffconf.h:280) so
+     * FatFs is not thread-safe and the arm runs on the SCPI/streaming task
+     * while every other filesystem access in this module runs on
+     * app_SDCardTask. Running the scan where the flag is set would race the
+     * SD task inside FatFs. */
+    volatile bool foreignScanPending;
+    /* #1124 r21 / ITEM 3: the prefilter's answer, latched for the session.
+     * True means another capture's manifest shares this directory, so each
+     * open must ask whether its own target is one of the names that manifest
+     * records. False -- the common case -- means no content read is ever
+     * needed, which is what keeps this off the rotation path. */
+    volatile bool foreignManifestsPresent;
     // #689: bucketing state. curBucket is the subdirectory index currently
     // being filled (0 == the configured directory itself); bucketPath is its
     // full path, rebuilt only when the bucket changes. bucketFileCountAtStart
@@ -1656,6 +1703,25 @@ bool sd_card_manager_Init(sd_card_manager_settings_t *pSettings) {
     gSDCardData.manifestOpenAttempted = false;
     gSDCardData.manifestLines = 0;
     gSDCardData.manifestFragmentPending = false;
+    /* ⛔⛔ #1124 r21: THE OVERWRITE AUTHORISATION IS RETAINED-RAM TOO, and was
+     * not on this list. It lives in gSDCardData, which the paragraph above
+     * says in so many words does NOT get its compile-time zero across an MCLR
+     * or an IPE flash -- so the one flag in this module that decides whether
+     * an existing file is DESTROYED could come up set, with no client having
+     * asked. It is written at every WRITE arm, so the window is "a flash, then
+     * an open reached without an intervening arm"; this file sets mode WRITE
+     * from config setters that arm nothing (see gWriteSessionIsStreamingLog's
+     * header), which is the shape that makes the window real rather than
+     * theoretical. #981 is on this list for the weaker reason that it decides
+     * whether a write FAILS.
+     *
+     * Scrubbed with its r21 subject and scan state, so a reset of any kind
+     * leaves "no authorisation, for no path, nothing scanned" -- the
+     * fail-closed combination. */
+    gSDCardData.overwriteAuthorizedForSession = false;
+    gSDCardData.overwriteAuthorizedManifest[0] = '\0';
+    gSDCardData.foreignScanPending = false;
+    gSDCardData.foreignManifestsPresent = false;
     /* #981: and the fault-injection arm, for the same reason plus a stronger
      * one -- this is the line that makes "a reboot always clears it" TRUE.
      * SYST:REBoot is RCON_SoftwareReset(), the same reset class #409 is about,
@@ -2140,6 +2206,46 @@ static void sd_AbandonRotationWindow(const char* why) {
  * own "failing safe rather than reading it as absent" idiom above -- same
  * shape, same reasoning, same two error codes that legitimately mean
  * absent. */
+/* ⛔⛔ #1124 r21 / ITEM 2: THE THREE-STATE INSPECTION RESULT.
+ *
+ * WHY A TYPE AND NOT ANOTHER OUT-PARAM. Rounds 17, 18, 19 and 20 each fixed
+ * one instance of the same defect: a `bool` inspector whose `false` meant
+ * BOTH "I looked, and the hazard is absent" and "I could not look", with a
+ * caller taking the permissive reading. r20's remedy was the out-param
+ * (`bool *fsFault`) that this file already used in three other places. That
+ * remedy is sound at each site and still wrong as a strategy, for one reason:
+ *
+ *   ⚠ AN OUT-PARAM MAKES THE THIRD STATE OPTIONAL TO READ. The fault is in a
+ *     variable the caller may ignore, and nothing -- not the compiler, not a
+ *     reviewer skimming the call -- requires it to be consulted. A caller that
+ *     ignores it is back to exactly the two-valued check the out-param was
+ *     added to fix, and r20's own finding at :2249 was that caller.
+ *
+ * Five instances says the SHAPE is the problem, so the fix is a type that
+ * cannot be collapsed: the fault is IN the value, there is no permissive
+ * default to fall into, and `switch` over it without a FAULT case warns. A
+ * caller that only cares "may I proceed?" writes `== SD_INSPECT_CLEAR`, which
+ * is fail-closed for both other states by construction.
+ *
+ * ⭐ IT ALSO FOUND ONE. Converting sd_NameIsRotationPartOfExistingManifest()
+ * -- written in r20, as part of the fix for this very class -- exposed a live
+ * fail-open: it ended `return (SYS_FS_FileStat(owner, &st) == SUCCESS);`, so
+ * an I/O fault on the owning manifest read as "no owner exists", and with the
+ * opt-in that authorised the truncation the function exists to refuse. r20
+ * fixed the two instances it was looking at and wrote a third.
+ */
+typedef enum {
+    /* Inspected, and the hazard is ABSENT. The only value that permits the
+     * guarded action. */
+    SD_INSPECT_CLEAR = 0,
+    /* Inspected, and the hazard is PRESENT. Refuse -- a known condition. */
+    SD_INSPECT_HAZARD,
+    /* NOT inspected: a stat, open or read failed for a reason that is not
+     * "absent", or a record did not parse. Refuse. An unreadable thing is not
+     * an absent one; that conflation is r18 finding 3. */
+    SD_INSPECT_FAULT
+} sd_InspectResult;
+
 /* ⛔ #1124 r20: `false` MEANT TWO THINGS AND ONE CALLER PICKED THE WRONG ONE.
  *
  * This returned false both for "definitely not a manifest" (safe -- leave it
@@ -2156,19 +2262,19 @@ static void sd_AbandonRotationWindow(const char* why) {
  * Third instance in this module of a two-valued answer collapsing a third
  * state onto the permissive value.
  */
-static bool sd_ManifestPathSafeToOverwrite(const char *path, bool *fsFault) {
-    *fsFault = false;
+/* #1124 r21: the out-param is gone -- see sd_InspectResult above. CLEAR means
+ * "ours to destroy", HAZARD "something else is there", FAULT "could not tell". */
+static sd_InspectResult sd_InspectManifestPathOverwritable(const char *path) {
     SYS_FS_FSTAT st;
     memset(&st, 0, sizeof(st));
     if (SYS_FS_FileStat(path, &st) != SYS_FS_RES_SUCCESS) {
         SYS_FS_ERROR e = SYS_FS_Error();
         if (e != SYS_FS_ERROR_NO_PATH && e != SYS_FS_ERROR_NO_FILE) {
-            *fsFault = true;
             LOG_E("[SD] #924 manifest-path stat failed err=%d - failing "
                   "safe rather than reading it as absent", (int)e);
-            return false;
+            return SD_INSPECT_FAULT;
         }
-        return true;    /* genuinely absent: nothing to overwrite */
+        return SD_INSPECT_CLEAR;    /* genuinely absent: nothing to overwrite */
     }
     /* ⛔ #1124 r17: A DIRECTORY IS NOT OURS TO DESTROY, and this is checked
      * BEFORE the size shortcut below, because a directory stats with
@@ -2183,10 +2289,10 @@ static bool sd_ManifestPathSafeToOverwrite(const char *path, bool *fsFault) {
      * that made it wrong. */
     if ((st.fattrib & SYS_FS_ATTR_DIR) != 0) {
         LOG_E("[SD] #924 the manifest path is a DIRECTORY - refusing to touch it");
-        return false;
+        return SD_INSPECT_HAZARD;
     }
     if (st.fsize == 0u) {
-        return true;    /* nothing there to be destroyed either way */
+        return SD_INSPECT_CLEAR;    /* nothing there to be destroyed either way */
     }
 
     char peek[SD_MANIFEST_LINE_MAX];
@@ -2194,10 +2300,9 @@ static bool sd_ManifestPathSafeToOverwrite(const char *path, bool *fsFault) {
     size_t peekRead;
 
     if (probeHandle == SYS_FS_HANDLE_INVALID) {
-        *fsFault = true;
         LOG_E("[SD] #924 could not inspect the file at the manifest path "
               "(err=%d) - refusing to risk it", (int)SYS_FS_Error());
-        return false;
+        return SD_INSPECT_FAULT;
     }
     peekRead = SYS_FS_FileRead(probeHandle, peek, sizeof(peek));
     /* ⛔ #1124 r12 review leg: this close result is NOT cosmetic, which is why
@@ -2221,12 +2326,13 @@ static bool sd_ManifestPathSafeToOverwrite(const char *path, bool *fsFault) {
               "slot may stick", (int)SYS_FS_Error());
     }
     if (peekRead == (size_t)-1) {
-        *fsFault = true;
         LOG_E("[SD] #924 could not read the file at the manifest path - "
               "refusing to risk it");
-        return false;
+        return SD_INSPECT_FAULT;
     }
-    return SdManifest_FirstLineLooksLikeManifest(peek, peekRead);
+    return SdManifest_FirstLineLooksLikeManifest(peek, peekRead)
+            ? SD_INSPECT_CLEAR      /* one of ours */
+            : SD_INSPECT_HAZARD;    /* a real file at this name: not ours */
 }
 
 /* Open this session's manifest. Called AT MOST ONCE per session -- see
@@ -2273,10 +2379,8 @@ static bool sd_ManifestPathSafeToOverwrite(const char *path, bool *fsFault) {
  * characters against Logger's 125-byte content ceiling, so naming the file
  * would truncate the tail -- the part that says what went wrong.
  */
-static bool sd_RemoveStaleManifestAt(const char *path, bool *fsFault) {
+static sd_InspectResult sd_RemoveStaleManifestAt(const char *path) {
     SYS_FS_FSTAT st;
-    bool inspectFault = false;
-    *fsFault = false;
     memset(&st, 0, sizeof(st));
     if (SYS_FS_FileStat(path, &st) != SYS_FS_RES_SUCCESS) {
         /* ⛔ #1124 r20 (:2246): A STAT FAULT IS NOT AN ABSENCE. This returned
@@ -2285,31 +2389,38 @@ static bool sd_RemoveStaleManifestAt(const char *path, bool *fsFault) {
         const SYS_FS_ERROR e = SYS_FS_Error();
         if (e != SYS_FS_ERROR_NO_PATH && e != SYS_FS_ERROR_NO_FILE) {
             LOG_E("[SD] #1124 manifest stat failed (err=%d) - refusing", (int)e);
-            *fsFault = true;
-            return false;
+            return SD_INSPECT_FAULT;
         }
-        return true;                    /* genuinely absent -- nothing stale */
+        return SD_INSPECT_CLEAR;        /* genuinely absent -- nothing stale */
     }
-    if (!sd_ManifestPathSafeToOverwrite(path, &inspectFault)) {
-        if (inspectFault) {
+    switch (sd_InspectManifestPathOverwritable(path)) {
+        case SD_INSPECT_FAULT:
             /* ⛔ #1124 r20 (:2249): the inspector REFUSED because it could not
              * tell, and this arm reported that as "holds a non-manifest file"
              * and returned TRUE -- converting a refusal into permission. The
-             * inspector was right; this caller discarded the distinction. */
+             * inspector was right; this caller discarded the distinction.
+             * r21: the distinction is now in the VALUE, so discarding it needs
+             * a `case` that says so rather than an ignored out-param. */
             LOG_E("[SD] #1124 manifest could not be inspected - refusing");
-            *fsFault = true;
-            return false;
-        }
-        LOG_E("[SD] #1124 manifest path holds a non-manifest file - left as is");
-        return true;                    /* not ours: left alone, not removed */
+            return SD_INSPECT_FAULT;
+        case SD_INSPECT_HAZARD:
+            /* ⚠ Deliberately CLEAR, as this function's header argues: a
+             * NON-manifest file at this name is not removed, and cannot be
+             * mistaken for a correct record of the new data either. Deleting a
+             * user file would be strictly worse. */
+            LOG_E("[SD] #1124 manifest path holds a non-manifest file - left as is");
+            return SD_INSPECT_CLEAR;
+        case SD_INSPECT_CLEAR:
+        default:
+            break;
     }
     if (SYS_FS_FileDirectoryRemove(path) != SYS_FS_RES_SUCCESS) {
         LOG_E("[SD] #1124 stale manifest not removed (err=%d) - refusing to "
               "truncate its data file", (int)SYS_FS_Error());
-        return false;
+        return SD_INSPECT_HAZARD;       /* a stale record we could not clear */
     }
     LOG_I("[SD] #1124 removed a prior session's manifest for this name");
-    return true;
+    return SD_INSPECT_CLEAR;
 }
 
 /* ⛔ #1124 r20: THE ONE DERIVATION OF THIS SESSION'S MANIFEST PATH.
@@ -2333,12 +2444,23 @@ static bool sd_RemoveStaleManifestAt(const char *path, bool *fsFault) {
  * as "no manifest can exist at that name" -- not as permission to proceed with
  * a destructive step.
  */
-static bool sd_SessionManifestPath(char *out, size_t outLen) {
+/* #1124 r21: the derivation, parameterised. The arm-time authorisation
+ * snapshot (item 1) must resolve the path from the settings the CLIENT just
+ * sent -- `pSettings`, which has not been copied into gpSDCardSettings yet at
+ * that point in sd_UpdateSettingsImpl -- so the one derivation has to be
+ * reachable without reading the globals. Still exactly one snprintf of this
+ * shape in the module: sd_SessionManifestPath now calls through here rather
+ * than formatting a second copy. */
+static bool sd_ManifestPathFor(char *out, size_t outLen,
+                               const char *dir, const char *file) {
     const int w = snprintf(out, outLen, "%.*s/%s" SD_MANIFEST_EXT,
-                           (int)SdManifest_CanonicalDirLen(gpSDCardSettings->directory),
-                           gpSDCardSettings->directory,
-                           gpSDCardSettings->file);
+                           (int)SdManifest_CanonicalDirLen(dir), dir, file);
     return (w >= 0) && ((size_t)w < outLen);
+}
+
+static bool sd_SessionManifestPath(char *out, size_t outLen) {
+    return sd_ManifestPathFor(out, outLen, gpSDCardSettings->directory,
+                              gpSDCardSettings->file);
 }
 
 /* ⛔ #1124 r20: does `name` look like a ROTATION PART of some other base?
@@ -2359,7 +2481,19 @@ static bool sd_SessionManifestPath(char *out, size_t outLen) {
  * Split on the LAST '-' before the extension, because split parts are
  * "<base>-N<ext>" with N unpadded.
  */
-static bool sd_NameIsRotationPartOfExistingManifest(const char *name) {
+/* ⛔⛔ #1124 r21 / ITEM 2 FOUND A LIVE DEFECT HERE. This returned `bool`, and
+ * its last statement was
+ *
+ *     return (SYS_FS_FileStat(owner, &st) == SYS_FS_RES_SUCCESS);
+ *
+ * so EVERY stat failure -- including a genuine I/O fault on the owning
+ * manifest -- read as "there is no owner", the permissive answer, and with the
+ * overwrite opt-in that authorised the very truncation this function exists to
+ * refuse. Written in r20, in the same round whose whole subject was this
+ * class, two functions above the comment explaining it. That is the argument
+ * for the type rather than another out-param: the shape reproduces itself
+ * faster than the instances get fixed. */
+static sd_InspectResult sd_NameIsRotationPartOfExistingManifest(const char *name) {
     char owner[SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX
                + SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX
                + sizeof(SD_MANIFEST_EXT) + 2u];
@@ -2370,11 +2504,11 @@ static bool sd_NameIsRotationPartOfExistingManifest(const char *name) {
         if (*q == '-') { dash = q; }
     }
     if (dash == NULL || (dash + 1) >= end) {
-        return false;                   /* no "-N" tail: not a part */
+        return SD_INSPECT_CLEAR;        /* no "-N" tail: not a part */
     }
     for (const char *d = dash + 1; d < end; d++) {
         if ((*d < '0') || (*d > '9')) {
-            return false;               /* "-foo" is not a part index */
+            return SD_INSPECT_CLEAR;    /* "-foo" is not a part index */
         }
     }
     /* Rebuild "<base><ext>.mfst" in the configured directory. */
@@ -2384,11 +2518,291 @@ static bool sd_NameIsRotationPartOfExistingManifest(const char *name) {
                            (int)(dash - name), name,
                            (dot != NULL) ? dot : "");
     if (w < 0 || (size_t)w >= sizeof(owner)) {
-        return false;                   /* cannot name it; nothing to own it */
+        /* Cannot name it, so nothing could have created a manifest there
+         * either: `owner` is sized at the MAXIMUM a configured directory plus
+         * filename can contribute, so an overflow here means the settings
+         * already exceed their own documented limits. */
+        return SD_INSPECT_CLEAR;
     }
     SYS_FS_FSTAT st;
     memset(&st, 0, sizeof(st));
-    return (SYS_FS_FileStat(owner, &st) == SYS_FS_RES_SUCCESS);
+    if (SYS_FS_FileStat(owner, &st) == SYS_FS_RES_SUCCESS) {
+        return SD_INSPECT_HAZARD;       /* an existing manifest owns this base */
+    }
+    /* ⛔ r21: THE FIX. Separate "no such manifest" from "could not look". */
+    const SYS_FS_ERROR e = SYS_FS_Error();
+    if (e != SYS_FS_ERROR_NO_PATH && e != SYS_FS_ERROR_NO_FILE) {
+        /* log_budget: max=90 */
+        LOG_E("[SD1124] owner stat e=%d: '%s'", (int)e, owner);
+        return SD_INSPECT_FAULT;
+    }
+    return SD_INSPECT_CLEAR;
+}
+
+/* ⛔⛔⛔ #1124 r21 / ITEM 3: THE FOREIGN-RECORD GUARD.
+ *
+ * THE HOLE. The overwrite opt-in authorises truncating THIS session's target.
+ * Once granted, sd_TargetSafeToOpenForWrite()'s step 1 stops refusing existing
+ * targets -- that is what the grant buys. But a session rotates, and
+ * generateFilename() derives part names from the configured stem; nothing
+ * checks whether a part name it is about to truncate is a name that ANOTHER
+ * session's manifest still RECORDS. Truncate one and that manifest keeps
+ * asserting a size and a CRC32 for bytes that are gone: a record that
+ * validates against nothing, which is the failure mode this whole row exists
+ * to prevent. r20's sd_NameIsRotationPartOfExistingManifest() catches the
+ * converse case (our target is a part of someone's base) and cannot see this
+ * one.
+ *
+ * ⭐⭐ WHY THERE IS NO PART-NAME GRAMMAR HERE, which is the whole design.
+ * The obvious shape is "enumerate this session's part-name space and test each
+ * recorded name for membership". I started there and abandoned it: deciding
+ * membership means re-implementing how FatFs considers two names equal, and
+ * rounds 16, 17, 18 and 19 of this row are four consecutive failures of
+ * exactly that -- "THE CODE INFERS FILE IDENTITY FROM A NAME, AND THE
+ * FILESYSTEM DOES NOT", as the function below already says. A fifth naming
+ * rule would be the fifth instance, and a near-miss in this one fails OPEN:
+ * a part name the test failed to recognise is a truncation it failed to
+ * refuse.
+ *
+ * So the comparison is moved to where no grammar is needed. At the open, the
+ * target path is known EXACTLY -- it is the string about to be handed to
+ * SYS_FS_FileOpen -- so the question becomes "is THIS path recorded?", decided
+ * by the one comparator that already models FatFs's equivalences
+ * (SdManifest_PathsEqualCaseInsensitive, whose equivalence list is enumerated
+ * from follow_path() and create_name() together and has a test per line).
+ * Nothing here guesses what a name means.
+ *
+ * ⭐ WHAT MAKES THAT AFFORDABLE is a cheap exact prefilter. Two facts about
+ * this module, both load-bearing:
+ *
+ *   1. a manifest is only ever created at sd_SessionManifestPath(), i.e. in
+ *      the CONFIGURED directory -- never in a rotation bucket (the r12
+ *      capacity note above says so explicitly); and
+ *   2. since the r13 ruling (issuecomment-6450419546) every record is a FULL
+ *      path.
+ *
+ * Therefore a manifest sitting in this session's directory records paths at or
+ * below it, and the mere PRESENCE of a foreign manifest there is a sound,
+ * conservative test for "a collision is possible at all" -- one directory
+ * enumeration, no file reads, no parsing. The common case (no other manifest
+ * in the directory) pays that once per session and nothing afterwards. Only a
+ * session that is BOTH granted the opt-in AND sharing a directory with another
+ * capture's records pays for content reads, and only then at each open.
+ *
+ * ⚠ The prefilter is deliberately COARSE and may flag a directory whose
+ * foreign manifest records nothing this session would ever write. That costs
+ * reads, never a refusal: the refusal is decided by the exact comparison.
+ */
+#define SD_FOREIGN_SCAN_MAX_MANIFESTS   16u
+#define SD_FOREIGN_SCAN_MAX_LINES       (SD_CARD_MANAGER_MAX_DIR_FILES + 1u)
+
+/* Build this session's own manifest FILE NAME (no directory), for telling our
+ * manifest apart from a foreign one while reading directory entries.
+ *
+ * A configured `file` containing a separator ("sub/exp.csv") puts our manifest
+ * at <dir>/sub/exp.csv.mfst, which is NOT in <dir> -- and then no entry in
+ * <dir> is ours, which is exactly what this comparison yields on its own,
+ * because a directory entry name can never contain '/'. No special case. */
+static bool sd_SessionManifestLeaf(char *out, size_t outLen) {
+    const int w = snprintf(out, outLen, "%s" SD_MANIFEST_EXT,
+                           gpSDCardSettings->file);
+    return (w >= 0) && ((size_t)w < outLen);
+}
+
+/* Read one manifest and report whether it records `needle`.
+ *
+ * ⛔ CONSTRAINT (b), "never trust a manifest to be well-formed": every bound
+ * is explicit and every doubt is a FAULT, which the caller turns into a
+ * refusal. A line over SD_MANIFEST_LINE_MAX, a line with no field separator,
+ * an empty name field, a read error, or more lines than a conforming manifest
+ * can have are all FAULT -- never "skip this line and carry on", which would
+ * make an unparseable manifest read as one recording nothing. */
+static sd_InspectResult sd_ManifestRecordsName(const char *manifestPath,
+                                               const char *needle) {
+    char chunk[64];
+    char line[SD_MANIFEST_LINE_MAX];
+    size_t lineLen = 0u;
+    uint32_t lines = 0u;
+    bool sawEof = false;
+    sd_InspectResult out = SD_INSPECT_CLEAR;
+
+    SYS_FS_HANDLE h = SYS_FS_FileOpen(manifestPath, SYS_FS_FILE_OPEN_READ);
+    if (h == SYS_FS_HANDLE_INVALID) {
+        /* log_budget: max=87 */
+        LOG_E("[SD1124] mfst open fail: '%s'", manifestPath);
+        return SD_INSPECT_FAULT;
+    }
+
+    while (out == SD_INSPECT_CLEAR && !sawEof) {
+        const size_t got = SYS_FS_FileRead(h, chunk, sizeof(chunk));
+        if (got == (size_t)-1) {
+            LOG_E("[SD1124] mfst read fail");
+            out = SD_INSPECT_FAULT;
+            break;
+        }
+        if (got == 0u) {
+            sawEof = true;
+            /* A record with no trailing newline means a truncated write. It is
+             * still processed -- dropping it would silently narrow what the
+             * manifest is taken to cover. */
+            if (lineLen == 0u) {
+                break;
+            }
+        }
+        for (size_t i = 0u; i <= got; i++) {
+            const bool atEnd = (i == got);
+            if (atEnd && !sawEof) {
+                break;              /* more chunks to come; keep accumulating */
+            }
+            if (!atEnd && chunk[i] != '\n') {
+                if (lineLen >= (sizeof(line) - 1u)) {
+                    /* Over the longest line this firmware can emit. Refuse
+                     * rather than truncate-and-parse, which would compare a
+                     * PREFIX of a recorded name against the target. */
+                    LOG_E("[SD1124] mfst line over %u bytes",
+                          (unsigned)(sizeof(line) - 1u));
+                    out = SD_INSPECT_FAULT;
+                    break;
+                }
+                line[lineLen++] = chunk[i];
+                continue;
+            }
+            /* End of a line (or of the file with bytes pending). */
+            line[lineLen] = '\0';
+            if (lineLen == 0u) {
+                lineLen = 0u;
+                if (atEnd) { break; }
+                continue;           /* a blank line records nothing */
+            }
+            if (++lines > SD_FOREIGN_SCAN_MAX_LINES) {
+                LOG_E("[SD1124] mfst over %u lines",
+                      (unsigned)SD_FOREIGN_SCAN_MAX_LINES);
+                out = SD_INSPECT_FAULT;
+                break;
+            }
+            char *sep = strchr(line, ',');
+            if (sep == NULL || sep == line) {
+                /* No name field, or an empty one. */
+                LOG_E("[SD1124] mfst line unparsable at %u", (unsigned)lines);
+                out = SD_INSPECT_FAULT;
+                break;
+            }
+            *sep = '\0';
+            if (SdManifest_PathsEqualCaseInsensitive(line, needle)) {
+                out = SD_INSPECT_HAZARD;
+                break;
+            }
+            lineLen = 0u;
+            if (atEnd) { break; }
+        }
+    }
+
+    if (SYS_FS_FileClose(h) != SYS_FS_RES_SUCCESS) {
+        /* FF_FS_LOCK is 10: a handle that fails to close keeps its lock slot,
+         * and the slot is what some later open needs. Same reasoning, and the
+         * same deliberately path-free message, as the manifest probe above. */
+        LOG_E("[SD1124] mfst scan close failed - a FatFs lock slot may stick");
+    }
+    return out;
+}
+
+/* The guard proper.
+ *
+ * `needle == NULL`  -> THE PREFILTER: is there a foreign manifest in this
+ *                      session's directory at all? HAZARD means "yes, content
+ *                      reads will be needed", not "refuse".
+ * `needle != NULL`  -> THE DECISION: does any foreign manifest record exactly
+ *                      this path? HAZARD means refuse.
+ *
+ * FAULT always means refuse, in both modes.
+ */
+static sd_InspectResult sd_ScanForeignManifests(const char *needle) {
+    char ownLeaf[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX
+                 + sizeof(SD_MANIFEST_EXT) + 1u];
+    char path[SD_SESSION_MANIFEST_PATH_MAX];
+    const char *dir = gpSDCardSettings->directory;
+    const size_t dirLen = SdManifest_CanonicalDirLen(dir);
+    uint32_t manifests = 0u;
+    uint32_t scanned = 0u;
+    sd_InspectResult out = SD_INSPECT_CLEAR;
+    SYS_FS_FSTAT st;
+
+    if (!sd_SessionManifestLeaf(ownLeaf, sizeof(ownLeaf))) {
+        /* Cannot name our own manifest, so nothing read below could be
+         * distinguished from it. Refuse rather than risk treating our own
+         * live records as a foreign session's, or vice versa. */
+        return SD_INSPECT_FAULT;
+    }
+
+    SYS_FS_HANDLE dh = SYS_FS_DirOpen(dir);
+    if (dh == SYS_FS_HANDLE_INVALID) {
+        const SYS_FS_ERROR e = SYS_FS_Error();
+        if (e == SYS_FS_ERROR_NO_PATH || e == SYS_FS_ERROR_NO_FILE) {
+            return SD_INSPECT_CLEAR;    /* no directory yet: no records in it */
+        }
+        /* log_budget: max=40 */
+        LOG_E("[SD1124] scan DirOpen e=%d: '%s'", (int)e, dir);
+        return SD_INSPECT_FAULT;
+    }
+
+    /* The same read bound CountDirEntries uses, for the same reason: a
+     * directory that never ends is a fault, not a long scan. */
+    const uint32_t readCap = SD_CARD_MANAGER_MAX_DIR_FILES
+                             + SD_CARD_MANAGER_MAX_BUCKET + 2u;
+    while (out == SD_INSPECT_CLEAR) {
+        if (scanned >= readCap) {
+            LOG_E("[SD1124] scan over %u entries", (unsigned)readCap);
+            out = SD_INSPECT_FAULT;
+            break;
+        }
+        scanned++;
+        memset(&st, 0, sizeof(st));     /* also NULLs the legacy lfname field */
+        if (SYS_FS_DirRead(dh, &st) == SYS_FS_RES_FAILURE) {
+            LOG_E("[SD1124] scan DirRead e=%d", (int)SYS_FS_Error());
+            out = SD_INSPECT_FAULT;
+            break;
+        }
+        if (st.fname[0] == '\0') {
+            break;                      /* end of directory */
+        }
+        if ((st.fattrib & SYS_FS_ATTR_DIR) != 0) {
+            continue;                   /* a bucket, or '.'/'..': holds no
+                                         * manifest -- see fact 1 above */
+        }
+        if (!SdManifest_NameHasManifestExt(st.fname)) {
+            continue;
+        }
+        if (SdManifest_PathsEqualCaseInsensitive(st.fname, ownLeaf)) {
+            continue;                   /* our own: its records are ours */
+        }
+        if (++manifests > SD_FOREIGN_SCAN_MAX_MANIFESTS) {
+            /* Bounds the per-open cost absolutely. A directory holding more
+             * foreign manifests than this, entered WITH the overwrite opt-in,
+             * is refused rather than permitted to re-read them at every
+             * rotation -- which is how #689's create wedge happened. */
+            LOG_E("[SD1124] over %u foreign mfst",
+                  (unsigned)SD_FOREIGN_SCAN_MAX_MANIFESTS);
+            out = SD_INSPECT_FAULT;
+            break;
+        }
+        if (needle == NULL) {
+            /* Prefilter: one is enough, and no content is read. */
+            out = SD_INSPECT_HAZARD;
+            break;
+        }
+        const int w = snprintf(path, sizeof(path), "%.*s/%s",
+                               (int)dirLen, dir, st.fname);
+        if (w < 0 || (size_t)w >= sizeof(path)) {
+            /* A name we cannot even address is a name we cannot clear. */
+            LOG_E("[SD1124] foreign mfst name too long");
+            out = SD_INSPECT_FAULT;
+            break;
+        }
+        out = sd_ManifestRecordsName(path, needle);
+    }
+
+    (void)SYS_FS_DirClose(dh);
+    return out;
 }
 
 /* ⛔ #1124 / OPERATOR RULING L=C: AN EXISTING TARGET IS REFUSED, NOT
@@ -2443,6 +2857,63 @@ static bool sd_TargetSafeToOpenForWrite(const char *dataPath) {
     overwriteAsked = gSDCardData.overwriteAuthorizedForSession;
     taskEXIT_CRITICAL();
 
+    /* ⛔⛔ #1124 r21: the opt-in's two preconditions, checked BEFORE anything
+     * below acts on `overwriteAsked`. Everything in this block is reached only
+     * WITH the grant, so a default session's open is unchanged -- no extra
+     * stat, no directory read, no parse. */
+    if (overwriteAsked) {
+        /* ---- ITEM 1: the grant must be FOR THIS PATH --------------------- */
+        char authNow[SD_SESSION_MANIFEST_PATH_MAX];
+        if (!sd_SessionManifestPath(authNow, sizeof(authNow))
+                || gSDCardData.overwriteAuthorizedManifest[0] == '\0'
+                || !SdManifest_PathsEqualCaseInsensitive(
+                        authNow, gSDCardData.overwriteAuthorizedManifest)) {
+            /* The configured directory or name moved between the grant and
+             * this open, or the grant never recorded a subject. Either way the
+             * client authorised a different file.
+             *
+             * ⚠ DEFENCE IN DEPTH, and deliberately so. #829's claim protocol
+             * already makes a concurrent SD:FILE/SD:DIR fail while a session
+             * holds `mode != MODE_NONE` (sd_card_manager_TryClaim consults
+             * sd_card_manager_IsBusyLocked inside its own critical section),
+             * so no CURRENT writer can move these fields mid-session. That is
+             * a property of every writer that exists today, which is precisely
+             * the kind of assumption this module has had to re-learn in four
+             * consecutive rounds. This compare does not depend on it. */
+            gSDCardData.writeRefuseReason = SD_REFUSE_AUTH_PATH_CHANGED;
+            /* log_budget: max=87 */
+            LOG_E("[SD1124] grant not for this path: '%s'", authNow);
+            return false;
+        }
+
+        /* ---- ITEM 3: no foreign manifest may RECORD this target ---------- */
+        if (gSDCardData.foreignScanPending) {
+            const sd_InspectResult pre = sd_ScanForeignManifests(NULL);
+            if (pre == SD_INSPECT_FAULT) {
+                gSDCardData.writeRefuseReason = SD_REFUSE_MANIFEST_UNPARSABLE;
+                return false;
+            }
+            /* Latched, so the directory enumeration is paid ONCE per session
+             * rather than once per rotation. Both writes together, so an open
+             * can never see "no longer pending" beside a stale answer. */
+            taskENTER_CRITICAL();
+            gSDCardData.foreignManifestsPresent = (pre == SD_INSPECT_HAZARD);
+            gSDCardData.foreignScanPending = false;
+            taskEXIT_CRITICAL();
+        }
+        if (gSDCardData.foreignManifestsPresent) {
+            const sd_InspectResult rec = sd_ScanForeignManifests(dataPath);
+            if (rec != SD_INSPECT_CLEAR) {
+                gSDCardData.writeRefuseReason =
+                        (rec == SD_INSPECT_FAULT) ? SD_REFUSE_MANIFEST_UNPARSABLE
+                                                  : SD_REFUSE_FOREIGN_RECORD;
+                /* log_budget: max=87 */
+                LOG_E("[SD1124] recorded elsewhere: '%s'", dataPath);
+                return false;
+            }
+        }
+    }
+
     /* ---- 1. the DATA file ------------------------------------------------
      * Checked FIRST and for the actual target, so a rotation part gets the
      * same treatment as a session's first file: both reach this one function
@@ -2479,8 +2950,14 @@ static bool sd_TargetSafeToOpenForWrite(const char *dataPath) {
      * Checked even WITH the opt-in: the client authorised overwriting this
      * target, not invalidating a manifest belonging to a base they may never
      * have named. */
-    if (sd_NameIsRotationPartOfExistingManifest(gpSDCardSettings->file)) {
-        gSDCardData.writeRefuseReason = SD_REFUSE_MANIFEST_NOT_OURS;
+    const sd_InspectResult partOfOther =
+            sd_NameIsRotationPartOfExistingManifest(gpSDCardSettings->file);
+    if (partOfOther != SD_INSPECT_CLEAR) {
+        /* FAULT and HAZARD both refuse; they differ only in the reason a
+         * client is told, which is the whole point of keeping them apart. */
+        gSDCardData.writeRefuseReason = (partOfOther == SD_INSPECT_FAULT)
+                ? SD_REFUSE_TARGET_UNREADABLE
+                : SD_REFUSE_MANIFEST_NOT_OURS;
         /* log_budget: max=90 */
         LOG_E("[SD1124] refuse, recorded part: '%s'", dataPath);
         return false;
@@ -2536,9 +3013,9 @@ static bool sd_TargetSafeToOpenForWrite(const char *dataPath) {
      * reason rather than left as whatever the reason happened to be. A refusal
      * reporting the wrong cause is the same silent-wrong-answer class as a
      * reason with no case in the text function. */
-    bool removeFault = false;
-    if (!sd_RemoveStaleManifestAt(target, &removeFault)) {
-        gSDCardData.writeRefuseReason = removeFault
+    const sd_InspectResult removal = sd_RemoveStaleManifestAt(target);
+    if (removal != SD_INSPECT_CLEAR) {
+        gSDCardData.writeRefuseReason = (removal == SD_INSPECT_FAULT)
                 ? SD_REFUSE_TARGET_UNREADABLE
                 : SD_REFUSE_MANIFEST_NOT_OURS;
         return false;
@@ -2820,15 +3297,16 @@ static void sd_OpenSessionManifest(void) {
      * With one name there is nowhere to fall back to, so REFUSE: opening it
      * SYS_FS_FILE_OPEN_WRITE would truncate whatever it is, and this path is
      * reachable from configured filenames alone. */
-    bool openInspectFault = false;
-    if (!sd_ManifestPathSafeToOverwrite(path, &openInspectFault)) {
-        /* Refuses on EITHER meaning, which is right here: with one name there
-         * is nowhere to fall back to, so "not a manifest" and "could not tell"
-         * both mean no sidecar. The flag is read so the log says which. */
+    const sd_InspectResult openInspect = sd_InspectManifestPathOverwritable(path);
+    if (openInspect != SD_INSPECT_CLEAR) {
+        /* Refuses on EITHER non-CLEAR value, which is right here: with one
+         * name there is nowhere to fall back to, so "not a manifest" and
+         * "could not tell" both mean no sidecar. The value is read so the log
+         * says which. */
         /* log_budget: max=28 -- the longer of the two literals below. */
         LOG_E("[SD] #924 manifest name unusable (%s) - no sidecar",
-              openInspectFault ? "could not inspect"
-                               : "holds a non-manifest file");
+              (openInspect == SD_INSPECT_FAULT) ? "could not inspect"
+                                                : "holds a non-manifest file");
         return;
     }
 
@@ -6355,6 +6833,19 @@ static bool sd_UpdateSettingsImpl(sd_card_manager_settings_t *pSettings,
      * requested mode and returns, so a refused STR:START must not leave the
      * latch set for whatever arms WRITE next. At boot the latch is false by
      * the #409 scrub in sd_card_manager_Init(). */
+    /* ⛔ #1124 r21 / ITEM 1: resolve the authorisation's subject BEFORE taking
+     * the critical section. snprintf of an ~87-byte path with interrupts
+     * disabled is far longer than this section needs to be held, and nothing
+     * about the derivation needs the lock: it reads only fields the caller
+     * owns and writes only this stack buffer. */
+    char armManifest[SD_SESSION_MANIFEST_PATH_MAX];
+    bool armManifestOk = false;
+    if (pSettings != NULL) {
+        armManifestOk = sd_ManifestPathFor(armManifest, sizeof(armManifest),
+                                           pSettings->directory,
+                                           pSettings->file);
+    }
+
     if (pSettings != NULL) {
         taskENTER_CRITICAL();
         if (arm == SD_WRITE_ARM_STREAMING) {
@@ -6383,9 +6874,53 @@ static bool sd_UpdateSettingsImpl(sd_card_manager_settings_t *pSettings,
          * The alternative -- an authorisation that survives a failure -- is
          * the thing that makes a stale one destructive later. */
         if ((arm == SD_WRITE_ARM_STREAMING) || (arm == SD_WRITE_ARM_PLAIN)) {
-            gSDCardData.overwriteAuthorizedForSession =
-                    pSettings->overwriteExisting;
+            const bool granted = pSettings->overwriteExisting;
+            gSDCardData.overwriteAuthorizedForSession = granted;
             pSettings->overwriteExisting = false;
+            /* ⛔ #1124 r21 / ITEM 1: BIND THE GRANT TO ITS SUBJECT IN THE SAME
+             * ATOMIC TRANSITION as the grant itself. Published as two steps,
+             * there is a window in which the flag is true while the recorded
+             * subject is still the PREVIOUS session's -- i.e. an interval
+             * where an authorisation reads as applying to a path nobody
+             * authorised. Same argument as the consume above.
+             *
+             * A grant whose subject could not be formed keeps the flag but
+             * leaves the subject EMPTY, which the compare at the open treats
+             * as a mismatch and refuses. Fail-closed: not naming what you
+             * authorised is not permission. */
+            if (granted && armManifestOk) {
+                memcpy(gSDCardData.overwriteAuthorizedManifest, armManifest,
+                       sizeof(armManifest));
+            } else {
+                gSDCardData.overwriteAuthorizedManifest[0] = '\0';
+            }
+            /* ⛔ #1124 r21 / ITEM 3: only a GRANTED session owes the
+             * foreign-record scan.
+             *
+             * ⭐ WHY THIS IS THE WHOLE WHITELIST, i.e. the answer to "run it
+             * for every session whose part-stem space can truncate an existing
+             * file, not only ',1' sessions". A session WITHOUT the grant
+             * cannot truncate an existing file at all: every truncating open
+             * in this module passes sd_TargetSafeToOpenForWrite(), whose step
+             * 1 stats the actual target and returns false on
+             * SD_REFUSE_TARGET_EXISTS whenever the grant is absent -- so for a
+             * default session the part-stem space is irrelevant, because any
+             * member of it that already exists ends the session instead of
+             * being overwritten. There is nothing for a scan to prevent.
+             *
+             * And scanning anyway would make things worse, not merely cost
+             * time: a default session's part space is unbounded in N, so a
+             * foreign record matching ANY member would refuse a session that
+             * the per-open check would have let run correctly for hours before
+             * ever reaching the colliding part -- if it ever did. That is a
+             * refusal bought with no safety gained. */
+            gSDCardData.foreignScanPending = granted;
+            /* The previous session's latched answer must not outlive it. It is
+             * only ever READ after the prefilter above has refreshed it, so
+             * this is hygiene rather than a fix -- but a stale `true` sitting
+             * next to a fresh `pending` is the kind of pair a later reader has
+             * to reason about, and clearing it removes the question. */
+            gSDCardData.foreignManifestsPresent = false;
         }
         taskEXIT_CRITICAL();
     }
@@ -6674,6 +7209,17 @@ const char* sd_card_manager_WriteRefuseText(void) {
         case SD_REFUSE_MANIFEST_NOT_OURS:
             return "a previous session's manifest describes this name - it is "
                    "not removed unless SYSTem:STORage:SD:FILE asked for it";
+        case SD_REFUSE_AUTH_PATH_CHANGED:
+            return "the overwrite permission was given for a different "
+                   "directory or filename - re-send SYSTem:STORage:SD:FILE "
+                   "naming the file you mean";
+        case SD_REFUSE_FOREIGN_RECORD:
+            return "another capture's manifest already records this exact "
+                   "file - overwriting it would invalidate that record; log "
+                   "to a different name or directory";
+        case SD_REFUSE_MANIFEST_UNPARSABLE:
+            return "a manifest in this directory could not be read or did not "
+                   "parse - refused rather than assumed to cover nothing";
         case SD_REFUSE_NONE:
         default:
             /* The enum documents NONE as "not refused", so returning a refusal

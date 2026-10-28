@@ -385,6 +385,24 @@ extern "C" {
          * r18 findings 1 and 4 are both wrong-DELETION bugs reached through a
          * name, and C's answer to a destructive default is to refuse. */
         SD_REFUSE_MANIFEST_NOT_OURS,
+        /* ⛔ #1124 r21 item 1: the overwrite opt-in was granted for a
+         * DIFFERENT resolved path than the one about to be truncated. The
+         * grant arrives in one command naming one target and is consumed
+         * later, on another task; if the configured directory or name moved in
+         * between, the permission is for a file nobody asked about. Refused
+         * rather than re-interpreted. Appended at the END, as above: these
+         * values cross the SCPI boundary. */
+        SD_REFUSE_AUTH_PATH_CHANGED,
+        /* ⛔ #1124 r21 item 3: another capture's manifest RECORDS this exact
+         * path, so writing it would leave that manifest asserting a size and a
+         * CRC32 for bytes that are gone. The opt-in cannot authorise it -- the
+         * client named their own target, not someone else's record. */
+        SD_REFUSE_FOREIGN_RECORD,
+        /* ⛔ #1124 r21, FAIL CLOSED: a manifest in the logging directory could
+         * not be read, or did not parse within its documented bounds. An
+         * unparseable record is not an empty one; reading it as covering
+         * nothing is what turns a scan into a clean-bill generator. */
+        SD_REFUSE_MANIFEST_UNPARSABLE,
     } SdWriteRefuseReason;
 
     SdWriteRefuseReason sd_card_manager_WriteRefuseReason(void);

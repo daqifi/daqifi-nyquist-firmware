@@ -194,6 +194,47 @@ static inline bool SdManifest_NameIsUsable(const char *name)
     return name[len - 1u] != '/';
 }
 
+/* #1124 r21: does `name` end in the manifest extension?
+ *
+ * Case-INSENSITIVELY, because FAT does not distinguish case: a manifest whose
+ * 8.3 alias reaches us as "EXP.MFS"/"exp.mfst" is the same file either way, and
+ * a case-sensitive test would read a real manifest as an ordinary file and so
+ * scan nothing. ASCII only, for the reason SdManifest_PathsEqualCaseInsensitive
+ * gives at length: strcasecmp is not used anywhere else in this firmware, so
+ * do not assume the XC32 newlib exposes it.
+ *
+ * A name that is EXACTLY the extension with no stem (".mfst") is NOT a
+ * manifest: SdManifest_FormatLine's callers always write <something>.mfst, so
+ * a bare extension is some other file and reading it as a manifest would make
+ * its contents decide a refusal. */
+static inline bool SdManifest_NameHasManifestExt(const char *name)
+{
+    size_t nameLen;
+    const size_t extLen = sizeof(SD_MANIFEST_EXT) - 1u;
+    const char *tail;
+    const char *ext = SD_MANIFEST_EXT;
+    size_t i;
+
+    if (name == NULL) {
+        return false;
+    }
+    nameLen = strlen(name);
+    if (nameLen <= extLen) {
+        return false;
+    }
+    tail = name + (nameLen - extLen);
+    for (i = 0u; i < extLen; i++) {
+        char a = tail[i];
+        char b = ext[i];
+        if ((a >= 'A') && (a <= 'Z')) { a = (char)(a - 'A' + 'a'); }
+        if ((b >= 'A') && (b <= 'Z')) { b = (char)(b - 'A' + 'a'); }
+        if (a != b) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static inline size_t SdManifest_CanonicalDirLen(const char *dir)
 {
     size_t len;
