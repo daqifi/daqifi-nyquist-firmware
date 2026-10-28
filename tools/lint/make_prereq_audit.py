@@ -122,7 +122,10 @@ AND THEN I REINTRODUCED A PARSER FOR THE REFUSALS THEMSELVES
     it now matches the two positions in which make can name a function:
     directly (`$(value X)`, `${value X}`) and through `call`
     (`$(call value,X)`). Measured: 0 hits on the audited Makefile, and prose
-    like "the return value of foo" does not match.
+    like "the return value of foo" does not match. It runs over LOGICAL lines
+    -- backslash continuations joined, and `define` bodies merged -- so no
+    spelling of "split the call across a newline" evades it; see
+    logical_lines() for the four rounds that took.
 
     ⚠ IRREDUCIBLE RESIDUE, stated rather than discovered later: a function
     name ASSEMBLED at runtime (`V := val$(nothing)ue`, then
@@ -160,6 +163,11 @@ WARN_RE = re.compile(
 # positions in which make can name a function: directly, and through `call` --
 # `$(call value,X)` IS the builtin (measured: both spellings expand alike).
 VALUE_RE = re.compile(r"[$][({]\s*(?:call\s+)?value\b")
+
+# A `define` body holds REAL newlines, not continuations, and make still
+# accepts a function call split across one -- so the body is one scanning unit.
+DEFINE_RE = re.compile(r"^\s*define\b")
+ENDEF_RE = re.compile(r"^\s*endef\b")
 
 # make's own record of every file it read, out of its `-p` dump. See the module
 # docstring for why this ONE line of that dump is evidence when the rest is a
@@ -253,6 +261,9 @@ def logical_lines(text):
       r4  `$(call \\` + newline + ` value,LATE)` splits the function name from
           `call`, so VALUE_RE matched neither line -- and the joined form is
           genuinely the builtin (measured: `joined=[x.c] direct=[x.c]`).
+      r5  the same split inside a `define` BODY, where the newline is not a
+          continuation at all, so phase 1 does not join it -- while make
+          accepts the call anyway. Phase 2 below merges define bodies.
 
     Three spellings of one mistake, so this joins ONCE, here, and every scan
     runs over the result. The line number reported is the FIRST physical line
@@ -271,6 +282,7 @@ def logical_lines(text):
             out += " " + part.lstrip()
         return out
 
+    # Phase 1 -- backslash continuations.
     lines, buf, start = [], [], None
     for lineno, ln in enumerate(text.splitlines(), 1):
         if start is None:
@@ -283,7 +295,33 @@ def logical_lines(text):
         buf, start = [], None
     if buf:                              # a trailing backslash at end of file
         lines.append((start, joined(buf)))
-    return lines
+
+    # Phase 2 -- `define` bodies. A plain newline inside define..endef is NOT a
+    # continuation, and phase 1 therefore leaves it alone -- but make accepts a
+    # function call split across one, so `$(call` / newline / `value,X)` in a
+    # define body stayed invisible after r4. Measured at r4's head: make exits
+    # 0 with no warnings, the rule expands to `run: base.c` with the
+    # prerequisite GONE, and moving the definition above the define brings it
+    # back as `run: base.c changed.c` -- so it genuinely is the builtin.
+    #
+    # The body is emitted as ONE logical unit, reported at the `define` line,
+    # which is where a reader goes to edit it. Joined with a space for the same
+    # reason as phase 1: it cannot glue two fragments into a keyword.
+    out, body, start = [], None, None
+    for lineno, ln in lines:
+        if body is None:
+            if DEFINE_RE.match(ln):
+                body, start = [ln], lineno
+            else:
+                out.append((lineno, ln))
+            continue
+        body.append(ln)
+        if ENDEF_RE.match(ln):
+            out.append((start, " ".join(p.strip() for p in body)))
+            body, start = None, None
+    if body:                             # an unterminated define at EOF
+        out.append((start, " ".join(p.strip() for p in body)))
+    return out
 
 
 def find_evasions(makefile, goal="run"):
@@ -467,6 +505,34 @@ SELFTEST_VALUE_CONTINUED = "ok: base.c $(call \\\n value,LATE)\n\t@true\nLATE :=
 # fragments would invent a refusal for a Makefile make reads as clean.
 SELFTEST_SPLIT_WORD = "ok: base.c $(va\\\nlue LATE)\n\t@true\nLATE := late.c\n"
 
+# r5: a `define` body's newlines are NOT continuations, so phase 1 leaves them
+# -- and make accepts the call split across one anyway. Measured: the rule
+# expands with the prerequisite GONE and make warns 0 times.
+SELFTEST_VALUE_IN_DEFINE = """\
+define GUARDED_SRC
+$(call
+value,LATE)
+endef
+
+ok: base.c $(GUARDED_SRC)
+\t@true
+LATE := late.c
+"""
+
+# ⛔ And the control for THAT: an ordinary `define` carrying no `value` call
+# must still pass. Merging bodies to find one evasion must not make every
+# define-using Makefile unauditable.
+SELFTEST_CLEAN_DEFINE = """\
+EARLY := early.c
+
+define GUARDED_SRC
+$(EARLY)
+endef
+
+ok: base.c $(GUARDED_SRC)
+\t@true
+"""
+
 
 def _fixture_exit(files, goal="ok"):
     """(exit code, captured output) from the REAL report() over a fixture tree.
@@ -557,6 +623,12 @@ def self_test():
             #   Makefile:1: warning: undefined variable 'va lue LATE'
             ("CONTROL   a word split by a continuation is NOT a value call",
              {"Makefile": SELFTEST_SPLIT_WORD}, 1),
+            # r5: the define body, which phase 1 alone could not reach.
+            ("REFUSE    $(call value,X) split inside a define BODY",
+             {"Makefile": SELFTEST_VALUE_IN_DEFINE}, 2),
+            # ⛔ And its control: an ordinary define must stay auditable.
+            ("CONTROL   a define carrying no value call still exits 0",
+             {"Makefile": SELFTEST_CLEAN_DEFINE}, 0),
         ]
         for name, files, want_rc in refusal_arms:
             got, out = _fixture_exit(files)

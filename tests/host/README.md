@@ -90,14 +90,20 @@ question and must never be used as evidence for it (see above) — but
 timing component, so the post-parse answer is the complete one. Nothing else is
 taken from that dump.
 
-⛔ **And the `value` scan was then defeated by a continuation too** —
+⛔ **And the `value` scan was then defeated by a split call, twice** —
 `$(call \` + newline + ` value,LATE)`, where the joined form genuinely *is* the
 builtin (measured: `joined=[x.c] direct=[x.c]`) while neither physical line
-matches on its own. That is the **third** time a physical-line scan has been
-beaten by a continuation in this one tool: r1's parser read only a rule's first
-line, r3 missed `include\` + newline, r4 missed this. So the scan no longer
-looks at physical lines at all — continuations are joined **once**, up front,
-and every scan runs over the joined text.
+matches on its own; and then the same split inside a **`define` body**, where
+the newline is not a continuation at all so joining continuations does not
+reach it, yet make accepts the call regardless (measured: the rule expands with
+the prerequisite **gone**, and moving the definition earlier brings it back).
+
+That is **four** rounds of one mistake — r1's parser read only a rule's first
+line, r3 missed `include\` + newline, r4 the split `call`, r5 the define body —
+so the scan no longer looks at physical lines at all. Lines are normalised
+**once**, up front, in two phases: backslash continuations joined, then
+`define` bodies merged into a single scanning unit (reported at the `define`
+line). Every scan runs over that.
 
 Joined with a single **space**, which is what make does, and that is also the
 safe direction: joining with nothing could glue two fragments into a keyword
