@@ -975,6 +975,45 @@ $(JSONESC_BIN): test_json_string_escape.c test_framework.h $(FW_SVC)/JSON_String
 
 $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
                  $(SD_MANAGER_SRC) $(SD_MGR_HDR) $(SD_BENCH_SRC) $(RECIPES)
+	@# ⭐⭐⭐ READ THIS BEFORE EDITING ANY #1124 PIN: KEY A PIN ON THE QUESTION A
+	@# SITE ASKS, NOT ON THE SYMBOL IT CALLS.
+	@#
+	@# Earned across r28-r30, where a pin on this row fired on its OWN PR's
+	@# correct fix three times. Each time the pin was RIGHT to fire and the
+	@# instinct to restore the text it wanted was backwards:
+	@#
+	@#   r29  PIN 23d pinned `memchr(pBuff, '~', fileLen)` INSIDE the opt-in
+	@#        block. The fix made that refusal unconditional, so the pin broke
+	@#        -- while still reporting the defect as protected.
+	@#   r29  PIN 37 pinned the part-suffix rule's TEXT. The rule turned out to
+	@#        be wrong in BOTH of its copies, so the pin had been holding two
+	@#        copies in agreement about a defect.
+	@#   r30  PIN 23d pinned the setter's predicate by NAME. Splitting one
+	@#        predicate into two (because two consumers needed opposite answers
+	@#        for one input) renamed it, and the pin broke again.
+	@#
+	@# A symbol-keyed pin asserts "the code still says what it said", which is
+	@# satisfied by a defect and broken by a correct refactor -- exactly the
+	@# wrong way round. Prefer, in this order:
+	@#   1. a VALUE a host test can assert (best: it survives every rename);
+	@#   2. a STRUCTURAL property -- position relative to a block, one arm per
+	@#      line, a count PER CONSUMER rather than a total;
+	@#   3. the exact text, and only when neither of the above can express it.
+	@#
+	@# ⚠ THIS IS A PREFERENCE, NOT AN ABSOLUTE, and overstating it would be its
+	@# own defect. Some properties have no handle but the symbol -- "this file
+	@# calls SdManifest_NameIsUsable exactly once, at the OPEN_FILE guard"
+	@# (ARM 1 below) is a text pin because the invariant IS about which function
+	@# is called where, and there is nothing truer to key on. The test is
+	@# whether a CORRECT change could break the pin: if yes, find a different
+	@# key; if the only way to break it is to reintroduce the defect, text is
+	@# fine.
+	@#
+	@# ⛔ And when a pin does fire on your fix, say so in the commit and record
+	@# WHY it was keyed wrongly. Three of these were found by the fix breaking
+	@# the pin, which is the cheap way to find them; the expensive way is a pin
+	@# that silently stops protecting anything after a rename.
+	@#
 	@# ⛔ #1124 L=C PIN 1 -- the gate exists and the opt-in is what it reads.
 	@#
 	@# ⛔ RULING V=A: the gate reads the SESSION'S authorisation, not the staged

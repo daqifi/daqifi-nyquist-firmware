@@ -48,6 +48,14 @@ set -u
 W="${1:-$(git rev-parse --show-toplevel 2>/dev/null || true)}"
 [ -n "$W" ] && [ -d "$W/tests/host" ] || { echo "FATAL: '$W' is not a worktree with tests/host."; exit 2; }
 W="$(cd "$W" && pwd -P)"
+# ⭐⭐ KEY A PIN ON THE QUESTION A SITE ASKS, NOT THE SYMBOL IT CALLS -- the
+# full argument is at the head of the #1124 pin block in tests/host/Makefile,
+# earned by a pin on this row firing on its OWN PR's correct fix three times
+# across r28-r30. It matters HERE too: an arm below whose `sub` anchor is a
+# symbol name breaks on a rename and reports "anchor absent", which is a FAIL
+# rather than a false pass -- cheap, but it is still the arm telling you the
+# key was wrong. R60, R77 and R79 were each re-anchored for exactly that.
+
 F="$W/firmware/src/services/sd_card_services/sd_card_manager.c"
 G="$W/tests/host/gen_1029_log_budget.py"
 M="$W/tests/host/Makefile"
