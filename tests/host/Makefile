@@ -924,6 +924,19 @@ $(JSONESC_BIN): test_json_string_escape.c test_framework.h $(FW_SVC)/JSON_String
 $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
                  $(SD_MANAGER_SRC) $(SD_MGR_HDR) $(SD_BENCH_SRC) $(RECIPES)
 	@# ⛔ #1124 L=C PIN 1 -- the gate exists and the opt-in is what it reads.
+	@#
+	@# ⛔ RULING V=A: the gate reads the SESSION'S authorisation, not the staged
+	@# one. The staged flag is cleared when the session arms, so a gate still
+	@# reading the config would refuse the session that legitimately asked --
+	@# and would let an SD:FILE from the other transport grant or revoke
+	@# permission mid-rotation. This arm asserted `overwriteExisting` until r20,
+	@# so it encoded the pre-ruling design; it now asserts the session copy.
+	@#
+	@# ⚠ AND THIS COMMENT LIVES HERE, NOT BESIDE THE ARM IT DESCRIBES. A `@#`
+	@# line inside a `\`-continued recipe is NOT a comment -- make hands it to
+	@# the shell as part of the command, and the apostrophe in "SESSION'S" then
+	@# opens an unterminated quoted string. Twice this session. Comments go
+	@# BEFORE the first line of a continued command.
 	@# The model's entire premise: nothing is destroyed unless the client asked
 	@# for THIS target, so if the gate stops consulting overwriteExisting the
 	@# model is describing firmware that no longer exists.
@@ -936,12 +949,12 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	       echo "       models THAT function; with it renamed or gone this pin"; \
 	       echo "       measures nothing and must not report a pass."; \
 	       rm -f /tmp/.g1124.$$$$; exit 1; }; \
-	 grep -q 'overwriteExisting' /tmp/.g1124.$$$$ \
-	  || { echo "ERROR: the #1124 gate no longer reads overwriteExisting."; \
-	       echo "       Operator ruling L=C requires an EXPLICIT opt-in; a gate"; \
-	       echo "       that does not consult it either refuses every second"; \
-	       echo "       recording (no way through, which is why A2 was rejected)"; \
-	       echo "       or destroys without being asked."; \
+	 grep -q 'overwriteAuthorizedForSession' /tmp/.g1124.$$$$ \
+	  || { echo "ERROR: the #1124 gate no longer reads the SESSION's overwrite"; \
+	       echo "       authorisation (ruling V=A). Reading the staged flag"; \
+	       echo "       instead would refuse the session that asked -- the arm"; \
+	       echo "       consumed it -- and would let a concurrent SD:FILE move"; \
+	       echo "       the permission mid-rotation."; \
 	       rm -f /tmp/.g1124.$$$$; exit 1; }; \
 	 rm -f /tmp/.g1124.$$$$
 	@# ⛔ PIN 2 -- FAIL CLOSED ON AN UNREADABLE PATH, TWICE: once for the data
@@ -1034,6 +1047,76 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	       echo "       than the truncation it prevents."; \
 	       rm -f /tmp/.g1124c.$$$$; exit 1; }; \
 	 rm -f /tmp/.g1124c.$$$$
+	@# ⛔ PIN 7 -- r19 finding 1: ONE derivation for the gate AND creation.
+	@# The gate stripped a subdirectory while sd_OpenSessionManifest did not, so
+	@# SD:FILE "sub/exp.csv" made the gate ask about <dir>/exp.csv.mfst -- a
+	@# different capture's sidecar. r19's body claimed one resolved path was
+	@# used for both; it was not, so this pin asserts the structure instead of
+	@# the intention. Both callers must go through sd_SessionManifestPath, and
+	@# NEITHER may build a manifest name itself.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null`; \
+	 n=`printf '%s' "$$pp" | grep -c 'sd_SessionManifestPath('`; \
+	 test "$$n" -ge 3 \
+	  || { echo "ERROR: sd_SessionManifestPath() is referenced $$n time(s),"; \
+	       echo "       expected >= 3 (the definition, the gate, and"; \
+	       echo "       sd_OpenSessionManifest). Fewer means a caller has gone"; \
+	       echo "       back to building the manifest name itself, which is"; \
+	       echo "       r18/r19 finding 1: the gate and the creation path"; \
+	       echo "       disagreeing about which sidecar is in question."; exit 1; }
+	@# ⛔ PIN 8 -- r19 finding 2: an opt-in on a part of a RECORDED SET is
+	@# refused, UNCONDITIONALLY. SD:FILE "exp-1.csv",1 truncates a part that a
+	@# previous session recorded in exp.csv.mfst, and that manifest is not at
+	@# this target's manifest name, so nothing else in the gate sees it. The
+	@# client authorised overwriting exp-1.csv; they did not authorise
+	@# invalidating a base they may never have named.
+	@#
+	@# ⚠ THE INVARIANT IS THE CONDITION, NOT THE POSITION. My first version of
+	@# this pin asserted the check appeared BEFORE the opt-in was honoured, and
+	@# it fired on correct code: the check sits after the existence branch and
+	@# refuses anyway, because its condition carries no opt-in term at all.
+	@# Order is irrelevant to an unconditional refusal; what would break it is a
+	@# conjunction. So this pins the exact condition -- the predicate alone --
+	@# on the flattened text, so a reflow is not an input.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"if (sd_NameIsRotationPartOfExistingManifest(gpSDCardSettings->file)) {"*) ;; \
+	   *) echo "ERROR: the #1124 gate does not refuse a recorded set's part on"; \
+	      echo "       the predicate ALONE (r19 finding 2). Either the check is"; \
+	      echo "       gone, or its condition gained a term -- most likely an"; \
+	      echo "       opt-in conjunction, which is exactly what must NOT gate"; \
+	      echo "       it: the opt-in cannot authorise invalidating a manifest"; \
+	      echo "       whose base the client never named."; \
+	      exit 1;; \
+	 esac
+	@# ⛔ PIN 9 -- r19 finding 4 / RULING V=A: an SD:DIR change WITHDRAWS the
+	@# authorisation, in the same critical section as the directory write. The
+	@# authorisation is bound to the RESOLVED target; without this, a grant
+	@# under one directory silently followed SD:DIR onto another directory's
+	@# file. Checked on the flattened text so where the statement wraps is not
+	@# an input.
+	@$(CC) -fpreprocessed -E $(SD_BENCH_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' ' \
+	   | grep -q 'overwriteExisting = false; } taskEXIT_CRITICAL' \
+	  || { echo "ERROR: SD:DIR does not withdraw the overwrite authorisation in"; \
+	       echo "       the same critical section as the directory write"; \
+	       echo "       (#1124 r19 finding 4). A grant made under one directory"; \
+	       echo "       would follow an SD:DIR onto a file the client never"; \
+	       echo "       named, and a reader could observe the new directory"; \
+	       echo "       still carrying the old authorisation."; exit 1; }
+	@# ⛔ PIN 10 -- RULING V=A: the authorisation is CONSUMED at the arm, as one
+	@# atomic transition. Two steps would be the #1182 read-modify-write race.
+	@# Both halves are asserted -- the session copy taken AND the staged flag
+	@# cleared -- because one without the other is either an authorisation that
+	@# never expires or one that never applies.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"gSDCardData.overwriteAuthorizedForSession = pSettings->overwriteExisting; pSettings->overwriteExisting = false;"*) ;; \
+	   *) echo "ERROR: the #1124 overwrite authorisation is not consumed as one"; \
+	      echo "       atomic transition at the arm (ruling V=A). The session"; \
+	      echo "       copy must be taken and the staged flag cleared together;"; \
+	      echo "       split, a concurrent SD:FILE is lost between them, or an"; \
+	      echo "       authorisation the task already took is re-granted."; \
+	      exit 1;; \
+	 esac
 	$(CC) $(CFLAGS) -o $(GATE1124_BIN) test_1124_overwrite_gate.c
 
 $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h \
@@ -1089,8 +1172,18 @@ $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h
 	@#     continuation lines, so it is what this keys on.
 	@# `-fpreprocessed` is here only to strip COMMENTS (verified: an operand
 	@# inside a comment contributes 0), so prose quoting a format cannot count.
-	@# ⛔ #1124: 9 -> 8 -> 9 across r17 and r18, both movements kept because the
-	@# totals coincide and the sites do not:
+	@# ⛔ #1124: 9 -> 8 -> 9 -> 8 across r17, r18 and r20. Every movement is kept
+	@# because the totals coincide and the sites do not:
+	@#   -1 r20  the gate's TWO constructions and sd_OpenSessionManifest's ONE
+	@#           collapsed into sd_SessionManifestPath(), the single derivation
+	@#           both now call -- which is the structural form of r18/r19
+	@#           finding 1, where the gate stripped a subdirectory and the
+	@#           creation path did not.
+	@#   +1 r20  sd_NameIsRotationPartOfExistingManifest() builds the OWNING
+	@#           base's manifest name, to refuse an opt-in on a part of a
+	@#           recorded set (r19 finding 2).
+	@# Net -1, and the two counters still move together, which is the property
+	@# this pin exists for.
 	@#   -1 r17  the FALLBACK name construction went with the two-candidate
 	@#           scheme.
 	@#   +1 r18  sd_TargetSafeToOpenForWrite() builds TWO names, not one: the
@@ -1104,7 +1197,7 @@ $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h
 	 canon=`grep -cF '"%.*s/' /tmp/.sd1124_pp.$$$$`; \
 	 acc=`grep -c 'SdManifest_CanonicalDirLen(' /tmp/.sd1124_pp.$$$$`; \
 	 rm -f /tmp/.sd1124_pp.$$$$; \
-test "$$raw" -eq 0 && test "$$canon" -eq 9 && test "$$acc" -eq 9 \
+test "$$raw" -eq 0 && test "$$canon" -eq 8 && test "$$acc" -eq 8 \
 	  || { echo "ERROR: $(SD_MANAGER_SRC)'s path construction is no longer"; \
 	       echo "       uniformly canonical (#1124)."; \
 	       echo "         raw \"%s/ joins:        $$raw (must be 0)"; \
@@ -1248,23 +1341,39 @@ test "$$raw" -eq 0 && test "$$canon" -eq 9 && test "$$acc" -eq 9 \
 	@# a new class: a doubled '/' here would name a file the create path never
 	@# created, so the removal would silently miss the stale manifest it exists
 	@# to delete, and the defect would present as the fix simply not working.
-	@# 24 -> 22 -> 20 -> 22 across #1124 r16/r17/r18. Every movement stays
-	@# listed; the totals repeat and the sites never do:
+	@# 24 -> 22 -> 20 -> 22 -> 20 across #1124 r16/r17/r18/r20. Every movement
+	@# stays listed; the totals repeat and the sites never do:
 	@#   +2 r16  the stale-manifest sweep's join.
 	@#   -2 r16  two LOG_E messages stopped printing the directory, after the
 	@#           #1110 gate measured them at 128 and 144 bytes against 125.
 	@#   -2 r17  the FALLBACK name construction was deleted.
 	@#   +2 r18  the LIVE-manifest name is built alongside the TARGET's, so the
 	@#           invalidation can refuse to delete this session's own record.
+	@#   -6 r20  THREE joins collapsed into one. The gate built the TARGET and
+	@#           LIVE names and sd_OpenSessionManifest built the session's,
+	@#           each with its own pair of reads -- and the gate's differed
+	@#           from creation's, which IS r18/r19 finding 1 (the gate stripped
+	@#           a subdirectory, creation did not). They now call one
+	@#           derivation, sd_SessionManifestPath(), so the agreement is
+	@#           structural instead of a property three sites must remember.
+	@#   +4 r20  TWO new joins: sd_SessionManifestPath() itself, and
+	@#           sd_NameIsRotationPartOfExistingManifest(), which builds the
+	@#           OWNING base's manifest name so an opt-in on a part of a
+	@#           recorded set can be refused (r19 finding 2).
+	@#           CLASSIFICATION for both: ordinary canonicalisation-DEPENDENT
+	@#           join shape, and both ARE routed through
+	@#           SdManifest_CanonicalDirLen() -- checked, not assumed, and the
+	@#           join/accessor counters above moved 9 -> 8 in the same edit,
+	@#           which is the coincidence this ledger is for.
 	@# CLASSIFICATION: all of them are the ordinary canonicalisation-DEPENDENT
 	@# join shape, already routed through SdManifest_CanonicalDirLen(). A NET
 	@# would let a future edit add one read and drop an unrelated one unseen,
 	@# which is the one thing a count ledger exists to notice.
 	@n=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null \
 	    | grep -oE '(gpSDCardSettings|cfg)->(directory|opDirectory)' | wc -l`; \
-	 test "$$n" -eq 22 \
+	 test "$$n" -eq 20 \
 	  || { echo "ERROR: $(SD_MANAGER_SRC) now has $$n raw reads of ->directory /"; \
-	       echo "       ->opDirectory, not the 22 classified in this recipe (#1124)."; \
+	       echo "       ->opDirectory, not the 20 classified in this recipe (#1124)."; \
 	       echo "       The canonicalisation invariant is about every USE, not just"; \
 	       echo "       every join: a read can reach a callee that neither joins nor"; \
 	       echo "       canonicalises, and no join-keyed check sees it. (Until r13 the"; \
@@ -1461,6 +1570,21 @@ test "$$raw" -eq 0 && test "$$canon" -eq 9 && test "$$acc" -eq 9 \
 	@# shape that silently measures an EMPTY region (this file has lost a round
 	@# to a pin whose awk range extracted nothing):
 	@#   - the extracted body must be non-empty;
+	@# ⛔ r20: WHAT COUNTS AS "PRODUCING A NAME" CHANGED, and this pin caught it
+	@# by REFUSING TO RUN -- its body count went to 0 and the non-vacuity arm
+	@# fired rather than letting the equality pass over nothing. That arm earned
+	@# its keep, so this is re-expressed and not relaxed.
+	@# The construction moved into sd_SessionManifestPath(), the ONE derivation
+	@# the gate and this function now share (r18/r19 finding 1), so the name is
+	@# no longer BUILT in this body -- it is REQUESTED here. The coupling the
+	@# pin protects is unchanged: every manifest name this function produces,
+	@# and therefore RECORDS, must be length-checked by
+	@# SdManifest_NameFitsOperand, because buffer capacity and RETRIEVAL
+	@# capacity are still different limits. So the construction count becomes a
+	@# count of CALLS to the shared derivation and the equality still reads
+	@# "every name produced here is checked here".
+	@# The gate deliberately does NOT check NameFitsOperand: it only stats the
+	@# name and never records it, so retrieval capacity does not apply there.
 	@#   - it must build at least 1 name, so a range that clipped early cannot
 	@#     read as a pass. This was 2 (primary and fallback) until r17 deleted
 	@#     the second candidate; lowered with the reason rather than quietly,
@@ -1472,12 +1596,12 @@ test "$$raw" -eq 0 && test "$$canon" -eq 9 && test "$$acc" -eq 9 \
 	 body=`printf '%s\n' "$$pp" | awk '/^static void sd_OpenSessionManifest\(void\) \{/{f=1} f{print} f&&/^\}/{exit}'`; \
 	 all=`printf '%s\n' "$$pp" | grep -c 'SD_MANIFEST_EXT,'`; \
 	 g=`printf '%s\n' "$$body" | grep -c 'SdManifest_NameFitsOperand'`; \
-	 n=`printf '%s\n' "$$body" | grep -c 'SD_MANIFEST_EXT,'`; \
+	 n=`printf '%s\n' "$$body" | grep -c 'sd_SessionManifestPath('`; \
 	 test -n "$$body" && test "$$n" -ge 1 && test "$$all" -gt "$$n" \
 	  || { echo "ERROR: the scoped manifest-name count is not measuring what it"; \
 	       echo "       claims (#1124 r16 non-vacuity)."; \
 	       echo "         extracted body lines: `printf '%s\n' "$$body" | wc -l`"; \
-	       echo "         names built in body:  $$n (must be >= 1)"; \
+	       echo "         names produced in body: $$n (must be >= 1)"; \
 	       echo "         names built in file:  $$all (must exceed the body's)"; \
 	       echo "       Either sd_OpenSessionManifest was renamed, or the"; \
 	       echo "       awk range no longer spans it, or the removal site that"; \
@@ -1960,10 +2084,22 @@ test "$$raw" -eq 0 && test "$$canon" -eq 9 && test "$$acc" -eq 9 \
 	@# PIN C -- the unlink stays gated on the create path's own predicate, and the
 	@# predicate stays able to say no. Unchanged from r16; still the check that
 	@# keeps this from deleting a user file that occupies the manifest name.
-	@awk '/^static bool sd_RemoveStaleManifestAt\(const char \*path\) \{/{f=1} f{print} f&&/^\}/{exit}' \
+	@#
+	@# ⛔ r20, TWO updates, and the first one broke this recipe before it was
+	@# noticed: the signature gained a FAULT out-param, so BOTH the awk range
+	@# and the call pattern had to move with it. An awk range that no longer
+	@# matches extracts NOTHING, and the `test -s` non-vacuity arm is the only
+	@# reason that surfaced as a failure instead of a pass.
+	@# Why the out-param: the predicate's `false` used to mean both "not a
+	@# manifest" (safe -- leave it) and "could not tell" (a fault -- refuse),
+	@# and this function picked the first meaning and returned TRUE, i.e.
+	@# permission to truncate. r19's findings at :2246/:2249. The coupling this
+	@# pin asserts is unchanged -- the unlink is still gated on the create
+	@# path's own predicate -- it now also honours WHICH answer it got.
+	@awk '/^static bool sd_RemoveStaleManifestAt\(const char \*path, bool \*fsFault\) \{/{f=1} f{print} f&&/^\}/{exit}' \
 	     $(SD_MANAGER_SRC) > /tmp/.sd1124_rm.$$$$; \
 	 test -s /tmp/.sd1124_rm.$$$$ \
-	   && grep -q 'sd_ManifestPathSafeToOverwrite(path)' /tmp/.sd1124_rm.$$$$ \
+	   && grep -q 'sd_ManifestPathSafeToOverwrite(path,' /tmp/.sd1124_rm.$$$$ \
 	   && grep -q 'SYS_FS_FileDirectoryRemove(path)' /tmp/.sd1124_rm.$$$$ \
    && grep -q 'return false;' /tmp/.sd1124_rm.$$$$ \
 	  || { echo "ERROR: sd_RemoveStaleManifestAt() no longer gates its unlink on the"; \
@@ -1977,7 +2113,13 @@ test "$$raw" -eq 0 && test "$$canon" -eq 9 && test "$$acc" -eq 9 \
 	@# r16 reused it to guard an UNLINK, where SYS_FS_FileDirectoryRemove removes
 	@# directories too. Reusing a predicate is only sound where the guarded ACTION
 	@# is the same.
-	@awk '/^static bool sd_ManifestPathSafeToOverwrite\(const char \*path\) \{/{f=1} f{print} f&&/^\}/{exit}' \
+	@# ⛔ r20: signature updated with the FAULT out-param. Third awk range on
+	@# this row to need that, which is the cost of keying an extraction on a
+	@# full signature -- precise, and it moves with every parameter change. Each
+	@# one failed LOUDLY via its non-vacuity arm rather than measuring nothing,
+	@# which is the only reason a signature change is a nuisance here instead of
+	@# a silent hole.
+	@awk '/^static bool sd_ManifestPathSafeToOverwrite\(const char \*path, bool \*fsFault\) \{/{f=1} f{print} f&&/^\}/{exit}' \
 	     $(SD_MANAGER_SRC) > /tmp/.sd1124_safe.$$$$; \
 	 d=`grep -n 'SYS_FS_ATTR_DIR' /tmp/.sd1124_safe.$$$$ | head -1 | cut -d: -f1`; \
 	 z=`grep -n 'st.fsize == 0u' /tmp/.sd1124_safe.$$$$ | head -1 | cut -d: -f1`; \

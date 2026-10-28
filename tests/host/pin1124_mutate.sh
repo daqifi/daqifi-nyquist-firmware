@@ -213,12 +213,13 @@ fi
 
 echo "== M1: revert one join to a raw \"%s/, operand on the CONTINUATION line =="
 echo "==     (the shape that defeated an operand-keyed enumeration: 2 of 8)  =="
-if sub "$F" 'snprintf(path, sizeof(path), "%.*s/%s" SD_MANIFEST_EXT,
-                           (int)SdManifest_CanonicalDirLen(gpSDCardSettings->directory),
-                           gpSDCardSettings->directory,
-                           gpSDCardSettings->file)' 'snprintf(path, sizeof(path), "%s/%s" SD_MANIFEST_EXT,
-                           gpSDCardSettings->directory,
-                           gpSDCardSettings->file)'; then
+echo "==     r20: re-pointed at sd_SessionManifestPath, the ONE derivation the  =="
+echo "==     gate and creation now share -- the three separate joins this used  =="
+echo "==     to mutate were collapsed into it.                                  =="
+if sub "$F" 'snprintf(out, outLen, "%.*s/%s" SD_MANIFEST_EXT,
+                           (int)SdManifest_CanonicalDirLen(gpSDCardSettings->directory),' \
+            'snprintf(out, outLen, "%s/%s" SD_MANIFEST_EXT,
+                           (gpSDCardSettings->directory),'; then
     expect "M1 count arm" "path construction is no longer"
 else
     echo "  FAIL M1 anchor absent -- source drifted from this harness."; fail=$((fail+1))
@@ -303,10 +304,9 @@ echo "== R23: unlink WITHOUT the create path's own predicate. Count-safe:       
 echo "==      sd_ManifestPathSafeToOverwrite drops 3 -> 2 and its own '>= 3'    =="
 echo "==      pin DOES fire too, so this arm asserts PIN C's message            =="
 echo "==      specifically rather than merely that something failed.            =="
-if sub "$F" '    if (!sd_ManifestPathSafeToOverwrite(path)) {
-        LOG_E("[SD] #1124 manifest path holds a non-manifest file - left as is");' \
-           '    if (0) {
-        LOG_E("[SD] #1124 manifest path holds a non-manifest file - left as is");'; then
+echo "==     r20: the predicate call gained a FAULT out-param.                  =="
+if sub "$F" '    if (!sd_ManifestPathSafeToOverwrite(path, &inspectFault)) {' \
+            '    if (0) {'; then
     expect "R23 unlink-predicate arm" "no longer gates its unlink"
 else
     echo "  FAIL R23 anchor absent -- source drifted from this harness."; fail=$((fail+1))
@@ -602,11 +602,11 @@ echo "== R29: make the gate ignore the opt-in, so it refuses unconditionally.  =
 echo "==      ⭐ GUARDS THE RULING, not just the code: C without a way through =="
 echo "==      is A2, which the operator REJECTED because default.bin has no    =="
 echo "==      uniquifier and every second recording would be refused.          =="
-if sub "$F" '    taskENTER_CRITICAL();
-    overwriteAsked = gpSDCardSettings->overwriteExisting;
-    taskEXIT_CRITICAL();' \
+echo "==     r20 / ruling V=A: the gate reads the SESSION copy now, so that is   =="
+echo "==     what this neuters.                                                  =="
+if sub "$F" '    overwriteAsked = gSDCardData.overwriteAuthorizedForSession;' \
             '    overwriteAsked = false;'; then
-    expect "R29 gate reads the opt-in" "no longer reads overwriteExisting"
+    expect "R29 gate reads the session's opt-in" "no longer reads the SESSION"
 else
     echo "  FAIL R29 anchor absent."; fail=$((fail+1))
 fi

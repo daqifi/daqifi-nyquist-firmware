@@ -53,11 +53,20 @@ typedef enum {
     REFUSE_MANIFEST_NOT_OURS,
 } Refusal;
 
+/* r20: whether the target's name is a rotation part of an EXISTING manifest's
+ * base -- `exp-1.csv` while `exp.csv.mfst` exists. The opt-in cannot authorise
+ * overwriting that, because the client named `exp-1.csv` and never named the
+ * base whose record would be left claiming changed bytes. */
+typedef enum { PART_NO = 0, PART_OF_RECORDED_SET } PartKind;
+
 typedef struct {
     FsState dataFile;        /* the target the caller is about to open */
     FsState manifestAtName;  /* whatever sits at the target's manifest name */
     bool    manifestIsOurLiveOne;
-    bool    overwriteAsked;  /* the SD:FILE opt-in */
+    bool    overwriteAsked;  /* the SESSION's consumed authorisation */
+    bool    stagedAuth;      /* the SD:FILE staged flag, pre-consume */
+    PartKind part;           /* r20: is this target a recorded set's part? */
+    bool    inspectorFaults; /* r20: the manifest inspector cannot tell */
     /* observations */
     bool    opened;          /* the WRITE_PLUS open happened (truncating) */
     bool    manifestRemoved; /* something was unlinked */
@@ -73,13 +82,28 @@ typedef struct {
      * refusal leaves mode == WRITE, and that is a wedge, not a tidiness
      * detail -- see the_refusal_must_not_wedge_the_card below. */
     bool refusalDisarmsSession;
+    /* r20: one resolved path for the gate AND creation. false reproduces r18/
+     * r19 finding 1, where the gate stripped a subdirectory and the creation
+     * path did not. */
+    bool oneResolvedPath;
+    /* r20: refuse an opt-in whose target is a part of a recorded set. */
+    bool refusePartOfRecordedSet;
+    /* r20: an inspector that cannot tell must refuse, not be read as
+     * "not a manifest" and therefore safe to proceed past. */
+    bool inspectorFaultRefuses;
+    /* r20 / ruling V=A: the authorisation is consumed when the session arms. */
+    bool consumeAtArm;
 } Shape;
 
-static const Shape SHAPE_R18 = { true,  false };
-static const Shape SHAPE_C   = { false, true  };
+static const Shape SHAPE_R18 = { true,  false, false, false, false, false };
+/* r19 as shipped: refuse-by-default and the disarm, but the gate still derived
+ * the manifest name independently, honoured an opt-in on a recorded set's
+ * part, let an inspector fault read as permissive, and never consumed. */
+static const Shape SHAPE_R19 = { false, true,  false, false, false, false };
+static const Shape SHAPE_C   = { false, true,  true,  true,  true,  true  };
 /* C's gate without the disarm: what this PR shipped before conv-ts asked
  * whether a refused session leaves the card usable. */
-static const Shape SHAPE_C_NO_DISARM = { false, false };
+static const Shape SHAPE_C_NO_DISARM = { false, false, true, true, true, true };
 
 static World world(FsState data, FsState mfst, bool ours, bool asked) {
     World w;
@@ -88,9 +112,26 @@ static World world(FsState data, FsState mfst, bool ours, bool asked) {
     w.manifestAtName = mfst;
     w.manifestIsOurLiveOne = ours;
     w.overwriteAsked = asked;
+    w.stagedAuth = asked;
     w.sessionArmed = true;          /* mode == WRITE: the session is running */
     return w;
 }
+
+/* sd_UpdateSettingsImpl's WRITE arm: ONE atomic transition that takes the
+ * staged authorisation into the session and clears the staged copy. Ruling
+ * V=A: one opt-in authorises one session, and SD:FILE? reports 0 after. */
+static void model_arm_session(World *w, Shape s) {
+    if (!s.consumeAtArm) {
+        w->overwriteAsked = w->stagedAuth;   /* r19: re-read, never consumed */
+        return;
+    }
+    w->overwriteAsked = w->stagedAuth;
+    w->stagedAuth = false;
+}
+
+/* SD:DIR -- r19 finding 4: the authorisation is bound to the RESOLVED target,
+ * so changing the directory withdraws it. */
+static void model_set_directory(World *w) { w->stagedAuth = false; }
 
 /* sd_card_manager_IsBusyLocked() tests `mode != MODE_NONE` FIRST, before any
  * state consideration, so an armed session means busy whatever the state
@@ -130,6 +171,11 @@ static void model_open_target(World *w, Shape s) {
         return;
     }
 
+    /* r20: a part of a recorded set -- checked even WITH the opt-in. */
+    if (s.refusePartOfRecordedSet && (w->part == PART_OF_RECORDED_SET)) {
+        w->refusal = REFUSE_MANIFEST_NOT_OURS;
+        return;
+    }
     /* C: the data file first. It is never truncated unless asked for. */
     if (w->dataFile == FS_UNREADABLE) {
         w->refusal = REFUSE_TARGET_UNREADABLE;   /* fail closed */
@@ -153,6 +199,17 @@ static void model_open_target(World *w, Shape s) {
     if (w->manifestAtName == FS_FILE || w->manifestAtName == FS_DIR) {
         if (!w->overwriteAsked) {
             w->refusal = REFUSE_MANIFEST_NOT_OURS;
+            return;
+        }
+        /* r20: the inspector cannot tell. r19 read that as "not a manifest"
+         * and proceeded; it must refuse. */
+        if (w->inspectorFaults) {
+            if (s.inspectorFaultRefuses) {
+                w->refusal = REFUSE_TARGET_UNREADABLE;
+                return;
+            }
+            /* r19's behaviour: a refusal converted into permission. */
+            w->opened = true;
             return;
         }
         if (!model_remove_manifest(w)) {
@@ -428,6 +485,97 @@ TEST(a_successful_open_leaves_the_session_armed) {
     ASSERT_TRUE(model_is_busy(&w));
 }
 
+/* ---- r19's six findings, as pairs -------------------------------------- */
+
+/* (1) A subdirectory target. r19's gate stripped "sub/" and asked about a
+ * DIFFERENT capture's sidecar; one shared derivation makes them agree. Modelled
+ * as the shape flag, because the divergence is structural, not per-fixture. */
+TEST(r19_gate_and_creation_disagreed_on_a_subdirectory_target) {
+    ASSERT_FALSE(SHAPE_R19.oneResolvedPath);
+    ASSERT_TRUE(SHAPE_C.oneResolvedPath);
+}
+
+/* (2) A part of a recorded set, WITH the opt-in. */
+TEST(r19_honoured_an_opt_in_on_a_recorded_sets_part) {
+    World w = world(FS_FILE, FS_ABSENT, false, true);
+    w.part = PART_OF_RECORDED_SET;
+    model_open_target(&w, SHAPE_R19);
+    ASSERT_TRUE(w.opened);               /* truncated a recorded part */
+}
+
+TEST(c_refuses_an_opt_in_on_a_recorded_sets_part) {
+    World w = world(FS_FILE, FS_ABSENT, false, true);
+    w.part = PART_OF_RECORDED_SET;
+    model_open_target(&w, SHAPE_C);
+    ASSERT_FALSE(w.opened);
+    ASSERT_EQ(w.refusal, REFUSE_MANIFEST_NOT_OURS);
+}
+
+/* (3) An inspector that cannot tell. */
+TEST(r19_read_an_inspector_fault_as_permission) {
+    World w = world(FS_ABSENT, FS_FILE, false, true);
+    w.inspectorFaults = true;
+    model_open_target(&w, SHAPE_R19);
+    ASSERT_TRUE(w.opened);               /* proceeded past "could not tell" */
+}
+
+TEST(c_refuses_when_the_inspector_cannot_tell) {
+    World w = world(FS_ABSENT, FS_FILE, false, true);
+    w.inspectorFaults = true;
+    model_open_target(&w, SHAPE_C);
+    ASSERT_FALSE(w.opened);
+    ASSERT_EQ(w.refusal, REFUSE_TARGET_UNREADABLE);
+}
+
+/* (4) A directory change must withdraw the authorisation. */
+TEST(a_directory_change_withdraws_the_authorisation) {
+    World w = world(FS_FILE, FS_ABSENT, false, true);
+    ASSERT_TRUE(w.stagedAuth);
+    model_set_directory(&w);             /* SD:DIR "archive" */
+    model_arm_session(&w, SHAPE_C);
+    model_open_target(&w, SHAPE_C);
+    ASSERT_FALSE(w.opened);              /* the new target is NOT overwritable */
+    ASSERT_EQ(w.refusal, REFUSE_TARGET_EXISTS);
+}
+
+/* (5) Ruling V=A: one opt-in authorises ONE session. */
+TEST(the_authorisation_is_consumed_so_a_second_session_is_refused) {
+    World w = world(FS_FILE, FS_ABSENT, false, true);
+    model_arm_session(&w, SHAPE_C);
+    ASSERT_FALSE(w.stagedAuth);          /* SD:FILE? reports 0 now */
+    model_open_target(&w, SHAPE_C);
+    ASSERT_TRUE(w.opened);               /* session 1 was authorised */
+
+    /* session 2, no fresh ",1" */
+    World n = world(FS_FILE, FS_ABSENT, false, false);
+    n.stagedAuth = w.stagedAuth;         /* i.e. false */
+    model_arm_session(&n, SHAPE_C);
+    model_open_target(&n, SHAPE_C);
+    ASSERT_FALSE(n.opened);
+    ASSERT_EQ(n.refusal, REFUSE_TARGET_EXISTS);
+}
+
+TEST(r19_never_consumed_so_a_second_session_silently_overwrote) {
+    World w = world(FS_FILE, FS_ABSENT, false, true);
+    model_arm_session(&w, SHAPE_R19);
+    ASSERT_TRUE(w.stagedAuth);           /* still armed -- the contradiction */
+    World n = world(FS_FILE, FS_ABSENT, false, false);
+    n.stagedAuth = w.stagedAuth;         /* true, carried over */
+    model_arm_session(&n, SHAPE_R19);
+    model_open_target(&n, SHAPE_R19);
+    ASSERT_TRUE(n.opened);               /* a second session, no new opt-in */
+}
+
+/* A refused session still clears the flag -- the ruling's accepted trade. */
+TEST(a_refused_session_still_consumes_the_authorisation) {
+    World w = world(FS_UNREADABLE, FS_ABSENT, false, true);
+    model_arm_session(&w, SHAPE_C);
+    model_open_target(&w, SHAPE_C);
+    ASSERT_FALSE(w.opened);              /* refused, unrelated reason */
+    ASSERT_EQ(w.refusal, REFUSE_TARGET_UNREADABLE);
+    ASSERT_FALSE(w.stagedAuth);          /* and the flag is gone anyway */
+}
+
 int main(void) {
     RUN(r18_truncates_an_existing_target_without_being_asked);
     RUN(c_refuses_an_existing_target);
@@ -449,5 +597,14 @@ int main(void) {
     RUN(a_refusal_disarms_the_session_so_the_card_stays_usable);
     RUN(every_refusal_reason_disarms_the_session);
     RUN(a_successful_open_leaves_the_session_armed);
+    RUN(r19_gate_and_creation_disagreed_on_a_subdirectory_target);
+    RUN(r19_honoured_an_opt_in_on_a_recorded_sets_part);
+    RUN(c_refuses_an_opt_in_on_a_recorded_sets_part);
+    RUN(r19_read_an_inspector_fault_as_permission);
+    RUN(c_refuses_when_the_inspector_cannot_tell);
+    RUN(a_directory_change_withdraws_the_authorisation);
+    RUN(the_authorisation_is_consumed_so_a_second_session_is_refused);
+    RUN(r19_never_consumed_so_a_second_session_silently_overwrote);
+    RUN(a_refused_session_still_consumes_the_authorisation);
     return TEST_SUMMARY();
 }

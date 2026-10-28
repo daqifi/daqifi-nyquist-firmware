@@ -125,12 +125,29 @@ extern "C" {
          *
          * Each SD:FILE invocation fully determines it -- omitting the
          * parameter clears it -- so an existing one-argument client gets
-         * refuse-by-default, which is the ruling's intent.
+         * refuse-by-default, which is the ruling's intent. An SD:DIR change
+         * withdraws it too: the authorisation is bound to the RESOLVED target
+         * (dir + file), because one granted under `scratch` must not follow a
+         * later SD:DIR onto `archive/log.csv` (r19 finding 4).
          *
-         * CONSUMED AT SESSION START (latched into the session, then cleared
-         * here), so one opt-in authorises one session. Session-scoped rather
-         * than single-file because the ruling extends the check to rotation
-         * parts, and a session rotates many times. */
+         * ⛔ CONSUMED AT SESSION START -- OPERATOR RULING V=A, 2026-10-28.
+         * One opt-in authorises ONE session: the arm latches this into
+         * gSDCardData.overwriteAuthorizedForSession and clears THIS field in
+         * the same critical section, so a later session needs a fresh ",1" and
+         * SD:FILE? reports 0 once consumed. It stays in force for that
+         * session's own rotation parts, because the gate reads the session's
+         * copy rather than this one.
+         *
+         * It is cleared even when the session is then refused for an unrelated
+         * reason, so a retry needs a fresh ",1". The ruling accepts that trade
+         * explicitly; the alternative is an authorisation that outlives the
+         * failure it was granted for.
+         *
+         * An earlier revision of this comment said the opt-in was consumed
+         * while the implementation left it persistent until renamed. The r19
+         * audit found the contradiction -- the text and the code disagreed and
+         * each could be cited as the specification. The ruling settled it in
+         * favour of this text, and the code now matches. */
         bool overwriteExisting;
     } sd_card_manager_settings_t;
 

@@ -3177,6 +3177,23 @@ scpi_result_t SCPI_StorageSDDirectorySet(scpi_t * context) {
     if (!busy) {
         memcpy(pSDCardRuntimeConfig->directory, pBuff, pathLen);
         pSDCardRuntimeConfig->directory[pathLen] = '\0';
+        /* ⛔ #1124 r19 finding 4 / RULING V=A: A DIRECTORY CHANGE WITHDRAWS THE
+         * OVERWRITE AUTHORISATION.
+         *
+         * The authorisation is bound to the RESOLVED target, dir + file, not to
+         * the filename alone. Without this, `SD:FILE "log.csv",1` granted under
+         * one directory silently made `<newdir>/log.csv` overwritable after an
+         * `SD:DIR` -- a file the client never named and may not know exists.
+         * The r19 audit found exactly that transfer.
+         *
+         * Withdrawing rather than re-resolving is deliberate: it needs no
+         * stored path to compare against, it cannot be defeated by changing
+         * the directory and changing it back, and the recovery is one explicit
+         * command (re-issue SD:FILE with ",1"), which is the same cost as the
+         * per-session consume already imposes. Cleared in the SAME critical
+         * section as the directory write, so no reader can observe the new
+         * directory still carrying the old authorisation. */
+        pSDCardRuntimeConfig->overwriteExisting = false;
     }
     taskEXIT_CRITICAL();
 
