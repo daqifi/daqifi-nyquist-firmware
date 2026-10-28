@@ -1142,6 +1142,20 @@ else
 fi
 restore
 
+echo "== R85 (PIN 23g): UNIFY the two manifest-name questions by pointing the =="
+echo "==      foreign SCAN at the WRITE path's predicate. This is the one     =="
+echo "==      direction PINs 23d and 23f are structurally blind to -- they    =="
+echo "==      only inspect the write path -- and it is the direction that      =="
+echo "==      breaks the SCAN: a bare \".mfst\" would then be read AS a manifest, =="
+echo "==      letting its CONTENTS decide a refusal.                           =="
+if sub "$F" "        if (!SdManifest_NameHasManifestExt(st.fname)) {" \
+            "        if (!SdManifest_NameReservedForManifests(st.fname)) {"; then
+    expect "R85 each consumer asks its own question" "a manifest-name consumer is asking the"
+else
+    echo "  FAIL R85 anchor absent."; fail=$((fail+1))
+fi
+restore
+
 echo "== R84 (PIN 37): remove the _Static_assert tying the parser's ceiling to =="
 echo "==      SD_FOREIGN_PART_LIMIT. Without it the header's literal is a      =="
 echo "==      SECOND source of truth and a drift is silent in every other      =="

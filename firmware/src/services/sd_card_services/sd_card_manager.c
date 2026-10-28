@@ -4900,7 +4900,7 @@ void sd_card_manager_ProcessState() {
                                 SD_CARD_MANAGER_PROCESS_STATE_ERROR;
                         break;
                     }
-                    if (SdManifest_NameHasManifestExt(nameOperand)) {
+                    if (SdManifest_NameReservedForManifests(nameOperand)) {
                         /* log_budget: max=40 */
                         LOG_E("[SD1124] mfstname '%s' is a manifest name", nameOperand);
                         gSDCardData.writeRefuseReason =

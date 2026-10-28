@@ -253,6 +253,97 @@ static inline bool SdManifest_NameHasManifestExt(const char *name)
     return SdManifest_NameHasManifestExtLen(name, strlen(name));
 }
 
+/* ⛔⛔⛔ #1124 r29 AUDIT HIGH (:232): THE SECOND QUESTION, WHICH NEEDS THE
+ * OPPOSITE ANSWER FOR THE BARE EXTENSION — SO IT NEEDS ITS OWN PREDICATE.
+ *
+ * "Is this name RESERVED for manifests, so a logging session may not take it?"
+ * That is NOT the question SdManifest_NameHasManifestExt answers, and r29
+ * found the difference the hard way. The two consumers:
+ *
+ *   the foreign SCAN   "is this FILE on the card a manifest I should READ?"
+ *                      bare ".mfst" -> NO. Every writer emits
+ *                      <something>.mfst, so a bare extension is some other
+ *                      file, and reading it as a manifest would let its
+ *                      CONTENTS decide a refusal. The carve-out is correct
+ *                      and deliberate.
+ *   this one           "would configuring this name put this session's own
+ *                      files on a manifest name?"
+ *                      bare ".mfst" -> YES, and it is the worst case of all.
+ *
+ * ⛔ WHAT r28's FIX MISSED, because it reused the scan's predicate: with
+ * SD:FILE ".mfst" the length carve-out accepted the name, extractBaseFilename
+ * produced an EMPTY stem, and rotation targeted "-1.mfst" -- the manifest of
+ * any session named "-1". With the overwrite grant that TRUNCATES another
+ * capture's integrity record. r28's refusal checked the TAIL and a bare
+ * extension has no tail to check.
+ *
+ * ⭐⭐ AND THE SHARED PREDICATE COULD NOT SIMPLY BE TIGHTENED. Dropping the
+ * length carve-out would have fixed this caller and broken the scan, which
+ * must keep answering NO for the same string. Two consumers, one spelling,
+ * OPPOSITE correct answers -- so the discriminator is the QUESTION, not the
+ * text, and the only sound fix is two predicates. They are deliberately named
+ * after their questions rather than their mechanism, because two names
+ * describing the same string operation is how the next reader picks the wrong
+ * one. Pinned in tests/host/Makefile so they cannot be unified.
+ *
+ * ⭐ WHY THE EXTENSION TEST IS SUFFICIENT, which is what makes this a complete
+ * fix rather than a patch for one spelling: a session's files are the
+ * configured name itself and "<base>-<N><ext>", where <ext> is the configured
+ * name's last extension. If that extension is not the manifest extension then
+ * neither form can end in it -- a part ends in <ext>, or in a DIGIT when there
+ * is no extension at all. So refusing the extension here forecloses every
+ * name this session could place on a manifest path, at any counter value and
+ * in any bucket.
+ *
+ * ⚠ AN EMPTY BASE IS NOT REFUSED, deliberately, and it was checked rather than
+ * assumed: SD:FILE ".csv" gives parts "-1.csv" and
+ * SdManifest_PartIndexOf("D/-1.csv", "D", ".csv") returns 1, while
+ * ("D/.csv", "D", ".csv") returns 0 -- so the foreign-record guard already
+ * matches them and there is no hazard to refuse. Restricting it anyway would
+ * cost input for no demonstrated failure. */
+static inline bool SdManifest_NameReservedForManifestsLen(const char *name,
+                                                           size_t nameLen)
+{
+    const size_t extLen = sizeof(SD_MANIFEST_EXT) - 1u;
+    const char *tail;
+    size_t i;
+
+    if (name == NULL) {
+        return false;
+    }
+    /* `<` not `<=`: a name that IS exactly the extension is the case r29
+     * found, and it is reserved. This one character is the whole difference
+     * from the scan's predicate. */
+    if (nameLen < extLen) {
+        return false;
+    }
+    tail = name + (nameLen - extLen);
+    for (i = 0u; i < extLen; i++) {
+        /* ⚠ The fold is written out rather than calling SdManifest_FoldChar,
+         * matching the sibling above for the same reason: FoldChar is defined
+         * further DOWN this header, so calling it here is an implicit
+         * declaration -- an error under the firmware's -Wall -Werror even
+         * though a host .c including the header only warns. The host suite's
+         * -Werror gate on this header is what caught it. */
+        char a = tail[i];
+        char b = SD_MANIFEST_EXT[i];
+        if ((a >= 'A') && (a <= 'Z')) { a = (char)(a - 'A' + 'a'); }
+        if ((b >= 'A') && (b <= 'Z')) { b = (char)(b - 'A' + 'a'); }
+        if (a != b) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static inline bool SdManifest_NameReservedForManifests(const char *name)
+{
+    if (name == NULL) {
+        return false;
+    }
+    return SdManifest_NameReservedForManifestsLen(name, strlen(name));
+}
+
 /* ⛔⛔⛔ #1124 r28 AUDIT HIGH, BOTH LEGS (SCPIStorageSD.c:1119, this file:501):
  * COULD THIS PATH COMPONENT BE A FatFs 8.3 ALIAS?
  *

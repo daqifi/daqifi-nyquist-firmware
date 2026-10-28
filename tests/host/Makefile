@@ -1711,7 +1711,7 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	 lgrant=`printf '%s\n' "$$pp" | grep -n 'SD_DirHasBucketComponent(' | head -1 | cut -d: -f1`; \
 	 lfile=`printf '%s\n' "$$pp" | grep -n 'SdManifest_PathHasAliasRiskLen(pBuff, fileLen)' | head -1 | cut -d: -f1`; \
 	 ldir=`printf '%s\n' "$$pp" | grep -n 'SdManifest_PathHasAliasRiskLen(pBuff, pathLen)' | head -1 | cut -d: -f1`; \
-	 lmfst=`printf '%s\n' "$$pp" | grep -n 'SdManifest_NameHasManifestExtLen(pBuff, fileLen)' | head -1 | cut -d: -f1`; \
+	 lmfst=`printf '%s\n' "$$pp" | grep -n 'SdManifest_NameReservedForManifestsLen(pBuff, fileLen)' | head -1 | cut -d: -f1`; \
 	 nold=`printf '%s\n' "$$pp" | grep -c "memchr(pBuff, '~', fileLen)"`; \
 	 if [ -z "$$ldir" ]; then \
 	   echo "ERROR: #1124 r28 PIN 23d: the DIRECTORY setter no longer refuses '~'."; \
@@ -1823,7 +1823,7 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	      exit 1;; \
 	 esac; \
 	 case "$$pp" in \
-	   *"if (SdManifest_NameHasManifestExt(nameOperand)) {"*) ;; \
+	   *"if (SdManifest_NameReservedForManifests(nameOperand)) {"*) ;; \
 	   *) echo "ERROR: #1124 r28 PIN 23f: the at-use manifest-extension refusal"; \
 	      echo "       is gone. A session whose configured name ends in"; \
 	      echo "       SD_MANIFEST_EXT writes its data file over another"; \
@@ -1844,6 +1844,54 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	   echo "       applies to the read/CRC/delete operands too."; \
 	   exit 1; \
 	 fi
+	@# ⛔⛔⛔ PIN 23g -- r29 AUDIT HIGH (:232): THE TWO MANIFEST-NAME QUESTIONS
+	@# MUST STAY TWO PREDICATES, AND EACH CONSUMER MUST USE ITS OWN.
+	@#
+	@# One string, two questions, OPPOSITE correct answers for the bare
+	@# extension ".mfst":
+	@#   the foreign SCAN  "is this FILE a manifest to READ?"      -> NO
+	@#   the WRITE path    "is this name RESERVED for manifests?"  -> YES
+	@#
+	@# r28 refused a logging name by reusing the SCAN's predicate, whose length
+	@# carve-out answers NO for the bare extension -- so `SD:FILE ".mfst"` was
+	@# accepted, extractBaseFilename gave an empty stem, rotation targeted
+	@# "-1.mfst", and the grant truncated another capture's manifest.
+	@#
+	@# ⭐ AND THE SHARED PREDICATE COULD NOT BE TIGHTENED: dropping the carve-out
+	@# fixes the setter and breaks the scan, which must keep answering NO. So the
+	@# failure mode this pin exists for is a future "unification" that looks like
+	@# a cleanup. Counted PER FILE AND PER PREDICATE, because a single total
+	@# cannot see one consumer switching to the other's question.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null`; \
+	 bp=`$(CC) -fpreprocessed -E $(SD_BENCH_SRC) 2>/dev/null`; \
+	 mgr_scan=`printf '%s\n' "$$pp" | grep -c 'SdManifest_NameHasManifestExt('`; \
+	 mgr_write=`printf '%s\n' "$$pp" | grep -c 'SdManifest_NameReservedForManifests('`; \
+	 scpi_scan=`printf '%s\n' "$$bp" | grep -c 'SdManifest_NameHasManifestExt'`; \
+	 scpi_write=`printf '%s\n' "$$bp" | grep -c 'SdManifest_NameReservedForManifestsLen('`; \
+	 hdr=`$(CC) -fpreprocessed -E -I$(FW_UTIL) $(FW_UTIL)/SdManifest.h 2>/dev/null \
+	      | grep -c 'SdManifest_NameReservedForManifestsLen('`; \
+	 ok=1; \
+	 test "$$mgr_scan" -eq 1 || ok=0; \
+	 test "$$mgr_write" -eq 1 || ok=0; \
+	 test "$$scpi_scan" -eq 0 || ok=0; \
+	 test "$$scpi_write" -eq 1 || ok=0; \
+	 test "$$hdr" -ge 2 || ok=0; \
+	 test "$$ok" -eq 1 \
+	  || { echo "ERROR: #1124 r29 PIN 23g: a manifest-name consumer is asking the"; \
+	       echo "       WRONG question, or the two predicates were unified."; \
+	       echo "         manager, SCAN predicate  (NameHasManifestExt):      $$mgr_scan (expect 1)"; \
+	       echo "         manager, WRITE predicate (NameReservedForManifests): $$mgr_write (expect 1)"; \
+	       echo "         SCPI,    SCAN predicate  (must not appear):          $$scpi_scan (expect 0)"; \
+	       echo "         SCPI,    WRITE predicate (…Len, the setter):         $$scpi_write (expect 1)"; \
+	       echo "         header, definition + use of the WRITE predicate:     $$hdr (expect >= 2)"; \
+	       echo "       They differ on exactly one input -- the bare \".mfst\" --"; \
+	       echo "       and that input is the r29 HIGH: reserved as a logging"; \
+	       echo "       target, NOT a manifest to read. Tightening the scan's"; \
+	       echo "       predicate to fix the setter BREAKS the scan, which must"; \
+	       echo "       keep answering NO (its contents would otherwise decide a"; \
+	       echo "       refusal). Two questions, two predicates, named after the"; \
+	       echo "       questions so the next reader cannot pick the wrong one."; \
+	       exit 1; }
 	@# ⛔⛔ PIN 24 -- r21 AUDIT HIGH (:972): THE DIRECTORY GENERATION IS
 	@# SNAPSHOTTED BEFORE THE RESOLUTION AND RE-CHECKED AT THE COMMIT.
 	@#

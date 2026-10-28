@@ -1284,7 +1284,7 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
-        if (SdManifest_NameHasManifestExtLen(pBuff, fileLen)) {
+        if (SdManifest_NameReservedForManifestsLen(pBuff, fileLen)) {
             /* log_budget: max=40 */
             LOG_E("[SD1124] mfstname refused in SD:FILE");
             SCPI_ExecutionError(context,

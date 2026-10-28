@@ -1886,9 +1886,103 @@ TEST(the_manifest_extension_is_recognised_whatever_its_case) {
     ASSERT_FALSE(SdManifest_NameHasManifestExt(NULL));
 }
 
+/* ⛔⛔⛔ #1124 r29 AUDIT HIGH (:232): TWO QUESTIONS ABOUT ONE STRING, WITH
+ * OPPOSITE CORRECT ANSWERS FOR THE BARE EXTENSION.
+ *
+ * r28 refused a logging name whose TAIL is the manifest extension by reusing
+ * the foreign scan's predicate. That predicate deliberately answers NO for a
+ * name that IS exactly ".mfst" -- every writer emits <something>.mfst, so a
+ * bare extension is some other file and reading it as a manifest would let its
+ * contents decide a refusal. The setter needed YES for the same string:
+ * `SD:FILE ".mfst"` gave extractBaseFilename an empty stem, rotation targeted
+ * "-1.mfst", and with the grant that truncated the manifest of a session named
+ * "-1".
+ *
+ * ⭐⭐ THIS TEST ASSERTS BOTH ANSWERS SIDE BY SIDE, which is the only shape
+ * that defends the split. Each predicate tested alone passes after a
+ * well-meaning "unification" that breaks the other; asserting the PAIR on the
+ * same input makes the disagreement itself the thing under test. The bare
+ * extension is the ONLY input where they differ, and that is asserted too --
+ * so this also fails if the split is widened into a general divergence. */
+TEST(the_two_manifest_name_questions_disagree_only_on_the_bare_extension) {
+    /* THE discriminating input: reserved as a logging target, NOT a manifest
+     * to read. */
+    ASSERT_TRUE(SdManifest_NameReservedForManifests(".mfst"));
+    ASSERT_FALSE(SdManifest_NameHasManifestExt(".mfst"));
+    /* case-folded, same disagreement */
+    ASSERT_TRUE(SdManifest_NameReservedForManifests(".MFST"));
+    ASSERT_FALSE(SdManifest_NameHasManifestExt(".MFST"));
+
+    /* EVERYWHERE ELSE THEY MUST AGREE. A divergence beyond the bare extension
+     * would mean the scan and the setter disagree about ordinary names, which
+     * is a different defect from the one being fixed. */
+    const char *const agree[] = {
+        "exp.csv.mfst", "exp.csv.MFST", "exp.csv.MfSt", "sub/exp.csv.mfst",
+        "exp.csv.mfst.mfst", "a.mfst",
+        "exp.csv", "exp.mfst.csv", "exp", "", "mfst", ".mfs", "x.mfs",
+    };
+    size_t i;
+    for (i = 0u; i < sizeof(agree) / sizeof(agree[0]); i++) {
+        ASSERT_EQ(SdManifest_NameReservedForManifests(agree[i]) ? 1 : 0,
+                  SdManifest_NameHasManifestExt(agree[i]) ? 1 : 0);
+    }
+    ASSERT_FALSE(SdManifest_NameReservedForManifests(NULL));
+    ASSERT_FALSE(SdManifest_NameHasManifestExt(NULL));
+
+    /* the length-taking form stops at the length, same as its sibling */
+    ASSERT_TRUE(SdManifest_NameReservedForManifestsLen("exp.mfst.csv", 8u));
+    ASSERT_FALSE(SdManifest_NameReservedForManifestsLen("exp.mfst.csv", 12u));
+    /* and the bare extension via an UNTERMINATED buffer */
+    {
+        const char raw[6] = { '.', 'm', 'f', 's', 't', 'X' };
+        ASSERT_TRUE(SdManifest_NameReservedForManifestsLen(raw, 5u));
+        ASSERT_FALSE(SdManifest_NameReservedForManifestsLen(raw, 4u));
+    }
+}
+
+/* ⭐ THE PROPERTY THAT MAKES THE EXTENSION TEST A COMPLETE FIX, asserted
+ * rather than argued: if a configured name's last extension is not the
+ * manifest extension, then NO name that session writes can be reserved --
+ * neither the unsuffixed name nor any part at any counter value. Built from
+ * the real formatter's inverse so it cannot drift from how parts are named. */
+TEST(a_session_whose_extension_is_not_the_manifest_one_can_never_write_a_reserved_name) {
+    static const char *const stems[] = { "exp", "", "a.b", "-1", "log.csv" };
+    static const char *const exts[]  = { ".csv", "", ".mfs", ".txt", ".mfstx" };
+    char name[64];
+    size_t si, ei;
+    uint32_t n;
+
+    for (si = 0u; si < sizeof(stems) / sizeof(stems[0]); si++) {
+        for (ei = 0u; ei < sizeof(exts) / sizeof(exts[0]); ei++) {
+            /* the configured name itself (counter 0 emits exactly this) */
+            snprintf(name, sizeof(name), "%s%s", stems[si], exts[ei]);
+            ASSERT_FALSE(SdManifest_NameReservedForManifests(name));
+            /* and its parts, which is "%s-%u%s" */
+            for (n = 1u; n <= 3u; n++) {
+                snprintf(name, sizeof(name), "%s-%u%s", stems[si], (unsigned)n,
+                         exts[ei]);
+                ASSERT_FALSE(SdManifest_NameReservedForManifests(name));
+            }
+        }
+    }
+    /* ...and the converse: once the extension IS the manifest one, both the
+     * name and every part are reserved -- which is why refusing it at the
+     * setter forecloses all of them at once. */
+    ASSERT_TRUE(SdManifest_NameReservedForManifests(".mfst"));
+    ASSERT_TRUE(SdManifest_NameReservedForManifests("exp.mfst"));
+    for (n = 1u; n <= 3u; n++) {
+        snprintf(name, sizeof(name), "-%u.mfst", (unsigned)n);
+        ASSERT_TRUE(SdManifest_NameReservedForManifests(name));
+        snprintf(name, sizeof(name), "exp-%u.mfst", (unsigned)n);
+        ASSERT_TRUE(SdManifest_NameReservedForManifests(name));
+    }
+}
+
 int main(void)
 {
     printf("=== #924 SD session integrity manifest ===\n");
+    RUN(the_two_manifest_name_questions_disagree_only_on_the_bare_extension);
+    RUN(a_session_whose_extension_is_not_the_manifest_one_can_never_write_a_reserved_name);
     RUN(part_suffix_parser_accepts_only_what_the_formatter_emits);
     RUN(part_suffix_parser_bounds_the_index_to_what_a_session_can_write);
     RUN(alias_risk_sees_a_tilde_anywhere_in_the_path);
