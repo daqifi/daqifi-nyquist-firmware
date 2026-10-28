@@ -1324,7 +1324,6 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	 for probe in \
 	   "if (got == (size_t)-1) {" \
 	   "if (lineLen >= (sizeof(line) - 1u)) {" \
-	   "if (++lines > SD_FOREIGN_SCAN_MAX_LINES) {" \
 	   "if (sep == NULL || sep == line) {" \
 	 ; do \
 	   case "$$pp" in \
@@ -2013,6 +2012,62 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	   *"[SD1124] scope name is not ASCII"*) ;; \
 	   *) echo "ERROR: #1124 r25 PIN 32b: the FILENAME no longer refuses the"; \
 	      echo "       grant on a non-ASCII byte (SdManifest.h:258)."; \
+	      exit 1;; \
+	 esac
+	@# ⛔⛔ PIN 33 -- r26 AUDIT MEDIUM (:2862): NO LINE CAP ON A MANIFEST.
+	@#
+	@# SD_FOREIGN_SCAN_MAX_LINES was ((MAX_BUCKET + 1) * MAX_DIR_FILES) + 1 =
+	@# 4161, and FAULT is a refusal -- so a manifest THIS FIRMWARE CAN PRODUCE
+	@# disarmed the next fresh capture in that directory.
+	@#
+	@# ⛔⛔ THE SAME PREMISE r25 HAD ALREADY DISPROVED. r25 established that
+	@# fileCounter is not bounded by bucket capacity (the reopen path suppresses
+	@# the roll and the count that drives it); I fixed the bitset logic the
+	@# finding named and left THIS constant, derived from the identical
+	@# arithmetic, standing. And the reopen path appends a RECORD per re-open of
+	@# an already-recorded name, so a manifest's line count follows the ROTATION
+	@# count, not the file count, and is effectively unbounded.
+	@#
+	@# ⭐ WHEN A PREMISE IS DISPROVED, ENUMERATE EVERYTHING DERIVED FROM IT. A
+	@# finding names one consumer; the premise may have several. This is the
+	@# fourth member of the wrong-dimension-bound family, and the second time
+	@# this exact arithmetic has been wrong.
+	@#
+	@# Pinned BY NAME so the constant cannot return, and by the presence of the
+	@# byte bound that replaced it -- a bound on how much we READ, not on how
+	@# much the user may have LOGGED.
+	@n=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null \
+	    | grep -c 'SD_FOREIGN_SCAN_MAX_LINES'`; \
+	 if [ "$$n" != "0" ]; then \
+	   echo "ERROR: #1124 r26 PIN 33: the manifest LINE cap is back ($$n"; \
+	   echo "       mention(s) of SD_FOREIGN_SCAN_MAX_LINES). A line count is a"; \
+	   echo "       SESSION bound, and FAULT is a refusal, so it disarms the next"; \
+	   echo "       capture over a manifest this firmware itself produced"; \
+	   echo "       (audit :2862). Bound the BYTES READ instead."; \
+	   exit 1; \
+	 fi; \
+	 pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"if (got > (size_t)(SD_FOREIGN_SCAN_MAX_BYTES - bytesRead)) {"*) ;; \
+	   *) echo "ERROR: #1124 r26 PIN 33: the byte bound on the manifest read is"; \
+	      echo "       gone, so a non-terminating file is unbounded work. It must"; \
+	      echo "       bound the READ (a corruption bound), not the number of"; \
+	      echo "       records the user may have logged."; \
+	      echo "       NOTE the subtraction form: computing bytesRead + got first"; \
+	      echo "       can WRAP and pass the check it exists to make."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"lines++;"*) ;; \
+	   *) echo "ERROR: #1124 r26 PIN 33: the line counter is no longer a plain"; \
+	      echo "       increment, so it is being USED for something. It exists"; \
+	      echo "       for the diagnostics only -- never as a cap."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"lines >"*|*"lines <"*) \
+	      echo "ERROR: #1124 r26 PIN 33: the manifest LINE count is compared, so"; \
+	      echo "       it can refuse a session over its length (audit :2862)."; \
 	      exit 1;; \
 	 esac
 	$(CC) $(CFLAGS) -o $(GATE1124_BIN) test_1124_overwrite_gate.c

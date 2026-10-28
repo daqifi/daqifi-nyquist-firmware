@@ -213,8 +213,40 @@ _Static_assert(offsetof(SYS_FS_FSTAT, lfname) >= sizeof(FILINFO),
  *
  * Derived from both dimensions now, so it tracks either macro moving: buckets
  * 0..MAX_BUCKET inclusive, MAX_DIR_FILES files each, plus one. */
-#define SD_FOREIGN_SCAN_MAX_LINES \
-        (((SD_CARD_MANAGER_MAX_BUCKET + 1u) * SD_CARD_MANAGER_MAX_DIR_FILES) + 1u)
+/* ⛔⛔ #1124 r26 AUDIT MEDIUM (:2862): THERE IS NO LINE CAP, BECAUSE A LINE
+ * COUNT IS A SESSION BOUND AND THIS HAS TO BE A CORRUPTION BOUND.
+ *
+ * This read ((MAX_BUCKET + 1) * MAX_DIR_FILES) + 1 = 4161, and FAULT is a
+ * refusal -- so a manifest THIS FIRMWARE ITSELF can produce disarmed the next
+ * fresh capture in that directory with MANIFEST_UNPARSABLE.
+ *
+ * ⛔⛔ AND THIS IS THE SAME PREMISE r25 ALREADY DISPROVED. r25 found that
+ * fileCounter is NOT bounded by bucket capacity -- the existing-target reopen
+ * path suppresses both the bucket roll and the count that drives it -- and I
+ * fixed the bitset logic that the finding named while leaving THIS constant,
+ * derived from the identical arithmetic, in place. Worse: the reopen path
+ * appends a RECORD per re-open of a name already recorded, so a manifest's
+ * line count is bounded by the session's ROTATION count, not its file count,
+ * and is effectively unbounded.
+ *
+ * ⭐ THE LESSON, which is bigger than the constant: WHEN A PREMISE IS
+ * DISPROVED, ENUMERATE EVERYTHING DERIVED FROM IT. A finding names one
+ * consumer; the premise may have several. I had two (the bitset range and this
+ * cap) and fixed the one I was pointed at. Fourth member of the
+ * wrong-dimension-bound family and the second time this exact arithmetic has
+ * been wrong.
+ *
+ * So the read is bounded by BYTES, at a value no manifest this writer produces
+ * can reach, which is what makes exceeding it mean CORRUPTION rather than
+ * capacity: at SD_MANIFEST_LINE_MAX (136) bytes per record this is over 61,000
+ * records, and a file that long is not terminating.
+ *
+ * ⚠ DISCLOSED, not hidden: exceeding it still refuses. That is unavoidable for
+ * an unbounded quantity -- the work has to stop somewhere -- but it is now a
+ * bound on how much we will READ rather than on how much the user may have
+ * LOGGED, and it fails loudly (a visible -200 with [SD1124] unparsable) rather
+ * than silently. */
+#define SD_FOREIGN_SCAN_MAX_BYTES  (8u * 1024u * 1024u)
 
 /* ⛔⛔ #1124 r21 / OPTION B: THE EXPENSIVE QUESTION IS ASKED ONCE PER SESSION.
  *
@@ -252,7 +284,13 @@ _Static_assert(offsetof(SYS_FS_FSTAT, lfname) >= sizeof(FILINFO),
  * Sized to the most parts one session can produce, so an index beyond it
  * cannot be one of ours. Static, not on app_SDCardTask's stack (1024 words,
  * 468 profiled peak -- app_freertos.c). 4161 bits = 522 bytes. */
-#define SD_FOREIGN_PART_LIMIT   SD_FOREIGN_SCAN_MAX_LINES
+/* ⛔ r26: this used to be SD_FOREIGN_SCAN_MAX_LINES, which coupled the bitset's
+ * RANGE to a read cap that r26 retired. They answer different questions -- how
+ * many indices we can record, versus how much of a file we will read -- so the
+ * range is now stated in its own terms. The value is unchanged, and r25's
+ * above-limit route is what makes an index beyond it safe. */
+#define SD_FOREIGN_PART_LIMIT \
+        (((SD_CARD_MANAGER_MAX_BUCKET + 1u) * SD_CARD_MANAGER_MAX_DIR_FILES) + 1u)
 #define SD_FOREIGN_BITS_WORDS   ((SD_FOREIGN_PART_LIMIT + 31u) / 32u)
 static uint32_t gForeignPartBits[SD_FOREIGN_BITS_WORDS];
 
@@ -2775,6 +2813,7 @@ static sd_InspectResult sd_ManifestRecordsName(const char *manifestPath,
     char line[SD_MANIFEST_LINE_MAX];
     size_t lineLen = 0u;
     uint32_t lines = 0u;
+    uint32_t bytesRead = 0u;
     bool sawEof = false;
     bool identified = false;
     sd_InspectResult out = SD_INSPECT_CLEAR;
@@ -2793,6 +2832,15 @@ static sd_InspectResult sd_ManifestRecordsName(const char *manifestPath,
             out = SD_INSPECT_FAULT;
             break;
         }
+        /* r26 (:2862): a bound on how much we READ, not on how much the user
+         * may have logged. See SD_FOREIGN_SCAN_MAX_BYTES. */
+        if (got > (size_t)(SD_FOREIGN_SCAN_MAX_BYTES - bytesRead)) {
+            LOG_E("[SD1124] unparsable over %u bytes",
+                  (unsigned)SD_FOREIGN_SCAN_MAX_BYTES);
+            out = SD_INSPECT_FAULT;
+            break;
+        }
+        bytesRead += (uint32_t)got;
         /* ⛔⛔ #1124 r21 AUDIT MEDIUM (:2909): IS THIS ACTUALLY A MANIFEST?
          *
          * The extension alone does not say. `old.mfst` is a legal name for a
@@ -2859,12 +2907,7 @@ static sd_InspectResult sd_ManifestRecordsName(const char *manifestPath,
                 if (atEnd) { break; }
                 continue;           /* a blank line records nothing */
             }
-            if (++lines > SD_FOREIGN_SCAN_MAX_LINES) {
-                LOG_E("[SD1124] unparsable lines over %u",
-                      (unsigned)SD_FOREIGN_SCAN_MAX_LINES);
-                out = SD_INSPECT_FAULT;
-                break;
-            }
+            lines++;    /* counted for the diagnostics below, never a cap */
             char *sep = strchr(line, ',');
             if (sep == NULL || sep == line) {
                 /* No name field, or an empty one. */

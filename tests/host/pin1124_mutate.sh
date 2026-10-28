@@ -1216,6 +1216,30 @@ else
 fi
 restore
 
+echo "== R72 (PIN 33): bring the manifest LINE cap back -- the r26 audit        =="
+echo "==      MEDIUM, and the 4th wrong-dimension bound. A manifest this       =="
+echo "==      firmware itself can produce then disarms the next capture in     =="
+echo "==      that directory. The byte bound still works, so the read is still =="
+echo "==      bounded and nothing else notices.                                =="
+if sub "$F" '            lines++;    /* counted for the diagnostics below, never a cap */' \
+            '            if (++lines > 4161u) { out = SD_INSPECT_FAULT; break; }'; then
+    expect "R72 no manifest line cap" "the manifest LINE count is compared"
+else
+    echo "  FAIL R72 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R73 (PIN 33): drop the BYTE bound, so a non-terminating manifest is   =="
+echo "==      unbounded work on the SD task. The line counter is untouched, so =="
+echo "==      the no-cap arms all pass.                                        =="
+if sub "$F" '        if (got > (size_t)(SD_FOREIGN_SCAN_MAX_BYTES - bytesRead)) {' \
+            '        if (false) {'; then
+    expect "R73 the read is bounded by bytes" "the byte bound on the manifest read is"
+else
+    echo "  FAIL R73 anchor absent."; fail=$((fail+1))
+fi
+restore
+
 echo "== restored =="
 expect "post-restore baseline" CLEAN
 
