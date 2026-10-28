@@ -26,9 +26,22 @@
  * ⭐ NEW BY SUBTRACTION, which is what decides the fix. Nothing this PR added
  * misbehaves. The stale STA_CONNECTED it REMOVES was accidentally routing
  * ERROR -> REINIT into the arm that retried the disconnect, so that protection
- * was real while the flag was wrong. Re-setting the flag to get it back would
- * reinstate the wrong link-state report the PR exists to fix; the recovery is
- * therefore restored by making the call succeed instead.
+ * was real while the flag was wrong.
+ *
+ * ⛔ AND THE SUBTRACTED PROTECTION WAS UNBOUNDED, which r2 missed and the r2
+ * audit caught. ERROR -> REINIT repeats, so the accidental retry ran on EVERY
+ * pass until it succeeded: any transient fault self-healed, however long it
+ * lasted. r2 replaced that with a retry bounded to the 500 ms settle, which
+ * still turns a fault that outlasts the window into a PERMANENT one -- so for
+ * this path the wedge was new, not the pre-existing class I had labelled it.
+ * Bounding an unbounded retry is a regression dressed as a fix.
+ *
+ * r3 restores the unbounded behaviour with a DEDICATED teardown-pending flag:
+ * set on exhaustion, cleared when a disconnect reaches the chip, re-attempted
+ * on every REINIT pass while set. Re-setting STA_CONNECTED would also have
+ * restored it -- and would have reinstated the wrong link-state report this PR
+ * exists to fix, because one flag would again answer two questions. A separate
+ * fact gets a separate flag.
  * ========================================================================== */
 
 #include "test_framework.h"
@@ -49,6 +62,8 @@ typedef enum { ST_OK = 0, ST_REQUEST_ERROR, ST_DISCONNECT_FAIL } Status;
 typedef struct {
     bool chipConnected;      /* the driver's internal isConnected */
     unsigned failuresLeft;   /* transport failures before it recovers */
+    bool staConnectedFlag;   /* the LINK-STATE flag GetLinkState() reports */
+    bool teardownPending;    /* r3's dedicated "a teardown is outstanding" */
     /* observations */
     unsigned attempts;
     unsigned settleMs;
@@ -56,18 +71,42 @@ typedef struct {
 } Chip;
 
 typedef struct {
-    bool retryAcrossSettle;  /* false = the pre-fix single attempt */
+    bool clearsModeFlags;    /* this PR's fix: the link state becomes honest */
+    bool retryAcrossSettle;  /* r2: bounded re-attempt during the settle */
+    bool teardownPendingFlag;/* r3: a dedicated flag drives an UNBOUNDED retry */
 } Shape;
 
-static const Shape SHAPE_OLD = { false };
-static const Shape SHAPE_NEW = { true  };
+/* BASE -- before this PR. The stale STA_CONNECTED is left set, which reports a
+ * link that does not exist (the #1060 defect) and ALSO, by accident, routes
+ * every ERROR -> REINIT through STA reconfiguration, which retries the
+ * disconnect indefinitely. So the base self-heals, for the wrong reason. */
+static const Shape SHAPE_BASE = { false, false, false };
+/* r1 -- flags cleared, one logged attempt. Honest link state, and the
+ * accidental unbounded retry is gone with it: a transient fault is permanent. */
+static const Shape SHAPE_R1   = { true,  false, false };
+/* r2 -- the retry is BOUNDED to the settle window. Better, and still permanent
+ * for any fault that outlasts the window. This is what the r2 audit rejected. */
+static const Shape SHAPE_R2   = { true,  true,  false };
+/* r3 -- bounded retry PLUS a dedicated teardown-pending flag that makes every
+ * later REINIT re-attempt it. Unbounded again, with the link state still
+ * honest, because the retry is driven by its own fact. */
+static const Shape SHAPE_NEW  = { true,  true,  true  };
 
 static Chip chip(bool connected, unsigned failures) {
     Chip c;
     memset(&c, 0, sizeof(c));
     c.chipConnected = connected;
     c.failuresLeft = failures;
+    /* An AP client association set the shared flag -- the situation #1060 is
+     * about. Whether the fix clears it is the shape's business. */
+    c.staConnectedFlag = true;
     return c;
+}
+
+/* What GetLinkState() would report. The #1060 defect is this being true with
+ * no STA link, and no fix may reintroduce it. */
+static bool model_link_reported_connected(const Chip *c) {
+    return c->staConnectedFlag;
 }
 
 /* WDRV_WINC_BSSDisconnect(): reaches the chip unless the transport is still
@@ -91,12 +130,17 @@ static bool status_is_done(Status s) {
 
 /* The AP->STA APPLY branch, from the disconnect to SendEvent(INIT). */
 static void model_apsta_switch(Chip *c, Shape s) {
+    if (s.clearsModeFlags) {
+        c->staConnectedFlag = false;     /* the link state becomes honest */
+    }
     Status st = model_disconnect(c);
     if (!s.retryAcrossSettle) {
-        /* Pre-fix: one attempt, logged, then the settle wait. */
         c->settleMs = SETTLE_SLICES * SETTLE_SLICE_MS;
         if (!status_is_done(st)) {
             c->loggedFailure = true;
+            if (s.teardownPendingFlag) {
+                c->teardownPending = true;
+            }
         }
         return;
     }
@@ -109,6 +153,10 @@ static void model_apsta_switch(Chip *c, Shape s) {
     }
     if (!status_is_done(st)) {
         c->loggedFailure = true;
+        /* r3: exhausted, not finished. */
+        if (s.teardownPendingFlag) {
+            c->teardownPending = true;
+        }
     }
 }
 
@@ -119,14 +167,37 @@ static bool model_dhcp_would_be_refused(const Chip *c) {
     return c->chipConnected;
 }
 
+/* One ERROR -> REINIT pass. THREE different things can happen here, and which
+ * one is the whole subject of this round:
+ *   BASE  the stale STA_CONNECTED routes into STA reconfiguration, which
+ *         retries the disconnect -- unbounded, because REINIT repeats;
+ *   r1/r2 the flags are clear, so the fresh-init arm runs and clears nothing;
+ *   r3    the dedicated flag re-attempts the disconnect, unbounded, without
+ *         consulting the link-state flag at all.
+ */
+static void model_reinit_pass(Chip *c, Shape s) {
+    if (s.teardownPendingFlag && c->teardownPending) {
+        Status st = model_disconnect(c);
+        if (status_is_done(st)) {
+            c->teardownPending = false;
+        }
+        return;
+    }
+    if (!s.clearsModeFlags && c->staConnectedFlag) {
+        (void)model_disconnect(c);   /* the accidental unbounded retry */
+        return;
+    }
+    /* fresh-init arm: returns the existing instance, clears nothing */
+}
+
 /* ---- the audit's exact scenario ---------------------------------------- */
 /*
  * Two transport failures, then recovery -- "then recovers" is the finding's own
  * wording, and it is what makes a retry the fix rather than a mitigation.
  */
-TEST(old_shape_loses_recovery_when_the_disconnect_itself_fails) {
+TEST(r1_loses_recovery_when_the_disconnect_itself_fails) {
     Chip c = chip(true, 2);
-    model_apsta_switch(&c, SHAPE_OLD);
+    model_apsta_switch(&c, SHAPE_R1);
     ASSERT_EQ(c.attempts, 1u);                       /* one attempt, logged */
     ASSERT_TRUE(c.loggedFailure);
     ASSERT_TRUE(c.chipConnected);                    /* never cleared */
@@ -168,7 +239,7 @@ TEST(the_settle_time_is_500ms_whatever_the_transport_does) {
         model_apsta_switch(&c, SHAPE_NEW);
         ASSERT_EQ(c.settleMs, 500u);
         Chip o = chip(true, failures);
-        model_apsta_switch(&o, SHAPE_OLD);
+        model_apsta_switch(&o, SHAPE_R1);
         ASSERT_EQ(o.settleMs, 500u);   /* the pre-fix wait, for comparison */
     }
 }
@@ -190,13 +261,13 @@ TEST(the_retry_is_bounded_not_a_spin) {
  * nobody can later believe this PR closed it: the day a recovery path lands,
  * this arm fails and has to be rewritten, which is exactly the right signal.
  */
-TEST(a_transport_that_never_recovers_still_wedges_the_ticketed_residual) {
-    Chip c = chip(true, 1000);
-    model_apsta_switch(&c, SHAPE_NEW);
-    ASSERT_TRUE(c.chipConnected);
-    ASSERT_TRUE(model_dhcp_would_be_refused(&c));
-    ASSERT_TRUE(c.loggedFailure);     /* at least it is REPORTED, with the tag */
-}
+/* ⛔ RETIRED AT r3, and deliberately replaced rather than deleted quietly.
+ * This arm asserted the exhaustion wedge and labelled it the pre-existing
+ * #1181 class. The r2 audit showed that for THIS path it was NEW -- the
+ * subtraction removed an UNBOUNDED retry and r2 only bounded it -- so the label
+ * was wrong and the arm was certifying a regression as inherited.
+ * a_transport_that_NEVER_recovers_stays_wedged_the_1181_residual below carries
+ * the correctly scoped claim. */
 
 /* ⭐ THE BOUNDARY, because "recovers in time" and "recovers too late" are the
  * two sides of what the bound buys, and only one of them was obvious. */
@@ -236,16 +307,137 @@ TEST(every_recovery_within_the_window_is_caught_and_none_outside_it) {
     ASSERT_EQ(missed, 3u);
 }
 
+/* ---- r2's rejected framing, as the four-shape matrix ------------------- */
+/*
+ * ⭐ THE SEQUENCE THE AUDIT NAMED: the transport fails through the AP stop and
+ * every attempt the settle window allows, and THEN recovers. Six failures is
+ * one more than the window, which is the smallest input that separates a
+ * bounded retry from an unbounded one -- and separating exactly those two is
+ * the point of this round.
+ */
+#define FAILURES_PAST_THE_WINDOW (SETTLE_SLICES + 1u)
+
+/* How many REINIT passes to run. The property under test is "it heals
+ * EVENTUALLY", so this must comfortably exceed the fault duration -- otherwise
+ * a shape that retries once per pass is starved rather than tested, and its arm
+ * fails for the model's reason instead of the firmware's. (Measured: at 4
+ * passes the BASE shape got 5 attempts against 6 failures and read as "never
+ * healed", which is the opposite of what BASE actually did.) The shapes that
+ * never heal, r1 and r2, never heal at ANY pass count -- which is the real
+ * discriminator and is why raising this does not weaken the matrix. */
+#define REINIT_PASSES 10u
+
+static Chip run_sequence(Shape s, unsigned failures) {
+    Chip c = chip(true, failures);
+    model_apsta_switch(&c, s);
+    for (unsigned i = 0; i < REINIT_PASSES; i++) {
+        model_reinit_pass(&c, s);
+    }
+    return c;
+}
+
+TEST(base_self_healed_but_lied_about_the_link) {
+    Chip c = run_sequence(SHAPE_BASE, FAILURES_PAST_THE_WINDOW);
+    ASSERT_FALSE(model_dhcp_would_be_refused(&c));   /* it DID self-heal */
+    /* ...and this is why it is not the answer: it reported a link that was
+     * never there, which is the defect #1060 was filed for. */
+    ASSERT_TRUE(model_link_reported_connected(&c));
+}
+
+TEST(r1_turns_a_transient_fault_into_a_permanent_one) {
+    Chip c = run_sequence(SHAPE_R1, FAILURES_PAST_THE_WINDOW);
+    ASSERT_TRUE(model_dhcp_would_be_refused(&c));
+    ASSERT_FALSE(model_link_reported_connected(&c));  /* honest, but wedged */
+}
+
+TEST(r2_only_bounded_it_so_the_fault_is_still_permanent) {
+    Chip c = run_sequence(SHAPE_R2, FAILURES_PAST_THE_WINDOW);
+    ASSERT_TRUE(model_dhcp_would_be_refused(&c));
+    ASSERT_FALSE(model_link_reported_connected(&c));
+}
+
+TEST(r3_self_heals_AND_keeps_the_link_state_honest) {
+    Chip c = run_sequence(SHAPE_NEW, FAILURES_PAST_THE_WINDOW);
+    ASSERT_FALSE(model_dhcp_would_be_refused(&c));    /* base's recovery back */
+    ASSERT_FALSE(model_link_reported_connected(&c));  /* without base's lie */
+    ASSERT_FALSE(c.teardownPending);                  /* and the flag cleared */
+}
+
+/* ⭐ The two properties are independent, so assert they hold TOGETHER rather
+ * than one per arm. Only r3 has both; each other shape has exactly one. */
+TEST(only_r3_has_both_properties) {
+    const Shape shapes[] = { SHAPE_BASE, SHAPE_R1, SHAPE_R2, SHAPE_NEW };
+    unsigned both = 0;
+    for (unsigned i = 0; i < 4; i++) {
+        Chip c = run_sequence(shapes[i], FAILURES_PAST_THE_WINDOW);
+        if (!model_dhcp_would_be_refused(&c) &&
+            !model_link_reported_connected(&c)) {
+            both++;
+        }
+    }
+    ASSERT_EQ(both, 1u);
+}
+
+/* However long the fault lasts, r3 heals once it clears -- that is what
+ * "unbounded" means, and a single duration cannot show it. */
+TEST(r3_heals_at_any_fault_duration_within_the_reinit_passes) {
+    for (unsigned extra = 0; extra <= REINIT_PASSES; extra++) {
+        Chip c = run_sequence(SHAPE_NEW, SETTLE_SLICES + extra);
+        ASSERT_FALSE(model_dhcp_would_be_refused(&c));
+        ASSERT_FALSE(model_link_reported_connected(&c));
+    }
+}
+
+/* ⚠ THE RESIDUAL, NOW CORRECTLY SCOPED. r2's version of this arm asserted the
+ * wedge for the exhaustion case and called it pre-existing; the audit showed
+ * that for this path it was NEW, because the subtraction removed an unbounded
+ * retry. Only the NEVER-RECOVERS case is genuinely the #1181 class: no retry
+ * policy can help a transport that never comes back, which is why that ticket
+ * asks for a recovery path rather than more retries. */
+TEST(a_transport_that_NEVER_recovers_stays_wedged_the_1181_residual) {
+    Chip c = chip(true, 100000u);          /* never recovers, ever */
+    model_apsta_switch(&c, SHAPE_NEW);
+    for (unsigned i = 0; i < 50u; i++) {
+        model_reinit_pass(&c, SHAPE_NEW);
+    }
+    ASSERT_TRUE(model_dhcp_would_be_refused(&c));
+    ASSERT_TRUE(c.teardownPending);        /* still trying, correctly */
+    ASSERT_FALSE(model_link_reported_connected(&c));
+}
+
+/* The control the audit asked for: the common path is untouched. No teardown is
+ * ever outstanding, so no REINIT pass issues an extra call, and the settle is
+ * the same 500 ms. */
+TEST(the_common_path_is_unchanged_in_calls_and_timing) {
+    Chip c = chip(true, 0);                /* healthy transport */
+    model_apsta_switch(&c, SHAPE_NEW);
+    ASSERT_EQ(c.attempts, 1u);
+    ASSERT_EQ(c.settleMs, 500u);
+    ASSERT_FALSE(c.teardownPending);
+    const unsigned before = c.attempts;
+    for (unsigned i = 0; i < REINIT_PASSES; i++) {
+        model_reinit_pass(&c, SHAPE_NEW);
+    }
+    ASSERT_EQ(c.attempts, before);         /* not one extra disconnect */
+}
+
 int main(void) {
-    RUN(old_shape_loses_recovery_when_the_disconnect_itself_fails);
+    RUN(r1_loses_recovery_when_the_disconnect_itself_fails);
     RUN(new_shape_recovers_once_the_transport_does);
     RUN(an_already_disconnected_chip_takes_exactly_one_attempt);
     RUN(a_connected_chip_with_a_healthy_transport_takes_one_attempt);
     RUN(the_settle_time_is_500ms_whatever_the_transport_does);
     RUN(the_retry_is_bounded_not_a_spin);
-    RUN(a_transport_that_never_recovers_still_wedges_the_ticketed_residual);
     RUN(recovery_on_the_very_last_slice_is_still_caught);
     RUN(recovery_one_slice_too_late_is_not_caught_and_is_reported);
     RUN(every_recovery_within_the_window_is_caught_and_none_outside_it);
+    RUN(base_self_healed_but_lied_about_the_link);
+    RUN(r1_turns_a_transient_fault_into_a_permanent_one);
+    RUN(r2_only_bounded_it_so_the_fault_is_still_permanent);
+    RUN(r3_self_heals_AND_keeps_the_link_state_honest);
+    RUN(only_r3_has_both_properties);
+    RUN(r3_heals_at_any_fault_duration_within_the_reinit_passes);
+    RUN(a_transport_that_NEVER_recovers_stays_wedged_the_1181_residual);
+    RUN(the_common_path_is_unchanged_in_calls_and_timing);
     return TEST_SUMMARY();
 }

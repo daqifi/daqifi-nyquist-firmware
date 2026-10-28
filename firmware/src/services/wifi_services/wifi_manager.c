@@ -61,6 +61,29 @@ typedef struct {
         WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_CONNECTED = 1 << 7,
         WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_REQUESTED = 1 << 8,  // WiFi firmware update requested but not yet initialized
         WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_READY = 1 << 9,      // WiFi firmware update initialized and active
+        /* ⛔ #1060 r3: THE CHIP MAY STILL HOLD AN ASSOCIATION, because a
+         * disconnect this driver issued never reached it.
+         *
+         * A DEDICATED flag, and the dedication is the point. r2 restored the
+         * lost recovery by BOUNDING a retry, and the audit was right that
+         * bounding is not enough: before this PR the stale STA_CONNECTED
+         * routed every ERROR -> REINIT through STA reconfiguration, which
+         * retried the disconnect INDEFINITELY and so self-healed whenever the
+         * transport eventually did. The subtraction removed an UNBOUNDED
+         * retry; a bounded one still turns a transient fault into a permanent
+         * one, only later.
+         *
+         * Re-setting STA_CONNECTED would restore the retry AND restore the
+         * wrong link-state report this PR exists to fix -- one flag answering
+         * two questions, which is how the original defect worked. This flag
+         * answers only "is a teardown outstanding?", so GetLinkState() is
+         * untouched and the retry is driven by the fact that governs it.
+         *
+         * Set on exhaustion, cleared the moment a disconnect reaches the chip,
+         * re-attempted on EVERY REINIT pass while set -- the unbounded
+         * behaviour restored without a deinit, so the AP->STA branch's "don't
+         * deinitialize" constraint still holds. */
+        WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING = 1 << 10,
     } flag;
     uint16_t value;
 } wifi_manager_stateFlag_t;
@@ -1712,6 +1735,40 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 break;
             }
 
+            /* ⛔ #1060 r3: FINISH AN OUTSTANDING TEARDOWN BEFORE RE-INITIALISING.
+             *
+             * This is the unbounded retry the stale STA_CONNECTED used to
+             * provide by accident, now driven by a flag that means exactly
+             * that and nothing else. While it is set the chip may still hold
+             * an association, and the fresh-init arm below cannot clear it:
+             * WDRV_WINC_Initialize and WDRV_WINC_Open both return early for an
+             * instance that is still initialised and open, so
+             * wincResetCtrlDcpt never runs and every IPUseDHCPSet is refused.
+             *
+             * Placed AFTER the BUSY check so the driver is quiescent, and
+             * BEFORE any re-init work so a success here is visible to it. On
+             * the passes where nothing is outstanding this costs one flag
+             * test, not a call.
+             *
+             * No deinit, deliberately: the AP->STA branch's "the driver gets
+             * into a bad state (-1) after deinit" observation still stands, so
+             * recovery is one more attempt at the thing that failed rather
+             * than a heavier reset. */
+            if (GetEventFlagStatus(pInstance->eventFlags,
+                                   WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING)) {
+                const WDRV_WINC_STATUS retryStatus =
+                        WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
+                if ((WDRV_WINC_STATUS_OK == retryStatus) ||
+                    (WDRV_WINC_STATUS_REQUEST_ERROR == retryStatus)) {
+                    ResetEventFlag(&pInstance->eventFlags,
+                            WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING);
+                    LOG_I("WiFi: outstanding teardown completed (#1060)");
+                }
+                /* Still failing: the flag stays set and the next REINIT tries
+                 * again. No log on failure -- a REINIT loop would spam it, and
+                 * the exhaustion that set the flag already reported once. */
+            }
+
             // IMPORTANT: Do NOT use WDRV_WINC_Deinitialize for runtime reconfiguration!
             // The Microchip driver has a bug where it asserts reset but never deasserts it,
             // leaving the WINC1500 in a permanent reset state. Instead, we perform a soft
@@ -2002,6 +2059,18 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                             }
                             discStatus = WDRV_WINC_BSSDisconnect(
                                     pInstance->wdrvHandle);
+                        }
+                        if ((WDRV_WINC_STATUS_OK == discStatus) ||
+                            (WDRV_WINC_STATUS_REQUEST_ERROR == discStatus)) {
+                            /* Reached the chip: nothing is outstanding. */
+                            ResetEventFlag(&pInstance->eventFlags,
+                                    WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING);
+                        } else {
+                            /* #1060 r3: the retry is EXHAUSTED, not finished.
+                             * Mark the teardown outstanding so every later
+                             * REINIT pass re-attempts it until it lands. */
+                            SetEventFlag(&pInstance->eventFlags,
+                                    WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING);
                         }
                         if ((WDRV_WINC_STATUS_OK != discStatus) &&
                             (WDRV_WINC_STATUS_REQUEST_ERROR != discStatus)) {

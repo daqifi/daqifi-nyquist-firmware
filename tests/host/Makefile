@@ -966,6 +966,74 @@ $(APSTA1060_BIN): test_1060_apsta_disconnect_retry.c test_framework.h \
 	       echo "       ticket. A bare 'disconnect failed' leaves the operator"; \
 	       echo "       with a board that refuses DHCP and no way to connect"; \
 	       echo "       that symptom to the known class."; exit 1; }
+	@# ⛔ PIN 6 -- r3: AN OUTSTANDING TEARDOWN IS RE-ATTEMPTED ON EVERY REINIT.
+	@# This is the UNBOUNDED retry the stale STA_CONNECTED used to supply by
+	@# accident. r2 bounded it to the settle window, and the r2 audit was right
+	@# that bounding an unbounded retry still turns a transient fault into a
+	@# permanent one -- just later. Without this block the exhaustion case is a
+	@# regression, not the pre-existing class.
+	@pp=`$(CC) -fpreprocessed -E $(WIFI_MGR_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING)) { const WDRV_WINC_STATUS retryStatus = WDRV_WINC_BSSDisconnect("*) ;; \
+	   *) echo "ERROR: no REINIT-side re-attempt of an outstanding teardown"; \
+	      echo "       (#1060 r3). The bounded retry in the AP->STA branch is"; \
+	      echo "       NOT sufficient on its own: before this PR the stale"; \
+	      echo "       STA_CONNECTED made every ERROR -> REINIT retry the"; \
+	      echo "       disconnect indefinitely, so any transient fault healed."; \
+	      echo "       With only a bounded retry, a fault that outlasts the"; \
+	      echo "       500 ms window is PERMANENT -- a regression this PR would"; \
+	      echo "       be introducing, not inheriting."; exit 1;; \
+	 esac
+	@# ⛔ PIN 7 -- the teardown flag is SET on exhaustion and CLEARED on success.
+	@# Set-only would retry for ever after one failure; clear-only would never
+	@# retry at all. Both directions, because one of them passing says nothing
+	@# about the other.
+	@pp=`$(CC) -fpreprocessed -E $(WIFI_MGR_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING)"*) ;; \
+	   *) echo "ERROR: nothing SETS the #1060 teardown-pending flag, so the"; \
+	      echo "       REINIT re-attempt can never run."; exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING)"*) ;; \
+	   *) echo "ERROR: nothing CLEARS the #1060 teardown-pending flag, so once"; \
+	      echo "       set it would re-issue a disconnect on every REINIT for"; \
+	      echo "       the rest of the session."; exit 1;; \
+	 esac
+	@# ⛔ PIN 8 -- ⭐ EXACTLY ONE WRITER OF STA_CONNECTED, and a COUNT rather
+	@# than an absence, which is the whole lesson of this pin.
+	@#
+	@# The property is "the AP->STA branch must not re-set STA_CONNECTED":
+	@# doing so would restore the lost unbounded retry -- that is exactly why it
+	@# is tempting -- and would reinstate the wrong link-state report this PR
+	@# exists to fix, one flag answering two questions. r3 uses a dedicated flag.
+	@#
+	@# ⚠ MY FIRST VERSION FORBADE THE WRITE FILE-WIDE AND FIRED IMMEDIATELY, on
+	@# the LEGITIMATE writer: the association-event handler in MainState sets
+	@# STA_CONNECTED when a real connection (or an AP client) arrives, and must.
+	@# That is "presence without position" from the other side -- a negative pin
+	@# whose scope is wrong fails on correct code. A count fixes it without a
+	@# brittle range extraction: ONE writer is the association handler, a SECOND
+	@# is someone re-setting the flag to buy back the retry.
+	@#
+	@# It also cannot go vacuous, which a bare absence check can: a count of 0
+	@# fails just as loudly as a count of 2, so a broken pattern or a moved file
+	@# reports instead of passing.
+	@n=`$(CC) -fpreprocessed -E $(WIFI_MGR_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' ' \
+	     | grep -o 'SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED)' \
+	     | wc -l`; \
+	 test "$$n" -eq 1 \
+	  || { echo "ERROR: $$n writer(s) of STA_CONNECTED, expected exactly 1"; \
+	       echo "       (#1060 r3). ONE is the association-event handler in"; \
+	       echo "       MainState, which is correct and required."; \
+	       echo "       A SECOND is almost certainly the AP->STA branch"; \
+	       echo "       re-setting the flag to recover the unbounded disconnect"; \
+	       echo "       retry -- which also reinstates the stale link-state"; \
+	       echo "       report this PR removes. Use"; \
+	       echo "       WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING, which answers"; \
+	       echo "       only \"is a teardown outstanding?\"."; \
+	       echo "       ZERO means the pattern or the path is broken, not that"; \
+	       echo "       the code is clean."; exit 1; }
 	$(CC) $(CFLAGS) -o $(APSTA1060_BIN) test_1060_apsta_disconnect_retry.c
 
 $(BIN): test_circularbuffer.c test_framework.h stubs/Logger.h stubs/osal/osal.h $(FW_UTIL)/CircularBuffer.c $(FW_UTIL)/CircularBuffer.h $(RECIPES)
