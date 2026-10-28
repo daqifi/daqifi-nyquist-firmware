@@ -4368,38 +4368,97 @@ $(BUTTONLATCH_BIN): test_1092_button_poweroff_latch.c test_framework.h \
 	       echo "       reason setting the latch unconditionally in the button"; \
 	       echo "       path is harmless -- without it a battery-only press"; \
 	       echo "       would suppress auto-promote forever."; exit 1; }
-	@# PIN 4 -- the button path sets the latch UNCONDITIONALLY, and writes a
-	@# CONSTANT. `= pgStat` is the round-1 defect (it also writes FALSE on a
-	@# stale read, cancelling a valid suppression); `if (pgStat)` is the round-2
-	@# residual. Neither may come back.
-	@pp=`$(CC) -fpreprocessed -E $(FW_UI_SRC) 2>/dev/null`; \
-	 printf '%s' "$$pp" | grep -qE 'autoPromotedThisVbusSession = [^t]' \
-	  && { echo "ERROR: the button path writes a NON-CONSTANT to the"; \
-	       echo "       suppression latch (#1092 round 1). Assigning pgStat"; \
-	       echo "       also writes FALSE on a stale-false reading, which"; \
-	       echo "       cancels the very shutdown this fix exists to make"; \
-	       echo "       stick. SET ONLY, NEVER CLEAR."; exit 1; } || true; \
-	 printf '%s' "$$pp" | grep -q 'autoPromotedThisVbusSession = true' \
-	  || { echo "ERROR: the button path no longer sets the AUTOOn suppression"; \
-	       echo "       latch (#1084). With AUTOOn on and VBUS present the"; \
-	       echo "       STANDBY pass auto-promotes the board straight back up."; \
-	       exit 1; }; \
-	 printf '%s' "$$pp" | grep -q 'if (gpPowerData->BQ24297Data.status.pgStat) {' \
-	  && { echo "ERROR: the button path gates the latch on the cached pgStat"; \
-	       echo "       again (#1092 round 2). A stale-FALSE reading then"; \
-	       echo "       leaves the latch clear, Power_Tasks refreshes pgStat"; \
-	       echo "       to true, and the next STANDBY pass auto-promotes --"; \
-	       echo "       the shutdown is undone. Set it unconditionally; the"; \
-	       echo "       standby re-arm makes that harmless (PIN 3)."; exit 1; } || true
-	@# PIN 5 -- the OTHER poster of DO_POWER_DOWN sets the latch too. The
-	@# model's correction ("the clear is not reachable as the auto-promote
-	@# defect") rests on BOTH posters doing it, so both are pinned.
-	@$(CC) -fpreprocessed -E $(SCPI_INTERFACE_C) 2>/dev/null \
-	   | grep -q 'autoPromotedThisVbusSession = true' \
-	  || { echo "ERROR: SYSTem:POWer:STATe 0 no longer sets the AUTOOn"; \
-	       echo "       suppression latch (#1092). It is the second poster of"; \
-	       echo "       DO_POWER_DOWN, and test_1092's DEFECT A correction"; \
-	       echo "       depends on both posters setting it."; exit 1; }
+	@# PIN 4/5 -- BOTH posters of DO_POWER_DOWN set the suppression latch from
+	@# a FRESH PHY read, never from the CACHED pgStat.
+	@#
+	@# ⛔ THE RULE CHANGED IN r6 AND SO DID THIS PIN. Earlier revisions demanded
+	@# a literal `= true`, because the then-current rule was "set it
+	@# unconditionally and let the standby pass re-arm it". r5 showed that rule
+	@# is unfixable in principle: it depends on a later pass OBSERVING VBUS
+	@# absent, and a battery-only press with USB plugged in before the next pass
+	@# means no such observation ever happens. The latch is now decided at the
+	@# moment of the press -- latch = "is VBUS present right now" -- so a
+	@# constant is exactly what must NOT be there.
+	@#
+	@# What stays forbidden is the CACHE: `= pgStat` is the r1 defect and
+	@# `if (pgStat)` the r2 residual, and both read a value that can be stale in
+	@# either direction. The r1/r2 defect was never "a variable", it was "the
+	@# wrong source".
+	@#
+	@# ⛔ MATCHED OVER THE FLATTENED STATEMENT, NOT PER LINE. The r6 assignment
+	@# does not fit in 80 columns, so it spans two lines -- and the previous
+	@# negative arm (`grep -qE '... = [^t]'`) would have passed VACUOUSLY on it,
+	@# because with the `=` last on its line there is no character after it for
+	@# the pattern to reject. A negative pin that cannot see its subject reports
+	@# success. Flattening newlines to spaces makes every arm here independent
+	@# of where the statement happens to wrap.
+	@for src in $(FW_UI_SRC) $(SCPI_INTERFACE_C); do \
+	   flat=`$(CC) -fpreprocessed -E $$src 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	   case "$$flat" in \
+	     *autoPromotedThisVbusSession*) ;; \
+	     *) echo "ERROR: $$src no longer writes the AUTOOn suppression latch"; \
+	        echo "       at all (#1084). With AUTOOn on and VBUS present the"; \
+	        echo "       STANDBY pass auto-promotes the board straight back up,"; \
+	        echo "       undoing the power-off. This pin found NO write, so it"; \
+	        echo "       is not measuring a changed rule -- the writer is gone."; \
+	        exit 1;; \
+	   esac; \
+	   case "$$flat" in \
+	     *"autoPromotedThisVbusSession = pData->BQ24297Data.status.pgStat"*|\
+	     *"autoPromotedThisVbusSession = gpPowerData->BQ24297Data.status.pgStat"*|\
+	     *"autoPromotedThisVbusSession = pPowerData->BQ24297Data.status.pgStat"*) \
+	        echo "ERROR: $$src sets the suppression latch from the CACHED"; \
+	        echo "       pgStat (#1092 round 1). The cache can be stale in"; \
+	        echo "       EITHER direction: a stale FALSE writes false and"; \
+	        echo "       cancels the very shutdown this exists to make stick."; \
+	        echo "       Use Power_IsVbusPresentFresh() -- same question, read"; \
+	        echo "       from the PHY, cannot be stale."; \
+	        exit 1;; \
+	   esac; \
+	   case "$$flat" in \
+	     *"if (gpPowerData->BQ24297Data.status.pgStat) { gpPowerData->autoPromotedThisVbusSession"*) \
+	        echo "ERROR: $$src gates the latch on the cached pgStat again"; \
+	        echo "       (#1092 round 2). A stale-FALSE reading leaves the"; \
+	        echo "       latch clear, Power_Tasks refreshes pgStat to true, and"; \
+	        echo "       the next STANDBY pass auto-promotes -- the shutdown is"; \
+	        echo "       undone. Decide at the press from the PHY instead."; \
+	        exit 1;; \
+	   esac; \
+	   case "$$flat" in \
+	     *"autoPromotedThisVbusSession = Power_IsVbusPresentFresh();"*) ;; \
+	     *) echo "ERROR: $$src does not set the AUTOOn suppression latch from"; \
+	        echo "       Power_IsVbusPresentFresh() (#1092 r6). The latch must"; \
+	        echo "       record whether VBUS was present AT THE MOMENT of the"; \
+	        echo "       power-off request. A constant cannot: set true, a"; \
+	        echo "       battery-only press suppresses a later plug-in unless"; \
+	        echo "       some pass happens to observe VBUS absent first, and r5"; \
+	        echo "       proved none is guaranteed. Set false, the shutdown is"; \
+	        echo "       undone outright."; \
+	        exit 1;; \
+	   esac; \
+	 done
+	@# PIN 5b -- the fresh read must stay NON-BLOCKING, because it is now called
+	@# from the button path and from a SCPI handler. If it ever grew an I2C read
+	@# it would put an unbounded wait on the press path; PIN 7 guards the
+	@# shutdown pass, and this guards the accessor itself.
+	@pp=`$(CC) -fpreprocessed -E $(FW_POWER_SRC) 2>/dev/null`; \
+	 printf '%s' "$$pp" \
+	   | awk '/^bool Power_IsVbusPresentFresh\(void\)/{f=1} f{print} f&&/^\}/{exit}' \
+	   > /tmp/.p1092g.$$$$; \
+	 test -s /tmp/.p1092g.$$$$ \
+	  || { echo "ERROR: Power_IsVbusPresentFresh() not found in"; \
+	       echo "       $(FW_POWER_SRC) (#1092 r6) -- both latch posters call"; \
+	       echo "       it, so this pin measures nothing and must not pass."; \
+	       rm -f /tmp/.p1092g.$$$$; exit 1; }; \
+	 grep -qE 'BQ24297_(Read|Write)_I2C|DRV_I2C_|portMAX_DELAY|OSAL_WAIT_FOREVER' \
+	      /tmp/.p1092g.$$$$ \
+	  && { echo "ERROR: Power_IsVbusPresentFresh() can now BLOCK (#1092 r6)."; \
+	       echo "       It is called from the button path and from the SCPI"; \
+	       echo "       POWer:STATe handler, and the whole point of it is that"; \
+	       echo "       it reads one USB PHY register and cannot wait. Keep the"; \
+	       echo "       I2C and the mutex in Power_UpdateStatusFromGPIO()."; \
+	       rm -f /tmp/.p1092g.$$$$; exit 1; } || true; \
+	 rm -f /tmp/.p1092g.$$$$
 	@# PIN 6 -- r4: the re-arm must be OUTSIDE the auto-promote gate, and the
 	@# handler must refresh VBUS before either. ⛔ THIS IS AN ORDER PROPERTY,
 	@# so PIN 3's by-name grep cannot express it: `= false` is present in BOTH

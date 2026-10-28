@@ -119,6 +119,11 @@ if crlf:
 open(p, "w", newline="").write(t)' "$1" "$2" "$3"
 }
 
+UI_NEW="                    gpPowerData->autoPromotedThisVbusSession =
+                            Power_IsVbusPresentFresh();"
+SCPI_NEW="            pPowerData->autoPromotedThisVbusSession =
+                    Power_IsVbusPresentFresh();"
+
 echo "== setup: baseline must be clean or every result below is noise =="
 expect "baseline" CLEAN
 if [ "$fail" -ne 0 ]; then
@@ -175,9 +180,10 @@ fi
 restore
 
 echo "== M5: re-gate the button latch on the cached pgStat -- the r2 residual.  =="
-if sub "$U" '                    gpPowerData->autoPromotedThisVbusSession = true;' \
+if sub "$U" "$UI_NEW" \
             '                    if (gpPowerData->BQ24297Data.status.pgStat) {
-                        gpPowerData->autoPromotedThisVbusSession = true;
+                        gpPowerData->autoPromotedThisVbusSession =
+                                Power_IsVbusPresentFresh();
                     }'; then
     expect "M5 latch re-gated on pgStat" "gates the latch on the cached pgStat"
 else
@@ -187,18 +193,18 @@ restore
 
 echo "== M6: assign pgStat to the latch -- the r1 defect, which also writes     =="
 echo "==     FALSE and cancels a valid suppression.                             =="
-if sub "$U" '                    gpPowerData->autoPromotedThisVbusSession = true;' \
+if sub "$U" "$UI_NEW" \
             '                    gpPowerData->autoPromotedThisVbusSession = gpPowerData->BQ24297Data.status.pgStat;'; then
-    expect "M6 non-constant latch write" "writes a NON-CONSTANT"
+    expect "M6 latch from the cached pgStat" "from the CACHED"
 else
     echo "  FAIL M6 anchor absent."; fail=$((fail+1))
 fi
 restore
 
 echo "== M7: remove the latch set from SYSTem:POWer:STATe 0, the OTHER poster.  =="
-if sub "$S" '            pPowerData->autoPromotedThisVbusSession = true;' \
+if sub "$S" "$SCPI_NEW" \
             '            /* mutant: latch set removed */'; then
-    expect "M7 the second poster's latch" "no longer sets the AUTOOn"
+    expect "M7 the second poster's latch" "does not set the AUTOOn suppression latch from"
 else
     echo "  FAIL M7 anchor absent."; fail=$((fail+1))
 fi
@@ -208,12 +214,14 @@ echo "== M8 NEGATIVE CONTROL: the fix intact, plus a COMMENT naming every       
 echo "==     forbidden shape. The guards must stay CLEAN -- they are            =="
 echo "==     comment-stripped precisely because the prose that explains this    =="
 echo "==     fix names all of these tokens.                                     =="
-if sub "$U" '                    gpPowerData->autoPromotedThisVbusSession = true;' \
+if sub "$U" "$UI_NEW" \
             '                    /* if (gpPowerData->BQ24297Data.status.pgStat) {
                      *     gpPowerData->autoPromotedThisVbusSession =
                      *         gpPowerData->BQ24297Data.status.pgStat;
-                     * } -- every forbidden shape, named in prose. */
-                    gpPowerData->autoPromotedThisVbusSession = true;'; then
+                     * } -- every forbidden shape, named in prose, including
+                     * autoPromotedThisVbusSession = true. */
+                    gpPowerData->autoPromotedThisVbusSession =
+                            Power_IsVbusPresentFresh();'; then
     expect "M8 prose does not trip the guards" CLEAN
 else
     echo "  FAIL M8 anchor absent."; fail=$((fail+1))
@@ -285,6 +293,32 @@ if sub "$P" 'CALLEES transitively, so renaming a wrapper cannot defeat it. */
     expect "M12 no blocking call before Power_Down" "transitively reaches a blocking sink"
 else
     echo "  FAIL M12 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== M13: set the latch to an unconditional TRUE -- the r4b rule. r5      =="
+echo "==      refuted it: it depends on some later pass OBSERVING VBUS        =="
+echo "==      absent, and a battery press with USB arriving first means none  =="
+echo "==      ever does, so the board stays off. The most plausible future     =="
+echo "==      'simplification', hence a mutant.                               =="
+if sub "$U" "$UI_NEW" \
+          '                    gpPowerData->autoPromotedThisVbusSession = true;'; then
+    expect "M13 latch decided at the press" "does not set the AUTOOn suppression latch from"
+else
+    echo "  FAIL M13 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== M14: make the fresh read BLOCK, by adding the I2C the full refresh    =="
+echo "==      does. It is called from the button path and a SCPI handler now.  =="
+if sub "$P" '    USBHS_VBUS_LEVEL vbusLevel = PLIB_USBHS_VBUSLevelGet(USBHS_ID_0);
+    return (vbusLevel >= USBHS_VBUS_BELOW_VBUSVALID);' \
+          '    uint8_t r8; BQ24297_Read_I2C(0x08, &r8);
+    USBHS_VBUS_LEVEL vbusLevel = PLIB_USBHS_VBUSLevelGet(USBHS_ID_0);
+    return (vbusLevel >= USBHS_VBUS_BELOW_VBUSVALID);'; then
+    expect "M14 fresh read stays non-blocking" "can now BLOCK"
+else
+    echo "  FAIL M14 anchor absent."; fail=$((fail+1))
 fi
 restore
 

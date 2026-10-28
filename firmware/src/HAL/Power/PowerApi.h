@@ -238,6 +238,17 @@ void Power_Write( void );
  */
 void Power_ArmRebootRestore( void );
 
+/*! #1092 r6: is VBUS present RIGHT NOW, read straight from the USB PHY?
+ *
+ * Side-effect free, and nothing in it can block (one PHY register, no I2C and
+ * no mutex), so it is safe on the button path and on the shutdown pass. Use
+ * this -- never the CACHED BQ24297Data.status.pgStat -- whenever a decision
+ * must reflect VBUS at a particular instant: the cache can be stale in either
+ * direction, and a stale FALSE and a truthful FALSE demand opposite actions
+ * while being indistinguishable from it.
+ */
+bool Power_IsVbusPresentFresh( void );
+
 
 #ifdef	__cplusplus
 }

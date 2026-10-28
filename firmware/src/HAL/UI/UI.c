@@ -135,19 +135,39 @@ void Button_Tasks( void )
                      * r2 framed that as unfixable from here ("you cannot set a
                      * latch you do not know you need"). You can: set it
                      * ALWAYS, because the two errors are not symmetric.
-                     * Setting it when it was not needed costs NOTHING --
-                     * Power_HandleStandbyState owns this latch's lifecycle and
-                     * re-arms it on any STANDBY pass without VBUS ("VBUS gone
-                     * -- re-arm auto-promote for next plug-in"), so a
-                     * battery-only press self-corrects on the very next pass
-                     * and a later plug-in still auto-promotes. FAILING to set
-                     * it costs the shutdown.
+                     * ⛔ #1092 r6: DECIDED HERE, FROM A FRESH PHY READ, rather
+                     * than set unconditionally and corrected later.
                      *
-                     * So this stays the SET-ONLY, NEVER-CLEAR writer described
-                     * above, and it now writes a constant unconditionally: a
-                     * stale cache can no longer even delay the suppression,
-                     * let alone undo it. */
-                    gpPowerData->autoPromotedThisVbusSession = true;
+                     * r2 set it only `if (pgStat)` -- the CACHED reading -- and
+                     * a stale FALSE then let the next pass undo the shutdown.
+                     * r3/r4b set it unconditionally and leaned on
+                     * Power_HandleStandbyState re-arming on the first STANDBY
+                     * pass that OBSERVED VBUS absent. r5 found that no such
+                     * pass is guaranteed: hold the button on battery, plug USB
+                     * in before the handler's next ~1 s pass, release, and
+                     * every pass from then on sees VBUS -- so the latch is
+                     * never cleared and the board sits in STANDBY. A rule
+                     * keyed on an observation that may never happen cannot be
+                     * fixed by ordering it better.
+                     *
+                     * The press is the moment the user's intent exists, so the
+                     * question is answered at the press: latch = "is VBUS
+                     * present RIGHT NOW". Battery-only presses set nothing, so
+                     * a later plug-in auto-promotes (#454) with no re-arm pass
+                     * required; a press with USB present latches, which is
+                     * #1084. Power_IsVbusPresentFresh() reads the PHY directly,
+                     * so the cache cannot be stale in either direction -- r2's
+                     * residual is gone at its source instead of compensated
+                     * for. The standby re-arm is KEPT, and is now belt and
+                     * braces for the one case this cannot see: VBUS cycled
+                     * while already in STANDBY.
+                     *
+                     * Still never a CLEAR of a latch someone else set: the only
+                     * way this writes false is VBUS genuinely absent at the
+                     * press, and a press on battery is exactly when no
+                     * suppression is wanted. */
+                    gpPowerData->autoPromotedThisVbusSession =
+                            Power_IsVbusPresentFresh();
                     oneShot = true;
                 }
                 break;

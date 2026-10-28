@@ -49,11 +49,17 @@ SINK_PATTERNS = (
     r"BQ24297_Write_I2C",
     r"DRV_I2C_\w+Transfer",
 )
-# A direct unbounded wait written inline, rather than reached through a sink.
+# An unbounded wait written inline, rather than reached through a named sink.
+#
+# ⛔ KEYED ON THE ARGUMENT, NOT THE FUNCTION NAME. An earlier revision listed
+# xSemaphoreTake / OSAL_SEM_Pend / ulTaskNotifyTake by name, which cannot
+# enumerate every RTOS primitive that can block for ever -- and the next one
+# added would be invisible. What they all share is the constant they are
+# passed, so that is what this matches: ANY call given portMAX_DELAY or
+# OSAL_WAIT_FOREVER is treated as unbounded regardless of what it is called.
 INLINE_WAIT_PATTERNS = (
-    r"xSemaphoreTake\s*\([^;]*portMAX_DELAY",
-    r"OSAL_SEM_Pend\s*\([^;]*OSAL_WAIT_FOREVER",
-    r"ulTaskNotifyTake\s*\([^;]*portMAX_DELAY",
+    r"\w+\s*\([^;]*\bportMAX_DELAY\b",
+    r"\w+\s*\([^;]*\bOSAL_WAIT_FOREVER\b",
 )
 
 GUARDED_FUNCTION = "Power_HandleStandbyState"
@@ -238,6 +244,20 @@ def check(power_src_text, bq_src_text, cc="cc"):
         return errs + ["%s's body has no %s() call to bound the checked "
                        "region; failing closed." % (GUARDED_FUNCTION,
                                                     MUST_PRECEDE)]
+    # ⛔ THE GUARDED FUNCTION'S OWN BODY, FIRST. has_inline_wait() already
+    # marked this function dangerous when it contains a wait, but the verdict
+    # loop below only inspects its CALLEES, so a wait written DIRECTLY in the
+    # pre-Power_Down region passed every check. The self-test missed it for the
+    # same reason it existed: both arms planted inline waits inside a HELPER,
+    # i.e. in the one place the matcher was already looking.
+    if has_inline_wait(region):
+        errs.append(
+            "%s contains an UNBOUNDED WAIT in its own body before %s() -- a "
+            "call passed portMAX_DELAY or OSAL_WAIT_FOREVER. On the shutdown "
+            "pass that strands the power-down with the rails and the MCU "
+            "self-hold ON, exactly as a blocking callee would."
+            % (GUARDED_FUNCTION, MUST_PRECEDE))
+
     unconditional = depth1_calls(region)
     for name in unconditional:
         if is_sink(name) or name in bq_sinks:
@@ -326,6 +346,32 @@ POWER_PROSE = POWER_FIXED.replace(
     " * and must not take a mutex with portMAX_DELAY. */\n"
     "static void Power_HandleStandbyState(void) {")
 
+# ⭐ THE WAIT PLANTED DIRECTLY IN THE GUARDED FUNCTION, which is the arm whose
+# absence let the hole through: both earlier inline-wait fixtures put it in a
+# helper, so the fixtures' LAYOUT matched the matcher's UNIT and could not test
+# the matcher. Same class as the #1020 guard's one-line mutants.
+POWER_WAIT_IN_HANDLER = POWER_FIXED.replace(
+    "    Power_RefreshVbusFromPhy();\n    if (!pData",
+    "    Power_RefreshVbusFromPhy();\n"
+    "    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);\n"
+    "    if (!pData")
+
+# An RTOS primitive this file has never heard of, in the handler. Keyed on the
+# argument, so the name is irrelevant.
+POWER_UNKNOWN_PRIMITIVE = POWER_FIXED.replace(
+    "    Power_RefreshVbusFromPhy();\n    if (!pData",
+    "    Power_RefreshVbusFromPhy();\n"
+    "    SomeVendorQueueReceive(q, &msg, portMAX_DELAY);\n"
+    "    if (!pData")
+
+# ...and the same wait AFTER Power_Down(), which must still be ACCEPTED, so the
+# new check inherits the region bound rather than reintroducing a whole-body
+# scan under a different name.
+POWER_WAIT_AFTER_PD = POWER_FIXED.replace(
+    "    if (shutdownNotified) { Power_Down(); }",
+    "    if (shutdownNotified) { Power_Down(); }\n"
+    "    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);")
+
 # main's shape: an unconditional blocking call AFTER Power_Down(). Must be
 # ACCEPTED. This is the control for the region bound itself -- without it, a
 # whole-body scan passes every other arm in this list and still cannot be
@@ -342,6 +388,32 @@ POWER_NO_PD = POWER_FIXED.replace("if (shutdownNotified) { Power_Down(); }", "")
 
 
 def self_test(cc="cc"):
+    # ⛔ EVERY FIXTURE IS BUILT BY .replace() FROM POWER_FIXED, AND A REPLACE
+    # THAT MATCHES NOTHING RETURNS THE ORIGINAL UNCHANGED. For an arm that
+    # expects a REJECTION that fails loudly, so it is self-validating. For an
+    # arm that expects CLEAN it does not: an inert fixture is identical to the
+    # clean baseline and passes for the wrong reason. So assert up front that
+    # each mutated fixture actually differs from the thing it was derived from.
+    derived = {
+        "POWER_R4_DEFECT": POWER_R4_DEFECT,
+        "POWER_WRAPPER": POWER_WRAPPER,
+        "POWER_DIRECT": POWER_DIRECT,
+        "POWER_INLINE_WAIT": POWER_INLINE_WAIT,
+        "POWER_PROSE": POWER_PROSE,
+        "POWER_WAIT_IN_HANDLER": POWER_WAIT_IN_HANDLER,
+        "POWER_UNKNOWN_PRIMITIVE": POWER_UNKNOWN_PRIMITIVE,
+        "POWER_WAIT_AFTER_PD": POWER_WAIT_AFTER_PD,
+        "POWER_AFTER_PD": POWER_AFTER_PD,
+        "POWER_RENAMED": POWER_RENAMED,
+        "POWER_NO_PD": POWER_NO_PD,
+    }
+    inert = [n for n, v in derived.items() if v == POWER_FIXED]
+    if inert:
+        print("pin_1092 self-test: INERT FIXTURE(S) -- a .replace() anchor "
+              "matched nothing, so these test the clean baseline instead of "
+              "what they name: %s" % ", ".join(sorted(inert)))
+        return 1
+
     cases = [
         ("the fixed shape is accepted", POWER_FIXED, BQ_FIXTURE, None),
         ("prose naming the sink does not trip it", POWER_PROSE, BQ_FIXTURE, None),
@@ -353,8 +425,14 @@ def self_test(cc="cc"):
          BQ_FIXTURE, "transitively reaches"),
         ("the sink called directly is rejected", POWER_DIRECT, BQ_FIXTURE,
          "blocking sink"),
-        ("an inline portMAX_DELAY wait is rejected", POWER_INLINE_WAIT,
-         BQ_FIXTURE, "transitively reaches"),
+        ("an inline portMAX_DELAY wait in a HELPER is rejected",
+         POWER_INLINE_WAIT, BQ_FIXTURE, "transitively reaches"),
+        ("a wait planted DIRECTLY in the guarded function is rejected",
+         POWER_WAIT_IN_HANDLER, BQ_FIXTURE, "UNBOUNDED WAIT in its own body"),
+        ("an UNKNOWN primitive given portMAX_DELAY is rejected",
+         POWER_UNKNOWN_PRIMITIVE, BQ_FIXTURE, "UNBOUNDED WAIT in its own body"),
+        ("the same wait AFTER Power_Down is accepted", POWER_WAIT_AFTER_PD,
+         BQ_FIXTURE, None),
         ("a renamed guarded function fails closed", POWER_RENAMED, BQ_FIXTURE,
          "not found"),
         ("no Power_Down on the path fails closed", POWER_NO_PD, BQ_FIXTURE,

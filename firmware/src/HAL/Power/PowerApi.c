@@ -657,6 +657,36 @@ void Power_Down(void) {
  * Kept as the single derivation of pgStat rather than duplicated at the two
  * call sites, so a threshold change cannot reach one and miss the other. */
 static void Power_RefreshVbusFromPhy(void) {
+    pData->BQ24297Data.status.pgStat = Power_IsVbusPresentFresh();
+}
+
+/* ⛔ #1092 r6: THE ONE DERIVATION OF "IS VBUS PRESENT", and deliberately
+ * SIDE-EFFECT FREE so a caller can ask without mutating the power cache.
+ *
+ * Public because the LATCH DECISION BELONGS AT THE MOMENT OF THE PRESS, not on
+ * some later pass. r4b re-armed the suppression latch on the first STANDBY pass
+ * that OBSERVED VBUS absent, and r5 found that nothing guarantees such a pass
+ * exists: a battery-only long-press held while USB is plugged in means every
+ * pass from then on sees VBUS, so the latch set by the press is never cleared
+ * and the board sits in STANDBY. Keying on an observation that may never occur
+ * cannot be made robust by ordering it better.
+ *
+ * So both posters of DO_POWER_DOWN now set the latch from a FRESH read taken
+ * WHEN THE POWER-OFF IS REQUESTED: latch = "was VBUS present at that moment?".
+ * Every case falls out of that one rule:
+ *   - USB present at press  -> latched -> the shutdown sticks (#1084);
+ *   - battery-only press    -> not latched -> a later plug-in auto-promotes
+ *                              (#454), with no re-arm pass required;
+ *   - stale CACHE at press  -> irrelevant, the PHY is read directly (the r2
+ *                              residual, fixed at its source rather than
+ *                              compensated for);
+ *   - VBUS cycled while in  -> the standby re-arm still clears it, which is
+ *     STANDBY                 why that re-arm is KEPT as belt and braces.
+ *
+ * Reads one USB PHY register. No I2C, no mutex, nothing that can block -- which
+ * is what makes it safe to call from the button path and is pinned by
+ * tests/host/pin_1092_no_blocking_before_powerdown.py. */
+bool Power_IsVbusPresentFresh(void) {
     /* Read directly from USB hardware register - more reliable than software events
      * which may not trigger correctly for wall chargers without USB data lines.
      *
@@ -664,8 +694,7 @@ static void Power_RefreshVbusFromPhy(void) {
      * (~4.75V) to handle wall chargers with minor voltage sag. This aligns better
      * with BQ24297's pgStat threshold (3.88V) for external power detection. */
     USBHS_VBUS_LEVEL vbusLevel = PLIB_USBHS_VBUSLevelGet(USBHS_ID_0);
-    pData->BQ24297Data.status.pgStat =
-            (vbusLevel >= USBHS_VBUS_BELOW_VBUSVALID);
+    return (vbusLevel >= USBHS_VBUS_BELOW_VBUSVALID);
 }
 
 static void Power_UpdateStatusFromGPIO(void) {
