@@ -142,6 +142,31 @@ SD_MANAGER_SRC := ../../firmware/src/services/sd_card_services/sd_card_manager.c
 # to explain the failure actively pointed away from it, and cost a round-trip to
 # re-derive. A hand-copied expectation in a message is a second source of truth;
 # there is now one, substituted into both.
+# ⛔⛔ #1124 r26: THE [SD1124] TOKEN PARTITION, as three DISJOINT classes.
+#
+# conv-ts asked for a pin that the classes are disjoint and that every site's
+# token falls in exactly one, so a client can decide what a line MEANS from the
+# token alone rather than from a snapshot of the source.
+#
+# ⚠ TWO CORRECTIONS to the partition as it was reported to me, both verified by
+# enumerating the preprocessed sources rather than trusting the summary:
+#   - `scope` was MISSING from it, and it is 7 of the 25 sites -- the grant-scope
+#     refusals added across r22-r25 (separator, tilde, bucket dir,
+#     non-canonical dir, non-ASCII, empty operand). A partition that omits a
+#     class is not a partition.
+#   - `note` was grouped with the FAULTS. It is neither: it means THIS LINE IS
+#     NOT A REFUSAL, and a client treating it as a fault reports a failure where
+#     none happened -- the fail-open-in-the-other-direction that made `note`
+#     necessary in the first place.
+#
+# Hence three classes:
+#   NOT-A-REFUSAL  informational; no refusal occurred
+#   FAULT          we could not DETERMINE the answer, so we refused
+#   POLICY         we determined the answer, and it is a refusal
+SD1124_TOK_NOTE   := note
+SD1124_TOK_FAULT  := unparsable unreadable
+SD1124_TOK_POLICY := authpath exists foreign notafile notours ourpart scope
+
 SD1124_CANON := 9
 # ⛔⛔ r22: THE TWO COUNTERS NOW LEGITIMATELY DIVERGE, and that needs saying
 # out loud because this ledger's whole premise was that they move TOGETHER --
@@ -1390,7 +1415,8 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	@# pipeline and a's whole preprocessed output lands in the variable -- the
 	@# pin then reports garbage tokens like `&targetFsError);`. It FAILED
 	@# rather than passing, which is the only reason that was cheap to find.
-	@toks=`{ $(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null; \
+	@SD1124_ALL=`echo "$(SD1124_TOK_NOTE) $(SD1124_TOK_FAULT) $(SD1124_TOK_POLICY)" | tr ' ' '|'`; \
+	 toks=`{ $(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null; \
 	         $(CC) -fpreprocessed -E $(SD_BENCH_SRC) 2>/dev/null; } \
 	   | grep -oE 'LOG_E\("\[SD1124\] [^ "]+' \
 	   | sed 's/.*\[SD1124\] //'`; \
@@ -1402,7 +1428,7 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	   echo "       nothing would pass the token check below vacuously."; \
 	   exit 1; \
 	 fi; \
-	 bad=`printf '%s\n' "$$toks" | grep -vxE 'exists|unreadable|notours|ourpart|authpath|foreign|unparsable|notafile|note|scope' | sort -u`; \
+	 bad=`printf '%s\n' "$$toks" | grep -vxE "$$SD1124_ALL" | sort -u`; \
 	 if [ -n "$$bad" ]; then \
 	   echo "ERROR: #1124 r21 PIN 17: these [SD1124] messages do not begin with"; \
 	   echo "       a reason token from the closed set, or carry punctuation on"; \
@@ -1410,10 +1436,44 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	   echo "       refusal it got -- and a token with a trailing comma fails an"; \
 	   echo "       exact match, i.e. fails OPEN:"; \
 	   printf '         %s\n' $$bad; \
-	   echo "       Set: exists unreadable notours ourpart authpath foreign"; \
-	   echo "            unparsable notafile scope note  (note = NOT a refusal)"; \
+	   echo "       NOT-A-REFUSAL: $(SD1124_TOK_NOTE)"; \
+	   echo "       FAULT:         $(SD1124_TOK_FAULT)"; \
+	   echo "       POLICY:        $(SD1124_TOK_POLICY)"; \
 	   exit 1; \
-	 fi
+	 fi; \
+	 for a in $(SD1124_TOK_NOTE) $(SD1124_TOK_FAULT) $(SD1124_TOK_POLICY); do \
+	   hits=0; \
+	   for b in $(SD1124_TOK_NOTE) $(SD1124_TOK_FAULT) $(SD1124_TOK_POLICY); do \
+	     [ "$$a" = "$$b" ] && hits=$$((hits+1)); \
+	   done; \
+	   if [ "$$hits" -ne 1 ]; then \
+	     echo "ERROR: #1124 PIN 17 PARTITION: token '$$a' appears in $$hits of the"; \
+	     echo "       three classes, not exactly 1. NOT-A-REFUSAL, FAULT and"; \
+	     echo "       POLICY must be DISJOINT, or a client cannot decide what a"; \
+	     echo "       line MEANS from its token -- which is the contract."; \
+	     exit 1; \
+	   fi; \
+	 done; \
+	 for cls in "$(SD1124_TOK_NOTE)" "$(SD1124_TOK_FAULT)" "$(SD1124_TOK_POLICY)"; do \
+	   if [ -z "$$cls" ]; then \
+	     echo "ERROR: #1124 PIN 17 PARTITION: a class is EMPTY, which makes the"; \
+	     echo "       disjointness check above vacuous for it."; \
+	     exit 1; \
+	   fi; \
+	 done; \
+	 for tok in $$toks; do \
+	   hits=0; \
+	   for a in $(SD1124_TOK_NOTE) $(SD1124_TOK_FAULT) $(SD1124_TOK_POLICY); do \
+	     [ "$$tok" = "$$a" ] && hits=$$((hits+1)); \
+	   done; \
+	   if [ "$$hits" -ne 1 ]; then \
+	     echo "ERROR: #1124 PIN 17 PARTITION: the site token '$$tok' falls in"; \
+	     echo "       $$hits classes, not exactly 1. Every [SD1124] line must be"; \
+	     echo "       classifiable as informational, a FAULT, or a POLICY"; \
+	     echo "       refusal -- a client keys its handling on exactly that."; \
+	     exit 1; \
+	   fi; \
+	 done
 	@# ⛔⛔ PIN 18 -- THE BIT IS A NECESSARY CONDITION, NEVER THE DECISION.
 	@#
 	@# r25: the GATE widened (an index above the bitset's range also owes the
