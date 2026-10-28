@@ -76,6 +76,11 @@ run_guard() {
     fi
 }
 
+# ⚠ MATCHES THE FIRST `^ERROR:` LINE ONLY. These pins print multi-line
+# diagnostics, and `want` is compared against that first line alone, so a
+# phrase from line 2 or 3 reports "did not come from this pin" while the
+# correct pin IS firing. That misread has happened twice here; key `want` on
+# words that appear on the diagnostic's FIRST line.
 expect() {
     label="$1"; want="$2"
     rm -f run_1092_tests
@@ -235,16 +240,18 @@ else
 fi
 restore
 
-echo "== M10: drop the ENTRY VBUS refresh, leaving only the pre-power-up one.   =="
-echo "==      The re-arm then decides on a CACHED pgStat, where a stale FALSE   =="
-echo "==      and a truthful FALSE are indistinguishable.                       =="
+echo "== M10: drop the ENTRY VBUS refresh entirely. The re-arm would then     =="
+echo "==      decide on a CACHED pgStat, where a stale FALSE and a truthful    =="
+echo "==      FALSE are indistinguishable while demanding opposite actions.    =="
+echo "==      PIN 6's non-vacuity arm reports it first: with no refresh in the =="
+echo "==      handler at all there is no position to order against.            =="
 if sub "$P" '    Power_RefreshVbusFromPhy();
 
     /* #454: Auto-power-up on VBUS-present.' \
           '    /* mutant: entry refresh removed */
 
     /* #454: Auto-power-up on VBUS-present.'; then
-    expect "M10 entry refresh present and first" "entry refresh"
+    expect "M10 entry refresh present and first" "no longer contains"
 else
     echo "  FAIL M10 anchor absent."; fail=$((fail+1))
 fi
