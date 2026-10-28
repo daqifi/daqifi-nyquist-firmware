@@ -277,12 +277,39 @@ POLICY = (
     # recurse the scan (another parser), a file that recurses gets NO VERDICT.
     # `$(MAKE)` anywhere is unambiguous; `make` is matched only in COMMAND
     # position, because the word appears in English inside echo strings here.
-    ("recursive make", re.compile(r"[$][({]\s*MAKE\s*[)}]"),
-     "a recursive `$(MAKE)` -- the child's own makefiles are not scanned, so "
-     "this audit cannot speak for the whole build"),
-    ("recursive make (command position)",
-     re.compile(r"^\t\s*[-@+]*\s*make\b|[;&|]\s*[-@+]*\s*make\b"),
-     "a recipe invoking `make` -- see `recursive make`"),
+    # ⛔ RECURSION, AFTER ANY PREFIX. r9 matched `make` only after [-@+], so
+    # `CC=cc make`, `+env make`, `+gmake` and `+$(MAKE_COMMAND)` all walked
+    # past it. The prefix set is now variable assignments and `env` as well,
+    # and `$(MAKE` is matched WITHOUT a trailing word boundary so
+    # `$(MAKE_COMMAND)` is caught too -- the `\b` was what let it through.
+    ("recursive make",
+     re.compile(r"^\t[\s@+-]*(?:\w+=\S*\s+|env\s+)*(?:g?make\b|\$[({]\s*MAKE)"
+                r"|[;&|]\s*[\s@+-]*(?:\w+=\S*\s+|env\s+)*"
+                r"(?:g?make\b|\$[({]\s*MAKE)"),
+     "a recipe invoking make (any of `make`, `gmake`, `$(MAKE...)`, after any "
+     "prefix) -- the child's own makefiles are not scanned, so this audit "
+     "cannot speak for the whole build"),
+    # ⛔ $(file ...) and $(eval ...) BOTH LOAD TEXT MAKE_FILE_LIST NEVER SEES.
+    # `$(eval $(file <rules.mk))` reads a file and evaluates it as makefile
+    # text without ever being an `include`, so it appears in no file list and
+    # the scan cannot reach it. Neither function is worth modelling; both are
+    # refused. 0 uses in the audited Makefile.
+    ("file/eval text loading", re.compile(r"[$][({]\s*(?:file|eval)\b"),
+     "`$(file ...)` or `$(eval ...)` -- either can introduce makefile text "
+     "that never appears in MAKEFILE_LIST, so no file-list-driven scan can "
+     "see it"),
+    # ⛔ CONDITIONALS, and this one is NOT an adversarial construct: `ifdef
+    # LATE` placed before LATE's definition silently drops the prerequisite,
+    # which is an ORDINARY late-definition regression -- exactly the defect
+    # class this gate exists for, reached by a route the warning cannot see
+    # (ifdef tests definedness and does not WARN about it). Deciding whether
+    # each tested name is defined later would be another Make model, so the
+    # whole construct is refused. Measured: the audited Makefile contains 0
+    # conditionals, so this costs nothing today.
+    ("conditional", re.compile(r"^\s*(?:else\s+)?if(?:n?def|n?eq)\b"),
+     "a conditional (ifdef/ifndef/ifeq/ifneq) -- `ifdef LATE` before LATE is "
+     "defined drops the prerequisite silently and make does not warn, and "
+     "resolving that per-name would mean modelling Make again"),
 )
 
 # Backslash PARITY, which only a physical line can answer: `\\` at end of line
@@ -862,6 +889,12 @@ def self_test():
             ("REFUSE    a CONTINUED include is still an include",
              {"Makefile": SELFTEST_INCLUDE_CONTINUED,
               "inc.mk": SELFTEST_INCLUDED_VALUE}, 2),
+            # ⚠ FROM r10 THIS ARM PASSES VIA THE POLICY, not via the
+            # file-list scan: `$(eval` is now refused outright. It is kept
+            # because the construct must still be refused, but it no longer
+            # exercises MAKEFILE_LIST -- the plain-`include` arms above and
+            # below are what still do that. Recording it so nobody reads a
+            # green here as evidence for the file-list path.
             ("REFUSE    $(eval include ...) is still an include",
              {"Makefile": SELFTEST_INCLUDE_EVAL,
               "inc.mk": SELFTEST_INCLUDED_VALUE}, 2),
@@ -1030,6 +1063,51 @@ def self_test():
              {"Makefile": "EARLY := base.c\nok: base.c $(EARLY)\n"
                           "\t@echo 'this hook exists to make a write fail'\n"},
              0),
+            # r10: the four prefixes that walked past r9's recursion refusal.
+            ("REFUSE    env-prefixed `CC=cc make`",
+             {"Makefile": "EARLY := base.c\nok: base.c $(EARLY)\n"
+                          "\tCC=cc make -f child.mk all\n",
+              "child.mk": "all:\n\t@true\n"}, 2),
+            ("REFUSE    `+env make`",
+             {"Makefile": "EARLY := base.c\nok: base.c $(EARLY)\n"
+                          "\t+env make -f child.mk all\n",
+              "child.mk": "all:\n\t@true\n"}, 2),
+            ("REFUSE    `+gmake`",
+             {"Makefile": "EARLY := base.c\nok: base.c $(EARLY)\n"
+                          "\t+gmake -f child.mk all\n",
+              "child.mk": "all:\n\t@true\n"}, 2),
+            # ⚠ $(MAKE_COMMAND) is why the `\\b` after MAKE had to go: `MAKE`
+            # to `_` is not a word boundary, so r9's pattern never matched it.
+            ("REFUSE    `+$(MAKE_COMMAND)`",
+             {"Makefile": "MAKE_COMMAND := make\nEARLY := base.c\n"
+                          "ok: base.c $(EARLY)\n"
+                          "\t+$(MAKE_COMMAND) -f child.mk all\n",
+              "child.mk": "all:\n\t@true\n"}, 2),
+            # ⚠ AND THE CONTROLS FOR THAT PREDICATE: a command whose name
+            # merely CONTAINS make, and an ordinary $(VAR) in command
+            # position, must both still pass -- `$(CC) -o x x.c` is the shape
+            # every real recipe uses.
+            ("CONTROL   `cmake` is not `make`",
+             {"Makefile": "EARLY := base.c\nok: base.c $(EARLY)\n"
+                          "\t@cmake --version\n"}, 0),
+            ("CONTROL   an ordinary $(VAR) command still passes",
+             {"Makefile": "CC := cc\nEARLY := base.c\nok: base.c $(EARLY)\n"
+                          "\t@$(CC) --version\n"}, 0),
+            # r10: $(file ...) loads makefile text that is in NO file list.
+            ("REFUSE    $(eval $(file <rules.mk)) -- text outside any list",
+             {"Makefile": "EARLY := base.c\n$(eval $(file <rules.mk))\n"
+                          "ok: base.c $(EARLY)\n\t@true\n",
+              "rules.mk": "guard: base.c $(value LATE)\n\t@true\n"
+                          "LATE := late.c\n"}, 2),
+            # r10: an ORDINARY late-definition case the warning cannot see,
+            # because ifdef tests definedness rather than referencing it.
+            ("REFUSE    `ifdef LATE` before LATE is defined",
+             {"Makefile": "EARLY := base.c\nifdef LATE\nok: base.c $(LATE)\n"
+                          "else\nok: base.c $(EARLY)\n\t@true\nendif\n"
+                          "LATE := late.c\n"}, 2),
+            ("REFUSE    any conditional at all, by policy",
+             {"Makefile": "EARLY := base.c\nifeq ($(EARLY),base.c)\n"
+                          "ok: base.c $(EARLY)\n\t@true\nendif\n"}, 2),
         ]
         for name, files, want_rc in refusal_arms:
             got, out = _fixture_exit(files)
