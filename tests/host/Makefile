@@ -4076,6 +4076,23 @@ $(TEAR904_BIN): test_904_cal_pair_tear.c test_framework.h cal_order_904.awk cal_
 # presence check passes if someone moves the pre-copy increment after the loop,
 # which is precisely the mutation that reopens the defect.
 SETTINGS_SRC := ../../firmware/src/services/daqifi_settings.c
+BUTTONLATCH_BIN := run_1092_tests
+# ⛔ WRITTEN OUT IN FULL, NOT COMPOSED WITH $(FW_HAL), SO check_ci_path_filters.py
+# CAN SEE THEM. That checker harvests firmware paths by matching the literal
+# text `../../firmware/src/...` in this Makefile, which is what makes it
+# independent of anyone's mental model of which files matter (#991). A path
+# assembled from a variable never appears as that literal, so these three were
+# invisible to it: it reported "all 25 firmware files covered" while reading
+# 28, and the three it could not see were covered only because they had been
+# added to both filters BY HAND -- the very thing the checker exists to replace.
+# Spelling them out costs one longer line each and puts them back under the
+# mechanical check. $(FW_HAL) is still right for -I flags, which name a
+# directory rather than a file the tests read.
+FW_POWER_SRC := ../../firmware/src/HAL/Power/PowerApi.c
+FW_UI_SRC    := ../../firmware/src/HAL/UI/UI.c
+FW_BQ_SRC    := ../../firmware/src/HAL/BQ24297/BQ24297.c
+PIN1092_I2C  := pin_1092_no_blocking_before_powerdown.py
+
 SEQ908_BIN := run_908_tests
 
 # ⚠ BOTH sources are prerequisites because BOTH are read by the guards below:
@@ -4332,12 +4349,254 @@ $(SEQ908_BIN): test_908_cal_source_seqlock.c test_framework.h $(SETTINGS_SRC) $(
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(SEQ908_BIN) test_908_cal_source_seqlock.c
 
+# ⛔⛔ #1084 / #1092: A BUTTON POWER-OFF MUST STICK.
+# test_1092_button_poweroff_latch.c models Power_UpdateState /
+# Power_HandleStandbyState / the button arm and runs every fixture through the
+# OLD and NEW shape, so each arm fails on the pre-fix code by construction.
+# PowerApi.c is not host-includable (definitions.h, BoardConfig.h, the BQ24297
+# driver, the WINC headers), so the guards below pin every structural claim the
+# model rests on. If one fails, the model describes firmware that no longer
+# exists and this build says so instead of passing a stale model green.
+#
+# Comment-STRIPPED via $(CC) -fpreprocessed -E wherever the token also appears
+# in the prose that explains the fix -- which, in these two files, it does for
+# every one of them.
+$(BUTTONLATCH_BIN): test_1092_button_poweroff_latch.c test_framework.h \
+                   $(FW_POWER_SRC) $(FW_UI_SRC) $(SCPI_INTERFACE_C) \
+                   $(FW_BQ_SRC) $(PIN1092_I2C) $(RECIPES)
+	@# PIN 1 -- the common DO_POWER_DOWN handler must NOT clear the request.
+	@# A NEGATIVE pin, so it is scoped to that handler's own body rather than
+	@# the file: there are five other legitimate `= NO_CHANGE` writes in
+	@# PowerApi.c and a file-wide grep could not tell them apart.
+	@$(CC) -fpreprocessed -E $(FW_POWER_SRC) 2>/dev/null \
+	   | awk '/requestedPowerState == DO_POWER_DOWN/{f=1} f{print} f&&/\}/{n++} n>=1{exit}' \
+	   > /tmp/.p1092a.$$$$; \
+	 test -s /tmp/.p1092a.$$$$ \
+	  || { echo "ERROR: could not extract the DO_POWER_DOWN handler from"; \
+	       echo "       $(FW_POWER_SRC) (#1092) -- this pin measures nothing."; \
+	       rm -f /tmp/.p1092a.$$$$; exit 1; }; \
+	 grep -q 'requestedPowerState = NO_CHANGE' /tmp/.p1092a.$$$$ \
+	  && { echo "ERROR: the common DO_POWER_DOWN handler clears"; \
+	       echo "       requestedPowerState again (#1092). That tells every"; \
+	       echo "       consumer no shutdown is pending while one is -- the LED"; \
+	       echo "       takeover and SCPI_PowerStatusGet's shutdown diagnostic"; \
+	       echo "       both read it -- and it restores the conflation, so a"; \
+	       echo "       poster of DO_POWER_DOWN that forgets the suppression"; \
+	       echo "       latch makes the STANDBY pass power the board UP instead"; \
+	       echo "       of down. Power_Down() clears it where it is serviced."; \
+	       rm -f /tmp/.p1092a.$$$$; exit 1; } || true; \
+	 rm -f /tmp/.p1092a.$$$$
+	@# PIN 2 -- Power_Down() is the executor and clears the request.
+	@$(CC) -fpreprocessed -E $(FW_POWER_SRC) 2>/dev/null \
+	   | awk '/^void Power_Down\(void\)/{f=1} f{print} f&&/^\}/{exit}' \
+	   > /tmp/.p1092b.$$$$; \
+	 test -s /tmp/.p1092b.$$$$ \
+	   && grep -q 'requestedPowerState = NO_CHANGE' /tmp/.p1092b.$$$$ \
+	  || { echo "ERROR: Power_Down() no longer clears requestedPowerState"; \
+	       echo "       (#1092). With PIN 1 forbidding the early clear, this is"; \
+	       echo "       the ONLY place it happens -- without it the request"; \
+	       echo "       stays DO_POWER_DOWN forever and every later pass"; \
+	       echo "       re-enters the power-down arm."; \
+	       rm -f /tmp/.p1092b.$$$$; exit 1; }; \
+	 rm -f /tmp/.p1092b.$$$$
+	@# PIN 3 -- the model's premises about the auto-promote gate: it reads the
+	@# request as NO_CHANGE, it also requires the latch to be clear, and it
+	@# re-arms the latch when VBUS is absent. The SECOND is the one that
+	@# refuted r2's framing, and the THIRD is what makes setting the latch
+	@# unconditionally harmless -- so both are load-bearing for the model.
+	@pp=`$(CC) -fpreprocessed -E $(FW_POWER_SRC) 2>/dev/null`; \
+	 printf '%s' "$$pp" | grep -q 'autoPowerOnUsb && pData->requestedPowerState == NO_CHANGE' \
+	  || { echo "ERROR: the auto-promote gate no longer reads the request as"; \
+	       echo "       NO_CHANGE (#1092). The model's whole premise."; exit 1; }; \
+	 printf '%s' "$$pp" | grep -q '!pData->autoPromotedThisVbusSession' \
+	  || { echo "ERROR: the auto-promote gate no longer consults the"; \
+	       echo "       suppression latch (#1092). That term is why the clear"; \
+	       echo "       is not reachable as the auto-promote defect today, and"; \
+	       echo "       the model's DEFECT A section says so. Without it the"; \
+	       echo "       latch fixes nothing and the correction is wrong."; exit 1; }; \
+	 printf '%s' "$$pp" | grep -q 'autoPromotedThisVbusSession = false' \
+	  || { echo "ERROR: Power_HandleStandbyState no longer re-arms the latch"; \
+	       echo "       when VBUS is absent (#1092). That re-arm is the ONLY"; \
+	       echo "       reason setting the latch unconditionally in the button"; \
+	       echo "       path is harmless -- without it a battery-only press"; \
+	       echo "       would suppress auto-promote forever."; exit 1; }
+	@# PIN 4/5 -- BOTH posters of DO_POWER_DOWN set the suppression latch from
+	@# a FRESH PHY read, never from the CACHED pgStat.
+	@#
+	@# ⛔ THE RULE CHANGED IN r6 AND SO DID THIS PIN. Earlier revisions demanded
+	@# a literal `= true`, because the then-current rule was "set it
+	@# unconditionally and let the standby pass re-arm it". r5 showed that rule
+	@# is unfixable in principle: it depends on a later pass OBSERVING VBUS
+	@# absent, and a battery-only press with USB plugged in before the next pass
+	@# means no such observation ever happens. The latch is now decided at the
+	@# moment of the press -- latch = "is VBUS present right now" -- so a
+	@# constant is exactly what must NOT be there.
+	@#
+	@# What stays forbidden is the CACHE: `= pgStat` is the r1 defect and
+	@# `if (pgStat)` the r2 residual, and both read a value that can be stale in
+	@# either direction. The r1/r2 defect was never "a variable", it was "the
+	@# wrong source".
+	@#
+	@# ⛔ MATCHED OVER THE FLATTENED STATEMENT, NOT PER LINE. The r6 assignment
+	@# does not fit in 80 columns, so it spans two lines -- and the previous
+	@# negative arm (`grep -qE '... = [^t]'`) would have passed VACUOUSLY on it,
+	@# because with the `=` last on its line there is no character after it for
+	@# the pattern to reject. A negative pin that cannot see its subject reports
+	@# success. Flattening newlines to spaces makes every arm here independent
+	@# of where the statement happens to wrap.
+	@for src in $(FW_UI_SRC) $(SCPI_INTERFACE_C); do \
+	   flat=`$(CC) -fpreprocessed -E $$src 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	   case "$$flat" in \
+	     *autoPromotedThisVbusSession*) ;; \
+	     *) echo "ERROR: $$src no longer writes the AUTOOn suppression latch"; \
+	        echo "       at all (#1084). With AUTOOn on and VBUS present the"; \
+	        echo "       STANDBY pass auto-promotes the board straight back up,"; \
+	        echo "       undoing the power-off. This pin found NO write, so it"; \
+	        echo "       is not measuring a changed rule -- the writer is gone."; \
+	        exit 1;; \
+	   esac; \
+	   case "$$flat" in \
+	     *"autoPromotedThisVbusSession = pData->BQ24297Data.status.pgStat"*|\
+	     *"autoPromotedThisVbusSession = gpPowerData->BQ24297Data.status.pgStat"*|\
+	     *"autoPromotedThisVbusSession = pPowerData->BQ24297Data.status.pgStat"*) \
+	        echo "ERROR: $$src sets the suppression latch from the CACHED"; \
+	        echo "       pgStat (#1092 round 1). The cache can be stale in"; \
+	        echo "       EITHER direction: a stale FALSE writes false and"; \
+	        echo "       cancels the very shutdown this exists to make stick."; \
+	        echo "       Use Power_IsVbusPresentFresh() -- same question, read"; \
+	        echo "       from the PHY, cannot be stale."; \
+	        exit 1;; \
+	   esac; \
+	   case "$$flat" in \
+	     *"if (gpPowerData->BQ24297Data.status.pgStat) { gpPowerData->autoPromotedThisVbusSession"*) \
+	        echo "ERROR: $$src gates the latch on the cached pgStat again"; \
+	        echo "       (#1092 round 2). A stale-FALSE reading leaves the"; \
+	        echo "       latch clear, Power_Tasks refreshes pgStat to true, and"; \
+	        echo "       the next STANDBY pass auto-promotes -- the shutdown is"; \
+	        echo "       undone. Decide at the press from the PHY instead."; \
+	        exit 1;; \
+	   esac; \
+	   case "$$flat" in \
+	     *"autoPromotedThisVbusSession = Power_IsVbusPresentFresh();"*) ;; \
+	     *) echo "ERROR: $$src does not set the AUTOOn suppression latch from"; \
+	        echo "       Power_IsVbusPresentFresh() (#1092 r6). The latch must"; \
+	        echo "       record whether VBUS was present AT THE MOMENT of the"; \
+	        echo "       power-off request. A constant cannot: set true, a"; \
+	        echo "       battery-only press suppresses a later plug-in unless"; \
+	        echo "       some pass happens to observe VBUS absent first, and r5"; \
+	        echo "       proved none is guaranteed. Set false, the shutdown is"; \
+	        echo "       undone outright."; \
+	        exit 1;; \
+	   esac; \
+	 done
+	@# PIN 5b -- the fresh read must stay NON-BLOCKING, because it is now called
+	@# from the button path and from a SCPI handler. If it ever grew an I2C read
+	@# it would put an unbounded wait on the press path; PIN 7 guards the
+	@# shutdown pass, and this guards the accessor itself.
+	@pp=`$(CC) -fpreprocessed -E $(FW_POWER_SRC) 2>/dev/null`; \
+	 printf '%s' "$$pp" \
+	   | awk '/^bool Power_IsVbusPresentFresh\(void\)/{f=1} f{print} f&&/^\}/{exit}' \
+	   > /tmp/.p1092g.$$$$; \
+	 test -s /tmp/.p1092g.$$$$ \
+	  || { echo "ERROR: Power_IsVbusPresentFresh() not found in"; \
+	       echo "       $(FW_POWER_SRC) (#1092 r6) -- both latch posters call"; \
+	       echo "       it, so this pin measures nothing and must not pass."; \
+	       rm -f /tmp/.p1092g.$$$$; exit 1; }; \
+	 grep -qE 'BQ24297_(Read|Write)_I2C|DRV_I2C_|portMAX_DELAY|OSAL_WAIT_FOREVER' \
+	      /tmp/.p1092g.$$$$ \
+	  && { echo "ERROR: Power_IsVbusPresentFresh() can now BLOCK (#1092 r6)."; \
+	       echo "       It is called from the button path and from the SCPI"; \
+	       echo "       POWer:STATe handler, and the whole point of it is that"; \
+	       echo "       it reads one USB PHY register and cannot wait. Keep the"; \
+	       echo "       I2C and the mutex in Power_UpdateStatusFromGPIO()."; \
+	       rm -f /tmp/.p1092g.$$$$; exit 1; } || true; \
+	 rm -f /tmp/.p1092g.$$$$
+	@# PIN 6 -- r4: the re-arm must be OUTSIDE the auto-promote gate, and the
+	@# handler must refresh VBUS before either. ⛔ THIS IS AN ORDER PROPERTY,
+	@# so PIN 3's by-name grep cannot express it: `= false` is present in BOTH
+	@# the r3 shape (re-arm inside the gate, where a pending DO_POWER_DOWN
+	@# makes it unreachable) and the r4 shape, and PIN 3 passes on both. The
+	@# position IS the fix, so the position is what is pinned -- plus an
+	@# exactly-one count, or a re-arm re-added inside the gate would satisfy
+	@# an order check that only looked at the first match.
+	@$(CC) -fpreprocessed -E $(FW_POWER_SRC) 2>/dev/null \
+	   | awk '/^static void Power_HandleStandbyState\(void\)/{f=1} f{print} f&&/^\}/{exit}' \
+	   > /tmp/.p1092f.$$$$; \
+	 test -s /tmp/.p1092f.$$$$ \
+	  || { echo "ERROR: could not extract Power_HandleStandbyState from"; \
+	       echo "       $(FW_POWER_SRC) (#1092 r4) -- this pin measures nothing."; \
+	       rm -f /tmp/.p1092f.$$$$; exit 1; }; \
+	 n=`grep -c 'autoPromotedThisVbusSession = false' /tmp/.p1092f.$$$$`; \
+	 test "$$n" = "1" \
+	  || { echo "ERROR: expected exactly ONE re-arm of the AUTOOn latch in"; \
+	       echo "       Power_HandleStandbyState, found $$n (#1092 r4). Two"; \
+	       echo "       re-arms let one sit inside the auto-promote gate --"; \
+	       echo "       where a pending DO_POWER_DOWN makes it unreachable --"; \
+	       echo "       while the order check below still passes on the other."; \
+	       rm -f /tmp/.p1092f.$$$$; exit 1; }; \
+	 r=`grep -n 'autoPromotedThisVbusSession = false' /tmp/.p1092f.$$$$ | cut -d: -f1`; \
+	 g=`grep -n 'autoPowerOnUsb &&' /tmp/.p1092f.$$$$ | head -1 | cut -d: -f1`; \
+	 v=`grep -n 'Power_RefreshVbusFromPhy' /tmp/.p1092f.$$$$ | head -1 | cut -d: -f1`; \
+	 test -n "$$g" && test -n "$$v" \
+	  || { echo "ERROR: Power_HandleStandbyState no longer contains the"; \
+	       echo "       auto-promote gate and/or a Power_RefreshVbusFromPhy()"; \
+	       echo "       entry refresh (#1092 r4b). The refresh must be the"; \
+	       echo "       PHY-ONLY helper: the full Power_UpdateStatusFromGPIO()"; \
+	       echo "       reaches BQ24297_Read_I2C and must never precede"; \
+	       echo "       Power_Down() -- see PIN 7."; \
+	       rm -f /tmp/.p1092f.$$$$; exit 1; }; \
+	 test "$$r" -lt "$$g" \
+	  || { echo "ERROR: the AUTOOn latch re-arm is INSIDE the auto-promote"; \
+	       echo "       gate again (#1092 r4: line $$r vs gate $$g). That gate"; \
+	       echo "       requires requestedPowerState == NO_CHANGE, so on the"; \
+	       echo "       shutdown pass -- where the request is still pending,"; \
+	       echo "       because PIN 1 forbids the early clear -- the re-arm"; \
+	       echo "       never runs. A battery-only long-press held until USB"; \
+	       echo "       arrives then strands the board in STANDBY for ever."; \
+	       echo "       A latch set by a press must be cleared by the FIRST"; \
+	       echo "       observation of VBUS absent, whichever pass makes it."; \
+	       rm -f /tmp/.p1092f.$$$$; exit 1; }; \
+	 test "$$v" -lt "$$r" \
+	  || { echo "ERROR: Power_HandleStandbyState decides the latch re-arm"; \
+	       echo "       before refreshing VBUS (#1092 r4: refresh $$v vs"; \
+	       echo "       re-arm $$r). The re-arm would then read a CACHED"; \
+	       echo "       pgStat, and a stale FALSE and a truthful FALSE are"; \
+	       echo "       indistinguishable from the cache while demanding"; \
+	       echo "       OPPOSITE actions: the stale one must not clear the"; \
+	       echo "       latch (r2 residual), the truthful one must (r3"; \
+	       echo "       regression). The fresh PHY read is what makes the"; \
+	       echo "       discriminator sound; no predicate over the cache can."; \
+	       echo "       It must be Power_RefreshVbusFromPhy(), not the full"; \
+	       echo "       status refresh -- that one does I2C (PIN 7)."; \
+	       rm -f /tmp/.p1092f.$$$$; exit 1; }; \
+	 rm -f /tmp/.p1092f.$$$$
+	@# PIN 7 -- r4b: nothing that can block unboundedly may run on the
+	@# shutdown pass before Power_Down(). A CALL-GRAPH pin, not a grep: r4
+	@# hoisted Power_UpdateStatusFromGPIO() to the handler's entry for a fresh
+	@# VBUS reading, and that put BQ24297_Read_I2C(REG08) -- I2C mutex with
+	@# portMAX_DELAY, then a blocking transfer -- ahead of the power-down, so a
+	@# stuck bus would leave the rails and the MCU self-hold ON. The function's
+	@# NAME gives none of that away; the I2C is two calls down, which is why
+	@# this derives the dangerous set from the callees transitively.
+	@# Its own self-test runs FIRST, so a pin that has stopped working cannot
+	@# report a pass -- including the arm that proves it accepts main's shape
+	@# (an unconditional blocking call AFTER Power_Down is fine).
+	@$(PYTHON) $(PIN1092_I2C) --self-test >/dev/null \
+	  || { echo "ERROR: $(PIN1092_I2C) --self-test FAILED. The #1092 r4b"; \
+	       echo "       blocking-call pin is broken, so its verdict on the"; \
+	       echo "       firmware below would be meaningless. Fix the pin."; \
+	       $(PYTHON) $(PIN1092_I2C) --self-test; exit 1; }
+	@$(PYTHON) $(PIN1092_I2C) --power-src $(FW_POWER_SRC) --bq-src $(FW_BQ_SRC)
+	$(CC) $(CFLAGS) -o $(BUTTONLATCH_BIN) test_1092_button_poweroff_latch.c
+
+
 run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) \
      $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) \
      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) \
      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(USECALTYPE_BIN) $(ARM_BIN) $(NAME_BIN) \
-     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(SUMBUDGET_BIN) $(BIN970)
+     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN)
 	./$(SEQ908_BIN)
+	./$(BUTTONLATCH_BIN)
 	./$(TEAR904_BIN)
 	./$(SUMBUDGET_BIN)
 	./$(BIN)
@@ -4640,6 +4899,6 @@ clean:
 	      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(GEN_1125) \
 	      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(SDLOG1029_GEN).tmp \
 	      $(USECALTYPE_BIN) $(NAME_BIN) $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(ARM_BIN) $(SCPIDAC_RAILGATE_BIN) \
-	      $(FORCEGATE_BIN) $(LOG1039_BIN) $(LOG1039_GEN) $(SUMBUDGET_BIN) $(BIN970)
+	      $(FORCEGATE_BIN) $(LOG1039_BIN) $(LOG1039_GEN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN)
 
 .PHONY: run clean

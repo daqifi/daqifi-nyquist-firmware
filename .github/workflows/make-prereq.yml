@@ -1,0 +1,119 @@
+name: make-prereq
+
+# #1170: a guard whose PREREQUISITE expanded to nothing still looks healthy.
+#
+# make expands a prerequisite list when it READS the rule, so a variable
+# defined LATER in the file is empty at that point and the dependency silently
+# disappears. The recipe is unaffected — recipe lines expand at execution time
+# — so every grep shows the right path and the guard, when it does run, is
+# correct. What breaks is that an edit to the guarded source reuses the stale
+# binary and the guard never runs at all.
+#
+# ⛔ And the obvious check is a clean-bill generator: `make -np`'s VARIABLE DUMP
+# runs after the whole file is parsed, so it prints the variable as a perfectly
+# good path while the rule it feeds has no such dependency. Measured on fw#904
+# before its fix.
+#
+# So the gate ASKS MAKE rather than reading the Makefile:
+# `make -n --warn-undefined-variables` warns at READ time, with file:line, and
+# cannot be evaded by syntax because it IS make. The checker's first
+# implementation parsed the file and was defeated by continuation lines, ${VAR}
+# references and tab-indented shell assignments -- see its docstring. It runs
+# under `env -i` because a variable present in the ENVIRONMENT is defined as far
+# as make is concerned, which would suppress the warning for exactly this
+# defect.
+#
+# Trigger scope mirrors log-budget.yml and cppcheck.yml: the files that are
+# MEASURED, the tool itself, and this workflow. The measured set is every file
+# in make's MAKEFILE_LIST -- the root Makefile AND any `include`d fragment --
+# so the filter covers *.mk too. A trigger narrower than the measurement is a
+# gate that can be bypassed by editing the right file (#1174 r11).
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tests/host/Makefile'
+      # ⛔ EVERY MAKEFILE THE GATE READS, NOT JUST THE ROOT. The audit scans
+      # every file in make's MAKEFILE_LIST, so an `include`d fragment is part
+      # of what it measures -- and a filter naming only the root Makefile
+      # meant editing that fragment changed the measured input WITHOUT running
+      # the gate. A trigger narrower than the measurement is a gate that can
+      # be bypassed by editing the right file. There are 0 .mk files under
+      # tests/host today, so this costs nothing and arms the trigger before
+      # the first one is added, rather than after it hides something.
+      - 'tests/host/*.mk'
+      - 'tests/host/**/*.mk'
+      - 'tools/lint/make_prereq_audit.py'
+      - '.github/workflows/make-prereq.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tests/host/Makefile'
+      # ⛔ EVERY MAKEFILE THE GATE READS, NOT JUST THE ROOT. The audit scans
+      # every file in make's MAKEFILE_LIST, so an `include`d fragment is part
+      # of what it measures -- and a filter naming only the root Makefile
+      # meant editing that fragment changed the measured input WITHOUT running
+      # the gate. A trigger narrower than the measurement is a gate that can
+      # be bypassed by editing the right file. There are 0 .mk files under
+      # tests/host today, so this costs nothing and arms the trigger before
+      # the first one is added, rather than after it hides something.
+      - 'tests/host/*.mk'
+      - 'tests/host/**/*.mk'
+      - 'tools/lint/make_prereq_audit.py'
+      - '.github/workflows/make-prereq.yml'
+
+permissions:
+  contents: read   # checkout + a local Python tool, no writes
+
+jobs:
+  make-prereq:
+    name: Makefile guard prerequisites
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ⛔ THIS STEP IS NOT OPTIONAL, and it runs FIRST on purpose.
+      #
+      # The live tree contains no known positive (the checker's original one,
+      # fw#904's real gap, is fixed), so a zero from the audit below is
+      # unfalsifiable on its own. The fixture carries the three evasions that
+      # broke the checker's first implementation — a ${VAR} reference, a
+      # prerequisite on a CONTINUATION line, and a recipe-only reference that
+      # must stay silent — and every arm decides the exit code.
+      #
+      # Further arms score the checker's own EXIT rather than make's warnings.
+      # Each refusal arm scored a clean exit 0 on the head it was written
+      # against: a Makefile make cannot finish reading, and $(value ...) in the
+      # file or one include away (#1174 r2); then the three that defeated those
+      # refusals in turn — $(call value,X), a CONTINUED include directive, and
+      # $(eval include ...) (r3, which is why the include scan was replaced by
+      # make's own MAKEFILE_LIST).
+      #
+      # Two CONTROL arms hold a clean Makefile and a clean INCLUDED file at 0.
+      # Without them a checker that refused everything — or one that refused
+      # any file carrying an include — would satisfy every refusal arm above.
+      #
+      # ⚠ One mutation is undetectable from inside: deleting the line that
+      # turns a failed arm into a non-zero exit cannot be caught by that exit.
+      # Fixture integrity is covered; the reporting mechanism itself is not,
+      # and no self-test can cover it. That is a review-time property.
+      - name: Self-test the checker
+        run: python3 tools/lint/make_prereq_audit.py --self-test
+
+      # Three outcomes, not two — "could not measure" is its own answer:
+      #
+      # Exit 0 = make read every rule to the end with no undefined-variable
+      #          warning, and every reference was of a kind make reports on.
+      # Exit 1 = warnings, annotated with ::error file=,line=:: so each one
+      #          points at the rule whose prerequisite list was empty.
+      # Exit 2 = NO VERDICT. Either the tool could not run (no such Makefile),
+      #          or make exited non-zero and so stopped before the end of the
+      #          file, or the file reaches for a variable through $(value ...)
+      #          / an unfollowable include, which --warn-undefined-variables
+      #          cannot see. Never silently green: a checker pointed at a file
+      #          with no guard rules reports 0 findings and looks like a pass,
+      #          and before #1174 r2 a Makefile make could not even READ scored
+      #          the same clean 0.
+      - name: Audit guard prerequisites
+        run: python3 tools/lint/make_prereq_audit.py
