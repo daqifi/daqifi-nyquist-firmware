@@ -112,6 +112,54 @@ to make — *not* a `value` call — and `--warn-undefined-variables` catches it
 an ordinary finding. The self-test pins that case at exit **1**, so a join that
 glued the fragments would answer 2 and fail the arm.
 
+### ⛔ So the gate now has a POLICY, and this Makefile must stay inside it
+
+Five rounds (r1, r3, r4, r5, r6) found **one** defect wearing different
+clothes: a hand-written Make lexer losing to Make's grammar. A continued rule,
+a continued `include`, a split `$(call value`, a `define` body, then
+`override define`, nested `define`s, backslash **parity** (`\\` at end of line
+is a literal backslash, *not* a continuation), and recursive `$(MAKE)`. Fixing
+forms one at a time is a bet that Make's syntax can be enumerated, and the
+measured record on that bet is **0 for 5**.
+
+So the burden is inverted. **The scanner is correct over a subset of Make, and
+this Makefile must stay inside it** — anything outside is `exit 2`, NO VERDICT.
+The refusal names the construct and why. What that buys is the *direction of
+failure*: a policy predicate that mis-fires refuses a legal Makefile, which is
+loud and fixable, where a lexer that mis-parses passes an evasion silently —
+the entire defect class above. Recognising a construct is also a far weaker
+requirement than interpreting it.
+
+Refused: a `define`/`endef` in **any** prefix form (`override`, `export`,
+`private`, `unexport`), a line ending in two or more backslashes, and a
+`value` reference anywhere inside an expansion.
+
+The policy is scoped to **non-recipe, comment-stripped** lines, and that
+scoping is load-bearing rather than tidy: unscoped it matched 2 real lines,
+both harmless — a comment reading *"the return value is discarded"*, and a
+recipe passing a C string literal containing the word "value". Recipes expand
+after the parse and cannot empty a prerequisite list; `#` starts a comment even
+inside what looks like a quoted string, because Make has no string quoting.
+
+⚠ **The cost, stated up front:** this gate will refuse Makefiles that are
+legal Make. Measured on this file (4102 lines, 1827 non-recipe), **every
+predicate matches 0 lines**, so it costs nothing today. Whoever later needs one
+of those constructs either extends the policy deliberately or loses this gate's
+verdict — and the error message says which.
+
+Each predicate is pinned with a **near-miss** control, because a detector that
+fires on the right construct *and* on anything containing its letters proves
+nothing: a variable named `defines` is not a `define`, `endefx` is not an
+`endef`, one trailing backslash is still a continuation, and `value` in a
+comment or a recipe is not a `value` call.
+
+**Recursion is a different bug and got a real fix.** `MAKEFILE_LIST` was never
+wrong — the wrong *one* was read. A recursive `$(MAKE)` runs even under `-n`,
+so the child's database prints **first**, and taking the first list scanned only
+the child while reporting clean on a parent it never read. The list is now bound
+to the makefile actually invoked (its first entry), with two same-named
+candidates refusing rather than guessing.
+
 ⚠ **Irreducible residue, stated rather than discovered later:** a function name
 *assembled* at runtime (`V := val$(nothing)ue`, then `$(call $(V),LATE)`)
 contains the word nowhere and no text scan can see it. That is accepted,

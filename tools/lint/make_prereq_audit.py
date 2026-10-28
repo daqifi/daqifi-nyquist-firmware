@@ -166,8 +166,52 @@ VALUE_RE = re.compile(r"[$][({]\s*(?:call\s+)?value\b")
 
 # A `define` body holds REAL newlines, not continuations, and make still
 # accepts a function call split across one -- so the body is one scanning unit.
-DEFINE_RE = re.compile(r"^\s*define\b")
+# ⚠ ANY PREFIX FORM counts: `override define`, `export define`, `private
+# define` are all defines, and an `^\s*define`-only regex missed every one.
+DEFINE_RE = re.compile(
+    r"^\s*(?:(?:override|export|private|unexport)\s+)*define\b")
 ENDEF_RE = re.compile(r"^\s*endef\b")
+
+# ⛔ THE POLICY, AND WHY THE TOOL HAS ONE NOW.
+#
+# Five audit rounds (r1, r3, r4, r5, r6) found the same defect: a hand-written
+# Make lexer losing to Make's grammar. Each round fixed the instance and the
+# next found the next spelling -- a continued rule, a continued include, a
+# split $(call value, a define body, then `override define`, nested defines,
+# backslash PARITY (`\\` at end of line is a literal backslash, not a
+# continuation), and recursive $(MAKE). Fixing forms one at a time is a bet
+# that Make's syntax can be enumerated, and the measured record on that bet is
+# 0 for 5.
+#
+# So the burden is inverted. The scanner is correct over a SUBSET of Make, and
+# the audited Makefile must stay inside it; anything outside is NO VERDICT.
+# The direction of failure is what makes this sound: a policy predicate that
+# MIS-FIRES refuses a legal Makefile -- loud, visible, fixable -- where a lexer
+# that mis-parses passes an evasion silently, which is the entire defect class.
+# Seeing a construct is also a far weaker requirement than interpreting it.
+#
+# ⚠ THE COST, STATED: this tool will refuse Makefiles that are legal Make.
+# That is deliberate for a dev-tooling gate on ONE file. Measured on
+# tests/host/Makefile (4102 lines, 1827 non-recipe): every predicate below
+# matches 0 lines, so it costs nothing today. Whoever later needs one of these
+# constructs either extends the policy deliberately or loses this gate's
+# verdict -- and the refusal says which construct and why.
+POLICY = (
+    ("define body", DEFINE_RE,
+     "a `define` body -- bodies hold real newlines, nest, and take prefix "
+     "forms, and this scanner is only correct without them"),
+    ("endef", ENDEF_RE,
+     "an `endef` -- see `define body`"),
+    ("value call", re.compile(r"\$[({][^\n]*\bvalue\b"),
+     "a `value` reference inside an expansion -- the builtin is invisible to "
+     "--warn-undefined-variables however it is spelled, so it is never "
+     "auditable here"),
+)
+
+# Backslash PARITY, which only a physical line can answer: `\\` at end of line
+# is an escaped backslash and NOT a continuation, so phase 1's joiner would
+# wrongly glue the next line on. Rejected rather than parsed.
+TRAILING_BSLASH_RUN_RE = re.compile(r"\\{2,}[ \t]*$")
 
 # make's own record of every file it read, out of its `-p` dump. See the module
 # docstring for why this ONE line of that dump is evidence when the rest is a
@@ -218,12 +262,31 @@ def gather_sources(makefile, goal="run"):
          "-f", os.path.basename(makefile), goal],
         cwd=root, capture_output=True, text=True, env=env,
     )
-    listed = None
+    # ⛔ BIND THE LIST TO THE MAKEFILE I INVOKED, not to whichever dump printed
+    # first. A recursive `$(MAKE)` runs even under -n (make passes -n down and
+    # the sub-make really runs), so the CHILD's database prints before the
+    # parent's -- and taking the first MAKEFILE_LIST scanned only the child,
+    # reporting clean on a parent it never read. That is not a lexer problem;
+    # it is reading the right instrument's output, the same mistake as an
+    # arbiter reasoning over another branch.
+    #
+    # The parent's list is the one whose FIRST entry is the file passed to -f.
+    # Exactly one such list, or NO VERDICT: two identically-named makefiles in
+    # a recursive build are not something to guess between.
+    want = os.path.basename(makefile)
+    candidates = []
     for ln in proc.stdout.splitlines():
         m = MAKEFILE_LIST_RE.match(ln)
         if m:
-            listed = m.group("files").split()
-            break
+            files = m.group("files").split()
+            if files and os.path.basename(files[0]) == want:
+                candidates.append(files)
+    listed = candidates[0] if len(candidates) == 1 else None
+    if len(candidates) > 1:
+        return [], [(makefile, f"make printed {len(candidates)} MAKEFILE_LISTs "
+                               f"beginning with {want!r} (a recursive build "
+                               f"with repeated makefile names), so which one "
+                               f"describes the file under audit is ambiguous")]
     if listed is None:
         return [], [(makefile, "make printed no MAKEFILE_LIST, so WHICH files "
                                "it read is unknown -- scanning the named file "
@@ -245,6 +308,75 @@ def gather_sources(makefile, goal="run"):
     if not files and not problems:
         problems.append((makefile, "MAKEFILE_LIST named no readable file"))
     return files, problems
+
+
+def is_recipe_line(line):
+    """A TAB-indented line is a RECIPE. Pure.
+
+    Recipes expand at execution time, after the parse, so nothing in one can
+    empty a prerequisite list -- which is the only thing this tool is about.
+    Scoping the policy to non-recipe lines is not a convenience: unscoped, it
+    matched 2 lines of the real Makefile, both harmless (one comment, one
+    recipe passing a C string literal that contains the word "value").
+    """
+    return line.startswith("\t")
+
+
+def strip_make_comment(line):
+    """The line with its comment removed. Pure.
+
+    make has NO string quoting, so an unescaped `#` starts a comment even
+    inside what looks like a quoted string -- `X := "a#b"` really is `X := "a`.
+    This is make's rule, not an approximation of it, and a comment's text is
+    never expanded, so a `value` call after one is inert.
+    """
+    out, i = [], 0
+    while i < len(line):
+        c = line[i]
+        if c == "\\" and i + 1 < len(line):
+            out.append(line[i:i + 2])
+            i += 2
+            continue
+        if c == "#":
+            break
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def policy_violations(text):
+    """[(lineno, kind, why, excerpt)] -- constructs this scanner refuses to
+    reason about. Pure, so every predicate is pinned and mutated.
+
+    Empty means the file is inside the subset the scanner is correct on. It is
+    NOT a statement that the Makefile is good; it is a statement that the
+    audit below is entitled to an opinion.
+    """
+    found = []
+    physical = text.splitlines()
+    # Parity is a property of a PHYSICAL line ending, so it is checked there.
+    for lineno, raw in enumerate(physical, 1):
+        if is_recipe_line(raw):
+            continue
+        if TRAILING_BSLASH_RUN_RE.search(strip_make_comment(raw)):
+            found.append((lineno, "backslash parity", TRAILING_BSLASH_PARITY_WHY,
+                          raw.strip()[:120]))
+    # Everything else reads LOGICAL lines, so a construct cannot hide behind a
+    # continuation -- the same reason every other scan here does.
+    for lineno, ln in logical_lines(text):
+        if is_recipe_line(ln):
+            continue
+        bare = strip_make_comment(ln)
+        for kind, rx, why in POLICY:
+            if rx.search(bare):
+                found.append((lineno, kind, why, bare.strip()[:120]))
+    return sorted(found)
+
+
+TRAILING_BSLASH_PARITY_WHY = (
+    "a line ending in two or more backslashes -- `\\\\` is an escaped "
+    "backslash, NOT a continuation, and this scanner's joiner cannot tell "
+    "the difference")
 
 
 def logical_lines(text):
@@ -346,6 +478,26 @@ def report(makefile, goal="run"):
     print(f"makefile : {makefile}")
     print(f"goal     : {goal}  (warnings are goal-independent -- prerequisite "
           f"lists expand when each rule is READ)")
+
+    # ⛔ THE POLICY RUNS FIRST, over the file as given. If the Makefile is
+    # outside the subset this scanner is correct on, nothing below is entitled
+    # to an opinion -- including a clean one.
+    try:
+        with open(makefile, "r", errors="replace") as fh:
+            policy_hits = policy_violations(fh.read())
+    except OSError as exc:
+        print(f"ERROR: cannot read {makefile}: {exc.strerror}")
+        return 2
+    for lineno, kind, why, excerpt in policy_hits:
+        print(f"::error file={os.path.basename(makefile)},line={lineno}::"
+              f"outside the audited subset ({kind}): {why} -- {excerpt}")
+    if policy_hits:
+        print(f"ERROR: {len(policy_hits)} construct(s) outside the subset this "
+              f"checker is correct on. NO VERDICT -- this is a deliberate "
+              f"narrowing after five rounds of a hand-written Make lexer "
+              f"losing to Make's grammar; extend the policy on purpose, or "
+              f"keep the file inside it.")
+        return 2
 
     evasions, unresolved = find_evasions(makefile, goal)
     for path, lineno, text in evasions:
@@ -626,9 +778,54 @@ def self_test():
             # r5: the define body, which phase 1 alone could not reach.
             ("REFUSE    $(call value,X) split inside a define BODY",
              {"Makefile": SELFTEST_VALUE_IN_DEFINE}, 2),
-            # ⛔ And its control: an ordinary define must stay auditable.
-            ("CONTROL   a define carrying no value call still exits 0",
-             {"Makefile": SELFTEST_CLEAN_DEFINE}, 0),
+            # r6: the POLICY. Every form is a refusal now, including the three
+            # the lexer lost to -- and the define arms above now refuse via
+            # the policy rather than via the body merge, which stays as
+            # defence in depth.
+            ("REFUSE    `override define` is a define",
+             {"Makefile": "override define B\n$(call\nvalue,L)\nendef\n"
+                          "ok: base.c $(B)\n\t@true\nL := late.c\n"}, 2),
+            ("REFUSE    `export define` is a define",
+             {"Makefile": "export define B\nx\nendef\nok: base.c\n\t@true\n"}, 2),
+            ("REFUSE    a NESTED define",
+             {"Makefile": "define A\ndefine B\nx\nendef\nendef\n"
+                          "ok: base.c\n\t@true\n"}, 2),
+            ("REFUSE    a line ending in TWO backslashes (parity)",
+             {"Makefile": "V := a\\\\\nok: base.c $(V)\n\t@true\n"}, 2),
+            # ⛔ NEAR-MISS CONTROLS. Each predicate must fire on the construct
+            # and NOT on a token that merely contains its letters -- the
+            # identifier-boundary and unrelated-site failures that pass a
+            # mutant while proving nothing (conv-ts, ts#365 r1).
+            ("CONTROL   a variable called `defines` is not a define",
+             {"Makefile": "defines := base.c\nok: $(defines)\n\t@true\n"}, 0),
+            ("CONTROL   `endefx` is not an endef",
+             {"Makefile": "endefx := base.c\nok: $(endefx)\n\t@true\n"}, 0),
+            ("CONTROL   ONE trailing backslash is still a continuation",
+             {"Makefile": "V := base.c\nok: $(V) \\\n     base.c\n\t@true\n"}, 0),
+            ("CONTROL   the word `value` in a COMMENT is not a value call",
+             {"Makefile": "# the return value of $(FOO) is discarded\n"
+                          "EARLY := base.c\nok: $(EARLY)\n\t@true\n"}, 0),
+            ("CONTROL   the word `value` in a RECIPE is not a value call",
+             {"Makefile": "EARLY := base.c\nok: $(EARLY)\n"
+                          "\t@echo 'no calibration bank for this value'\n"}, 0),
+            # ⛔ And its control: an ordinary define must stay auditable...
+            # EXCEPT it no longer is, by policy. Stated as the deliberate cost.
+            ("POLICY    even a CLEAN define is refused now, by design",
+             {"Makefile": SELFTEST_CLEAN_DEFINE}, 2),
+            # ⛔ r6's recursion finding, and the fixture is built to isolate
+            # the ATTRIBUTION fix from everything else. The evasion lives in
+            # the INCLUDED file, so only the MAKEFILE_LIST binding decides
+            # whether it is ever scanned: the policy reads the given Makefile
+            # (clean here) and the warnings leg sees no undefined reference.
+            # Measured at b7a0d74f6: exit 0, because the child's database
+            # prints FIRST and the old code took it -- scanning child.mk and
+            # calling the audit clean on a parent it never read.
+            ("REFUSE    a recursive $(MAKE) must not redirect the file list",
+             {"Makefile": "include inc.mk\nok: base.c $(FROM_INC)\n"
+                          "\t@$(MAKE) -f child.mk all\n",
+              "inc.mk": "FROM_INC := inc.c\nguard: base.c $(value LATE)\n"
+                        "\t@true\nLATE := late.c\n",
+              "child.mk": "all:\n\t@true\n"}, 2),
         ]
         for name, files, want_rc in refusal_arms:
             got, out = _fixture_exit(files)
