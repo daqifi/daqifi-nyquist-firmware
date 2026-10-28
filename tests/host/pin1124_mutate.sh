@@ -994,22 +994,18 @@ else
 fi
 restore
 
-echo "== R56 (PIN 25): FAULT on an index past our part limit -- the r22 audit  =="
-echo "==      MEDIUM. A foreign record named exp-5000.csv then disarms every   =="
-echo "==      capture in that directory. The scan still works, the bits are    =="
-echo "==      still exact for in-range indices, every other arm passes.        =="
-if sub "$F" '                if ((idx != SDMANIFEST_PART_NONE)
-                        && (idx < SD_FOREIGN_PART_LIMIT)) {
-                    sd_ForeignBitSet(idx);
-                }' \
-            '                if (idx != SDMANIFEST_PART_NONE) {
-                    if (idx >= SD_FOREIGN_PART_LIMIT) {
-                        out = SD_INSPECT_FAULT;
-                        break;
-                    }
-                    sd_ForeignBitSet(idx);
-                }'; then
-    expect "R56 an over-limit index is skipped" "is no"
+echo "== R56 (PIN 18, the above-limit term): drop the OPEN-side half of the    =="
+echo "==      r25 fix -- the index pass still records the flag, the bit arm    =="
+echo "==      still works, and only a counter past the bitset stops consulting =="
+echo "==      the exact check. The false negative returns, silently.           =="
+echo "==      r25: re-pointed. Its old target (the pre-r25 skip) no longer     =="
+echo "==      exists, and a mutant for the index-pass side would be            =="
+echo "==      indistinguishable from R68 -- so this takes the OTHER side.      =="
+if sub "$F" '            && (sd_ForeignBitTest(gSDCardData.fileCounter)
+                || ((gSDCardData.fileCounter >= SD_FOREIGN_PART_LIMIT)
+                    && gSDCardData.foreignAboveLimitRecord))) {' \
+            '            && sd_ForeignBitTest(gSDCardData.fileCounter)) {'; then
+    expect "R56 the open consults the above-limit flag" "PIN 18: a set foreign-part bit no"
 else
     echo "  FAIL R56 anchor absent."; fail=$((fail+1))
 fi
@@ -1175,7 +1171,7 @@ echo "==      simply stops seeing one, silently. Nothing else notices.         =
 if sub "$F" '                        gSDCardData.foreignAboveLimitRecord = true;' \
             '                        (void)0;'; then
     expect "R68 an above-limit index routes to the exact check" \
-           "no longer routes to the exact check"
+           "PIN 25: an index past SD_FOREIGN_PART_LIMIT no"
 else
     echo "  FAIL R68 anchor absent."; fail=$((fail+1))
 fi
