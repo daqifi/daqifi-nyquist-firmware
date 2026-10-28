@@ -125,7 +125,19 @@ measured record on that bet is **0 for 5**.
 So the burden is inverted. **The scanner is correct over a subset of Make, and
 this Makefile must stay inside it** — anything outside is `exit 2`, NO VERDICT.
 
-⛔ **The authoritative list of refused constructs is `REFUSED_EXAMPLES` in
+⛔ **`REFUSED_EXAMPLES` is authoritative on what the code *does* refuse — it is
+NOT a claim that nothing else *should* be refused.** It is exhaustive over the
+tool's own rules (a self-test arm asserts every `POLICY` rule is exercised by
+some row), which is a far weaker claim than being exhaustive over Make. Round
+13 found **seven** constructs the predicates do not recognise, stated as five
+classes in the `RESIDUAL CLASSES` block in `make_prereq_audit.py`:
+call-indirection to a refused builtin, BOM or recipe-prefix lexing,
+shell-keyword or non-wrapper recursion, file/eval text loading, and includes
+outside the workflow's path filter. Each is a false negative of a check `main`
+does not have at all, so none is a regression — they carry ACCEPTED-RESIDUAL
+dispositions rather than fixes.
+
+⛔ **The list of refused constructs lives in `REFUSED_EXAMPLES` in
 `tools/lint/make_prereq_audit.py`, and the self-test asserts every row against
 the rule that must refuse it. Do not restate that list here or in the module
 docstring.** The docstring used to carry its own copy, and in r12 that copy was

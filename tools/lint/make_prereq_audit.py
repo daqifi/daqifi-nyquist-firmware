@@ -179,6 +179,17 @@ THE RESIDUAL CLASS, AND WHY IT IS DOCUMENTED RATHER THAN CHASED
     `POLICY_NEAR_MISSES`, and the self-test asserts every row against the
     named rule.
 
+    ⛔⛔ AND THAT LIST IS NOT EXHAUSTIVE OVER MAKE. It is exhaustive over this
+    tool's own RULES -- a self-test arm asserts every POLICY rule is exercised
+    by some row -- which is a different and far weaker claim. Round 13 found
+    SEVEN constructs the predicates do not recognise. They are stated as five
+    classes in the RESIDUAL CLASSES block above `POLICY_NEAR_MISSES`:
+    call-indirection to a refused builtin, BOM or recipe-prefix lexing,
+    shell-keyword or non-wrapper recursion, file/eval text loading, and
+    includes outside the workflow's path filter. Those classes carry
+    ACCEPTED-RESIDUAL dispositions on this PR; each is a false negative of a
+    check `main` does not have, not a regression.
+
     That indirection is the fix for a defect this docstring HAD. Until r12 it
     listed `/usr/bin/make`, `command make` and an `origin()` definedness test
     as refused, and the policy refused none of the three -- prose ahead of
@@ -451,8 +462,16 @@ REFUSED_EXAMPLES = (
     ("X := $(origin  LATE)", "origin definedness test"),
     ("X := ${origin LATE}", "origin definedness test"),
     ("ifeq ($(origin LATE),undefined)", "origin definedness test"),
-    # Pre-existing families, pinned here so the list is the WHOLE claim and a
-    # rule deleted elsewhere cannot pass by being absent from this table.
+    # Pre-existing families, pinned here so that every POLICY RULE is exercised
+    # by some row and a rule deleted elsewhere cannot pass by being absent from
+    # this table.
+    #
+    # ⛔ THAT IS COMPLETENESS OVER THE RULES, NOT OVER MAKE. This table says
+    # what the eight predicates refuse; it says NOTHING about which constructs
+    # ought to be refused, and r13 found seven it does not recognise. An
+    # earlier wording here claimed the list was "the WHOLE claim", which reads
+    # as exhaustive over Make and is false. See the RESIDUAL CLASSES block
+    # above POLICY_NEAR_MISSES.
     ("define body\n", "define body"),
     ("endef", "endef"),
     ("X := $(value LATE)", "value call"),
@@ -465,6 +484,54 @@ REFUSED_EXAMPLES = (
     ("ifndef LATE", "conditional"),
     ("else ifeq ($(A),$(B))", "conditional"),
 )
+
+# ⛔⛔ WHAT THIS GATE DOES NOT CATCH, stated because an undocumented residual
+# invites exactly the trust this tool must not be given. Round 13 found seven
+# constructs the predicates do not recognise; they fall into five classes, and
+# the classes are the durable statement -- enumerating members one round at a
+# time is the treadmill this tool's whole design rejects.
+#
+# ⛔ A MISS IN ANY OF THESE IS A FALSE NEGATIVE OF A CHECK `main` DOES NOT
+# HAVE. The comparison for "is this safe to land" is against ZERO coverage,
+# not against a working check this one weakens. None of them is a regression.
+#
+#   1. CALL-INDIRECTION TO A REFUSED BUILTIN. The builtin rules match a
+#      DIRECT invocation, so `$(call origin,X)`, `$(call eval,...)` and
+#      `$(call file,...)` reach a refused builtin through a literal, legal
+#      function name that the non-literal-call rule correctly admits.
+#      Refusing every `$(call <builtin>,...)` means enumerating Make's
+#      builtins, which is the model this tool exists not to be.
+#   2. LEXING ASSUMPTIONS -- A BOM OR A CUSTOM RECIPE PREFIX. The conditional
+#      rule is anchored with `^\s*`, and a UTF-8 BOM is not whitespace, so a
+#      conditional on line 1 of a BOM'd file is unseen. The recursion rule is
+#      anchored to a literal TAB, so `.RECIPEPREFIX := >` moves every recipe
+#      out from under it.
+#   3. RECURSION BEHIND A SHELL KEYWORD OR AN UNLISTED WRAPPER. The wrapper
+#      set is a LIST (`env`, `command`, `exec`, `nice`, `time`, `sudo`,
+#      `stdbuf`), so `if true; then $(MAKE) ...`, a `for ... do $(MAKE)`, a
+#      submake reached through a shell variable, or one behind any wrapper
+#      nobody named reads as an ordinary command.
+#   4. FILE/EVAL TEXT LOADING, including through class 1. Text introduced by
+#      `$(eval ...)`/`$(file ...)` never enters MAKEFILE_LIST, so no
+#      file-list-driven scan can reach it -- and a token assembled from
+#      fragments is invisible to a token scan by construction.
+#   5. INCLUDES OUTSIDE THE WORKFLOW'S PATH FILTER. The audit measures every
+#      file in make's MAKEFILE_LIST, but CI only RUNS on the paths
+#      `.github/workflows/make-prereq.yml` names. An include whose path or
+#      extension falls outside them (anything not `tests/host/Makefile`,
+#      `tests/host/*.mk` or `tests/host/**/*.mk`) is measured but unwatched.
+#      Tracked as #1178. Measured today: MAKEFILE_LIST is exactly ONE file and
+#      the Makefile has 0 include directives, so the gap is forward-looking.
+#
+# Each class is also a reason it is not cheaply fixable: 1 and 4 need a model
+# of Make's builtins, 2 needs a lexer, 3 needs to distinguish a shell command
+# from a submake, and 5 is a CI-trigger property rather than a scanner one.
+#
+# ⚠ Deliberately a COMMENT and not a module-level tuple. The five names would
+# read better as data, but this round's disposition is carry-forward-eligible
+# only while the executable AST is unchanged, and a new assignment is a new
+# node. The list has no reader in code -- it is a statement to a human about
+# what the gate does not claim -- so prose costs nothing here.
 
 # ⛔ EVERY REFUSAL NEEDS A NEAR-MISS, or a rule that refuses everything
 # satisfies every row above. These must match NO policy rule at all.
@@ -1386,7 +1453,11 @@ def self_test():
         # could be deleted from POLICY and no arm above would fail -- the
         # refusal rows name rules, so a missing rule makes its own rows fail,
         # but a rule that NO row names could vanish unnoticed. This is the arm
-        # that makes the table a complete claim rather than a sample.
+        # that makes the table complete over POLICY's RULES rather than a
+        # sample of them. ⛔ It says nothing about Make's constructs: r13 found
+        # seven the predicates do not recognise, so "every rule is exercised"
+        # must not be read as "every construct is refused". See the RESIDUAL
+        # CLASSES block above POLICY_NEAR_MISSES.
         _named = {want for _s, want in REFUSED_EXAMPLES}
         _defined = {kind for kind, _rx, _why in POLICY}
         _unexercised = _defined - _named
