@@ -858,8 +858,13 @@ echo "==      the refusal still happens in the cases they cover. What it adds   
 echo "==      is refusals of CORRECT sessions, because the part index does not  =="
 echo "==      determine the path -- the bucket is unknown when the bits are     =="
 echo "==      built. Only PIN 18 sees it.                                       =="
+echo "==      \u26d4 KEEPS THE CALL and discards its result. Deleting the call drops  =="
+echo "==      PIN 13's mention count 3 -> 2, so that arm fires first with its    =="
+echo "==      own diagnostic and this one proves nothing about PIN 18 -- the     =="
+echo "==      same trap R23 fell into twice.                                     =="
 if sub "$F" '        const sd_InspectResult rec = sd_ScanForeignManifests(dataPath);' \
-            '        const sd_InspectResult rec = SD_INSPECT_HAZARD;'; then
+            '        (void)sd_ScanForeignManifests(dataPath);
+        const sd_InspectResult rec = SD_INSPECT_HAZARD;'; then
     expect "R46 the bit only gates an exact scan" \
            "no longer gates"
 else
