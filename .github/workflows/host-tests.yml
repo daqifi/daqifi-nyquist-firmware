@@ -336,6 +336,14 @@ name: host-tests
 #     snippet from sd_card_manager.c verbatim and compiles + RUNS it, so the
 #     behaviour is checked, not just the shape. Both files live directly under
 #     tests/host/, already covered by the 'tests/host/**' entry below.
+#   - test_970_encoder_consume_accounting.c (#970): re-implements two loop
+#     shapes (streaming.c's `encoded == 0` booking arm, and JSON_Encoder.c's
+#     DIO element commit loop) against mocks, and its Makefile target greps
+#     both real sources for the guarantees that re-implementation depends on
+#     (see tests/host/Makefile). Scoped to the two individual files by name,
+#     same reasoning as the JSON_StringEscape.h entry above -- not the whole
+#     services/ directory. JSON_Encoder.c is already listed; this adds
+#     streaming.c and streaming.h, which were not previously triggers here.
 
 on:
   pull_request:
@@ -376,6 +384,13 @@ on:
       - 'firmware/src/HAL/DAC7718/**'
       - 'firmware/src/services/JSON_StringEscape.h'
       - 'firmware/src/services/JSON_Encoder.c'
+      # #970 / PR #991 round-2 audit: csv_encoder.c was absent from BOTH
+      # filters while JSON_Encoder.c was in both -- the same JSON-present/
+      # CSV-absent pairing as the code gap and the $(BIN970) pin gap. Without
+      # it a change to csv_encoder.c does not trigger this job, so the pin
+      # that guards that file never runs for it: a green gate constrains only
+      # what the gate RUNS.
+      - 'firmware/src/services/csv_encoder.c'
       # #904: test_904_cal_pair_tear.c's target greps daqifi_settings.c for
       # the WRITE-half critical sections at the two writer sites it owns
       # (LoadADCCalSettings' copy loop and SaveADCCalSettings' read-back) and
@@ -455,6 +470,9 @@ on:
       # tests/host/Makefile) for the Timestamp field the fix adds; no entry
       # above matches firmware/src/state/data/.
       - 'firmware/src/state/data/AOutSample.h'
+      - 'firmware/src/services/streaming.c'
+      - 'firmware/src/services/DaqifiPB/NanoPB_Encoder.c'
+      - 'firmware/src/services/streaming.h'
       - '.github/workflows/host-tests.yml'
       # #756 r7: test_756_detect_force_rate_limit.c's Makefile pins grep this
       # driver for the detect-force gate's shape, so a DRIVER-ONLY PR must run
@@ -494,6 +512,13 @@ on:
       - 'firmware/src/HAL/DAC7718/**'
       - 'firmware/src/services/JSON_StringEscape.h'
       - 'firmware/src/services/JSON_Encoder.c'
+      # #970 / PR #991 round-2 audit: csv_encoder.c was absent from BOTH
+      # filters while JSON_Encoder.c was in both -- the same JSON-present/
+      # CSV-absent pairing as the code gap and the $(BIN970) pin gap. Without
+      # it a change to csv_encoder.c does not trigger this job, so the pin
+      # that guards that file never runs for it: a green gate constrains only
+      # what the gate RUNS.
+      - 'firmware/src/services/csv_encoder.c'
       # #904: test_904_cal_pair_tear.c's target greps daqifi_settings.c for
       # the WRITE-half critical sections at the two writer sites it owns
       # (LoadADCCalSettings' copy loop and SaveADCCalSettings' read-back) and
@@ -552,6 +577,9 @@ on:
       - 'firmware/src/Util/CRC32.h'
       # #1034: see the matching entry under pull_request above.
       - 'firmware/src/state/data/AOutSample.h'
+      - 'firmware/src/services/streaming.c'
+      - 'firmware/src/services/DaqifiPB/NanoPB_Encoder.c'
+      - 'firmware/src/services/streaming.h'
       - '.github/workflows/host-tests.yml'
       # #756 r7: test_756_detect_force_rate_limit.c's Makefile pins grep this
       # driver for the detect-force gate's shape, so a DRIVER-ONLY PR must run
