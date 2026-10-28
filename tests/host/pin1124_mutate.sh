@@ -1161,7 +1161,8 @@ if sub "$F" '        if (w < 0 || (size_t)w >= sizeof(path)) {' \
             break;
         }
         if (false) {'; then
-    expect "R67 an unconstructable name is skipped" "no longer SKIPS"
+    expect "R67 an unconstructable name is skipped" \
+           "PIN 31: a foreign manifest name that will not"
 else
     echo "  FAIL R67 anchor absent."; fail=$((fail+1))
 fi
