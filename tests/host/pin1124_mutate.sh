@@ -55,7 +55,12 @@ S="$W/firmware/src/services/SCPI/SCPIStorageSD.c"
 # #1124 r11 finding 4 moved SD_CARD_MANAGER_BUCKET_PREFIX here, and the
 # Makefile reads it out of this header, so one arm below mutates it.
 H="$W/firmware/src/services/sd_card_services/sd_card_manager.h"
-for f in "$F" "$G" "$M" "$S" "$H"; do
+# #1124 r21: PIN 13 re-reads FF_FS_REENTRANT out of this header, because the
+# foreign-record scan's TASK placement is a consequence of that setting rather
+# than a style choice. An arm that reads a value must be mutable here, or the
+# arm is pinned by nothing but its own prose.
+C="$W/firmware/src/config/default/system/fs/fat_fs/file_system/ffconf.h"
+for f in "$F" "$G" "$M" "$S" "$H" "$C"; do
     [ -f "$f" ] || { echo "FATAL: $f missing."; exit 2; }
 done
 
@@ -63,7 +68,7 @@ echo "################################################################"
 echo "# OPERATING ON: $W"
 echo "#   HEAD $(git -C "$W" rev-parse HEAD 2>/dev/null | cut -c1-9)  branch $(git -C "$W" rev-parse --abbrev-ref HEAD 2>/dev/null)"
 echo "################################################################"
-if [ -n "$(git -C "$W" status --porcelain -- "$F" "$G" "$M" "$S" "$H" 2>/dev/null)" ]; then
+if [ -n "$(git -C "$W" status --porcelain -- "$F" "$G" "$M" "$S" "$H" "$C" 2>/dev/null)" ]; then
     echo "FATAL: uncommitted changes in the files this mutates. Commit or set them"
     echo "       aside first -- restore here is a byte copy and will not arbitrate."
     exit 2
@@ -86,15 +91,15 @@ fi
 # filesystems, and a silently short backup is exactly the case that survives
 # until restore. Nothing is trapped until all four are proven good, so an
 # abort here leaves the tree untouched by definition.
-BF=""; BG=""; BS=""; BH=""
+BF=""; BG=""; BS=""; BH=""; BC=""
 backup_failed() {
     echo "FATAL: $1"
     echo "       Nothing has been mutated and no trap is installed, so the"
     echo "       worktree is untouched. Fix the backup location and re-run."
-    rm -f "$BF" "$BG" "$BS" "$BH"
+    rm -f "$BF" "$BG" "$BS" "$BH" "$BC"
     exit 2
 }
-for v in BF BG BS BH; do
+for v in BF BG BS BH BC; do
     tmp=$(mktemp 2>/dev/null) \
       || backup_failed "mktemp failed while creating backup $v"
     [ -n "$tmp" ] && [ -f "$tmp" ] \
@@ -110,8 +115,10 @@ back_up_one "$F" "$BF"
 back_up_one "$G" "$BG"
 back_up_one "$S" "$BS"
 back_up_one "$H" "$BH"
-restore() { cp "$BF" "$F"; cp "$BG" "$G"; cp "$BS" "$S"; cp "$BH" "$H"; }
-cleanup() { restore; rm -f "$BF" "$BG" "$BS" "$BH"; }
+back_up_one "$C" "$BC"
+restore() { cp "$BF" "$F"; cp "$BG" "$G"; cp "$BS" "$S"; cp "$BH" "$H"; \
+            cp "$BC" "$C"; }
+cleanup() { restore; rm -f "$BF" "$BG" "$BS" "$BH" "$BC"; }
 # ⛔ #1124 r12 finding 3. `trap '...' EXIT INT TERM` was NOT equivalent to
 # this. On INT or TERM bash runs the handler and then RESUMES the script --
 # it does not exit for you -- so the handler restored the tree and the run
@@ -661,6 +668,157 @@ if sub "$S" '    int overwriteParam = 0;' \
     expect "R33 the opt-in defaults to withdrawn" "no longer defaults to 0"
 else
     echo "  FAIL R33 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+# ===========================================================================
+# r21 arms. Each pin added or changed in r21 gets a mutant, for the reason
+# this whole file exists: PRESENT and EFFECTIVE are different properties.
+# r21 itself is the evidence -- it found a live fail-open in a function r20
+# wrote while fixing that exact class, and r20's pins all passed over it.
+# ===========================================================================
+
+echo "== R34 (PIN 8 call arm): pass something else to the recorded-part       =="
+echo "==      predicate. The refusal CONDITION is untouched and still reads    =="
+echo "==      != SD_INSPECT_CLEAR, so only the call arm can see this.          =="
+if sub "$F" 'sd_NameIsRotationPartOfExistingManifest(gpSDCardSettings->file);' \
+            'sd_NameIsRotationPartOfExistingManifest(dataPath);'; then
+    expect "R34 the predicate is consulted on the configured name" \
+           "does not consult the recorded-part"
+else
+    echo "  FAIL R34 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R35 (PIN 8 refusal arm): THE r21 REGRESSION, as one token. Narrow the =="
+echo "==      refusal from != CLEAR to == HAZARD. The check is still present,  =="
+echo "==      still unconditional, still refuses a real recorded part -- it    =="
+echo "==      simply stops refusing on a FAULT, which is precisely the r20     =="
+echo "==      fail-open r21 removed. Every other arm passes.                   =="
+if sub "$F" 'if (partOfOther != SD_INSPECT_CLEAR) {' \
+            'if (partOfOther == SD_INSPECT_HAZARD) {'; then
+    expect "R35 a FAULT still refuses" "does not refuse a recorded set"
+else
+    echo "  FAIL R35 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R36 (PIN 10): split the consume into two statements with a read       =="
+echo "==      between them -- the #1182 read-modify-write race.                =="
+if sub "$F" 'const bool granted = pSettings->overwriteExisting;
+            gSDCardData.overwriteAuthorizedForSession = granted;
+            pSettings->overwriteExisting = false;' \
+            'const bool granted = pSettings->overwriteExisting;
+            gSDCardData.overwriteAuthorizedForSession = granted;
+            gSDCardData.foreignManifestsPresent = false;
+            pSettings->overwriteExisting = false;'; then
+    expect "R36 the consume is one transition" "is not consumed as one"
+else
+    echo "  FAIL R36 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R37 (PIN 11 subject): drop the ELSE arm, so a grant whose subject     =="
+echo "==      could not be formed keeps the PREVIOUS session path instead of   =="
+echo "==      clearing it. The if-arm is intact, so the happy path is fine and =="
+echo "==      only the fail-closed case is lost.                               =="
+if sub "$F" ' else {
+                gSDCardData.overwriteAuthorizedManifest[0] = '"'"'\0'"'"';
+            }' \
+            ''; then
+    expect "R37 an unformed subject is cleared" "the overwrite grant no longer records"
+else
+    echo "  FAIL R37 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R38 (PIN 11 tail): move the scan flag OUT of the critical section.    =="
+echo "==      Both writes still happen, in the same order, with the same        =="
+echo "==      values -- just no longer atomically with the grant.              =="
+if sub "$F" '            gSDCardData.foreignScanPending = true;' \
+            '        }
+        taskEXIT_CRITICAL();
+        if ((arm == SD_WRITE_ARM_STREAMING) || (arm == SD_WRITE_ARM_PLAIN)) {
+            gSDCardData.foreignScanPending = true;'; then
+    expect "R38 the arm block ends under the lock" "the arm block no longer ENDS inside"
+else
+    echo "  FAIL R38 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R39 (PIN 12): compare the grant subject with strcmp instead of the    =="
+echo "==      FatFs-equivalence comparator. Still a compare, still refuses a   =="
+echo "==      moved path -- and now refuses a LEGAL session whose config        =="
+echo "==      differs only in case, the #924 self-collision mistake again.     =="
+if sub "$F" '|| !SdManifest_PathsEqualCaseInsensitive(
+                        authNow, gSDCardData.overwriteAuthorizedManifest)' \
+            '|| (strcmp(authNow, gSDCardData.overwriteAuthorizedManifest) != 0)'; then
+    expect "R39 the subject compare is case-insensitive" \
+           "the open no longer refuses when the"
+else
+    echo "  FAIL R39 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R40 (PIN 13 count): add a THIRD call site for the scan, in the ARM    =="
+echo "==      path -- i.e. FatFs driven from the SCPI task while the SD task   =="
+echo "==      may be inside it. FF_FS_REENTRANT is 0, so this is a real data   =="
+echo "==      race, and NOTHING else in this suite can see it.                 =="
+if sub "$F" '            gSDCardData.foreignScanPending = true;' \
+            '            (void)sd_ScanForeignManifests(NULL);
+            gSDCardData.foreignScanPending = true;'; then
+    expect "R40 the scan has exactly two call sites" "expected 3 mentions of"
+else
+    echo "  FAIL R40 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R41 (PIN 13 premise): turn FatFs reentrancy ON. The firmware is       =="
+echo "==      unchanged and correct for the OLD premise; the pin must notice    =="
+echo "==      that the premise behind the scan placement has moved, rather     =="
+echo "==      than keep passing because the code still looks the same.         =="
+if sub "$C" '#define FF_FS_REENTRANT	0' \
+            '#define FF_FS_REENTRANT	1'; then
+    expect "R41 the reentrancy premise is re-read" "FF_FS_REENTRANT is now"
+else
+    echo "  FAIL R41 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R42 (PIN 14): make the unparseable-line arm SKIP instead of refuse --  =="
+echo "==      the attractive wrong parser. A corrupt manifest then reads as    =="
+echo "==      one recording NOTHING, which is the permissive answer over       =="
+echo "==      exactly the input that must refuse.                              =="
+if sub "$F" '            if (sep == NULL || sep == line) {' \
+            '            if (false) {'; then
+    expect "R42 an unparseable line refuses" "the manifest parser lost a bound"
+else
+    echo "  FAIL R42 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R43 (PIN 15): drop the busy term from TryClaim, so a second session   =="
+echo "==      can arm while one is running. The SCPI claim flag still works,   =="
+echo "==      so every ordinary sequence passes -- and the r21 prefilter's     =="
+echo "==      once-per-session latch silently becomes a stale answer.          =="
+if sub "$F" '    got = !gSdScpiClaim && !sd_card_manager_IsBusyLocked();' \
+            '    got = !gSdScpiClaim;'; then
+    expect "R43 exclusivity is enforced by both terms" \
+           "sd_card_manager_TryClaim no longer"
+else
+    echo "  FAIL R43 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R44 (PIN 16): remove the authorisation from the #409 retained-RAM     =="
+echo "==      scrub. Nothing else changes, and the device can boot after a     =="
+echo "==      flash already authorised to overwrite.                           =="
+if sub "$F" '    gSDCardData.overwriteAuthorizedForSession = false;' \
+            ''; then
+    expect "R44 the authorisation is scrubbed at init" \
+           "the overwrite authorisation and its"
+else
+    echo "  FAIL R44 anchor absent."; fail=$((fail+1))
 fi
 restore
 
