@@ -638,7 +638,7 @@ echo "==      is what catches it: the data-file guard is still there.           
 if sub "$F" '        if (e != SYS_FS_ERROR_NO_PATH && e != SYS_FS_ERROR_NO_FILE) {
             gSDCardData.writeRefuseReason = SD_REFUSE_TARGET_UNREADABLE;
             /* log_budget: max=88 */
-            LOG_E("[SD1124] mfst stat e=%d: '"'"'%s'"'"'", (int)e, target);
+            LOG_E("[SD1124] unreadable mfst e=%d: '"'"'%s'"'"'", (int)e, target);
             return false;
         }
         return true;                    /* no manifest at that name */' \
@@ -653,8 +653,8 @@ echo "== R31: move the [SD1124] tag off the FRONT of a refusal message. The     
 echo "==      logger truncates the TAIL, so a tag that is not first is what     =="
 echo "==      gets lost on the longest paths -- and it is the only thing        =="
 echo "==      telling this refusal from any other -200 in SYSTem:LOG?.          =="
-if sub "$F" 'LOG_E("[SD1124] refuse overwrite:' \
-            'LOG_E("refuse overwrite [SD1124]:'; then
+if sub "$F" 'LOG_E("[SD1124] exists' \
+            'LOG_E("exists [SD1124]'; then
     expect "R31 the tag leads every message" "do not START with the"
 else
     echo "  FAIL R31 anchor absent."; fail=$((fail+1))

@@ -2395,13 +2395,25 @@ test "$$raw" -eq 0 && test "$$canon" -eq $(SD1124_CANON) && test "$$acc" -eq $(S
 	@# is distinguished -- `switch` with an explicit SD_INSPECT_FAULT case --
 	@# because collapsing it back onto the permissive arm is precisely r19's
 	@# :2249 defect.
+	@# ⛔⛔ r21: THE FAULT ARM IS SLICED, not grepped for in the whole function
+	@# -- mutant R23 proved the difference. Asking whether
+	@# `return SD_INSPECT_FAULT;` appears ANYWHERE in this function is satisfied
+	@# by the STAT-fault arm near the top, so deleting the switch's FAULT
+	@# refusal (letting a fault fall through to the unlink, which is r19's
+	@# :2249 defect exactly) left the pin GREEN. Grep-presence inside a
+	@# function slice is satisfied by any arm, so it cannot see WHICH arm lost
+	@# its refusal. The awk below reads only the FAULT case's own body, from
+	@# `case SD_INSPECT_FAULT:` to the next `case`, and requires the refusal
+	@# THERE. Same lesson as PIN 11: check that the thing which DECIDES
+	@# decides, not that something similar exists nearby.
 	@awk '/^static sd_InspectResult sd_RemoveStaleManifestAt\(const char \*path\) \{/{f=1} f{print} f&&/^\}/{exit}' \
 	     $(SD_MANAGER_SRC) > /tmp/.sd1124_rm.$$$$; \
 	 test -s /tmp/.sd1124_rm.$$$$ \
 	   && grep -q 'sd_InspectManifestPathOverwritable(path)' /tmp/.sd1124_rm.$$$$ \
-	   && grep -q 'case SD_INSPECT_FAULT:' /tmp/.sd1124_rm.$$$$ \
 	   && grep -q 'SYS_FS_FileDirectoryRemove(path)' /tmp/.sd1124_rm.$$$$ \
-	   && grep -q 'return SD_INSPECT_FAULT;' /tmp/.sd1124_rm.$$$$ \
+	   && awk '/case SD_INSPECT_FAULT:/{f=1;next} f&&/case /{exit} \
+	           f&&/return SD_INSPECT_FAULT;/{ok=1;exit} END{exit ok?0:1}' \
+	          /tmp/.sd1124_rm.$$$$ \
 	  || { echo "ERROR: sd_RemoveStaleManifestAt() no longer gates its unlink on the"; \
 	       echo "       create path's predicate, or stopped distinguishing the"; \
 	       echo "       FAULT answer (#1124 r17 PIN C, r21 update)."; \
