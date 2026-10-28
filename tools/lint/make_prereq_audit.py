@@ -135,6 +135,32 @@ AND THEN I REINTRODUCED A PARSER FOR THE REFUSALS THEMSELVES
     that by accident. It is not a defence against someone deliberately hiding
     a stale dependency from the gate.
 
+THREAT MODEL -- WHAT THIS TOOL CLAIMS, AND WHAT IT DOES NOT
+    Stated plainly because nine rounds of findings have been argued without it,
+    and because a reviewer cannot judge a finding without knowing the claim.
+
+    IT GUARDS OUR Makefile AGAINST AN ACCIDENTAL LATE-DEFINITION REGRESSION.
+    Someone moves a variable below the rule that uses it, the prerequisite list
+    silently empties, and the guard stops re-running. That is the failure this
+    exists to catch, it has happened here (fw#904), and `make
+    --warn-undefined-variables` catches it by construction.
+
+    IT IS NOT A PROOF AGAINST AN ADVERSARIAL MAKEFILE. Someone who WANTS to
+    hide a stale dependency from this gate can: assemble a function name at
+    runtime so no token scan sees it, or find a construct the policy does not
+    yet refuse. The design answer to that is not a better scanner -- it is the
+    POLICY: anything this tool cannot reason about is NO VERDICT (exit 2), so
+    the way to defeat it is to make it refuse, which is loud, rather than to
+    make it pass, which would be silent. Every round so far has moved a
+    construct from the second category into the first.
+
+    SO A FINDING AGAINST THIS TOOL IS SERIOUS IF it makes the tool report
+    `warnings : 0` and exit 0 on a Makefile whose guard rule has lost a
+    prerequisite -- a false CLEAN. It is comparatively minor if it makes the
+    tool refuse something legal, because a refusal is visible and fixable. And
+    it is out of scope if it requires deliberately hiding a dependency, since
+    the gate protects against accident, not malice.
+
 WHAT THIS DOES NOT COVER. It answers "can this guard fire at all?" -- does the
 rule's prerequisite list actually name the source it guards. It does NOT answer
 "is this guard ever RE-EVALUATED?": a rule omitting $(RECIPES) (the Makefile
@@ -226,13 +252,37 @@ POLICY = (
      "or a recipe, because getting that wrong is what hid a real `value` call. "
      "If this hit is a comment, REWORD THE COMMENT rather than looking for a "
      "defect that is not there"),
-    # The one route to the builtin with no literal `value` anywhere: a call
-    # whose FUNCTION NAME is itself an expansion. `$(call $(FN),X)` with
-    # FN=value is the builtin and contains the word nowhere, so the token scan
-    # cannot see it -- refused rather than reasoned about. 0 uses today.
-    ("computed function name", re.compile(r"[$][({]\s*call\s*[$][({]"),
-     "a `call` whose function NAME is computed -- it can reach the `value` "
-     "builtin without the word appearing anywhere, so no token scan can see it"),
+    # ⛔ ANY `call` WHOSE FIRST ARGUMENT IS NOT A LITERAL IDENTIFIER, plus
+    # `call call,` and `call value,`. One predicate instead of three, because
+    # enumerating the spellings is the treadmill: `$(call $(FN),X)`,
+    # `$(call ${FN},X)` and the single-char `$(call $F,X)` all reach the
+    # `value` builtin with the word appearing nowhere, and `$(call call,...)`
+    # launders it through another level. Requiring a literal identifier
+    # refuses every one of them without naming any.
+    #
+    # ⚠ Deliberately NOT a bare `$X` predicate: `$$n` appears 421 times in
+    # this Makefile as an escaped SHELL variable, which is not a make
+    # reference at all. A single-char reference only matters where it names a
+    # FUNCTION, which is exactly where this looks.
+    ("call with a non-literal function name",
+     re.compile(r"[$][({]\s*call\s+"
+                r"(?:(?!(?:[A-Za-z_][A-Za-z0-9_]*)\s*,)|(?:call|value)\s*,)"),
+     "a `call` whose function name is not a literal identifier (or is `call` "
+     "or `value`) -- it can reach the `value` builtin with the word appearing "
+     "nowhere, so no token scan can see it"),
+    # ⛔ RECURSION IS REFUSED, NOT TRACKED. r7 bound the file list to the
+    # makefile actually invoked, which fixed reading the CHILD's list by
+    # mistake -- and then the child's own sources were never scanned at all,
+    # so a recursive build could hide anything in a submake. Rather than
+    # recurse the scan (another parser), a file that recurses gets NO VERDICT.
+    # `$(MAKE)` anywhere is unambiguous; `make` is matched only in COMMAND
+    # position, because the word appears in English inside echo strings here.
+    ("recursive make", re.compile(r"[$][({]\s*MAKE\s*[)}]"),
+     "a recursive `$(MAKE)` -- the child's own makefiles are not scanned, so "
+     "this audit cannot speak for the whole build"),
+    ("recursive make (command position)",
+     re.compile(r"^\t\s*[-@+]*\s*make\b|[;&|]\s*[-@+]*\s*make\b"),
+     "a recipe invoking `make` -- see `recursive make`"),
 )
 
 # Backslash PARITY, which only a physical line can answer: `\\` at end of line
@@ -244,6 +294,31 @@ TRAILING_BSLASH_RUN_RE = re.compile(r"\\{2,}[ \t]*$")
 # docstring for why this ONE line of that dump is evidence when the rest is a
 # clean-bill generator: "which files did you read?" has no timing component.
 MAKEFILE_LIST_RE = re.compile(r"^MAKEFILE_LIST\s*:?=\s*(?P<files>.*)$")
+
+
+def classify_warnings(stderr):
+    """(located, unlocated) from make's stderr. Pure, so arms pin the RETURN.
+
+    ⛔ EXTRACTED BECAUSE THE DECISION IS THE THING WORTH PINNING. Forcing real
+    make to emit a prefix-less warning is not reproducible in a fixture, so a
+    structural pin would only have shown that the loop EXISTS -- never that it
+    classifies. A mutant that drops the `unlocated` branch passes the former
+    and fails the arms below.
+
+    `located` are the ones WARN_RE can point at. `unlocated` is every other
+    line mentioning a warning: make does not always emit a `file:line:` prefix,
+    and a warning this tool cannot PARSE is not a warning it may IGNORE -- that
+    is the silent-pass shape every finding in this file has had.
+    """
+    located, unlocated = [], []
+    for ln in (stderr or "").splitlines():
+        stripped = ln.strip()
+        m = WARN_RE.match(stripped)
+        if m:
+            located.append(m.groupdict())
+        elif "warning:" in stripped.lower():
+            unlocated.append(stripped[:200])
+    return located, unlocated
 
 
 def run_make(makefile, goal="run"):
@@ -260,12 +335,19 @@ def run_make(makefile, goal="run"):
         cwd=os.path.dirname(makefile) or ".",
         capture_output=True, text=True, env=env,
     )
-    warnings = []
-    for ln in proc.stderr.splitlines():
-        m = WARN_RE.match(ln.strip())
-        if m:
-            warnings.append(m.groupdict())
-    return warnings, proc.stderr, proc.returncode
+    # ⛔ EVERY `warning:` LINE COUNTS, LOCATED OR NOT. WARN_RE needs a
+    # `file:line:` prefix, and make does not always emit one -- a warning from
+    # a command-line or environment-originated variable, or any wording this
+    # regex does not anticipate, arrived with no prefix and was DROPPED. A
+    # warning the tool cannot parse is not a warning the tool may ignore:
+    # that is the same silent-pass shape as every other finding here.
+    #
+    # So unlocated warnings come back separately and the caller fails on them
+    # too. They cannot carry a ::error file=,line=:: annotation (there is
+    # nothing to point at), which is exactly why they must be printed loudly
+    # instead of quietly discarded.
+    warnings, unlocated = classify_warnings(proc.stderr)
+    return warnings, unlocated, proc.stderr, proc.returncode
 
 
 def gather_sources(makefile, goal="run"):
@@ -530,14 +612,21 @@ def report(makefile, goal="run"):
               f"actually read could not be established, so part of this "
               f"Makefile may never have been scanned ({why})")
 
-    warnings, stderr, rc = run_make(makefile, goal)
+    warnings, unlocated, stderr, rc = run_make(makefile, goal)
     print(f"warnings : {len(warnings)}")
     for w in warnings:
         print(f"::error file={w['file']},line={w['line']}::"
               f"prerequisite variable '{w['var']}' is not defined at this "
               f"point, so this rule's prerequisite list was EMPTY when make "
               f"read it -- the guard will not re-run when its source changes")
-    if not warnings:
+    for ln in unlocated:
+        print(f"::error file={os.path.basename(makefile)}::make warned without "
+              f"a file:line prefix, so it cannot be located -- and an "
+              f"unparseable warning is not an absent one: {ln}")
+    if unlocated:
+        print(f"unlocated: {len(unlocated)} warning(s) make emitted with no "
+              f"file:line prefix")
+    if not warnings and not unlocated:
         print("  (none)")
 
     # ANY non-zero exit means make stopped before the end of the file, so the
@@ -555,7 +644,7 @@ def report(makefile, goal="run"):
               f"file-list problem(s). NO VERDICT -- this audit is only sound "
               f"over text make reports on, in files make says it read.")
         return 2
-    if warnings:
+    if warnings or unlocated:
         return 1
     return 0
 
@@ -739,7 +828,7 @@ def self_test():
             fh.write(SELFTEST_MAKEFILE)
         for n in ("base.c", "early.c", "late1.c", "late2.c", "r.c"):
             open(os.path.join(d, n), "w").close()
-        warnings, stderr, _ = run_make(mk, goal="ok")
+        warnings, _unloc, stderr, _ = run_make(mk, goal="ok")
         got = {w["var"] for w in warnings}
 
         arms = [
@@ -907,6 +996,40 @@ def self_test():
             ("CONTROL   an ordinary $(call fn,args) still passes",
              {"Makefile": "double = $(1)$(1)\nEARLY := base.c\n"
                           "ok: base.c $(EARLY)\n\t@echo $(call double,x)\n"}, 0),
+            # r9: the remaining `call` spellings, all refused by ONE predicate
+            # (first argument must be a literal identifier) rather than by
+            # enumerating them -- enumerating is the treadmill.
+            ("REFUSE    $(call $F,X) -- SINGLE-CHAR computed name",
+             {"Makefile": "F := value\nok: base.c $(call $F,LATE)\n"
+                          "\t@true\nLATE := late.c\n"}, 2),
+            ("REFUSE    $(call call,value,X) -- laundered through `call`",
+             {"Makefile": "ok: base.c $(call call,value,LATE)\n"
+                          "\t@true\nLATE := late.c\n"}, 2),
+            # ⚠ AND THE CONTROL THAT KEEPS THAT PREDICATE HONEST: `$$n` is an
+            # escaped SHELL variable, not a make reference, and it appears 421
+            # times in the audited Makefile. A bare `$X` predicate would have
+            # refused the whole file.
+            ("CONTROL   escaped shell $$n in a recipe still passes",
+             {"Makefile": "EARLY := base.c\nok: base.c $(EARLY)\n"
+                          "\t@n=3; echo \"$$n items\"\n"}, 0),
+            # r9: recursion is REFUSED now, not tracked -- r7's file-list
+            # binding fixed reading the CHILD's list and then left the child's
+            # own sources unscanned.
+            ("REFUSE    a recipe invoking $(MAKE)",
+             {"Makefile": "EARLY := base.c\nok: base.c $(EARLY)\n"
+                          "\t@$(MAKE) -f child.mk all\n",
+              "child.mk": "all:\n\t@true\n"}, 2),
+            ("REFUSE    a recipe invoking bare `make`",
+             {"Makefile": "EARLY := base.c\nok: base.c $(EARLY)\n"
+                          "\t@make -f child.mk all\n",
+              "child.mk": "all:\n\t@true\n"}, 2),
+            # ⚠ The word `make` in English, inside a recipe's echo text, is not
+            # an invocation -- there are 3 such lines in the audited Makefile,
+            # so a bare \\bmake\\b predicate would have refused it.
+            ("CONTROL   the word 'make' in prose still passes",
+             {"Makefile": "EARLY := base.c\nok: base.c $(EARLY)\n"
+                          "\t@echo 'this hook exists to make a write fail'\n"},
+             0),
         ]
         for name, files, want_rc in refusal_arms:
             got, out = _fixture_exit(files)
@@ -917,6 +1040,38 @@ def self_test():
             if not good:
                 for ln in out.strip().splitlines():
                     print(f"        | {ln}")
+
+        # ⛔ A WARNING THE TOOL CANNOT PARSE IS NOT ONE IT MAY IGNORE, and
+        # these pin the DECISION rather than the loop's existence. make does
+        # not always emit a `file:line:` prefix, and forcing it to do so in a
+        # fixture is not reproducible -- so the classifier is pure and gets
+        # canned stderr. A mutant that drops the `unlocated` branch passes any
+        # structural pin and fails here. ALL OF THESE FAIL ON 317acfc94, where
+        # a prefix-less warning was silently dropped and the audit still
+        # printed `(none)` and exited 0.
+        _canned = (
+            "Makefile:7: warning: undefined variable 'LATE'\n"
+            "make: warning: jobserver unavailable: using -j1\n"
+            "warning: Clock skew detected\n"
+            "Makefile:9: *** missing separator.  Stop.\n")
+        _loc, _unloc = classify_warnings(_canned)
+        arms2 = [
+            ("located warnings still parse", [w["var"] for w in _loc],
+             ["LATE"]),
+            ("a prefix-less warning is KEPT, not dropped", len(_unloc), 2),
+            ("and it is not mistaken for a located one", len(_loc), 1),
+            ("a non-warning error line is neither",
+             any("missing separator" in u for u in _unloc), False),
+            ("empty stderr classifies as nothing at all",
+             classify_warnings(""), ([], [])),
+            ("and so does None, rather than raising",
+             classify_warnings(None), ([], [])),
+        ]
+        for name, actual, want in arms2:
+            good = (actual == want)
+            ok = ok and good
+            print(f"  {'PASS' if good else 'FAIL'}  CLASSIFY  {name}: "
+                  f"got {actual!r}, wanted {want!r}")
 
         # A finding without file:line is not actionable.
         located = all(w["file"] and w["line"].isdigit() for w in warnings)
