@@ -60,11 +60,17 @@ jobs:
       # prerequisite on a CONTINUATION line, and a recipe-only reference that
       # must stay silent — and every arm decides the exit code.
       #
-      # Four further arms score the checker's own EXIT rather than make's
-      # warnings: a Makefile make cannot finish reading, $(value ...) in the
-      # file, $(value ...) one include away — each of which scored a clean
-      # exit 0 before #1174 r2 — and a CLEAN fixture that must stay 0, which
-      # is what stops a checker that refuses everything from passing them.
+      # Further arms score the checker's own EXIT rather than make's warnings.
+      # Each refusal arm scored a clean exit 0 on the head it was written
+      # against: a Makefile make cannot finish reading, and $(value ...) in the
+      # file or one include away (#1174 r2); then the three that defeated those
+      # refusals in turn — $(call value,X), a CONTINUED include directive, and
+      # $(eval include ...) (r3, which is why the include scan was replaced by
+      # make's own MAKEFILE_LIST).
+      #
+      # Two CONTROL arms hold a clean Makefile and a clean INCLUDED file at 0.
+      # Without them a checker that refused everything — or one that refused
+      # any file carrying an include — would satisfy every refusal arm above.
       #
       # ⚠ One mutation is undetectable from inside: deleting the line that
       # turns a failed arm into a non-zero exit cannot be caught by that exit.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ask MAKE whether a guard's prerequisite variable was defined in time.
+r"""Ask MAKE whether a guard's prerequisite variable was defined in time.
 
 THE DEFECT
     make expands a PREREQUISITE list when it READS the rule. A variable
@@ -78,13 +78,59 @@ THE TWO WAYS ASKING make CAN STILL GO WRONG, AND WHY BOTH ARE REFUSALS
         Measured on one fixture: `ok: base.c $(value LATE)` warns 0 times,
         while the same rule written `${LATE}` warns once. A prerequisite list
         built that way is just as empty and completely invisible here. So a
-        file using it gets NO VERDICT rather than a green one -- including via
-        an `include`, which is why the scan follows those and refuses any it
-        cannot follow by text alone. The audited Makefile contains 0 of both.
+        file using it gets NO VERDICT rather than a green one.
 
     Both are the same shape as the parser's: an answer that looks like a
     measurement but is the absence of one. The rule here is that this tool has
     three outcomes, not two -- clean, findings, and NO VERDICT.
+
+AND THEN I REINTRODUCED A PARSER FOR THE REFUSALS THEMSELVES
+    An adversarial audit took the refusals apart three ways on the real file,
+    and all three were ONE mistake: having removed the Makefile parser for
+    prerequisites, I wrote a new text scan to decide WHICH FILES to scan and
+    WHICH SPELLING counts as `value`. Measured, every one of these printed
+    `warnings : 0 / (none)` and exited 0 on a Makefile whose guard rule had a
+    silently empty prerequisite list:
+
+      * `include\` + newline + ` inc.mk`. The include regex was matched per
+        PHYSICAL line, so neither line of a continued directive matched: the
+        included file was never scanned AND never recorded as unfollowable.
+      * `$(eval include inc.mk)`. The line starts with `$`, so an
+        `^\s*include`-anchored regex never sees it, while make performs the
+        include perfectly well (proved by the included file's rule appearing
+        in `make -pn`).
+      * `$(call value,LATE)`. `call` invokes the builtin by name, so this IS
+        `$(value LATE)` -- the control prints `changed.c` for both -- but a
+        regex demanding `value` immediately after `$(` cannot match it.
+
+    So the include scan is GONE too. The file list now comes from make's own
+    `MAKEFILE_LIST`, read out of `make -pn`: whatever route make took to read
+    a file -- a continued directive, an eval, a computed name -- the file is
+    in that list, because make put it there. There is no "unfollowable
+    include" category left to get wrong, and a file make could NOT read makes
+    make exit non-zero, which is already a refusal.
+
+    ⚠ `make -np`'s variable dump is normally a CLEAN-BILL GENERATOR here and
+    must not be used as evidence: it prints every variable's FINAL value after
+    the whole file is parsed, so a late-defined prerequisite variable shows a
+    perfectly good path for a rule that never had the dependency. That warning
+    is about VALUES over TIME. `MAKEFILE_LIST` is a different kind of fact --
+    "which files did you read?" has no timing component, and the post-parse
+    answer is the complete one. Nothing else is taken from the dump.
+
+    The `value` check stays a text scan, because no make flag warns on it, but
+    it now matches the two positions in which make can name a function:
+    directly (`$(value X)`, `${value X}`) and through `call`
+    (`$(call value,X)`). Measured: 0 hits on the audited Makefile, and prose
+    like "the return value of foo" does not match.
+
+    ⚠ IRREDUCIBLE RESIDUE, stated rather than discovered later: a function
+    name ASSEMBLED at runtime (`V := val$(nothing)ue`, then
+    `$(call $(V),LATE)`) contains the word nowhere and is undetectable by any
+    text scan. That is accepted, and the reason is the tool's purpose: this
+    gate detects an ACCIDENTAL late-defined prerequisite, and nobody writes
+    that by accident. It is not a defence against someone deliberately hiding
+    a stale dependency from the gate.
 
 WHAT THIS DOES NOT COVER. It answers "can this guard fire at all?" -- does the
 rule's prerequisite list actually name the source it guards. It does NOT answer
@@ -109,12 +155,16 @@ WARN_RE = re.compile(
     r"^(?P<file>[^:]+):(?P<line>\d+):\s*warning:\s*"
     r"undefined variable ['\"](?P<var>[^'\"]+)['\"]")
 
-# $(value X) / ${value X}: reads X's text without referencing X, so
-# --warn-undefined-variables is silent whether or not X is defined yet.
-VALUE_RE = re.compile(r"[$][({]\s*value\b")
+# Reads a variable's text without REFERENCING it, so
+# --warn-undefined-variables is silent whether or not it is defined yet. Both
+# positions in which make can name a function: directly, and through `call` --
+# `$(call value,X)` IS the builtin (measured: both spellings expand alike).
+VALUE_RE = re.compile(r"[$][({]\s*(?:call\s+)?value\b")
 
-# include / -include / sinclude, with whatever it names.
-INCLUDE_RE = re.compile(r"^\s*[-s]?include\s+(?P<what>.+?)\s*$")
+# make's own record of every file it read, out of its `-p` dump. See the module
+# docstring for why this ONE line of that dump is evidence when the rest is a
+# clean-bill generator: "which files did you read?" has no timing component.
+MAKEFILE_LIST_RE = re.compile(r"^MAKEFILE_LIST\s*:?=\s*(?P<files>.*)$")
 
 
 def run_make(makefile, goal="run"):
@@ -139,57 +189,70 @@ def run_make(makefile, goal="run"):
     return warnings, proc.stderr, proc.returncode
 
 
-def gather_sources(makefile):
-    """(files whose TEXT must be scanned, includes that cannot be followed).
+def gather_sources(makefile, goal="run"):
+    """(files whose TEXT must be scanned, reasons the list is untrustworthy).
 
-    An `include` can carry the $(value ...) evasion just as well as the file
-    itself, so the scan follows them. An include naming a variable, or a file
-    that is unreadable, CANNOT be followed by text alone -- and skipping one
-    silently would reopen exactly the hole this scan closes, so it is returned
-    as unresolved for the caller to refuse on.
+    ⛔ THE FILE LIST COMES FROM MAKE, NOT FROM READING `include` LINES. Three
+    separate evasions of the old text scan were reproduced on the real file --
+    a continued `include\\` directive, `$(eval include ...)`, and an include
+    naming a variable -- and every one of them produced a GREEN audit over a
+    file whose text was never examined. Asking make removes the whole class:
+    MAKEFILE_LIST holds every file make read, by whatever route, because make
+    is what put them there.
+
+    A missing or unparseable MAKEFILE_LIST is a REASON, never an empty list:
+    an audit over zero files would otherwise be the cleanest result there is.
     """
     root = os.path.dirname(os.path.abspath(makefile)) or "."
-    pending, seen, files, unresolved = [os.path.abspath(makefile)], set(), [], []
-    while pending:
-        path = pending.pop()
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
+    proc = subprocess.run(
+        ["make", "-pn", "--warn-undefined-variables",
+         "-f", os.path.basename(makefile), goal],
+        cwd=root, capture_output=True, text=True, env=env,
+    )
+    listed = None
+    for ln in proc.stdout.splitlines():
+        m = MAKEFILE_LIST_RE.match(ln)
+        if m:
+            listed = m.group("files").split()
+            break
+    if listed is None:
+        return [], [(makefile, "make printed no MAKEFILE_LIST, so WHICH files "
+                               "it read is unknown -- scanning the named file "
+                               "alone would be a guess")]
+
+    files, problems, seen = [], [], set()
+    for token in listed:
+        path = os.path.abspath(os.path.join(root, token))
         if path in seen:
             continue
         seen.add(path)
         try:
             with open(path, "r", errors="replace") as fh:
-                text = fh.read()
+                files.append((path, fh.read()))
         except OSError as exc:
-            unresolved.append((path, f"unreadable: {exc.strerror}"))
-            continue
-        files.append((path, text))
-        for lineno, ln in enumerate(text.splitlines(), 1):
-            m = INCLUDE_RE.match(ln)
-            if not m:
-                continue
-            what = m.group("what")
-            if "$" in what:
-                unresolved.append(
-                    (path, f"line {lineno}: include names a variable "
-                           f"({what!r}) -- not resolvable by text"))
-                continue
-            for token in what.split():
-                pending.append(os.path.join(root, token))
-    return files, unresolved
+            # make read it and we cannot: that is a refusal, not a skip.
+            problems.append((path, f"make read this file but it is not "
+                                   f"readable here: {exc.strerror}"))
+    if not files and not problems:
+        problems.append((makefile, "MAKEFILE_LIST named no readable file"))
+    return files, problems
 
 
-def find_evasions(makefile):
-    """[(file, line, text)] for every $(value ...), plus unfollowable includes.
+def find_evasions(makefile, goal="run"):
+    """[(file, line, text)] for every `value` call, plus list-integrity problems.
 
-    Returns (hits, unresolved). Either one means NO VERDICT: make's warnings
-    cannot speak for text make never reports on, nor for text never read.
+    Returns (hits, problems). Either one means NO VERDICT: make's warnings
+    cannot speak for a construct it does not report on, nor for text that was
+    never read.
     """
-    files, unresolved = gather_sources(makefile)
+    files, problems = gather_sources(makefile, goal)
     hits = []
     for path, text in files:
         for lineno, ln in enumerate(text.splitlines(), 1):
             if VALUE_RE.search(ln):
                 hits.append((path, lineno, ln.strip()[:120]))
-    return hits, unresolved
+    return hits, problems
 
 
 def report(makefile, goal="run"):
@@ -197,15 +260,16 @@ def report(makefile, goal="run"):
     print(f"goal     : {goal}  (warnings are goal-independent -- prerequisite "
           f"lists expand when each rule is READ)")
 
-    evasions, unresolved = find_evasions(makefile)
+    evasions, unresolved = find_evasions(makefile, goal)
     for path, lineno, text in evasions:
         print(f"::error file={os.path.basename(path)},line={lineno}::"
-              f"$(value ...) reads a variable without referencing it, so "
+              f"a `value` call reads a variable without referencing it, so "
               f"--warn-undefined-variables is silent here whether or not it "
               f"is defined yet -- this audit cannot see this line: {text}")
     for path, why in unresolved:
-        print(f"::error file={os.path.basename(path)}::an include could not be "
-              f"followed, so part of this Makefile was never scanned ({why})")
+        print(f"::error file={os.path.basename(path)}::the set of files make "
+              f"actually read could not be established, so part of this "
+              f"Makefile may never have been scanned ({why})")
 
     warnings, stderr, rc = run_make(makefile, goal)
     print(f"warnings : {len(warnings)}")
@@ -228,9 +292,9 @@ def report(makefile, goal="run"):
         print(stderr.strip()[:500])
         return 2
     if evasions or unresolved:
-        print(f"ERROR: {len(evasions)} $(value ...) reference(s) and "
-              f"{len(unresolved)} unfollowable include(s). NO VERDICT -- this "
-              f"audit is only sound over text make reports on.")
+        print(f"ERROR: {len(evasions)} `value` call(s) and {len(unresolved)} "
+              f"file-list problem(s). NO VERDICT -- this audit is only sound "
+              f"over text make reports on, in files make says it read.")
         return 2
     if warnings:
         return 1
@@ -308,6 +372,40 @@ ok: base.c $(EARLY)
 \t@true
 """
 
+# ---------------------------------------------------------------------------
+# The three evasions of the REFUSALS, each reproduced on the real file by an
+# adversarial audit and each scoring a clean exit 0 before this round. All
+# three were one mistake: a text scan deciding which files to read and which
+# spelling counts.
+
+# `call` invokes the builtin BY NAME, so this is $(value LATE) -- measured,
+# both spellings expand to the same text -- but it does not follow `$(`.
+SELFTEST_VALUE_VIA_CALL = """\
+ok: base.c $(call value,LATE)
+\t@true
+LATE := late.c
+"""
+
+# A CONTINUED include directive: neither physical line matches an
+# `^\\s*include\\s+` regex, while make follows it perfectly well.
+SELFTEST_INCLUDE_CONTINUED = "include\\\n inc.mk\nok: base.c\n\t@true\n"
+
+# An include make performs through eval. The line starts with `$`, so an
+# anchored include regex never sees it.
+SELFTEST_INCLUDE_EVAL = """\
+$(eval include inc.mk)
+ok: base.c
+\t@true
+"""
+
+# The included file carries the evasion, so it is only found if the file list
+# is right. Its own rule also proves the include really happened.
+SELFTEST_INCLUDED_VALUE = """\
+guard: $(value LATE)
+\t@true
+LATE := guarded.c
+"""
+
 
 def _fixture_exit(files, goal="ok"):
     """(exit code, captured output) from the REAL report() over a fixture tree.
@@ -370,6 +468,22 @@ def self_test():
              {"Makefile": SELFTEST_INCLUDER, "inc.mk": SELFTEST_INCLUDED}, 2),
             ("CONTROL   a clean Makefile still exits 0",
              {"Makefile": SELFTEST_CLEAN}, 0),
+            # The three that defeated the refusals themselves. Each exited 0.
+            ("REFUSE    $(call value,X) is the builtin too",
+             {"Makefile": SELFTEST_VALUE_VIA_CALL}, 2),
+            ("REFUSE    a CONTINUED include is still an include",
+             {"Makefile": SELFTEST_INCLUDE_CONTINUED,
+              "inc.mk": SELFTEST_INCLUDED_VALUE}, 2),
+            ("REFUSE    $(eval include ...) is still an include",
+             {"Makefile": SELFTEST_INCLUDE_EVAL,
+              "inc.mk": SELFTEST_INCLUDED_VALUE}, 2),
+            # ⛔ AND THE CONTROL FOR THOSE THREE: an include make reads, whose
+            # text is clean, must still PASS. Without this, "refuse whenever
+            # anything is included" would satisfy all three above -- and that
+            # is a tool nobody could add an include to.
+            ("CONTROL   a clean INCLUDED file still exits 0",
+             {"Makefile": "include inc.mk\nok: base.c $(FROM_INC)\n\t@true\n",
+              "inc.mk": "FROM_INC := inc.c\n"}, 0),
         ]
         for name, files, want_rc in refusal_arms:
             got, out = _fixture_exit(files)

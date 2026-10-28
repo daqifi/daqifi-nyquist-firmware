@@ -59,21 +59,50 @@ so the gate has three outcomes — clean, findings, and NO VERDICT:**
   make target*), so every other way of failing read as cleanliness. Any
   non-zero exit is now a refusal; this Makefile exits 0 with no stderr, so
   nothing is carved out for it.
-- **`$(value X)`.** `value` yields a variable's unexpanded text *without
+- **A `value` call.** `value` yields a variable's unexpanded text *without
   referencing it*, so `--warn-undefined-variables` says nothing whether or not
   it is defined yet. Measured: `ok: base.c $(value LATE)` warns **0** times
   where the same rule spelled `${LATE}` warns once — and the prerequisite list
-  is just as empty. A file using it therefore gets no verdict, and the scan
-  follows `include`s because the evasion works just as well one file away. It
-  refuses any include it cannot follow by text alone (one naming a variable,
-  or an unreadable file) rather than skipping it silently. This Makefile
-  contains none of either.
+  is just as empty. A file using it therefore gets no verdict. Both positions
+  in which make can name a function count, because `$(call value,X)` *is* the
+  builtin (measured: both spellings expand to the same text). This Makefile
+  contains **0** of either.
+
+⛔ **And then the refusals themselves grew a parser, which an audit took apart
+three ways.** Having removed the Makefile parser for prerequisites, the first
+version of these refusals used a text scan to decide *which files to read* and
+*which spelling counts as `value`* — and each of these reproduced a clean
+`warnings : 0 / (none)`, exit 0, on a Makefile whose guard rule had a silently
+empty prerequisite list: a continued `include\` directive (matched per physical
+line, so neither line matched), `$(eval include inc.mk)` (the line starts with
+`$`, so an `^\s*include`-anchored regex never sees it), and
+`$(call value,LATE)`.
+
+So the include scan is gone. **The file list now comes from make's own
+`MAKEFILE_LIST`**, read out of `make -pn`: whatever route make took to read a
+file, the file is in that list because make put it there, and there is no
+"unfollowable include" category left to get wrong. A file make could *not* read
+makes make exit non-zero, which is already a refusal.
+
+⚠ `make -np`'s *variable dump* is a clean-bill generator for the staleness
+question and must never be used as evidence for it (see above) — but
+`MAKEFILE_LIST` is a different kind of fact. "Which files did you read?" has no
+timing component, so the post-parse answer is the complete one. Nothing else is
+taken from that dump.
+
+⚠ **Irreducible residue, stated rather than discovered later:** a function name
+*assembled* at runtime (`V := val$(nothing)ue`, then `$(call $(V),LATE)`)
+contains the word nowhere and no text scan can see it. That is accepted,
+because this gate detects an *accidental* late-defined prerequisite and nobody
+writes that by accident. It is not a defence against deliberately hiding a
+stale dependency from the gate.
 
 Both are the same shape as the parser's defeats: something that looks like a
-measurement but is the absence of one. The self-test's three refusal arms each
-exited **0** on the checker's previous head, and a fourth arm holds a clean
-fixture at 0 — without it, a checker that refused *everything* would satisfy
-the other three.
+measurement but is the absence of one. Every refusal arm in the self-test
+exited **0** on the head it was written against, and two **control** arms hold
+a clean Makefile and a clean *included* file at 0 — without those, a checker
+that refused everything, or one that refused any file with an `include`, would
+satisfy all of the refusal arms.
 
 ⚠ It does **not** check whether a rule declares `$(RECIPES)` (this Makefile
 itself). That is the separate "is this guard ever *re-evaluated*?" question,
