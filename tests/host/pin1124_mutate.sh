@@ -223,10 +223,13 @@ echo "==     (the shape that defeated an operand-keyed enumeration: 2 of 8)  =="
 echo "==     r20: re-pointed at sd_SessionManifestPath, the ONE derivation the  =="
 echo "==     gate and creation now share -- the three separate joins this used  =="
 echo "==     to mutate were collapsed into it.                                  =="
+echo "==     r21: re-pointed again. That derivation moved into                   =="
+echo "==     sd_ManifestPathFor(), which takes dir/file as PARAMETERS so the     =="
+echo "==     arm-time authorisation snapshot can resolve from pSettings before   =="
+echo "==     it reaches the globals. Same single construction, new operands.     =="
 if sub "$F" 'snprintf(out, outLen, "%.*s/%s" SD_MANIFEST_EXT,
-                           (int)SdManifest_CanonicalDirLen(gpSDCardSettings->directory),' \
-            'snprintf(out, outLen, "%s/%s" SD_MANIFEST_EXT,
-                           (gpSDCardSettings->directory),'; then
+                           (int)SdManifest_CanonicalDirLen(dir), dir, file);' \
+            'snprintf(out, outLen, "%s/%s" SD_MANIFEST_EXT, dir, file);'; then
     expect "M1 count arm" "path construction is no longer"
 else
     echo "  FAIL M1 anchor absent -- source drifted from this harness."; fail=$((fail+1))
@@ -312,8 +315,11 @@ echo "==      sd_ManifestPathSafeToOverwrite drops 3 -> 2 and its own '>= 3'    
 echo "==      pin DOES fire too, so this arm asserts PIN C's message            =="
 echo "==      specifically rather than merely that something failed.            =="
 echo "==     r20: the predicate call gained a FAULT out-param.                  =="
-if sub "$F" '    if (!sd_ManifestPathSafeToOverwrite(path, &inspectFault)) {' \
-            '    if (0) {'; then
+echo "==     r21: and lost it again -- the predicate RETURNS sd_InspectResult,   =="
+echo "==     consumed by a switch, so the mutation now forces the switch onto    =="
+echo "==     a value the predicate never produces rather than negating a bool.   =="
+if sub "$F" '    switch (sd_InspectManifestPathOverwritable(path)) {' \
+            '    switch (SD_INSPECT_CLEAR) {'; then
     expect "R23 unlink-predicate arm" "no longer gates its unlink"
 else
     echo "  FAIL R23 anchor absent -- source drifted from this harness."; fail=$((fail+1))
@@ -326,16 +332,16 @@ echo "==      stats with fsize == 0, so it takes the shortcut and the refusal   
 echo "==      below is dead. ORDER is the whole property, so only PIN E sees it. =="
 if sub "$F" '    if ((st.fattrib & SYS_FS_ATTR_DIR) != 0) {
         LOG_E("[SD] #924 the manifest path is a DIRECTORY - refusing to touch it");
-        return false;
+        return SD_INSPECT_HAZARD;
     }
     if (st.fsize == 0u) {
-        return true;    /* nothing there to be destroyed either way */
+        return SD_INSPECT_CLEAR;    /* nothing there to be destroyed either way */
     }' '    if (st.fsize == 0u) {
-        return true;    /* nothing there to be destroyed either way */
+        return SD_INSPECT_CLEAR;    /* nothing there to be destroyed either way */
     }
     if ((st.fattrib & SYS_FS_ATTR_DIR) != 0) {
         LOG_E("[SD] #924 the manifest path is a DIRECTORY - refusing to touch it");
-        return false;
+        return SD_INSPECT_HAZARD;
     }'; then
     expect "R25 directory-check ORDER" "does not refuse a DIRECTORY"
 else

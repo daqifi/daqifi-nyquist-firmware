@@ -1167,15 +1167,52 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	      echo "       subject, or a stale one, authorises a file the client"; \
 	      echo "       never named."; \
 	      exit 1;; \
-	 esac; \
-	 case "$$pp" in \
-	   *"gSDCardData.foreignScanPending = true; gSDCardData.foreignManifestsPresent = false; } taskEXIT_CRITICAL();"*) ;; \
-	   *) echo "ERROR: #1124 r21: the arm block no longer ENDS inside its"; \
-	      echo "       critical section. Something was moved out from under the"; \
-	      echo "       lock, so the grant, its subject and the scan flag are no"; \
-	      echo "       longer one atomic transition."; \
-	      exit 1;; \
 	 esac
+	@# ⛔⛔ STRUCTURAL, NOT A SEQUENCE KEY -- and mutant R38 is why.
+	@# ⚠ NOTE THE LINE ABOVE ENDS `esac` WITH NO BACKSLASH. It used to carry
+	@# one, joining this arm to the next, and these `@#` lines were then INSIDE
+	@# that continuation -- where `@#` is not a comment at all: make hands it
+	@# straight to the shell, which reported `@#: not found`. A comment block
+	@# may only begin where a recipe line has actually ended.
+	@#
+	@# This arm first read: does the flattened text contain
+	@#   "foreignScanPending = true; foreignManifestsPresent = false; }
+	@#    taskEXIT_CRITICAL();"
+	@# R38 moved the scan flag OUT of the critical section by closing the
+	@# block early and reopening it, and that key STILL MATCHED -- the moved
+	@# statement took its neighbours with it, so the sequence existed verbatim
+	@# while a taskEXIT_CRITICAL() now sat BEFORE it. A key asserting that a
+	@# sequence EXISTS cannot see something inserted EARLIER; the mutant came
+	@# back <<NO ERROR>>, i.e. the pin was present and not effective.
+	@#
+	@# So the invariant is expressed as what it actually is: these three writes
+	@# must fall inside the FIRST critical section after the arm. The slice runs
+	@# from the arm-kind branch to the first taskEXIT_CRITICAL(), and every
+	@# write must be in it. An early unlock truncates the slice and the writes
+	@# fall outside it, whatever order they are left in.
+	@#
+	@# Line markers are stripped: `-fpreprocessed -E` emits `# N "file"` where
+	@# it removed comments, and those carry line numbers, so any multi-statement
+	@# key spanning one would be brittle to edits elsewhere in the file.
+	@$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | grep -v '^#' \
+	   | awk '/if \(arm == SD_WRITE_ARM_STREAMING\) \{/{f=1} f{print} \
+	          f&&/taskEXIT_CRITICAL\(\);/{exit}' > /tmp/.sd1124_cs.$$$$; \
+	 ok=1; \
+	 test -s /tmp/.sd1124_cs.$$$$ || ok=0; \
+	 for w in 'gSDCardData.overwriteAuthorizedForSession = granted;' \
+	          'gSDCardData.overwriteAuthorizedManifest' \
+	          'gSDCardData.foreignScanPending = true;'; do \
+	   grep -qF -- "$$w" /tmp/.sd1124_cs.$$$$ || ok=0; \
+	 done; \
+	 rm -f /tmp/.sd1124_cs.$$$$; \
+	 test "$$ok" -eq 1 \
+	  || { echo "ERROR: #1124 r21: the grant, its subject and the scan flag are"; \
+	       echo "       no longer all inside the FIRST critical section after the"; \
+	       echo "       arm, so they are not one atomic transition. A reader can"; \
+	       echo "       then observe a grant whose subject is still the previous"; \
+	       echo "       session's. An empty slice means the arm-kind branch was"; \
+	       echo "       renamed and this pin measured nothing."; \
+	       exit 1; }
 	@# ⛔ PIN 12 -- r21 ITEM 1: THE OPEN REFUSES ON A SUBJECT MISMATCH, and it
 	@# compares the way the FILESYSTEM does. A plain strcmp here would let a
 	@# config differing only in case read as a different path and refuse a
