@@ -927,7 +927,10 @@ echo "== R51 (PIN 23a): accept \",1\" for a name containing '/'. The manifest   
 echo "==      for sub/exp.csv lives in <dir>/sub, which the scan never reads,  =="
 echo "==      so the only check protecting it is blind. This is the state the  =="
 echo "==      audit MEASURED as accepted.                                      =="
-if sub "$S" "        if ((fileLen > 0) && (memchr(pBuff, '/', fileLen) != NULL)) {" \
+echo "==      r22: the fileLen>0 guard moved OUT of this condition -- an empty    =="
+echo "==      operand is now refused earlier, by PIN 23c's rule -- so the       =="
+echo "==      anchor is the bare memchr test.                                   =="
+if sub "$S" "        if (memchr(pBuff, '/', fileLen) != NULL) {" \
             "        if (false) {"; then
     expect "R51 the opt-in refuses a separator in the name" \
            "PIN 23a: the opt-in accepts a SEPARATOR"
