@@ -1118,6 +1118,55 @@ else
 fi
 restore
 
+echo "== R65 (PIN 29): gate index 0 on !inBucket again -- the r24 audit HIGH.   =="
+echo "==      An unsuffixed FIRST file inside a bucket (which happens whenever =="
+echo "==      the configured directory is already full) then sets no bit, so   =="
+echo "==      the exact check never runs. Fail-OPEN, and it reads as a          =="
+echo "==      deliberate scoping choice.                                       =="
+if sub "$U" '    if (SdManifest_SegmentsEqual(leaf, leafLen, file, fileLen)) {
+        return 0u;
+    }' \
+            '    if (!inBucket && SdManifest_SegmentsEqual(leaf, leafLen, file, fileLen)) {
+        return 0u;
+    }'; then
+    expect "R65 index 0 is not gated on the bucket" "index 0 is gated on the bucket again"
+else
+    echo "  FAIL R65 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R66 (PIN 30): drop the '~' refusal for the DIRECTORY, keeping it for  =="
+echo "==      the filename. An 8.3 alias in a directory component then gets    =="
+echo "==      the opt-in, and diverges from its long name exactly as one in    =="
+echo "==      the name would. The filename arm still passes.                   =="
+if sub "$S" """    if (strchr(dir, '~') != NULL) {
+        return true;
+    }""" '    if (false) {
+        return true;
+    }'; then
+    expect "R66 a tilde in the directory refuses the grant" \
+           "a '~' in the configured DIRECTORY no"
+else
+    echo "  FAIL R66 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R67 (PIN 31): FAULT on a foreign name too long for the path buffer.   =="
+echo "==      One 100-character *.mfst in the directory then refuses every     =="
+echo "==      capture there. Violates this module's own PIN 27 rule, which is  =="
+echo "==      why both pins exist.                                             =="
+if sub "$F" '        if (w < 0 || (size_t)w >= sizeof(path)) {' \
+            '        if (w < 0 || (size_t)w >= sizeof(path)) {
+            out = SD_INSPECT_FAULT;
+            break;
+        }
+        if (false) {'; then
+    expect "R67 an unconstructable name is skipped" "no longer SKIPS"
+else
+    echo "  FAIL R67 anchor absent."; fail=$((fail+1))
+fi
+restore
+
 echo "== restored =="
 expect "post-restore baseline" CLEAN
 

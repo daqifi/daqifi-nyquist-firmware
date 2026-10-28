@@ -2994,10 +2994,22 @@ static sd_InspectResult sd_ScanOneDirectory(const char *dir, bool isOwnDir,
         const int w = snprintf(path, sizeof(path), "%.*s/%s",
                                (int)dirLen, dir, st.fname);
         if (w < 0 || (size_t)w >= sizeof(path)) {
-            /* A name we cannot even address is a name we cannot clear. */
-            LOG_E("[SD1124] unparsable name too long");
-            out = SD_INSPECT_FAULT;
-            break;
+            /* ⛔⛔ #1124 r24 AUDIT MEDIUM (:2996): SKIPPED, NOT FAULTED.
+             *
+             * A 100-character foreign *.mfst name does not fit this buffer,
+             * and r23 made that a FAULT -- i.e. one such file disarmed every
+             * capture in the directory. By THIS MODULE'S OWN RULE, stated one
+             * round earlier and pinned as PIN 27: A FOREIGN NAME CAN NEVER
+             * FAULT THE SCAN. Its length is the outside world's choice.
+             *
+             * ⚠ And skipping loses nothing, which is why it is not a trade:
+             * the buffer is sized for the LONGEST path this firmware can
+             * construct (dir + '/' + file + ".mfst"), so a name that does not
+             * fit is a name no session of ours could have written, and its
+             * records cannot be about our files. Sixth instance of one
+             * mistake; the rule was already written down when I wrote this
+             * line. */
+            continue;
         }
         out = sd_ManifestRecordsName(path, needle);
     }

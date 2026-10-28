@@ -633,6 +633,22 @@ static bool SD_DirHasNonCanonicalForm(const char *dir)
     if (len == 0u) {
         return false;
     }
+    /* ⛔⛔ #1124 r24 AUDIT HIGH (:1111): '~' ANYWHERE IN THE DIRECTORY, TOO.
+     *
+     * r22 refused the opt-in for a '~' in the FILENAME, because a FatFs 8.3
+     * alias names the same file as a long name while comparing unequal to it.
+     * I applied that to the name and stopped there -- but the guard compares
+     * whole PATHS, so an alias in a DIRECTORY component diverges in exactly
+     * the same way and by exactly the same mechanism. A restriction derived
+     * from a property of path text has no business being scoped to one
+     * component of the path.
+     *
+     * Checked over the whole string rather than per component: '~' is not
+     * legal in any position for this purpose, so there is nothing a split
+     * would add. */
+    if (strchr(dir, '~') != NULL) {
+        return true;
+    }
     if (dir[len - 1u] == '/') {
         return true;                    /* trailing separator */
     }
@@ -1123,8 +1139,8 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
             LOG_E("[SD1124] scope dir form not canonical");
             SCPI_ExecutionError(context,
                                 "SYST:STOR:SD:FILE: overwrite not allowed while "
-                                "SYST:STOR:SD:DIR contains '//', a '.' or '..' "
-                                "component, or a trailing '/'");
+                                "SYST:STOR:SD:DIR contains '~', '//', a '.' or "
+                                "'..' component, or a trailing '/'");
             result = SCPI_RES_ERR;
             goto __exit_point;
         }

@@ -1805,6 +1805,87 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	      echo "       bucket is a MISSED COLLISION."; \
 	      exit 1;; \
 	 esac
+	@# ⛔⛔ PIN 29 -- r24 AUDIT HIGH (:479): INDEX 0 IS NOT GATED ON THE BUCKET.
+	@#
+	@# I had `if (!inBucket && ...) return 0u;` on the reasoning that the counter
+	@# is 0 exactly once and bucket 0 IS the directory. True clause, invalid
+	@# conclusion: the bucket-advance loop runs BEFORE generateFilename and
+	@# advances on a full bucket even for the session's FIRST file, so a
+	@# directory already holding MAX_DIR_FILES files makes the session write
+	@# `D/P001/exp.csv` -- unsuffixed, inside a bucket. My restriction rejected a
+	@# name this firmware really writes, so no bit was set and the exact check
+	@# never ran. Fail-OPEN.
+	@#
+	@# Pinned as the ABSENCE of the conjunction, because that is the defect's
+	@# exact shape and it reads as a deliberate scoping choice.
+	@pp=`$(CC) -fpreprocessed -E $(FW_UTIL)/SdManifest.h 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"if (!inBucket && SdManifest_SegmentsEqual"*|*"if (inBucket == false"*) \
+	      echo "ERROR: #1124 r24 PIN 29: index 0 is gated on the bucket again"; \
+	      echo "       (audit :479). An unsuffixed FIRST file lands inside a"; \
+	      echo "       bucket whenever the configured directory is already full"; \
+	      echo "       -- the bucket-advance loop runs before generateFilename."; \
+	      echo "       Gating it there sets no bit for a name we really write,"; \
+	      echo "       so the exact check never runs: fail-OPEN."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"if (SdManifest_SegmentsEqual(leaf, leafLen, file, fileLen)) { return 0u; }"*) ;; \
+	   *) echo "ERROR: #1124 r24 PIN 29: the index-0 test is gone or reshaped."; \
+	      echo "       The configured name itself must map to index 0, in the"; \
+	      echo "       directory OR in a bucket."; \
+	      exit 1;; \
+	 esac
+	@# ⛔⛔ PIN 30 -- r24 AUDIT HIGH (:1111): '~' IS REFUSED IN THE DIRECTORY TOO.
+	@#
+	@# r22 refused the opt-in for a '~' in the FILENAME, because a FatFs 8.3
+	@# alias names the same file as a long name while comparing unequal to it. I
+	@# applied it to the name and stopped -- but the guard compares whole PATHS,
+	@# so an alias in a DIRECTORY component diverges identically. A restriction
+	@# derived from a property of path TEXT has no business being scoped to one
+	@# component of the path, and that is the general form worth keeping.
+	@pp=`$(CC) -fpreprocessed -E $(SD_BENCH_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"if (strchr(dir, '~') != NULL) { return true; }"*) ;; \
+	   *) echo "ERROR: #1124 r24 PIN 30: a '~' in the configured DIRECTORY no"; \
+	      echo "       longer refuses the overwrite opt-in (audit :1111). An 8.3"; \
+	      echo "       alias in a directory component diverges from its long name"; \
+	      echo "       exactly as one in the filename does; the guard compares"; \
+	      echo "       whole paths."; \
+	      exit 1;; \
+	 esac
+	@# ⛔⛔ PIN 31 -- r24 AUDIT MEDIUM (:2996): AN UNCONSTRUCTABLE FOREIGN NAME IS
+	@# SKIPPED, NOT FAULTED.
+	@#
+	@# A 100-character foreign *.mfst name does not fit the path buffer, and r23
+	@# made that a FAULT -- so one such file disarmed every capture in the
+	@# directory. By this module's OWN rule, written one round earlier and pinned
+	@# as PIN 27: a foreign NAME can never fault the scan. Its length is the
+	@# outside world's choice.
+	@#
+	@# Nothing is lost by skipping, which is why it is not a trade: the buffer is
+	@# sized for the LONGEST path this firmware can construct, so a name that
+	@# does not fit is one no session of ours could have written, and its records
+	@# cannot be about our files.
+	@#
+	@# ⭐ SIXTH INSTANCE of one mistake, and the rule was already written down
+	@# when I wrote the faulting line. A rule being recorded is not the same as it
+	@# being applied at the next site.
+	@# Line markers stripped: -fpreprocessed emits `# N "file"` where it removed
+	@# a comment, and the explanation for this `continue` sits between the test
+	@# and the statement -- so the key would otherwise span a marker carrying a
+	@# line number.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | grep -v '^#' \
+	    | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"if (w < 0 || (size_t)w >= sizeof(path)) { continue; }"*) ;; \
+	   *) echo "ERROR: #1124 r24 PIN 31: a foreign manifest name that will not"; \
+	      echo "       fit the path buffer no longer SKIPS (audit :2996). If it"; \
+	      echo "       faults, one over-long filename in the directory refuses"; \
+	      echo "       every capture there. A foreign NAME must never fault the"; \
+	      echo "       scan -- see PIN 27."; \
+	      exit 1;; \
+	 esac
 	$(CC) $(CFLAGS) -o $(GATE1124_BIN) test_1124_overwrite_gate.c
 
 $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h \

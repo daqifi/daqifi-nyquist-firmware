@@ -472,13 +472,33 @@ static inline uint32_t SdManifest_PartIndexOf(const char *name,
         return SDMANIFEST_PART_NONE;
     }
 
-    /* ---- 3. index 0 is the configured name itself, and ONLY directly in the
-     * directory: generateFilename's counter==0 arm runs exactly once, while
-     * bucket 0 IS the directory, so the configured name never appears inside a
-     * bucket. */
-    if (!inBucket && SdManifest_SegmentsEqual(leaf, leafLen, file, fileLen)) {
+    /* ---- 3. index 0 is the configured name itself, IN THE DIRECTORY OR IN A
+     * BUCKET.
+     *
+     * ⛔⛔ #1124 r24 AUDIT HIGH (:479): I had this gated on `!inBucket`, with
+     * the reasoning "generateFilename's counter==0 arm runs exactly once,
+     * while bucket 0 IS the directory, so the configured name never appears
+     * inside a bucket". The first clause is true and the conclusion does not
+     * follow -- it conflates "the counter is 0 only once" with "the counter is
+     * 0 only in bucket 0".
+     *
+     * MEASURED at sd_card_manager.c: the bucket-advance `while` loop runs
+     * BEFORE generateFilename and advances whenever the current bucket is
+     * full, including on the session's FIRST file. So if the configured
+     * directory already holds MAX_DIR_FILES files, the session starts in P001
+     * and writes `D/P001/exp.csv` -- an UNSUFFIXED name inside a bucket.
+     *
+     * My restriction therefore rejected a name this firmware really does
+     * write, no bit was set, the exact check never ran, and the bucketed first
+     * file could overwrite a foreign record. Fail-OPEN.
+     *
+     * Dropping the restriction can only over-match: if a foreign record names
+     * `D/P001/exp.csv` while our first file lands in `D/exp.csv`, bit 0 is set
+     * and the exact comparison then declines it at the cost of one scan. */
+    if (SdManifest_SegmentsEqual(leaf, leafLen, file, fileLen)) {
         return 0u;
     }
+    (void)inBucket;     /* no longer a discriminator -- see above */
 
     /* ---- 4. otherwise "<stem>-<N><ext>", N unpadded as "%u" emits -------- */
     dot = NULL;

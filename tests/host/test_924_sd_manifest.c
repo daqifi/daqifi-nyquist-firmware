@@ -1308,10 +1308,6 @@ TEST(part_index_rejects_names_this_session_cannot_write) {
     ASSERT_EQ(SdManifest_PartIndexOf("OTHER/exp-1.csv", "DAQiFi", "exp.csv"), SDMANIFEST_PART_NONE);
     /* deeper than we ever write */
     ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/a/b/exp-1.csv", "DAQiFi", "exp.csv"), SDMANIFEST_PART_NONE);
-    /* ⚠ index 0 ONLY directly in the directory: generateFilename's counter==0
-     * arm runs exactly once, while bucket 0 IS the directory, so the
-     * configured name never appears inside a bucket. */
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/P001/exp.csv", "DAQiFi", "exp.csv"), SDMANIFEST_PART_NONE);
     /* a padded index is not what "%u" emits, so it is a name we can never
      * open -- NONE. */
     ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-05.csv", "DAQiFi", "exp.csv"), SDMANIFEST_PART_NONE);
@@ -1611,6 +1607,41 @@ TEST(a_doubled_separator_inside_the_directory_is_recognised) {
     ASSERT_EQ(SdManifest_PartIndexOf(canonical, "DAQiFi/sub/", "exp.csv"), 1u);
 }
 
+/* ⛔⛔ #1124 r24 AUDIT HIGH (:479): AN UNSUFFIXED FIRST FILE CAN LIVE IN A
+ * BUCKET, and I had asserted the opposite.
+ *
+ * The removed row above read: "index 0 ONLY directly in the directory --
+ * generateFilename's counter==0 arm runs exactly once, while bucket 0 IS the
+ * directory". The first clause is true; the conclusion does not follow. It
+ * confuses "the counter is 0 only once" with "the counter is 0 only in bucket
+ * 0".
+ *
+ * MEASURED at sd_card_manager.c: the bucket-advance loop runs BEFORE
+ * generateFilename and advances whenever the current bucket is full, including
+ * on the session's FIRST file. A configured directory already holding
+ * MAX_DIR_FILES files makes the session start in P001 and write
+ * `D/P001/exp.csv`.
+ *
+ * ⚠ So the test ENCODED MY WRONG BELIEF and defended it. A fixture asserting
+ * that a real behaviour cannot happen is worse than no fixture: it makes the
+ * fail-open look deliberate to the next reader, which is exactly how this
+ * survived a round. */
+TEST(an_unsuffixed_first_file_inside_a_bucket_is_index_zero) {
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/P001/exp.csv", "DAQiFi", "exp.csv"), 0u);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/P064/exp.csv", "DAQiFi", "exp.csv"), 0u);
+    /* still index 0 directly in the directory, which is the common case */
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp.csv", "DAQiFi", "exp.csv"), 0u);
+    /* and the normalised spellings of the bucketed form agree, as everywhere */
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi//P001/exp.csv", "DAQiFi", "exp.csv"), 0u);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/P001/exp.csv.", "DAQiFi", "exp.csv"), 0u);
+    /* ⭐ the control: a DIFFERENT name in a bucket is still not ours */
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/P001/other.csv", "DAQiFi", "exp.csv"),
+              SDMANIFEST_PART_NONE);
+    /* ...and the two stages still agree about the bucketed form */
+    ASSERT_TRUE(SdManifest_PathsEqualCaseInsensitive("DAQiFi//P001/exp.csv",
+                                                     "DAQiFi/P001/exp.csv"));
+}
+
 int main(void)
 {
     printf("=== #924 SD session integrity manifest ===\n");
@@ -1666,5 +1697,6 @@ int main(void)
     RUN(the_prefilter_agrees_however_the_configured_directory_is_spelled);
     RUN(normalisation_does_not_make_unrelated_names_match);
     RUN(a_doubled_separator_inside_the_directory_is_recognised);
+    RUN(an_unsuffixed_first_file_inside_a_bucket_is_index_zero);
     return TEST_SUMMARY();
 }
