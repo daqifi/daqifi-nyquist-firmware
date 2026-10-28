@@ -1724,6 +1724,87 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	      echo "       is treated as foreign and its own records refuse it."; \
 	      exit 1;; \
 	 esac
+	@# ⛔⛔ PIN 27 -- r23 AUDIT MEDIUM (:424): A FOREIGN NAME CANNOT FAULT THE
+	@# SCAN. SdManifest_PartIndexOf has NO fault return, by signature.
+	@#
+	@# It had a `bool *fault` out-param, set when an index would not fit a
+	@# uint32_t, and the caller turned that into a refusal -- so a foreign file
+	@# called exp-4294967296.csv disarmed every capture in the directory. The
+	@# parameter is REMOVED rather than left always-false, because an out-param
+	@# that can never be true still invites the next reader to add a case to it.
+	@#
+	@# ⭐ THE PROPERTY, pinned by SIGNATURE so it cannot be re-added quietly: a
+	@# NAME is an INPUT. Its length, its digits and its spelling are the outside
+	@# world's choice, and none of them is an error condition for us. Only
+	@# unreadable or unparseable manifest CONTENT may fault. Three consecutive
+	@# rounds produced three violations (a manifest COUNT cap, an over-limit
+	@# index, an overflowing index), every one a fail-closed branch reasoning
+	@# about someone else's name using our own limits.
+	@# ⚠ Both arms read COMMENT-STRIPPED text. The signature arm always did;
+	@# the header arm did not, and fired immediately on this pin's own
+	@# explanation of the parameter it forbids -- a pin tripped BY prose, the
+	@# mirror of a pin satisfied by it. Same remedy either way: measure the
+	@# translation unit, not the file.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"SdManifest_PartIndexOf( line, gpSDCardSettings->directory, gpSDCardSettings->file);"*) ;; \
+	   *) echo "ERROR: #1124 r23 PIN 27: the index pass no longer calls"; \
+	      echo "       SdManifest_PartIndexOf with exactly three arguments, so a"; \
+	      echo "       fault channel may have come back (audit :424). A foreign"; \
+	      echo "       NAME must never fault the scan -- only unreadable or"; \
+	      echo "       unparseable CONTENT may."; \
+	      exit 1;; \
+	 esac; \
+	 n=`$(CC) -fpreprocessed -E $(FW_UTIL)/SdManifest.h 2>/dev/null \
+	    | grep -c 'bool \*fault'`; \
+	 if [ "$$n" != "0" ]; then \
+	   echo "ERROR: #1124 r23 PIN 27: SdManifest.h declares a fault out-param"; \
+	   echo "       again ($$n occurrence(s)). An index that does not fit, or"; \
+	   echo "       exceeds our part range, means NOT OURS -- skip it. One"; \
+	   echo "       session produces at most"; \
+	   echo "       (MAX_BUCKET + 1) * MAX_DIR_FILES = 4160 parts."; \
+	   exit 1; \
+	 fi
+	@# ⛔⛔ PIN 28 -- r23 AUDIT HIGH (:2980) + r22 (:2930): THE SCAN COVERS EVERY
+	@# PLACE #689 PUTS A MANIFEST, AND BOTH DIRECTIONS ARE PINNED.
+	@#
+	@# A manifest is only created in the directory its session had CONFIGURED,
+	@# and #689 puts data in that directory and in its immediate P### children,
+	@# never deeper and never nested. So a manifest that could name one of OUR
+	@# files lives in exactly three places: our directory, its PARENT when ours
+	@# is a bucket, or our immediate bucket CHILDREN. 2 and 3 are mirrors and
+	@# only one can apply -- if we are in a bucket we look up, else we look down.
+	@# That exhausts the layout instead of adding a case to a list, which is what
+	@# separates this from the four naming rules rounds 16-19 produced.
+	@#
+	@# Separate diagnostics per direction, so a mutant that drops one is not
+	@# indistinguishable from one that drops the other.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"out = sd_ScanOneDirectory(parent, false, needle);"*) ;; \
+	   *) echo "ERROR: #1124 PIN 28a: the UPWARD scan is gone. A session whose"; \
+	      echo "       configured directory IS a bucket must read the parent,"; \
+	      echo "       which owns the records written into that bucket"; \
+	      echo "       (audit :2930)."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"out = sd_ScanOneDirectory(child, false, needle);"*) ;; \
+	   *) echo "ERROR: #1124 PIN 28b: the DOWNWARD scan is gone. A session at the"; \
+	      echo "       top of a bucket set must read its immediate P### children,"; \
+	      echo "       where a session configured THERE recorded files our own"; \
+	      echo "       rotation will write to (audit :2980)."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"for (b = 1u; (b <= SD_CARD_MANAGER_MAX_BUCKET) && (out == SD_INSPECT_CLEAR); b++)"*) ;; \
+	   *) echo "ERROR: #1124 PIN 28c: the downward scan no longer probes EVERY"; \
+	      echo "       bucket index up to SD_CARD_MANAGER_MAX_BUCKET. An early"; \
+	      echo "       stop at the first absent bucket would skip every later one"; \
+	      echo "       if a user deleted an intermediate directory, and a skipped"; \
+	      echo "       bucket is a MISSED COLLISION."; \
+	      exit 1;; \
+	 esac
 	$(CC) $(CFLAGS) -o $(GATE1124_BIN) test_1124_overwrite_gate.c
 
 $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h \

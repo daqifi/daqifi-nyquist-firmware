@@ -1275,78 +1275,80 @@ TEST(the_extension_test_agrees_with_the_manifest_construction) {
  * So the tests below lean on the miss direction.
  */
 TEST(part_index_recognises_the_names_a_session_writes) {
-    bool f = true;
     /* index 0 is the configured name itself, directly in the directory */
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp.csv", "DAQiFi", "exp.csv", &f), 0u);
-    ASSERT_FALSE(f);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp.csv", "DAQiFi", "exp.csv"), 0u);
     /* rotation parts, bucket 0 (the directory itself) and a bucket */
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-1.csv", "DAQiFi", "exp.csv", &f), 1u);
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-65.csv", "DAQiFi", "exp.csv", &f), 65u);
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/P001/exp-65.csv", "DAQiFi", "exp.csv", &f), 65u);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-1.csv", "DAQiFi", "exp.csv"), 1u);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-65.csv", "DAQiFi", "exp.csv"), 65u);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/P001/exp-65.csv", "DAQiFi", "exp.csv"), 65u);
     /* a trailing slash on the directory must not change the answer */
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-7.csv", "DAQiFi/", "exp.csv", &f), 7u);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-7.csv", "DAQiFi/", "exp.csv"), 7u);
     /* a name with no extension at all */
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/log-3", "DAQiFi", "log", &f), 3u);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/log-3", "DAQiFi", "log"), 3u);
 }
 
 /* FAT is case-insensitive, so a record reaching us upper-cased is the same
  * file. A case-SENSITIVE match here would MISS it -- the fail-open direction. */
 TEST(part_index_folds_case_on_both_sides) {
-    bool f;
-    ASSERT_EQ(SdManifest_PartIndexOf("daqifi/EXP-1.CSV", "DAQiFi", "exp.csv", &f), 1u);
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQIFI/exp-1.csv", "daqifi", "EXP.CSV", &f), 1u);
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/Exp.Csv", "DAQiFi", "exp.csv", &f), 0u);
+    ASSERT_EQ(SdManifest_PartIndexOf("daqifi/EXP-1.CSV", "DAQiFi", "exp.csv"), 1u);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQIFI/exp-1.csv", "daqifi", "EXP.CSV"), 1u);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/Exp.Csv", "DAQiFi", "exp.csv"), 0u);
 }
 
 TEST(part_index_rejects_names_this_session_cannot_write) {
-    bool f;
     /* another capture entirely */
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/other.csv", "DAQiFi", "exp.csv", &f), SDMANIFEST_PART_NONE);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/other.csv", "DAQiFi", "exp.csv"), SDMANIFEST_PART_NONE);
     /* right stem, wrong extension */
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-1.txt", "DAQiFi", "exp.csv", &f), SDMANIFEST_PART_NONE);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-1.txt", "DAQiFi", "exp.csv"), SDMANIFEST_PART_NONE);
     /* not an index */
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-x.csv", "DAQiFi", "exp.csv", &f), SDMANIFEST_PART_NONE);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-x.csv", "DAQiFi", "exp.csv"), SDMANIFEST_PART_NONE);
     /* no index at all */
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-.csv", "DAQiFi", "exp.csv", &f), SDMANIFEST_PART_NONE);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-.csv", "DAQiFi", "exp.csv"), SDMANIFEST_PART_NONE);
     /* a different directory */
-    ASSERT_EQ(SdManifest_PartIndexOf("OTHER/exp-1.csv", "DAQiFi", "exp.csv", &f), SDMANIFEST_PART_NONE);
+    ASSERT_EQ(SdManifest_PartIndexOf("OTHER/exp-1.csv", "DAQiFi", "exp.csv"), SDMANIFEST_PART_NONE);
     /* deeper than we ever write */
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/a/b/exp-1.csv", "DAQiFi", "exp.csv", &f), SDMANIFEST_PART_NONE);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/a/b/exp-1.csv", "DAQiFi", "exp.csv"), SDMANIFEST_PART_NONE);
     /* ⚠ index 0 ONLY directly in the directory: generateFilename's counter==0
      * arm runs exactly once, while bucket 0 IS the directory, so the
      * configured name never appears inside a bucket. */
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/P001/exp.csv", "DAQiFi", "exp.csv", &f), SDMANIFEST_PART_NONE);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/P001/exp.csv", "DAQiFi", "exp.csv"), SDMANIFEST_PART_NONE);
     /* a padded index is not what "%u" emits, so it is a name we can never
-     * open -- NONE, and deliberately NOT a fault. */
-    f = true;
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-05.csv", "DAQiFi", "exp.csv", &f), SDMANIFEST_PART_NONE);
-    ASSERT_FALSE(f);
+     * open -- NONE. */
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-05.csv", "DAQiFi", "exp.csv"), SDMANIFEST_PART_NONE);
     /* but a bare "0" index is legal digits (and still not index 0's name) */
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-0.csv", "DAQiFi", "exp.csv", &f), 0u);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-0.csv", "DAQiFi", "exp.csv"), 0u);
 }
 
-/* An index we cannot REPRESENT is a FAULT, not a NONE: we cannot tell whether
- * it is one of ours, and "cannot tell" has to refuse. */
-TEST(part_index_faults_on_an_unrepresentable_index) {
-    bool f = false;
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-99999999999.csv", "DAQiFi", "exp.csv", &f), SDMANIFEST_PART_NONE);
-    ASSERT_TRUE(f);
-    f = false;
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-4294967296.csv", "DAQiFi", "exp.csv", &f), SDMANIFEST_PART_NONE);
-    ASSERT_TRUE(f);
-    /* and the sentinel value itself cannot be returned as a real index */
-    f = false;
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-4294967295.csv", "DAQiFi", "exp.csv", &f), SDMANIFEST_PART_NONE);
-    ASSERT_TRUE(f);
+/* ⛔⛔ #1124 r23 AUDIT MEDIUM (:424): AN OVERFLOWING INDEX IS SKIPPED, NOT
+ * FAULTED -- and the function no longer has a fault return at all.
+ *
+ * It used to set a `bool *fault` here, which the caller turned into a refusal,
+ * so a foreign file called `exp-4294967296.csv` disarmed every capture in the
+ * directory. The old reasoning was that an unrepresentable index means "we
+ * cannot tell whether it is one of ours". We can tell, and the answer is no:
+ * one session produces at most (MAX_BUCKET + 1) * MAX_DIR_FILES = 4160 parts,
+ * so a value that does not fit a uint32_t is nowhere near a name we open.
+ *
+ * ⭐ THE INVARIANT this now encodes: A FOREIGN NAME CAN NEVER FAULT THE SCAN.
+ * Only unreadable or unparseable manifest CONTENT may. A name is an INPUT --
+ * its length, digits and spelling are the outside world's choice, and none of
+ * them is an error condition for us. Three rounds produced three violations of
+ * exactly this. */
+TEST(part_index_skips_an_overflowing_index_rather_than_faulting) {
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-99999999999.csv", "DAQiFi", "exp.csv"), SDMANIFEST_PART_NONE);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-4294967296.csv", "DAQiFi", "exp.csv"), SDMANIFEST_PART_NONE);
+    /* the sentinel value itself, which cannot be returned as a real index */
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-4294967295.csv", "DAQiFi", "exp.csv"), SDMANIFEST_PART_NONE);
+    /* and absurd digit counts, which are just long strings */
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-000000000000000000001.csv", "DAQiFi", "exp.csv"), SDMANIFEST_PART_NONE);
+    /* ⭐ the boundary stays a NUMBER on the representable side */
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-4294967294.csv", "DAQiFi", "exp.csv"), 4294967294u);
 }
 
 TEST(part_index_is_null_safe) {
-    bool f;
-    ASSERT_EQ(SdManifest_PartIndexOf(NULL, "DAQiFi", "exp.csv", &f), SDMANIFEST_PART_NONE);
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-1.csv", NULL, "exp.csv", &f), SDMANIFEST_PART_NONE);
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-1.csv", "DAQiFi", NULL, &f), SDMANIFEST_PART_NONE);
-    /* the fault out-param is optional */
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-1.csv", "DAQiFi", "exp.csv", NULL), 1u);
+    ASSERT_EQ(SdManifest_PartIndexOf(NULL, "DAQiFi", "exp.csv"), SDMANIFEST_PART_NONE);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-1.csv", NULL, "exp.csv"), SDMANIFEST_PART_NONE);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-1.csv", "DAQiFi", NULL), SDMANIFEST_PART_NONE);
 }
 
 /* ⭐⭐ THE ROUND TRIP, and the only arm that ties this parser to the FORMATTER.
@@ -1368,27 +1370,24 @@ TEST(part_index_round_trips_the_filename_formatter) {
     const char *ext = ".csv";
     char path[128];
     unsigned i;
-    bool f;
     int n;
 
     /* index 0 lands directly in the directory */
     n = snprintf(path, sizeof(path), "%s/%s", dir, file);
     ASSERT_TRUE(n > 0 && (size_t)n < sizeof(path));
-    ASSERT_EQ(SdManifest_PartIndexOf(path, dir, file, &f), 0u);
+    ASSERT_EQ(SdManifest_PartIndexOf(path, dir, file), 0u);
 
     for (i = 0; i < (sizeof(idxs) / sizeof(idxs[0])); i++) {
         /* bucket 0: the bucket path IS the directory */
         n = snprintf(path, sizeof(path), "%s/%s-%u%s", dir, stem,
                      (unsigned)idxs[i], ext);
         ASSERT_TRUE(n > 0 && (size_t)n < sizeof(path));
-        ASSERT_EQ(SdManifest_PartIndexOf(path, dir, file, &f), idxs[i]);
-        ASSERT_FALSE(f);
+        ASSERT_EQ(SdManifest_PartIndexOf(path, dir, file), idxs[i]);
         /* bucket n: "<dir>/P%03u" */
         n = snprintf(path, sizeof(path), "%s/P%03u/%s-%u%s", dir, 1u, stem,
                      (unsigned)idxs[i], ext);
         ASSERT_TRUE(n > 0 && (size_t)n < sizeof(path));
-        ASSERT_EQ(SdManifest_PartIndexOf(path, dir, file, &f), idxs[i]);
-        ASSERT_FALSE(f);
+        ASSERT_EQ(SdManifest_PartIndexOf(path, dir, file), idxs[i]);
     }
 }
 
@@ -1399,12 +1398,11 @@ TEST(part_index_round_trips_the_filename_formatter) {
  * manifest-name check nor r20's recorded-part check can see it -- and it is
  * OUR part 1. This is the record whose index must be recognised. */
 TEST(a_foreign_base_name_that_is_one_of_our_parts_is_recognised) {
-    bool f;
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-1.csv", "DAQiFi", "exp.csv", &f), 1u);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-1.csv", "DAQiFi", "exp.csv"), 1u);
     /* ...and symmetrically, OUR base name is THEIR part 1, which is the case
      * r20's sd_NameIsRotationPartOfExistingManifest covers from the other
      * side. Both directions exist; neither subsumes the other. */
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-1-1.csv", "DAQiFi", "exp-1.csv", &f), 1u);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-1-1.csv", "DAQiFi", "exp-1.csv"), 1u);
 }
 
 /* ⛔⛔ #1124 r21 AUDIT HIGH (:378): THE INVERSE PROPERTY, OVER A SET OF
@@ -1434,7 +1432,6 @@ TEST(part_index_inverts_the_generator_over_a_set_of_stems_and_extensions) {
     const char *dir = "DAQiFi";
     char file[64], path[160];
     unsigned c, i;
-    bool f;
 
     for (c = 0; c < (sizeof(cases) / sizeof(cases[0])); c++) {
         /* the configured name is exactly stem + ext */
@@ -1443,22 +1440,19 @@ TEST(part_index_inverts_the_generator_over_a_set_of_stems_and_extensions) {
 
         /* index 0: generateFilename's counter==0 arm is "<dir>/<file>" */
         ASSERT_TRUE(snprintf(path, sizeof(path), "%s/%s", dir, file) > 0);
-        ASSERT_EQ(SdManifest_PartIndexOf(path, dir, file, &f), 0u);
-        ASSERT_FALSE(f);
+        ASSERT_EQ(SdManifest_PartIndexOf(path, dir, file), 0u);
 
         for (i = 0; i < (sizeof(idxs) / sizeof(idxs[0])); i++) {
             /* parts: "%.*s/%s-%u%s" over the bucket path, bucket 0 and bucket n */
             ASSERT_TRUE(snprintf(path, sizeof(path), "%s/%s-%u%s", dir,
                                  cases[c].stem, (unsigned)idxs[i],
                                  cases[c].ext) > 0);
-            ASSERT_EQ(SdManifest_PartIndexOf(path, dir, file, &f), idxs[i]);
-            ASSERT_FALSE(f);
+            ASSERT_EQ(SdManifest_PartIndexOf(path, dir, file), idxs[i]);
 
             ASSERT_TRUE(snprintf(path, sizeof(path), "%s/P%03u/%s-%u%s", dir, 2u,
                                  cases[c].stem, (unsigned)idxs[i],
                                  cases[c].ext) > 0);
-            ASSERT_EQ(SdManifest_PartIndexOf(path, dir, file, &f), idxs[i]);
-            ASSERT_FALSE(f);
+            ASSERT_EQ(SdManifest_PartIndexOf(path, dir, file), idxs[i]);
         }
     }
 }
@@ -1467,24 +1461,23 @@ TEST(part_index_inverts_the_generator_over_a_set_of_stems_and_extensions) {
  * this the inverse property above is satisfied by a function that says "yes,
  * index N" to everything, which would refuse every session for no reason. */
 TEST(part_index_says_none_to_a_near_miss) {
-    bool f;
     /* empty stem, and these are the near misses that matter for it */
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/.csv", "DAQiFi", ".csv", &f), 0u);
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/-1.csv", "DAQiFi", ".csv", &f), 1u);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/.csv", "DAQiFi", ".csv"), 0u);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/-1.csv", "DAQiFi", ".csv"), 1u);
     /* ...but a stem where the empty-stem session expects none */
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/x-1.csv", "DAQiFi", ".csv", &f), SDMANIFEST_PART_NONE);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/x-1.csv", "DAQiFi", ".csv"), SDMANIFEST_PART_NONE);
     /* wrong extension against an empty stem */
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/-1.txt", "DAQiFi", ".csv", &f), SDMANIFEST_PART_NONE);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/-1.txt", "DAQiFi", ".csv"), SDMANIFEST_PART_NONE);
     /* the separator itself missing */
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/1.csv", "DAQiFi", ".csv", &f), SDMANIFEST_PART_NONE);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/1.csv", "DAQiFi", ".csv"), SDMANIFEST_PART_NONE);
     /* a no-extension session must not swallow an extended name */
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/log-1.csv", "DAQiFi", "log", &f), SDMANIFEST_PART_NONE);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/log-1.csv", "DAQiFi", "log"), SDMANIFEST_PART_NONE);
     /* ...and vice versa */
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/log-1", "DAQiFi", "log.csv", &f), SDMANIFEST_PART_NONE);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/log-1", "DAQiFi", "log.csv"), SDMANIFEST_PART_NONE);
     /* a stem that is a PREFIX of ours is not ours */
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/ex-1.csv", "DAQiFi", "exp.csv", &f), SDMANIFEST_PART_NONE);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/ex-1.csv", "DAQiFi", "exp.csv"), SDMANIFEST_PART_NONE);
     /* ...nor one that EXTENDS ours */
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/expx-1.csv", "DAQiFi", "exp.csv", &f), SDMANIFEST_PART_NONE);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/expx-1.csv", "DAQiFi", "exp.csv"), SDMANIFEST_PART_NONE);
 }
 
 /* ⛔⛔ #1124 r22 AUDIT MEDIUM (:2871): A LARGE INDEX IS A NUMBER, NOT A FAULT.
@@ -1499,19 +1492,13 @@ TEST(part_index_says_none_to_a_near_miss) {
  * boundary cases around the firmware's own limit (4161) are here to make the
  * separation of concerns explicit rather than incidental. */
 TEST(part_index_treats_a_large_index_as_a_number_not_a_fault) {
-    bool f = true;
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-5000.csv", "DAQiFi", "exp.csv", &f), 5000u);
-    ASSERT_FALSE(f);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-5000.csv", "DAQiFi", "exp.csv"), 5000u);
     /* at, and either side of, the firmware's part limit -- all just numbers */
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-4160.csv", "DAQiFi", "exp.csv", &f), 4160u);
-    ASSERT_FALSE(f);
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-4161.csv", "DAQiFi", "exp.csv", &f), 4161u);
-    ASSERT_FALSE(f);
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-999999.csv", "DAQiFi", "exp.csv", &f), 999999u);
-    ASSERT_FALSE(f);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-4160.csv", "DAQiFi", "exp.csv"), 4160u);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-4161.csv", "DAQiFi", "exp.csv"), 4161u);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-999999.csv", "DAQiFi", "exp.csv"), 999999u);
     /* ...and in a bucket, which is where a long foreign session's parts live */
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/P078/exp-5000.csv", "DAQiFi", "exp.csv", &f), 5000u);
-    ASSERT_FALSE(f);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/P078/exp-5000.csv", "DAQiFi", "exp.csv"), 5000u);
 }
 
 /* ⛔⛔ #1124 r22 FOLLOW-UP: THE TWO STAGES OF THE GATE MUST AGREE.
@@ -1541,14 +1528,12 @@ TEST(the_prefilter_recognises_every_spelling_the_comparator_calls_equal) {
         "//DAQiFi///exp-1.csv//",   /* all of them at once */
     };
     unsigned i;
-    bool f;
 
     for (i = 0; i < (sizeof(spellings) / sizeof(spellings[0])); i++) {
         /* the comparator calls it the same path... */
         ASSERT_TRUE(SdManifest_PathsEqualCaseInsensitive(spellings[i], canonical));
         /* ...so the prefilter must give it the same index */
-        ASSERT_EQ(SdManifest_PartIndexOf(spellings[i], "DAQiFi", "exp.csv", &f), 1u);
-        ASSERT_FALSE(f);
+        ASSERT_EQ(SdManifest_PartIndexOf(spellings[i], "DAQiFi", "exp.csv"), 1u);
     }
 }
 
@@ -1557,14 +1542,13 @@ TEST(the_prefilter_recognises_every_spelling_the_comparator_calls_equal) {
 TEST(the_prefilter_agrees_however_the_configured_directory_is_spelled) {
     const char *dirs[] = { "DAQiFi", "DAQiFi/", "DAQiFi//", "/DAQiFi", "DAQiFi." };
     unsigned i;
-    bool f;
     for (i = 0; i < (sizeof(dirs) / sizeof(dirs[0])); i++) {
-        ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-1.csv", dirs[i], "exp.csv", &f), 1u);
-        ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp.csv", dirs[i], "exp.csv", &f), 0u);
-        ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/P003/exp-9.csv", dirs[i], "exp.csv", &f), 9u);
+        ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-1.csv", dirs[i], "exp.csv"), 1u);
+        ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp.csv", dirs[i], "exp.csv"), 0u);
+        ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/P003/exp-9.csv", dirs[i], "exp.csv"), 9u);
     }
     /* and the configured NAME spelled with a trailing dot is the same name */
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-1.csv", "DAQiFi", "exp.csv.", &f), 1u);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-1.csv", "DAQiFi", "exp.csv."), 1u);
 }
 
 /* ⭐ THE CONTROL. Normalising must not make UNRELATED names match -- otherwise
@@ -1581,12 +1565,50 @@ TEST(normalisation_does_not_make_unrelated_names_match) {
         "DAQiFi/exp-1.txt",
     };
     unsigned i;
-    bool f;
     for (i = 0; i < (sizeof(others) / sizeof(others[0])); i++) {
         ASSERT_FALSE(SdManifest_PathsEqualCaseInsensitive(others[i], canonical));
-        ASSERT_EQ(SdManifest_PartIndexOf(others[i], "DAQiFi", "exp.csv", &f),
+        ASSERT_EQ(SdManifest_PartIndexOf(others[i], "DAQiFi", "exp.csv"),
                   SDMANIFEST_PART_NONE);
     }
+}
+
+/* ⛔ #1124 r23 AUDIT HIGH (:346): A DOUBLED SEPARATOR INSIDE A MULTI-SEGMENT
+ * DIRECTORY -- "D//sub" -- which is the exact shape the audit named.
+ *
+ * The r22-follow-up rows cover a doubled separator between the directory and
+ * the leaf; this covers one BETWEEN TWO DIRECTORY SEGMENTS, which the
+ * segment-wise walk handles by the same mechanism but which no existing row
+ * exercised. Asserted the same way: the comparator calls it the same path, so
+ * the prefilter must give it the same index. */
+TEST(a_doubled_separator_inside_the_directory_is_recognised) {
+    const char *canonical = "DAQiFi/sub/exp-1.csv";
+    const char *spellings[] = {
+        "DAQiFi//sub/exp-1.csv",        /* the audit's shape */
+        "DAQiFi/sub//exp-1.csv",
+        "DAQiFi//sub//exp-1.csv",
+        "/DAQiFi//sub/exp-1.csv/",
+        "DAQiFi/./sub/exp-1.csv",       /* NOT equivalent -- see below */
+    };
+    unsigned i;
+    /* the first four are the same path to the comparator AND to the prefilter */
+    for (i = 0; i < 4; i++) {
+        ASSERT_TRUE(SdManifest_PathsEqualCaseInsensitive(spellings[i], canonical));
+        ASSERT_EQ(SdManifest_PartIndexOf(spellings[i], "DAQiFi/sub", "exp.csv"), 1u);
+    }
+    /* ⚠ A '.' COMPONENT IS NOT HANDLED, by either stage, and that is
+     * deliberate and consistent: FatFs's create_name() does not collapse it,
+     * the comparator's enumerated equivalences (E1-E5) do not include it, and
+     * the overwrite opt-in is REFUSED outright for a configured directory
+     * containing one (SD_DirHasNonCanonicalForm). So both stages agree it is a
+     * different path, which is the property that matters -- the two stages
+     * never disagree, whatever the answer. */
+    ASSERT_FALSE(SdManifest_PathsEqualCaseInsensitive(spellings[4], canonical));
+    ASSERT_EQ(SdManifest_PartIndexOf(spellings[4], "DAQiFi/sub", "exp.csv"),
+              SDMANIFEST_PART_NONE);
+
+    /* and the directory given with the doubled separator instead */
+    ASSERT_EQ(SdManifest_PartIndexOf(canonical, "DAQiFi//sub", "exp.csv"), 1u);
+    ASSERT_EQ(SdManifest_PartIndexOf(canonical, "DAQiFi/sub/", "exp.csv"), 1u);
 }
 
 int main(void)
@@ -1633,7 +1655,7 @@ int main(void)
     RUN(part_index_recognises_the_names_a_session_writes);
     RUN(part_index_folds_case_on_both_sides);
     RUN(part_index_rejects_names_this_session_cannot_write);
-    RUN(part_index_faults_on_an_unrepresentable_index);
+    RUN(part_index_skips_an_overflowing_index_rather_than_faulting);
     RUN(part_index_is_null_safe);
     RUN(part_index_round_trips_the_filename_formatter);
     RUN(a_foreign_base_name_that_is_one_of_our_parts_is_recognised);
@@ -1643,5 +1665,6 @@ int main(void)
     RUN(the_prefilter_recognises_every_spelling_the_comparator_calls_equal);
     RUN(the_prefilter_agrees_however_the_configured_directory_is_spelled);
     RUN(normalisation_does_not_make_unrelated_names_match);
+    RUN(a_doubled_separator_inside_the_directory_is_recognised);
     return TEST_SUMMARY();
 }

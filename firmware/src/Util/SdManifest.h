@@ -368,8 +368,24 @@ static inline bool SdManifest_SegmentsEqual(const char *a, size_t la,
  * therefore means "an exact check is owed for this index", never "refuse".
  *
  * Returns the index, or SDMANIFEST_PART_NONE when the name cannot be one of
- * that session's own names. `*fault` is set when the name HAS the part shape
- * but its index cannot be represented -- refuse, never ignore.
+ * that session's own names.
+ *
+ * ⛔⛔ THERE IS NO FAULT RETURN, AND THAT IS THE INVARIANT (r23 audit :424).
+ * It had a `bool *fault` out-param, set when an index would not fit a
+ * uint32_t. The caller turned that into a refusal, so a foreign file called
+ * `exp-4294967296.csv` disarmed every capture in the directory. Removing the
+ * parameter rather than leaving it always-false is deliberate: an out-param
+ * that can never be true still invites the next reader to add a case to it,
+ * and the property worth making un-addable is
+ *
+ *     A FOREIGN NAME CAN NEVER FAULT THE SCAN.
+ *
+ * Only unreadable or unparseable manifest CONTENT may do that. A name is an
+ * INPUT: its length, its digits and its spelling are things the outside world
+ * chooses, and none of them is an error condition for us. Three rounds
+ * produced three violations of this (a manifest COUNT cap, an over-limit
+ * index, an overflowing index), all of them a fail-closed branch reasoning
+ * about someone else's name using our own limits.
  *
  * DELIBERATELY A SUPERSET in one respect: any single intermediate segment is
  * accepted as a possible bucket, rather than matching "P%03u" exactly, so this
@@ -392,8 +408,7 @@ static inline bool SdManifest_SegmentsEqual(const char *a, size_t la,
 
 static inline uint32_t SdManifest_PartIndexOf(const char *name,
                                                const char *dir,
-                                               const char *file,
-                                               bool *fault)
+                                               const char *file)
 {
     const char *np;
     const char *dp;
@@ -411,9 +426,6 @@ static inline uint32_t SdManifest_PartIndexOf(const char *name,
     bool inBucket = false;
     uint32_t idx = 0u;
 
-    if (fault != NULL) {
-        *fault = false;
-    }
     if (name == NULL || dir == NULL || file == NULL) {
         return SDMANIFEST_PART_NONE;
     }
@@ -513,18 +525,33 @@ static inline uint32_t SdManifest_PartIndexOf(const char *name,
         if ((*d < '0') || (*d > '9')) {
             return SDMANIFEST_PART_NONE;
         }
+        /* ⛔⛔ #1124 r23 AUDIT MEDIUM (:424): AN OVERFLOWING INDEX IS NOT OUR
+         * PART, SO IT IS SKIPPED -- NOT A FAULT.
+         *
+         * This used to set *fault, which the caller turns into a refusal, so a
+         * foreign file called `exp-4294967296.csv` disarmed every capture in
+         * that directory. The reasoning in the comment I replaced was wrong:
+         * it said an unrepresentable index means "we cannot tell whether it is
+         * one of ours". We can tell, and the answer is NO -- the most parts one
+         * session can produce is (MAX_BUCKET + 1) * MAX_DIR_FILES = 4160, so
+         * ANY value that does not even fit a uint32_t is far outside the set of
+         * names we will ever open. Nothing to check; do not set a bit.
+         *
+         * ⭐ THIRD INSTANCE of one mistake in three rounds -- the manifest
+         * COUNT cap, the over-limit index, and now the overflowing index. All
+         * three were a fail-closed branch reasoning about SOMEONE ELSE'S name
+         * using OUR limits, and the rule is the one r22 recorded: "this cannot
+         * happen, so refuse" is only safe when the impossible thing is ours to
+         * produce. A foreign filename is an INPUT, and an input's size is never
+         * a fault. */
         if (idx > ((0xFFFFFFFFu - (uint32_t)(*d - '0')) / 10u)) {
-            if (fault != NULL) {
-                *fault = true;
-            }
-            return SDMANIFEST_PART_NONE;
+            return SDMANIFEST_PART_NONE;        /* skipped, not faulted */
         }
         idx = (idx * 10u) + (uint32_t)(*d - '0');
     }
     if (idx == SDMANIFEST_PART_NONE) {
-        if (fault != NULL) {
-            *fault = true;              /* cannot be distinguished from NONE */
-        }
+        /* The sentinel value itself: indistinguishable from "no index", and
+         * likewise far beyond any index we produce, so the same answer. */
         return SDMANIFEST_PART_NONE;
     }
     return idx;

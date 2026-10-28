@@ -104,6 +104,12 @@ typedef struct {
     bool     foreignOverLimitRecord;
     bool     dirIsBucket;
     bool     parentRecordsTarget;
+    /* r23 audit (:2980): a manifest INSIDE one of our bucket children, written
+     * by a session configured at `D/P001`. The mirror of the parent case: we
+     * are at the top of the bucket set and must look DOWN. */
+    bool     bucketChildRecordsTarget;
+    /* r23 audit (:424): a foreign record whose index OVERFLOWS the parse. */
+    bool     foreignOverflowRecord;
     /* observations */
     bool    opened;          /* the WRITE_PLUS open happened (truncating) */
     bool    manifestRemoved; /* something was unlinked */
@@ -156,45 +162,65 @@ typedef struct {
      * bucket, the PARENT is scanned too -- for every session, not just an
      * opt-in, because creation alone invalidates a parent's record. */
     bool scansParentOfBucket;
+    /* r23 audit HIGH (:2980): the immediate bucket CHILDREN are scanned too. */
+    bool scansBucketChildren;
+    /* r23 audit MEDIUM (:424): an overflowing index is SKIPPED. False
+     * reproduces r22, which faulted -- so `exp-4294967296.csv` refused. */
+    bool overflowIsSkipped;
 } Shape;
 
 static const Shape SHAPE_R18 = { true,  false, false, false, false, false,
                                  false, false, false, false, false,
+                                 false, false, 
                                  false, false };
 /* r19 as shipped: refuse-by-default and the disarm, but the gate still derived
  * the manifest name independently, honoured an opt-in on a recorded set's
  * part, let an inspector fault read as permissive, and never consumed. */
 static const Shape SHAPE_R19 = { false, true,  false, false, false, false,
                                  false, false, false, false, false,
+                                 false, false, 
                                  false, false };
 /* r20 as shipped: everything r19 lacked, and none of r21's three. This is the
  * baseline every r21 test is differential against -- without it, "the fix
  * works" would be a claim about a shape nobody ever ran. */
 static const Shape SHAPE_R20 = { false, true,  true,  true,  true,  true,
                                  false, false, false, false, false,
+                                 false, false, 
                                  false, false };
 /* What the r21 audit BLOCKED: every r21 property, and neither audit fix. This
  * is the baseline the two arms below are differential against. */
 static const Shape SHAPE_R21_AUDITED = { false, true, true, true, true, true,
                                          true, true, true, false, false,
+                                         false, false, 
                                          false, false };
 /* What the r22 audit BLOCKED: every r21 fix plus both r21-audit fixes, and
  * neither r22-audit fix. The baseline the arms below are differential against. */
+/* What the r23 BLIND leg found at: every fix through r22's audit, and neither
+ * r23 fix. (r23's steered leg failed on capacity, so that round is INCOMPLETE
+ * coverage -- this baseline is named for what it contains, not for a clean
+ * round.) */
+static const Shape SHAPE_R23_AUDITED = { false, true, true, true, true, true,
+                                         true, true, true, true, true,
+                                         true, true, false, false };
 static const Shape SHAPE_R22_AUDITED = { false, true, true, true, true, true,
                                          true, true, true, true, true,
+                                         false, false, 
                                          false, false };
 static const Shape SHAPE_C   = { false, true,  true,  true,  true,  true,
                                  true,  true,  true,  true,  true,
-                                 true,  true  };
+                                 true,  true,  
+                                 true,  true };
 /* r21 with the scan's fail-closed arm removed: the one-line mistake that makes
  * an unparseable manifest read as empty. Everything else intact. */
 static const Shape SHAPE_C_SCAN_SKIPS = { false, true, true, true, true, true,
                                           true, true, false, true, true,
+                                          true, true, 
                                           true, true };
 /* C's gate without the disarm: what this PR shipped before conv-ts asked
  * whether a refused session leaves the card usable. */
 static const Shape SHAPE_C_NO_DISARM = { false, false, true, true, true, true,
                                          true, true, true, true, true,
+                                         true, true, 
                                          true, true };
 
 static World world(FsState data, FsState mfst, bool ours, bool asked) {
@@ -309,6 +335,24 @@ static void model_open_target(World *w, Shape s) {
             && !s.overLimitIsSkipped) {
         w->refusal = REFUSE_MANIFEST_UNPARSABLE;
         return;
+    }
+    /* r23 audit MEDIUM (:424): a foreign record whose index overflows the
+     * parse. Same answer as an over-limit one -- it cannot be a name we open,
+     * so skip it. r22 faulted, i.e. refused. */
+    if (s.refuseForeignRecord && w->foreignOverflowRecord
+            && !s.overflowIsSkipped) {
+        w->refusal = REFUSE_MANIFEST_UNPARSABLE;
+        return;
+    }
+    /* r23 audit HIGH (:2980): the record lives in a manifest INSIDE one of our
+     * bucket children, written by a session configured there. The mirror of
+     * the parent case, and it needs no opt-in for the same reason. */
+    if (s.refuseForeignRecord && w->bucketChildRecordsTarget) {
+        if (s.scansBucketChildren) {
+            w->refusal = REFUSE_FOREIGN_RECORD;
+            return;
+        }
+        /* r23's behaviour: the bucket children were never read. */
     }
     /* r22 audit MEDIUM (:2930): the configured directory IS a bucket and the
      * record lives in the parent's manifest. Needs no opt-in: the part was
@@ -1052,6 +1096,73 @@ TEST(a_bucket_directory_whose_parent_records_nothing_still_logs) {
     ASSERT_EQ(b.refusal, REFUSE_NONE);
 }
 
+/* ---- r23 audit MEDIUM (:424): an overflowing index skips ---------------- */
+
+TEST(the_audited_r23_faulted_on_a_foreign_record_whose_index_overflows) {
+    World w = world(FS_ABSENT, FS_ABSENT, false, false);
+    w.foreignOverflowRecord = true;
+    model_arm_session(&w, SHAPE_R23_AUDITED);
+    model_open_target(&w, SHAPE_R23_AUDITED);
+    ASSERT_FALSE(w.opened);
+    ASSERT_EQ(w.refusal, REFUSE_MANIFEST_UNPARSABLE);
+}
+
+TEST(a_foreign_record_whose_index_overflows_still_arms) {
+    World w = world(FS_ABSENT, FS_ABSENT, false, false);
+    w.foreignOverflowRecord = true;
+    model_arm_session(&w, SHAPE_C);
+    model_open_target(&w, SHAPE_C);
+    model_finish_refusal(&w, SHAPE_C);
+    ASSERT_TRUE(w.opened);
+    ASSERT_EQ(w.refusal, REFUSE_NONE);
+    ASSERT_TRUE(model_is_busy(&w));
+}
+
+/* ---- r23 audit HIGH (:2980): bucket children, the mirror of the parent --- */
+
+TEST(the_audited_r23_missed_a_manifest_inside_a_bucket_child) {
+    World w = world(FS_ABSENT, FS_ABSENT, false, false);
+    w.bucketChildRecordsTarget = true;
+    model_arm_session(&w, SHAPE_R23_AUDITED);
+    model_open_target(&w, SHAPE_R23_AUDITED);
+    ASSERT_TRUE(w.opened);            /* the children were never read */
+    ASSERT_EQ(w.refusal, REFUSE_NONE);
+}
+
+TEST(a_manifest_inside_a_bucket_child_is_found_without_the_opt_in) {
+    World w = world(FS_ABSENT, FS_ABSENT, false, false);
+    w.bucketChildRecordsTarget = true;
+    model_arm_session(&w, SHAPE_C);
+    model_open_target(&w, SHAPE_C);
+    model_finish_refusal(&w, SHAPE_C);
+    ASSERT_FALSE(w.opened);
+    ASSERT_EQ(w.refusal, REFUSE_FOREIGN_RECORD);
+    ASSERT_FALSE(model_is_busy(&w));
+}
+
+/* ⭐ BOTH DIRECTIONS, AND THEY ARE EXCLUSIVE. A session inside a bucket looks
+ * UP; one at the top of a bucket set looks DOWN. The pair matters because an
+ * implementation doing only one passes half the arms above, and because doing
+ * both unconditionally would double the scan for every session. The control is
+ * the ordinary directory, which must pay for neither. */
+TEST(the_scan_looks_up_from_a_bucket_and_down_from_its_parent) {
+    World up = world(FS_ABSENT, FS_ABSENT, false, false);
+    up.dirIsBucket = true;
+    up.parentRecordsTarget = true;
+    model_open_target(&up, SHAPE_C);
+    ASSERT_EQ(up.refusal, REFUSE_FOREIGN_RECORD);
+
+    World down = world(FS_ABSENT, FS_ABSENT, false, false);
+    down.bucketChildRecordsTarget = true;
+    model_open_target(&down, SHAPE_C);
+    ASSERT_EQ(down.refusal, REFUSE_FOREIGN_RECORD);
+
+    World plain = world(FS_ABSENT, FS_ABSENT, false, false);
+    model_open_target(&plain, SHAPE_C);
+    ASSERT_TRUE(plain.opened);
+    ASSERT_EQ(plain.refusal, REFUSE_NONE);
+}
+
 int main(void) {
     RUN(r18_truncates_an_existing_target_without_being_asked);
     RUN(c_refuses_an_existing_target);
@@ -1104,5 +1215,10 @@ int main(void) {
     RUN(the_audited_r22_recreated_a_part_recorded_by_the_parents_manifest);
     RUN(a_bucket_directory_scans_its_parent_even_without_the_opt_in);
     RUN(a_bucket_directory_whose_parent_records_nothing_still_logs);
+    RUN(the_audited_r23_faulted_on_a_foreign_record_whose_index_overflows);
+    RUN(a_foreign_record_whose_index_overflows_still_arms);
+    RUN(the_audited_r23_missed_a_manifest_inside_a_bucket_child);
+    RUN(a_manifest_inside_a_bucket_child_is_found_without_the_opt_in);
+    RUN(the_scan_looks_up_from_a_bucket_and_down_from_its_parent);
     return TEST_SUMMARY();
 }

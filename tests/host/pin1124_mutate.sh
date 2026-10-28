@@ -55,12 +55,14 @@ S="$W/firmware/src/services/SCPI/SCPIStorageSD.c"
 # #1124 r11 finding 4 moved SD_CARD_MANAGER_BUCKET_PREFIX here, and the
 # Makefile reads it out of this header, so one arm below mutates it.
 H="$W/firmware/src/services/sd_card_services/sd_card_manager.h"
+# #1124 r23: SdManifest.h is a mutation target now -- PIN 27 reads it.
+U="$W/firmware/src/Util/SdManifest.h"
 # #1124 r21: PIN 13 re-reads FF_FS_REENTRANT out of this header, because the
 # foreign-record scan's TASK placement is a consequence of that setting rather
 # than a style choice. An arm that reads a value must be mutable here, or the
 # arm is pinned by nothing but its own prose.
 C="$W/firmware/src/config/default/system/fs/fat_fs/file_system/ffconf.h"
-for f in "$F" "$G" "$M" "$S" "$H" "$C"; do
+for f in "$F" "$G" "$M" "$S" "$H" "$C" "$U"; do
     [ -f "$f" ] || { echo "FATAL: $f missing."; exit 2; }
 done
 
@@ -68,7 +70,7 @@ echo "################################################################"
 echo "# OPERATING ON: $W"
 echo "#   HEAD $(git -C "$W" rev-parse HEAD 2>/dev/null | cut -c1-9)  branch $(git -C "$W" rev-parse --abbrev-ref HEAD 2>/dev/null)"
 echo "################################################################"
-if [ -n "$(git -C "$W" status --porcelain -- "$F" "$G" "$M" "$S" "$H" "$C" 2>/dev/null)" ]; then
+if [ -n "$(git -C "$W" status --porcelain -- "$F" "$G" "$M" "$S" "$H" "$C" "$U" 2>/dev/null)" ]; then
     echo "FATAL: uncommitted changes in the files this mutates. Commit or set them"
     echo "       aside first -- restore here is a byte copy and will not arbitrate."
     exit 2
@@ -91,15 +93,15 @@ fi
 # filesystems, and a silently short backup is exactly the case that survives
 # until restore. Nothing is trapped until all four are proven good, so an
 # abort here leaves the tree untouched by definition.
-BF=""; BG=""; BS=""; BH=""; BC=""
+BF=""; BG=""; BS=""; BH=""; BC=""; BU=""
 backup_failed() {
     echo "FATAL: $1"
     echo "       Nothing has been mutated and no trap is installed, so the"
     echo "       worktree is untouched. Fix the backup location and re-run."
-    rm -f "$BF" "$BG" "$BS" "$BH" "$BC"
+    rm -f "$BF" "$BG" "$BS" "$BH" "$BC" "$BU"
     exit 2
 }
-for v in BF BG BS BH BC; do
+for v in BF BG BS BH BC BU; do
     tmp=$(mktemp 2>/dev/null) \
       || backup_failed "mktemp failed while creating backup $v"
     [ -n "$tmp" ] && [ -f "$tmp" ] \
@@ -116,9 +118,10 @@ back_up_one "$G" "$BG"
 back_up_one "$S" "$BS"
 back_up_one "$H" "$BH"
 back_up_one "$C" "$BC"
+back_up_one "$U" "$BU"
 restore() { cp "$BF" "$F"; cp "$BG" "$G"; cp "$BS" "$S"; cp "$BH" "$H"; \
-            cp "$BC" "$C"; }
-cleanup() { restore; rm -f "$BF" "$BG" "$BS" "$BH" "$BC"; }
+            cp "$BC" "$C"; cp "$BU" "$U"; }
+cleanup() { restore; rm -f "$BF" "$BG" "$BS" "$BH" "$BC" "$BU"; }
 # ⛔ #1124 r12 finding 3. `trap '...' EXIT INT TERM` was NOT equivalent to
 # this. On INT or TERM bash runs the handler and then RESUMES the script --
 # it does not exit for you -- so the handler restored the tree and the run
@@ -1065,6 +1068,53 @@ if sub "$S" '        if (SD_DirHasNonCanonicalForm(pSDCardRuntimeConfig->directo
     expect "R61 the opt-in refuses a non-canonical dir" "accepts a NON-CANONICAL"
 else
     echo "  FAIL R61 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R62 (PIN 27): bring the FAULT back for an overflowing index -- the    =="
+echo "==      r23 audit MEDIUM. A foreign file called exp-4294967296.csv then  =="
+echo "==      disarms every capture in that directory. Keeps the 3-arg call,   =="
+echo "==      so only the header arm sees it.                                  =="
+if sub "$U" 'static inline bool SdManifest_NameHasManifestExt(const char *name)' \
+            'static inline uint32_t SdManifest_PartIndexOf2(const char *name,
+                                                const char *dir,
+                                                const char *file,
+                                                bool *fault)
+{
+    (void)dir; (void)file;
+    if (fault != NULL) { *fault = (name == NULL); }
+    return SDMANIFEST_PART_NONE;
+}
+
+static inline bool SdManifest_NameHasManifestExt(const char *name)'; then
+    expect "R62 no fault out-param in the header" "declares a fault out-param"
+else
+    echo "  FAIL R62 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R63 (PIN 28b): drop the DOWNWARD scan, so a manifest written INSIDE a =="
+echo "==      bucket child is never read. No opt-in involved, so every opt-in  =="
+echo "==      arm passes, and the UPWARD scan still works so PIN 28a passes.   =="
+if sub "$F" '            out = sd_ScanOneDirectory(child, false, needle);' \
+            '            (void)child;'; then
+    expect "R63 the downward scan exists" "PIN 28b: the DOWNWARD scan is gone"
+else
+    echo "  FAIL R63 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R64 (PIN 28c): stop the downward probe at the first ABSENT bucket.     =="
+echo "==      Correct on a conforming card (#689 creates them in order), and a =="
+echo "==      user who deleted one intermediate directory then has every later =="
+echo "==      bucket skipped -- a missed collision, silently.                  =="
+if sub "$F" '        for (b = 1u; (b <= SD_CARD_MANAGER_MAX_BUCKET)
+                     && (out == SD_INSPECT_CLEAR); b++) {' \
+            '        for (b = 1u; (b <= 1u)
+                     && (out == SD_INSPECT_CLEAR); b++) {'; then
+    expect "R64 every bucket index is probed" "no longer probes EVERY"
+else
+    echo "  FAIL R64 anchor absent."; fail=$((fail+1))
 fi
 restore
 

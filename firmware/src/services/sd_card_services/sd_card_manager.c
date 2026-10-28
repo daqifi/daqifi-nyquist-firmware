@@ -2859,15 +2859,13 @@ static sd_InspectResult sd_ManifestRecordsName(const char *manifestPath,
                  * open it -- so it is ignored. A record with the part SHAPE
                  * whose index cannot be represented is a FAULT: we cannot tell
                  * whether it is one of ours, and "cannot tell" has to refuse. */
-                bool idxFault = false;
+                /* ⛔ r23 audit :424 -- NO FAULT PATH HERE ANY MORE. A foreign
+                 * NAME cannot fault the scan, whatever its length, digits or
+                 * spelling; only unreadable or unparseable CONTENT can. See
+                 * SdManifest_PartIndexOf's header. */
                 const uint32_t idx = SdManifest_PartIndexOf(
                         line, gpSDCardSettings->directory,
-                        gpSDCardSettings->file, &idxFault);
-                if (idxFault) {
-                    LOG_E("[SD1124] unparsable index at %u", (unsigned)lines);
-                    out = SD_INSPECT_FAULT;
-                    break;
-                }
+                        gpSDCardSettings->file);
                 /* ⛔⛔ #1124 r22 AUDIT MEDIUM (:2871): AN INDEX PAST OUR LIMIT
                  * IS SKIPPED, NOT A FAULT.
                  *
@@ -3029,45 +3027,103 @@ static sd_InspectResult sd_ScanOneDirectory(const char *dir, bool isOwnDir,
  * of the configured directory and never nests them, so a bucket's parent is
  * where its owning session was configured. Walking further would be modelling
  * a layout this firmware does not produce. */
+/* Does the last component of `dir` wear a rotation bucket's name? */
+static bool sd_DirLeafIsBucket(const char *dir, size_t dirLen, size_t *cutOut) {
+    size_t cut = dirLen;
+    size_t i;
+    bool looks;
+
+    while (cut > 0u && dir[cut - 1u] != '/') {
+        cut--;
+    }
+    *cutOut = cut;
+    if (cut == 0u) {
+        return false;                   /* single component: no parent */
+    }
+    looks = ((dirLen - cut) >= 2u)
+            && (SdManifest_FoldChar(dir[cut])
+                == SdManifest_FoldChar(SD_CARD_MANAGER_BUCKET_PREFIX[0]));
+    for (i = cut + 1u; looks && (i < dirLen); i++) {
+        if ((dir[i] < '0') || (dir[i] > '9')) {
+            looks = false;
+        }
+    }
+    return looks;
+}
+
+/* ⛔⛔ #1124 r23 AUDIT HIGH (:2980) + r22 (:2930): THE SCAN COVERS EVERY PLACE
+ * #689 PUTS A MANIFEST, WHICH IS THREE AND ONLY THREE.
+ *
+ * A manifest is only ever created at sd_SessionManifestPath(), i.e. in whatever
+ * directory that session had CONFIGURED. #689 then puts that session's DATA in
+ * the configured directory and in its immediate `P###` children, never deeper
+ * and never nested. So for the session running now, a manifest whose records
+ * could name one of OUR files can live in exactly:
+ *
+ *   1. our configured directory D                     -- always scanned
+ *   2. D's PARENT, when D is itself a bucket (r22 :2930) -- a session
+ *      configured at the parent wrote into D and recorded it from up there
+ *   3. D's immediate BUCKET CHILDREN (r23 :2980)       -- a session configured
+ *      at `D/P001` recorded its files from inside the bucket, and our own
+ *      rotation will put OUR parts in that same directory
+ *
+ * 2 and 3 are mirror images, and only one can apply: if D is a bucket we look
+ * up, otherwise we look down. That exhausts the layout rather than adding
+ * another case to a list, which is the difference between this and the four
+ * naming rules rounds 16-19 produced.
+ *
+ * ⚠ BUCKETS ARE PROBED BY INDEX, NOT BY RECURSING THE WALK. A nested DirOpen
+ * inside the outer directory walk would hold a third SYS_FS handle while
+ * sd_ManifestRecordsName already opens a file inside that walk, against a pool
+ * of SYS_FS_MAX_FILES = 10 (configuration.h) shared by files and directories.
+ * Exhausting it mid-scan would FAULT, i.e. refuse -- the failure mode this row
+ * keeps producing. Probing after the walk has closed keeps the handle depth
+ * exactly as it is today.
+ *
+ * ⚠ AND EVERY INDEX IS PROBED, with no early stop at the first absent bucket.
+ * #689 creates them in ascending order so a conforming card has no gaps, and
+ * sd_BucketDirExists' forward search relies on that -- but a user who deleted
+ * one intermediate bucket would make an early stop skip every later one, and a
+ * skipped bucket is a MISSED COLLISION. Paying MAX_BUCKET directory lookups
+ * once per session is the cheaper side of that trade.
+ */
 static sd_InspectResult sd_ScanForeignManifests(const char *needle) {
     const char *dir = gpSDCardSettings->directory;
     const size_t dirLen = SdManifest_CanonicalDirLen(dir);
+    size_t cut = 0u;
     sd_InspectResult out = sd_ScanOneDirectory(dir, true, needle);
 
     if (out != SD_INSPECT_CLEAR) {
         return out;
     }
-    /* Is the LAST component a bucket name? Then its parent holds the manifest
-     * of whoever wrote into it. */
-    {
-        size_t cut = dirLen;
-        while (cut > 0u && dir[cut - 1u] != '/') {
-            cut--;
+
+    if (sd_DirLeafIsBucket(dir, dirLen, &cut)) {
+        /* CASE 2: we are inside a bucket, so look UP. */
+        char parent[SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX + 1u];
+        const size_t parentLen = cut - 1u;      /* drop the separator */
+        if (parentLen < sizeof(parent)) {
+            memcpy(parent, dir, parentLen);
+            parent[parentLen] = '\0';
+            /* isOwnDir false: a same-leaf manifest up there belongs to a
+             * session configured at the parent, which is what we came for. */
+            out = sd_ScanOneDirectory(parent, false, needle);
         }
-        if (cut > 1u) {                 /* there IS a parent to speak of */
-            const char *leaf = dir + cut;
-            const size_t leafLen = dirLen - cut;
-            bool looksLikeBucket = (leafLen >= 2u)
-                    && (SdManifest_FoldChar(leaf[0])
-                        == SdManifest_FoldChar(SD_CARD_MANAGER_BUCKET_PREFIX[0]));
-            size_t i;
-            for (i = 1u; looksLikeBucket && (i < leafLen); i++) {
-                if ((leaf[i] < '0') || (leaf[i] > '9')) {
-                    looksLikeBucket = false;
-                }
+        return out;
+    }
+
+    /* CASE 3: we are at the top of a bucket set, so look DOWN. */
+    {
+        uint32_t b;
+        for (b = 1u; (b <= SD_CARD_MANAGER_MAX_BUCKET)
+                     && (out == SD_INSPECT_CLEAR); b++) {
+            char child[SD_CARD_MANAGER_FILE_PATH_LEN_MAX + 1u];
+            if (!sd_BuildBucketPath(child, sizeof(child), dir, b)) {
+                continue;               /* cannot name it: nothing to read */
             }
-            if (looksLikeBucket) {
-                char parent[SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX + 1u];
-                const size_t parentLen = cut - 1u;   /* drop the separator */
-                if (parentLen < sizeof(parent)) {
-                    memcpy(parent, dir, parentLen);
-                    parent[parentLen] = '\0';
-                    /* isOwnDir false: a same-leaf manifest up here belongs to
-                     * a session configured at the parent, which is precisely
-                     * what we came to find. */
-                    out = sd_ScanOneDirectory(parent, false, needle);
-                }
-            }
+            /* isOwnDir false: our own manifest is in D, never in a bucket, so
+             * anything found down here belongs to someone else. An absent
+             * bucket is CLEAR, not a fault -- see sd_ScanOneDirectory. */
+            out = sd_ScanOneDirectory(child, false, needle);
         }
     }
     return out;
