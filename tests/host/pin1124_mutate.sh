@@ -899,6 +899,77 @@ else
 fi
 restore
 
+echo "== R49 (PIN 21): bring the manifest-COUNT cap back -- the audit HIGH.    =="
+echo "==      A FAULT is a refusal, so 17 short sessions in one directory      =="
+echo "==      (34 files, under MAX_DIR_FILES) disarm every later capture,      =="
+echo "==      opt-in or not. Nothing else notices: the scan still works, the   =="
+echo "==      bits are still exact, every refusal test still passes.           =="
+if sub "$F" '        manifests++;        /* counted for the log only -- never a refusal */' \
+            '        if (++manifests > 16u) { out = SD_INSPECT_FAULT; break; }'; then
+    expect "R49 no manifest-count cap" "a manifest-COUNT cap is back"
+else
+    echo "  FAIL R49 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R50 (PIN 22): identify a .mfst by its EXTENSION again, so a legal     =="
+echo "==      DATA file called old.mfst is parsed as a manifest, FAULTs, and   =="
+echo "==      blocks every later capture in that directory.                    =="
+if sub "$F" '            if (!SdManifest_FirstLineLooksLikeManifest(chunk, got)) {' \
+            '            if (false) {'; then
+    expect "R50 a manifest is identified by content" "no longer identifies a"
+else
+    echo "  FAIL R50 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R51 (PIN 23a): accept \",1\" for a name containing '/'. The manifest    =="
+echo "==      for sub/exp.csv lives in <dir>/sub, which the scan never reads,  =="
+echo "==      so the only check protecting it is blind. This is the state the  =="
+echo "==      audit MEASURED as accepted.                                      =="
+if sub "$S" "        if ((fileLen > 0) && (memchr(pBuff, '/', fileLen) != NULL)) {" \
+            "        if (false) {"; then
+    expect "R51 the opt-in refuses a separator in the name" "a name containing"
+else
+    echo "  FAIL R51 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R52 (PIN 23b): accept \",1\" while SD:DIR is a rotation bucket. The     =="
+echo "==      manifest owning the records in D/P001 lives in D, unscanned.    =="
+if sub "$S" '        if (SD_DirHasBucketComponent(pSDCardRuntimeConfig->directory)) {' \
+            '        if (false) {'; then
+    expect "R52 the opt-in refuses a bucket directory" "is a rotation"
+else
+    echo "  FAIL R52 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R53 (PIN 24): move the generation compare OUT of the commit critical  =="
+echo "==      section. The snapshot is still taken, the counter is still       =="
+echo "==      bumped, the compare still happens and still refuses -- it is     =="
+echo "==      just another stale fast path, which is the defect itself.        =="
+if sub "$S" '        dirMoved = (gSdDirGeneration != dirGenAtStrip);
+        if (!benchOwnsTarget && !dirMoved) {' \
+            '        if (!benchOwnsTarget) {'; then
+    expect "R53 the generation compare is inside the commit section" \
+           "lost a part"
+else
+    echo "  FAIL R53 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R54 (PIN 24): drop the generation BUMP, leaving the snapshot and the  =="
+echo "==      compare in place. They then always agree, so the check is        =="
+echo "==      present and can never fire -- the inert-guard shape.            =="
+if sub "$S" """        gSdDirGeneration++;""" \
+            """        (void)0;"""; then
+    expect "R54 the generation is bumped on every dir write" "lost a part"
+else
+    echo "  FAIL R54 anchor absent."; fail=$((fail+1))
+fi
+restore
+
 echo "== restored =="
 expect "post-restore baseline" CLEAN
 

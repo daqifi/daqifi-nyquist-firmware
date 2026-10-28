@@ -375,9 +375,20 @@ static inline uint32_t SdManifest_PartIndexOf(const char *name,
     stemLen = (dot != NULL) ? (size_t)(dot - file) : strlen(file);
     extLen = (dot != NULL) ? strlen(dot) : 0u;
     leafLen = strlen(leaf);
-    if (stemLen == 0u) {
-        return SDMANIFEST_PART_NONE;
-    }
+    /* ⛔ #1124 r21 AUDIT HIGH (:378): NO EMPTY-STEM SPECIAL CASE.
+     *
+     * This used to return NONE when the stem was empty, which broke the one
+     * property the function has to have: being the INVERSE of the generator.
+     * SD:FILE accepts ".csv" (the validator's segment checks only reject
+     * lengths 1 and 2, so a zero-length stem passes), and generateFilename
+     * then emits "-1.csv" for part 1. So a real part name was classified as
+     * "not one of ours", the bit was never set, the exact check never ran, and
+     * the collision went unnoticed -- the fail-OPEN direction.
+     *
+     * Nothing below needs the special case: with stemLen == 0 the prefix test
+     * is vacuously true and the separator test still requires a leading '-',
+     * which is exactly what the generator produces. Removing it makes the
+     * match structural rather than a set of cases I remembered to cover. */
     /* stem + '-' + at least one digit + ext */
     if (leafLen < (stemLen + 2u + extLen)) {
         return SDMANIFEST_PART_NONE;

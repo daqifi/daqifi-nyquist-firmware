@@ -1285,7 +1285,6 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	   "if (lineLen >= (sizeof(line) - 1u)) {" \
 	   "if (++lines > SD_FOREIGN_SCAN_MAX_LINES) {" \
 	   "if (sep == NULL || sep == line) {" \
-	   "if (++manifests > SD_FOREIGN_SCAN_MAX_MANIFESTS) {" \
 	 ; do \
 	   case "$$pp" in \
 	     *"$$probe"*) ;; \
@@ -1368,7 +1367,15 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	@# notours/ourpart=MANIFEST_NOT_OURS, authpath=AUTH_PATH_CHANGED,
 	@# foreign=FOREIGN_RECORD, unparsable=MANIFEST_UNPARSABLE,
 	@# notafile=NAME_NOT_A_FILE, note=not a refusal.
-	@toks=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null \
+	@# r21 audit: BOTH files are scanned now. The audit's scope fixes put
+	@# [SD1124] lines in SCPIStorageSD.c, and a contract that covers only one
+	@# of the two files a client can see lines from is not a contract.
+	@# ⚠ BRACES, not just `;`. Written as `a; b | grep`, only b feeds the
+	@# pipeline and a's whole preprocessed output lands in the variable -- the
+	@# pin then reports garbage tokens like `&targetFsError);`. It FAILED
+	@# rather than passing, which is the only reason that was cheap to find.
+	@toks=`{ $(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null; \
+	         $(CC) -fpreprocessed -E $(SD_BENCH_SRC) 2>/dev/null; } \
 	   | grep -oE 'LOG_E\("\[SD1124\] [^ "]+' \
 	   | sed 's/.*\[SD1124\] //'`; \
 	 n=`printf '%s\n' "$$toks" | grep -c .`; \
@@ -1379,7 +1386,7 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	   echo "       nothing would pass the token check below vacuously."; \
 	   exit 1; \
 	 fi; \
-	 bad=`printf '%s\n' "$$toks" | grep -vxE 'exists|unreadable|notours|ourpart|authpath|foreign|unparsable|notafile|note' | sort -u`; \
+	 bad=`printf '%s\n' "$$toks" | grep -vxE 'exists|unreadable|notours|ourpart|authpath|foreign|unparsable|notafile|note|scope' | sort -u`; \
 	 if [ -n "$$bad" ]; then \
 	   echo "ERROR: #1124 r21 PIN 17: these [SD1124] messages do not begin with"; \
 	   echo "       a reason token from the closed set, or carry punctuation on"; \
@@ -1388,7 +1395,7 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	   echo "       exact match, i.e. fails OPEN:"; \
 	   printf '         %s\n' $$bad; \
 	   echo "       Set: exists unreadable notours ourpart authpath foreign"; \
-	   echo "            unparsable notafile note   (note = NOT a refusal)"; \
+	   echo "            unparsable notafile scope note  (note = NOT a refusal)"; \
 	   exit 1; \
 	 fi
 	@# ⛔⛔ PIN 18 -- THE BIT IS A NECESSARY CONDITION, NEVER THE DECISION.
@@ -1461,6 +1468,123 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	      echo "       complete answer."; \
 	      exit 1;; \
 	 esac
+	@# ⛔⛔ PIN 21 -- r21 AUDIT HIGH (:2915): NO CAP ON THE MANIFEST COUNT.
+	@#
+	@# This is the INVERSE of a pin: it asserts an absence, because the bound it
+	@# forbids is one PIN 14 used to require. r21 shipped
+	@# SD_FOREIGN_SCAN_MAX_MANIFESTS = 16 with a FAULT past it, and a FAULT is a
+	@# refusal -- so after 17 short sessions in ONE directory (34 files, well
+	@# under MAX_DIR_FILES) every later capture was disarmed, opt-in or not. The
+	@# guard meant to protect ordinary logging broke it.
+	@#
+	@# ⭐ THE RULE: A COUNT OF PRE-EXISTING WORK MUST NEVER REFUSE A NEW
+	@# SESSION. Using more of the card is not a fault condition. The cost is
+	@# bounded by the per-manifest line/byte caps and by the directory itself,
+	@# which #689 rolls at MAX_DIR_FILES entries -- neither of which refuses in
+	@# the ordinary case, which is exactly what the deleted cap lacked.
+	@#
+	@# Pinned by NAME, so re-introducing the macro fails even if the comparison
+	@# is spelled differently.
+	@n=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null \
+	    | grep -c 'SD_FOREIGN_SCAN_MAX_MANIFESTS'`; \
+	 if [ "$$n" != "0" ]; then \
+	   echo "ERROR: #1124 r21 PIN 21: a manifest-COUNT cap is back ($$n"; \
+	   echo "       mention(s) of SD_FOREIGN_SCAN_MAX_MANIFESTS)."; \
+	   echo "       A count of pre-existing manifests must never refuse a"; \
+	   echo "       session: FAULT is a refusal, so a cap here disarms every"; \
+	   echo "       capture in a directory that has simply been used a lot."; \
+	   echo "       That was audit finding :2915 -- 17 short sessions, 34 files,"; \
+	   echo "       and the card stops logging. Bound the BYTES per manifest"; \
+	   echo "       instead; the directory already bounds the count."; \
+	   exit 1; \
+	 fi
+	@# ⛔⛔ PIN 22 -- r21 AUDIT MEDIUM (:2909): A .mfst IS IDENTIFIED BY
+	@# CONTENT, NOT BY ITS EXTENSION. `old.mfst` is a legal DATA filename; parsed
+	@# as a manifest it fails, FAULTs, and blocks every later capture in that
+	@# directory, so one ordinarily-named user file became a brick.
+	@#
+	@# ⚠ AND NOT BY PAIRING WITH `X` EITHER, which the audit offered as an
+	@# alternative. A manifest whose data file was DELETED while the manifest
+	@# survived is precisely the stale record this scan was widened to catch, so
+	@# existence-pairing would have skipped it -- fixing the MEDIUM by silently
+	@# reopening the HIGH. The content test is the one the create path already
+	@# trusts for the same question, so there is one notion of "looks like a
+	@# manifest" rather than two free to disagree.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"if (!SdManifest_FirstLineLooksLikeManifest(chunk, got)) {"*) ;; \
+	   *) echo "ERROR: #1124 r21 PIN 22: the foreign scan no longer identifies a"; \
+	      echo "       manifest by its CONTENT before parsing it, so a data file"; \
+	      echo "       named *.mfst FAULTs and disarms every later capture in"; \
+	      echo "       that directory (audit :2909)."; \
+	      exit 1;; \
+	 esac
+	@# ⛔⛔ PIN 23 -- r21 AUDIT HIGH (:2874 / :2905): THE OPT-IN'S SCOPE IS
+	@# NARROWED SO THE SCAN STAYS SOUND.
+	@#
+	@# The foreign-record scan reads the CONFIGURED directory only, and that is
+	@# the complete set of relevant places just while two conditions hold:
+	@#   - the configured NAME carries no '/', because `sub/exp.csv` puts our
+	@#     manifest in <dir>/sub, which the scan never reads;
+	@#   - no component of the configured DIR is a rotation bucket, because with
+	@#     SD:DIR = D/P001 the manifest owning those records lives in D.
+	@# Both are refused for the OPT-IN only, which is the agreed fix direction:
+	@# NARROW the grant rather than widen the scan. Ordinary refuse-by-default
+	@# logging in such a layout is untouched.
+	@#
+	@# ⚠ The audit measured `"sub/exp.csv",1` as ACCEPTED, i.e. this whitelist
+	@# had never landed despite being described. Pinned now so the description
+	@# and the code cannot part company again.
+	@pp=`$(CC) -fpreprocessed -E $(SD_BENCH_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"if ((fileLen > 0) && (memchr(pBuff, '/', fileLen) != NULL)) {"*) ;; \
+	   *) echo "ERROR: #1124 r21 PIN 23: SD:FILE no longer refuses the overwrite"; \
+	      echo "       opt-in for a name containing '/'. The manifest for"; \
+	      echo "       sub/exp.csv lives in <dir>/sub, which the foreign-record"; \
+	      echo "       scan does not read, so the one check protecting it is"; \
+	      echo "       blind (audit :2905)."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"if (SD_DirHasBucketComponent(pSDCardRuntimeConfig->directory)) {"*) ;; \
+	   *) echo "ERROR: #1124 r21 PIN 23: SD:FILE no longer refuses the overwrite"; \
+	      echo "       opt-in while the configured directory is a rotation"; \
+	      echo "       bucket. The manifest owning records in D/P001 lives in D,"; \
+	      echo "       which the scan does not read (audit :2874)."; \
+	      exit 1;; \
+	 esac
+	@# ⛔⛔ PIN 24 -- r21 AUDIT HIGH (:972): THE DIRECTORY GENERATION IS
+	@# SNAPSHOTTED BEFORE THE RESOLUTION AND RE-CHECKED AT THE COMMIT.
+	@#
+	@# SD:FILE resolves its operand against the configured directory early
+	@# (SD_StripConfiguredDir accepts the "<dir>/<name>" form) and commits the
+	@# name plus its grant late. It leaves the critical section several times in
+	@# between, and USB SCPI at priority 7 preempts WiFi SCPI at 2 with no
+	@# cross-transport dispatch mutex -- so an SD:DIR landing in the gap means
+	@# the operand was stripped against one directory and committed under
+	@# another, granting overwrite on a file the client never named.
+	@#
+	@# All three parts are pinned, because any one of them alone is inert: the
+	@# snapshot, the bump INSIDE the directory write's own critical section, and
+	@# the compare inside the COMMIT's critical section. A compare outside it
+	@# would be another stale fast path, which is the defect itself.
+	@pp=`$(CC) -fpreprocessed -E $(SD_BENCH_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 for probe in \
+	   "const uint32_t dirGenAtStrip = gSdDirGeneration;" \
+	   "pSDCardRuntimeConfig->directory[pathLen] = '\\0'; gSdDirGeneration++;" \
+	   "dirMoved = (gSdDirGeneration != dirGenAtStrip); if (!benchOwnsTarget && !dirMoved) {" \
+	 ; do \
+	   case "$$pp" in \
+	     *"$$probe"*) ;; \
+	     *) echo "ERROR: #1124 r21 PIN 24: the SD:FILE directory-generation"; \
+	        echo "       check lost a part (audit :972). Missing:"; \
+	        echo "         $$probe"; \
+	        echo "       Without all three, an SD:DIR landing between the"; \
+	        echo "       operand resolution and the commit grants overwrite on a"; \
+	        echo "       file the client never named."; \
+	        exit 1;; \
+	   esac; \
+	 done
 	$(CC) $(CFLAGS) -o $(GATE1124_BIN) test_1124_overwrite_gate.c
 
 $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h \

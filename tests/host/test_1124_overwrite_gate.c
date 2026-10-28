@@ -94,6 +94,11 @@ typedef struct {
     bool    grantSubjectRecorded; /* the grant recorded a subject at all */
     bool    grantSubjectMatches;
     ForeignKind foreign;     /* r21 item 3 */
+    /* r21 audit: how many foreign manifests sit in the directory, and whether
+     * one of them is actually a DATA file that merely ends in .mfst. */
+    unsigned foreignManifests;
+    bool     mfstNameIsADataFile;
+    bool     realManifestIsDamaged;
     /* observations */
     bool    opened;          /* the WRITE_PLUS open happened (truncating) */
     bool    manifestRemoved; /* something was unlinked */
@@ -130,30 +135,42 @@ typedef struct {
      * attractive wrong version -- skip the bad line and carry on -- which makes
      * a corrupt manifest read as recording nothing. */
     bool scanFaultRefuses;
+    /* r21 audit HIGH (:2915): a COUNT of pre-existing manifests must never
+     * refuse a session. False reproduces what the audit blocked -- a FAULT
+     * past 16 manifests, which disarmed every capture after 17 short sessions
+     * in one directory. */
+    bool countNeverRefuses;
+    /* r21 audit MEDIUM (:2909): a .mfst is identified by CONTENT, so a data
+     * file wearing that name is skipped rather than parsed-and-FAULTed. */
+    bool identifyByContent;
 } Shape;
 
 static const Shape SHAPE_R18 = { true,  false, false, false, false, false,
-                                 false, false, false };
+                                 false, false, false, false, false };
 /* r19 as shipped: refuse-by-default and the disarm, but the gate still derived
  * the manifest name independently, honoured an opt-in on a recorded set's
  * part, let an inspector fault read as permissive, and never consumed. */
 static const Shape SHAPE_R19 = { false, true,  false, false, false, false,
-                                 false, false, false };
+                                 false, false, false, false, false };
 /* r20 as shipped: everything r19 lacked, and none of r21's three. This is the
  * baseline every r21 test is differential against -- without it, "the fix
  * works" would be a claim about a shape nobody ever ran. */
 static const Shape SHAPE_R20 = { false, true,  true,  true,  true,  true,
-                                 false, false, false };
+                                 false, false, false, false, false };
+/* What the r21 audit BLOCKED: every r21 property, and neither audit fix. This
+ * is the baseline the two arms below are differential against. */
+static const Shape SHAPE_R21_AUDITED = { false, true, true, true, true, true,
+                                         true, true, true, false, false };
 static const Shape SHAPE_C   = { false, true,  true,  true,  true,  true,
-                                 true,  true,  true  };
+                                 true,  true,  true,  true,  true  };
 /* r21 with the scan's fail-closed arm removed: the one-line mistake that makes
  * an unparseable manifest read as empty. Everything else intact. */
 static const Shape SHAPE_C_SCAN_SKIPS = { false, true, true, true, true, true,
-                                          true, true, false };
+                                          true, true, false, true, true };
 /* C's gate without the disarm: what this PR shipped before conv-ts asked
  * whether a refused session leaves the card usable. */
 static const Shape SHAPE_C_NO_DISARM = { false, false, true, true, true, true,
-                                         true, true, true };
+                                         true, true, true, true, true };
 
 static World world(FsState data, FsState mfst, bool ours, bool asked) {
     World w;
@@ -241,6 +258,25 @@ static void model_open_target(World *w, Shape s) {
      * opt-in: a granted session can TRUNCATE a recorded file, but ANY session
      * can CREATE one at a recorded-but-deleted name, and both leave that
      * manifest describing bytes it never recorded. */
+    /* r21 audit HIGH (:2915): the manifest COUNT. A cap here is a refusal, and
+     * a refusal driven by how much the user has already logged is a brick. */
+    if (s.refuseForeignRecord && !s.countNeverRefuses
+            && (w->foreignManifests > 16u)) {
+        w->refusal = REFUSE_MANIFEST_UNPARSABLE;
+        return;
+    }
+    /* r21 audit MEDIUM (:2909): a DATA file that merely ends in .mfst. Parsed
+     * as a manifest it fails and FAULTs, blocking every later capture; the fix
+     * identifies by content and skips it. A genuinely DAMAGED manifest still
+     * faults -- that distinction is the whole point. */
+    if (s.refuseForeignRecord && w->mfstNameIsADataFile && !s.identifyByContent) {
+        w->refusal = REFUSE_MANIFEST_UNPARSABLE;
+        return;
+    }
+    if (s.refuseForeignRecord && w->realManifestIsDamaged && s.scanFaultRefuses) {
+        w->refusal = REFUSE_MANIFEST_UNPARSABLE;
+        return;
+    }
     if (s.refuseForeignRecord) {
         if (w->foreign == FOREIGN_RECORDS_TARGET) {
             w->refusal = REFUSE_FOREIGN_RECORD;
@@ -832,6 +868,75 @@ TEST(every_r21_refusal_reason_also_disarms_the_session) {
     ASSERT_TRUE(seenUnparsable > 0u);
 }
 
+/* ---- r21 audit HIGH (:2915): a count must never refuse ------------------ */
+
+/* ⛔ What the audit blocked. Seventeen short sessions in one directory -- 34
+ * files, well under MAX_DIR_FILES -- and every later capture is disarmed, with
+ * or without the opt-in. The guard meant to protect ordinary logging broke it. */
+TEST(the_audited_r21_refused_a_session_after_seventeen_short_sessions) {
+    World w = world(FS_ABSENT, FS_ABSENT, false, false);
+    w.foreignManifests = 17u;
+    model_arm_session(&w, SHAPE_R21_AUDITED);
+    model_open_target(&w, SHAPE_R21_AUDITED);
+    ASSERT_FALSE(w.opened);
+    ASSERT_EQ(w.refusal, REFUSE_MANIFEST_UNPARSABLE);
+}
+
+/* ⭐ The fix, and the arm the audit asked for by name: 63 manifests in the
+ * directory and a fresh session still arms. The number is deliberately just
+ * under MAX_DIR_FILES, because that -- not a cap of our own -- is what bounds
+ * how many manifests a conforming directory can hold. */
+TEST(a_manifest_count_never_refuses_a_session) {
+    unsigned n;
+    for (n = 0u; n <= 63u; n++) {
+        World w = world(FS_ABSENT, FS_ABSENT, false, false);
+        w.foreignManifests = n;
+        model_arm_session(&w, SHAPE_C);
+        model_open_target(&w, SHAPE_C);
+        model_finish_refusal(&w, SHAPE_C);
+        ASSERT_TRUE(w.opened);
+        ASSERT_EQ(w.refusal, REFUSE_NONE);
+        ASSERT_TRUE(model_is_busy(&w));      /* still armed, still logging */
+    }
+}
+
+/* ---- r21 audit MEDIUM (:2909): .mfst is not proof of being a manifest --- */
+
+TEST(the_audited_r21_faulted_on_a_data_file_named_mfst) {
+    World w = world(FS_ABSENT, FS_ABSENT, false, false);
+    w.mfstNameIsADataFile = true;
+    model_arm_session(&w, SHAPE_R21_AUDITED);
+    model_open_target(&w, SHAPE_R21_AUDITED);
+    ASSERT_FALSE(w.opened);
+    ASSERT_EQ(w.refusal, REFUSE_MANIFEST_UNPARSABLE);
+}
+
+TEST(a_non_manifest_file_named_mfst_is_skipped_not_faulted) {
+    World w = world(FS_ABSENT, FS_ABSENT, false, false);
+    w.mfstNameIsADataFile = true;
+    model_arm_session(&w, SHAPE_C);
+    model_open_target(&w, SHAPE_C);
+    ASSERT_TRUE(w.opened);
+    ASSERT_EQ(w.refusal, REFUSE_NONE);
+}
+
+/* ⭐ THE CONTROL that stops the fix becoming "skip everything that does not
+ * parse". A file that IS a manifest and is DAMAGED is a damaged record, not an
+ * unrelated file, and must still refuse. Without this arm, identifying by
+ * content could degrade into ignoring every manifest it found hard to read --
+ * which is the clean-bill generator the whole fail-closed design exists to
+ * avoid. */
+TEST(a_damaged_real_manifest_still_refuses) {
+    World w = world(FS_ABSENT, FS_ABSENT, false, false);
+    w.realManifestIsDamaged = true;
+    model_arm_session(&w, SHAPE_C);
+    model_open_target(&w, SHAPE_C);
+    model_finish_refusal(&w, SHAPE_C);
+    ASSERT_FALSE(w.opened);
+    ASSERT_EQ(w.refusal, REFUSE_MANIFEST_UNPARSABLE);
+    ASSERT_FALSE(model_is_busy(&w));
+}
+
 int main(void) {
     RUN(r18_truncates_an_existing_target_without_being_asked);
     RUN(c_refuses_an_existing_target);
@@ -874,5 +979,10 @@ int main(void) {
     RUN(r21_refuses_when_a_manifest_cannot_be_parsed);
     RUN(skipping_an_unparseable_line_would_have_let_it_through);
     RUN(every_r21_refusal_reason_also_disarms_the_session);
+    RUN(the_audited_r21_refused_a_session_after_seventeen_short_sessions);
+    RUN(a_manifest_count_never_refuses_a_session);
+    RUN(the_audited_r21_faulted_on_a_data_file_named_mfst);
+    RUN(a_non_manifest_file_named_mfst_is_skipped_not_faulted);
+    RUN(a_damaged_real_manifest_still_refuses);
     return TEST_SUMMARY();
 }

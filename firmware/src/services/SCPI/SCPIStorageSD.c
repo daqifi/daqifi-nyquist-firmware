@@ -572,6 +572,88 @@ static bool SD_ValidatePathParam(const char *p, size_t len, bool isFileName)
  * Case-sensitive on purpose — this normalizes the exact form the device emits,
  * not arbitrary user spellings. Returns the (possibly advanced) pointer and
  * updates *pLen. */
+/* ⛔⛔ #1124 r21 AUDIT HIGH (:972, blind leg): THE CONFIGURED-DIRECTORY
+ * GENERATION.
+ *
+ * SD:FILE resolves its operand against the configured directory EARLY --
+ * SD_StripConfiguredDir() accepts the "<dir>/<name>" form SD:LISt? prints --
+ * and commits the name plus its overwrite authorisation LATE, in a critical
+ * section near the end. Between those two points the function leaves the
+ * critical section several times (SCPI_ParamCharacters, SD_ValidatePathParam,
+ * the opt-in parse), and USB SCPI at priority 7 preempts WiFi SCPI at 2 with
+ * no cross-transport dispatch mutex. So:
+ *
+ *   SD:FILE "D1/log.csv",1   strips against D1 -> "log.csv"
+ *   (preempted)  SD:DIR D2   commits a new directory
+ *   SD:FILE resumes          commits "log.csv" + the grant, now under D2
+ *
+ * The client authorised D1/log.csv and D2/log.csv became overwritable. Same
+ * class as r20 item 1, which bound the grant to its resolved path on the SD
+ * side; this is the SCPI side of the same hole, and the r19 "SD:DIR withdraws
+ * the authorisation" rule does not close it because the withdrawal happens
+ * BEFORE the late commit re-grants it.
+ *
+ * A counter rather than re-reading the directory and comparing strings: the
+ * question is "did it CHANGE", and two edits that return to the same value
+ * must still invalidate a resolution made between them. Incremented inside
+ * the same critical section as every directory write, so a reader cannot see
+ * a new directory with an old generation. Wrapping is harmless -- the compare
+ * is for equality, and 2^32 directory writes between two statements of one
+ * function is not a reachable state. */
+static volatile uint32_t gSdDirGeneration = 0u;
+
+/* ⛔⛔ #1124 r21 AUDIT HIGH (:2874): does any component of `dir` wear a
+ * ROTATION BUCKET's name?
+ *
+ * This exists to NARROW the overwrite opt-in rather than widen the
+ * foreign-record scan, which is the agreed shape. The scan looks for foreign
+ * manifests in the CONFIGURED directory, and that is only the complete set of
+ * relevant places while two things hold: the configured directory is not
+ * itself a bucket (if SD:DIR were `D/P001`, the manifest owning the records in
+ * it lives in the PARENT, `D`, which is not scanned), and the configured name
+ * carries no subdirectory (`sub/exp.csv` puts our manifest in `D/sub`, also
+ * not scanned). Refusing the OPT-IN in both cases restores the invariant
+ * without a recursive walk -- and only the opt-in is refused, so ordinary
+ * refuse-by-default logging in such a layout keeps working exactly as before.
+ *
+ * Derived from SD_CARD_MANAGER_BUCKET_PREFIX and case-folded, and it accepts
+ * the prefix plus ONE OR MORE digits rather than exactly the three that
+ * "%03u" emits today: over-matching only refuses a few more opt-ins, which is
+ * the safe direction for a destructive grant, and it keeps holding if the
+ * bucket ceiling ever passes 999. */
+static bool SD_DirHasBucketComponent(const char *dir)
+{
+    const char bucketChar = SD_CARD_MANAGER_BUCKET_PREFIX[0];
+    const char *p = dir;
+
+    if (dir == NULL) {
+        return false;
+    }
+    while (*p != '\0') {
+        const char *end = strchr(p, '/');
+        const size_t len = (end != NULL) ? (size_t)(end - p) : strlen(p);
+        if (len >= 2u
+                && SdManifest_FoldChar(p[0]) == SdManifest_FoldChar(bucketChar)) {
+            bool allDigits = true;
+            size_t i;
+            for (i = 1u; i < len; i++) {
+                if ((p[i] < '0') || (p[i] > '9')) {
+                    allDigits = false;
+                    break;
+                }
+            }
+            if (allDigits) {
+                return true;
+            }
+        }
+        if (end == NULL) {
+            break;
+        }
+        p = end + 1;
+    }
+    return false;
+}
+
 static const char* SD_StripConfiguredDir(const char *p, size_t *pLen,
                                          const char *directory)
 {
@@ -889,6 +971,9 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
     }
 
     SCPI_ParamCharacters(context, &pBuff, &fileLen, false);
+    /* #1124 r21 (:972): snapshot the directory generation IMMEDIATELY before
+     * the resolution that depends on it, and re-check it at the commit. */
+    const uint32_t dirGenAtStrip = gSdDirGeneration;
     /* #747: accept the "<directory>/<name>" form SD:LISt? prints. Before the
      * length check, so a max-length name is not rejected for the prefix. */
     pBuff = SD_StripConfiguredDir(pBuff, &fileLen, pSDCardRuntimeConfig->directory);
@@ -921,6 +1006,45 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
         goto __exit_point;
     }
     const bool overwriteAsked = (overwriteParam == 1);
+
+    /* ⛔⛔ #1124 r21 AUDIT HIGH (:2874 / :2905): THE OPT-IN'S SCOPE.
+     *
+     * The foreign-record scan reads the CONFIGURED directory, and that is the
+     * complete set of places a relevant manifest can live only while the two
+     * conditions below hold. Rather than make the scan recursive -- more I/O,
+     * and a second naming rule to get wrong -- the destructive opt-in is
+     * refused in exactly the layouts that break the argument. Ordinary
+     * refuse-by-default logging in those layouts is untouched.
+     *
+     * Checked BEFORE anything is committed, so a refused command changes
+     * nothing, and checked for the opt-in ONLY. */
+    if (overwriteAsked) {
+        if ((fileLen > 0) && (memchr(pBuff, '/', fileLen) != NULL)) {
+            /* The manifest for `sub/exp.csv` lives in <dir>/sub, which the
+             * scan does not read, so a foreign record there would be
+             * invisible to the one check that protects it. */
+            /* log_budget: max=40 */
+            LOG_E("[SD1124] scope name has a separator");
+            SCPI_ExecutionError(context,
+                                "SYST:STOR:SD:FILE: overwrite not allowed for a "
+                                "name containing '/' - set SYST:STOR:SD:DIR to "
+                                "that directory and name the file alone");
+            result = SCPI_RES_ERR;
+            goto __exit_point;
+        }
+        if (SD_DirHasBucketComponent(pSDCardRuntimeConfig->directory)) {
+            /* Logging INTO a rotation bucket: the manifest owning records in
+             * it sits in the parent, which the scan does not read. */
+            /* log_budget: max=40 */
+            LOG_E("[SD1124] scope dir is a bucket");
+            SCPI_ExecutionError(context,
+                                "SYST:STOR:SD:FILE: overwrite not allowed while "
+                                "the configured directory is a rotation bucket "
+                                "(P###) - log to its parent instead");
+            result = SCPI_RES_ERR;
+            goto __exit_point;
+        }
+    }
 
     if (fileLen > 0) {
         if (fileLen > SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX) {
@@ -961,9 +1085,15 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
          * Checking and writing under one critical section makes it atomic,
          * mirroring the benchmark's own claim (#736 audit round 7). */
         bool benchOwnsTarget;
+        bool dirMoved;
         taskENTER_CRITICAL();
         benchOwnsTarget = gSDBenchmarkResults.testInProgress;
-        if (!benchOwnsTarget) {
+        /* #1124 r21 (:972): the operand was resolved against a directory that
+         * must still be the current one, re-checked HERE, under the same
+         * critical section that commits the name and the grant. Outside it the
+         * check would be another stale fast path, which is the defect. */
+        dirMoved = (gSdDirGeneration != dirGenAtStrip);
+        if (!benchOwnsTarget && !dirMoved) {
             memcpy(pSDCardRuntimeConfig->file, pBuff, fileLen);
             pSDCardRuntimeConfig->file[fileLen] = '\0';
             /* #1124: written under the SAME critical section as the name, so
@@ -972,6 +1102,16 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
             pSDCardRuntimeConfig->overwriteExisting = overwriteAsked;
         }
         taskEXIT_CRITICAL();
+        if (dirMoved) {
+            /* log_budget: max=40 */
+            LOG_E("[SD1124] scope dir moved during validation");
+            SCPI_ExecutionError(context,
+                                "SYST:STOR:SD:FILE: rejected, SYST:STOR:SD:DIR "
+                                "changed while this name was being validated - "
+                                "re-send it");
+            result = SCPI_RES_ERR;
+            goto __exit_point;
+        }
         if (benchOwnsTarget) {
             SCPI_ExecutionError(context,
                                 "SYST:STOR:SD:FILE: rejected, benchmark claimed "
@@ -3177,6 +3317,10 @@ scpi_result_t SCPI_StorageSDDirectorySet(scpi_t * context) {
     if (!busy) {
         memcpy(pSDCardRuntimeConfig->directory, pBuff, pathLen);
         pSDCardRuntimeConfig->directory[pathLen] = '\0';
+        /* #1124 r21 (:972): inside the SAME critical section as the write, so
+         * no reader can observe the new directory carrying the old
+         * generation. See gSdDirGeneration. */
+        gSdDirGeneration++;
         /* ⛔ #1124 r19 finding 4 / RULING V=A: A DIRECTORY CHANGE WITHDRAWS THE
          * OVERWRITE AUTHORISATION.
          *

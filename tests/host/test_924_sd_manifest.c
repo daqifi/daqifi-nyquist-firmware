@@ -1407,6 +1407,86 @@ TEST(a_foreign_base_name_that_is_one_of_our_parts_is_recognised) {
     ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-1-1.csv", "DAQiFi", "exp-1.csv", &f), 1u);
 }
 
+/* ⛔⛔ #1124 r21 AUDIT HIGH (:378): THE INVERSE PROPERTY, OVER A SET OF
+ * (stem, N, ext) THAT INCLUDES AN EMPTY STEM.
+ *
+ * The audit's finding: PartIndexOf returned NONE for an empty stem, while the
+ * setter accepts ".csv" and the generator emits "-1.csv". So the function was
+ * not the generator's inverse, a real part name read as "not one of ours", the
+ * bit was never set and the collision went unseen -- the fail-OPEN direction.
+ *
+ * The earlier round_trips test used one stem and could not see this. This one
+ * is the property the audit asked for, stated over a SET: for every (stem, N,
+ * ext) the generator can produce, PartIndexOf(generate(...)) == N. An empty
+ * stem and an empty extension are in the set because the setter admits both.
+ */
+TEST(part_index_inverts_the_generator_over_a_set_of_stems_and_extensions) {
+    struct { const char *stem; const char *ext; } cases[] = {
+        { "exp",  ".csv" },
+        { "e",    ".csv" },
+        { "",     ".csv" },   /* ⛔ the audit's case: SD:FILE ".csv" */
+        { "log",  ".txt" },
+        { "log",  ""     },   /* no extension at all */
+        { "",     ".p"   },
+        { "a.b",  ".csv" },   /* a dot inside the stem */
+    };
+    const uint32_t idxs[] = { 1u, 9u, 10u, 64u, 65u, 999u, 1000u, 4160u };
+    const char *dir = "DAQiFi";
+    char file[64], path[160];
+    unsigned c, i;
+    bool f;
+
+    for (c = 0; c < (sizeof(cases) / sizeof(cases[0])); c++) {
+        /* the configured name is exactly stem + ext */
+        int fn = snprintf(file, sizeof(file), "%s%s", cases[c].stem, cases[c].ext);
+        ASSERT_TRUE(fn > 0 && (size_t)fn < sizeof(file));
+
+        /* index 0: generateFilename's counter==0 arm is "<dir>/<file>" */
+        ASSERT_TRUE(snprintf(path, sizeof(path), "%s/%s", dir, file) > 0);
+        ASSERT_EQ(SdManifest_PartIndexOf(path, dir, file, &f), 0u);
+        ASSERT_FALSE(f);
+
+        for (i = 0; i < (sizeof(idxs) / sizeof(idxs[0])); i++) {
+            /* parts: "%.*s/%s-%u%s" over the bucket path, bucket 0 and bucket n */
+            ASSERT_TRUE(snprintf(path, sizeof(path), "%s/%s-%u%s", dir,
+                                 cases[c].stem, (unsigned)idxs[i],
+                                 cases[c].ext) > 0);
+            ASSERT_EQ(SdManifest_PartIndexOf(path, dir, file, &f), idxs[i]);
+            ASSERT_FALSE(f);
+
+            ASSERT_TRUE(snprintf(path, sizeof(path), "%s/P%03u/%s-%u%s", dir, 2u,
+                                 cases[c].stem, (unsigned)idxs[i],
+                                 cases[c].ext) > 0);
+            ASSERT_EQ(SdManifest_PartIndexOf(path, dir, file, &f), idxs[i]);
+            ASSERT_FALSE(f);
+        }
+    }
+}
+
+/* ⭐ The other half of the audit's property: a NEAR MISS must be NONE. Without
+ * this the inverse property above is satisfied by a function that says "yes,
+ * index N" to everything, which would refuse every session for no reason. */
+TEST(part_index_says_none_to_a_near_miss) {
+    bool f;
+    /* empty stem, and these are the near misses that matter for it */
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/.csv", "DAQiFi", ".csv", &f), 0u);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/-1.csv", "DAQiFi", ".csv", &f), 1u);
+    /* ...but a stem where the empty-stem session expects none */
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/x-1.csv", "DAQiFi", ".csv", &f), SDMANIFEST_PART_NONE);
+    /* wrong extension against an empty stem */
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/-1.txt", "DAQiFi", ".csv", &f), SDMANIFEST_PART_NONE);
+    /* the separator itself missing */
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/1.csv", "DAQiFi", ".csv", &f), SDMANIFEST_PART_NONE);
+    /* a no-extension session must not swallow an extended name */
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/log-1.csv", "DAQiFi", "log", &f), SDMANIFEST_PART_NONE);
+    /* ...and vice versa */
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/log-1", "DAQiFi", "log.csv", &f), SDMANIFEST_PART_NONE);
+    /* a stem that is a PREFIX of ours is not ours */
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/ex-1.csv", "DAQiFi", "exp.csv", &f), SDMANIFEST_PART_NONE);
+    /* ...nor one that EXTENDS ours */
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/expx-1.csv", "DAQiFi", "exp.csv", &f), SDMANIFEST_PART_NONE);
+}
+
 int main(void)
 {
     printf("=== #924 SD session integrity manifest ===\n");
@@ -1455,5 +1535,7 @@ int main(void)
     RUN(part_index_is_null_safe);
     RUN(part_index_round_trips_the_filename_formatter);
     RUN(a_foreign_base_name_that_is_one_of_our_parts_is_recognised);
+    RUN(part_index_inverts_the_generator_over_a_set_of_stems_and_extensions);
+    RUN(part_index_says_none_to_a_near_miss);
     return TEST_SUMMARY();
 }

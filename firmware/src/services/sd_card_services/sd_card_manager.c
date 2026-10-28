@@ -155,7 +155,30 @@ _Static_assert(offsetof(SYS_FS_FSTAT, lfname) >= sizeof(FILINFO),
          + SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX \
          + sizeof(SD_MANIFEST_EXT) + 2u)
 
-#define SD_FOREIGN_SCAN_MAX_MANIFESTS   16u
+/* ⛔⛔ #1124 r21 AUDIT HIGH (:2915): THERE IS NO CAP ON THE MANIFEST COUNT,
+ * and there must not be. This held 16, FAULTed on the 17th, and a FAULT is a
+ * refusal -- so after 17 short sessions in one directory (34 files, well under
+ * MAX_DIR_FILES) EVERY later capture was disarmed, opt-in or not. A regression
+ * in ordinary logging, introduced by the very guard meant to protect it.
+ *
+ * ⭐ THE RULE THE DEFECT BREAKS: A COUNT OF PRE-EXISTING WORK MUST NEVER
+ * REFUSE A NEW SESSION. Using more of the card is not a fault condition, and a
+ * bound whose only outcome is "refuse" turns ordinary accumulation into a
+ * brick. The same mistake twice over now -- see the two wrong-dimension bounds
+ * fixed earlier this round -- and the tell is identical: a cap adopted because
+ * a cap felt prudent, without asking what exceeding it would MEAN.
+ *
+ * The cost is bounded without it, by two things that are already true:
+ *   - per manifest, SD_FOREIGN_SCAN_MAX_LINES and SD_MANIFEST_LINE_MAX bound
+ *     the bytes read;
+ *   - the number of manifests is bounded by the DIRECTORY, which #689 rolls to
+ *     a bucket at SD_CARD_MANAGER_MAX_DIR_FILES entries. A manifest and the
+ *     data file it describes both occupy entries, so a conforming directory
+ *     holds at most ~MAX_DIR_FILES/2 manifests -- and the walk's own
+ *     SD_FOREIGN_SCAN_MAX_DIR_ENTRIES corruption guard covers a directory
+ *     filled by something other than us.
+ * Neither of those is a refusal in the ordinary case, which is the property
+ * the deleted cap lacked. */
 /* ⛔⛔ #1124 r21: A CORRUPTION GUARD, NOT A CAPACITY POLICY -- and deliberately
  * NOT CountDirEntries' bound.
  *
@@ -2727,6 +2750,7 @@ static sd_InspectResult sd_ManifestRecordsName(const char *manifestPath,
     size_t lineLen = 0u;
     uint32_t lines = 0u;
     bool sawEof = false;
+    bool identified = false;
     sd_InspectResult out = SD_INSPECT_CLEAR;
 
     SYS_FS_HANDLE h = SYS_FS_FileOpen(manifestPath, SYS_FS_FILE_OPEN_READ);
@@ -2742,6 +2766,38 @@ static sd_InspectResult sd_ManifestRecordsName(const char *manifestPath,
             LOG_E("[SD1124] unparsable read");
             out = SD_INSPECT_FAULT;
             break;
+        }
+        /* ⛔⛔ #1124 r21 AUDIT MEDIUM (:2909): IS THIS ACTUALLY A MANIFEST?
+         *
+         * The extension alone does not say. `old.mfst` is a legal name for a
+         * DATA file, and treating one as a manifest made it fail to parse,
+         * which is a FAULT, which refuses -- so one ordinarily-named user file
+         * disarmed every later capture in that directory. The guard turned a
+         * filename into a brick.
+         *
+         * ⚠ IDENTIFIED BY CONTENT, NOT BY PAIRING WITH `X`. The reviewer
+         * offered either; existence-pairing is wrong HERE, and the reason is
+         * the whole point of this scan. A manifest whose data file has been
+         * DELETED while the manifest survived is exactly the stale record this
+         * guard was widened to catch -- creating a file at a name such a
+         * record still claims makes it describe bytes it never saw. Pairing on
+         * existence would skip precisely that manifest, so the fix for a
+         * MEDIUM would have silently reopened the HIGH.
+         *
+         * The content test is the one the create path already trusts for this
+         * same question (sd_InspectManifestPathOverwritable), so there is one
+         * notion of "looks like a manifest" rather than two free to disagree.
+         *
+         * NOT a manifest -> SKIP it (CLEAR), because it records nothing about
+         * our names. A file that IS one and then fails to parse is still
+         * FAULT: that is a damaged record, not an unrelated file. */
+        if (!identified && got > 0u) {
+            identified = true;
+            if (!SdManifest_FirstLineLooksLikeManifest(chunk, got)) {
+                /* log_budget: max=87 */
+                LOG_E("[SD1124] note not a manifest: '%s'", manifestPath);
+                break;              /* out stays CLEAR: skipped, not refused */
+            }
         }
         if (got == 0u) {
             sawEof = true;
@@ -2912,16 +2968,7 @@ static sd_InspectResult sd_ScanForeignManifests(const char *needle) {
         if (SdManifest_PathsEqualCaseInsensitive(st.fname, ownLeaf)) {
             continue;                   /* our own: its records are ours */
         }
-        if (++manifests > SD_FOREIGN_SCAN_MAX_MANIFESTS) {
-            /* Bounds the per-open cost absolutely. A directory holding more
-             * foreign manifests than this, entered WITH the overwrite opt-in,
-             * is refused rather than permitted to re-read them at every
-             * rotation -- which is how #689's create wedge happened. */
-            LOG_E("[SD1124] unparsable mfst over %u",
-                  (unsigned)SD_FOREIGN_SCAN_MAX_MANIFESTS);
-            out = SD_INSPECT_FAULT;
-            break;
-        }
+        manifests++;        /* counted for the log only -- never a refusal */
         /* ⛔ NO EARLY EXIT IN THE INDEX PASS. Finding one foreign manifest is
          * not the answer any more -- every one of them has to be read, or the
          * bits are a partial record of what is claimed, which is a missed
