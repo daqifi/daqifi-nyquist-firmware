@@ -3873,6 +3873,8 @@ SETTINGS_SRC := ../../firmware/src/services/daqifi_settings.c
 BUTTONLATCH_BIN := run_1092_tests
 FW_POWER_SRC := $(FW_HAL)/Power/PowerApi.c
 FW_UI_SRC    := $(FW_HAL)/UI/UI.c
+FW_BQ_SRC    := $(FW_HAL)/BQ24297/BQ24297.c
+PIN1092_I2C  := pin_1092_no_blocking_before_powerdown.py
 
 SEQ908_BIN := run_908_tests
 
@@ -4143,7 +4145,8 @@ $(SEQ908_BIN): test_908_cal_source_seqlock.c test_framework.h $(SETTINGS_SRC) $(
 # in the prose that explains the fix -- which, in these two files, it does for
 # every one of them.
 $(BUTTONLATCH_BIN): test_1092_button_poweroff_latch.c test_framework.h \
-                   $(FW_POWER_SRC) $(FW_UI_SRC) $(SCPI_INTERFACE_C) $(RECIPES)
+                   $(FW_POWER_SRC) $(FW_UI_SRC) $(SCPI_INTERFACE_C) \
+                   $(FW_BQ_SRC) $(PIN1092_I2C) $(RECIPES)
 	@# PIN 1 -- the common DO_POWER_DOWN handler must NOT clear the request.
 	@# A NEGATIVE pin, so it is scoped to that handler's own body rather than
 	@# the file: there are five other legitimate `= NO_CHANGE` writes in
@@ -4257,10 +4260,14 @@ $(BUTTONLATCH_BIN): test_1092_button_poweroff_latch.c test_framework.h \
 	       rm -f /tmp/.p1092f.$$$$; exit 1; }; \
 	 r=`grep -n 'autoPromotedThisVbusSession = false' /tmp/.p1092f.$$$$ | cut -d: -f1`; \
 	 g=`grep -n 'autoPowerOnUsb &&' /tmp/.p1092f.$$$$ | head -1 | cut -d: -f1`; \
-	 v=`grep -n 'Power_UpdateStatusFromGPIO' /tmp/.p1092f.$$$$ | head -1 | cut -d: -f1`; \
+	 v=`grep -n 'Power_RefreshVbusFromPhy' /tmp/.p1092f.$$$$ | head -1 | cut -d: -f1`; \
 	 test -n "$$g" && test -n "$$v" \
 	  || { echo "ERROR: Power_HandleStandbyState no longer contains the"; \
-	       echo "       auto-promote gate and/or a VBUS refresh (#1092 r4)."; \
+	       echo "       auto-promote gate and/or a Power_RefreshVbusFromPhy()"; \
+	       echo "       entry refresh (#1092 r4b). The refresh must be the"; \
+	       echo "       PHY-ONLY helper: the full Power_UpdateStatusFromGPIO()"; \
+	       echo "       reaches BQ24297_Read_I2C and must never precede"; \
+	       echo "       Power_Down() -- see PIN 7."; \
 	       rm -f /tmp/.p1092f.$$$$; exit 1; }; \
 	 test "$$r" -lt "$$g" \
 	  || { echo "ERROR: the AUTOOn latch re-arm is INSIDE the auto-promote"; \
@@ -4283,8 +4290,27 @@ $(BUTTONLATCH_BIN): test_1092_button_poweroff_latch.c test_framework.h \
 	       echo "       latch (r2 residual), the truthful one must (r3"; \
 	       echo "       regression). The fresh PHY read is what makes the"; \
 	       echo "       discriminator sound; no predicate over the cache can."; \
+	       echo "       It must be Power_RefreshVbusFromPhy(), not the full"; \
+	       echo "       status refresh -- that one does I2C (PIN 7)."; \
 	       rm -f /tmp/.p1092f.$$$$; exit 1; }; \
 	 rm -f /tmp/.p1092f.$$$$
+	@# PIN 7 -- r4b: nothing that can block unboundedly may run on the
+	@# shutdown pass before Power_Down(). A CALL-GRAPH pin, not a grep: r4
+	@# hoisted Power_UpdateStatusFromGPIO() to the handler's entry for a fresh
+	@# VBUS reading, and that put BQ24297_Read_I2C(REG08) -- I2C mutex with
+	@# portMAX_DELAY, then a blocking transfer -- ahead of the power-down, so a
+	@# stuck bus would leave the rails and the MCU self-hold ON. The function's
+	@# NAME gives none of that away; the I2C is two calls down, which is why
+	@# this derives the dangerous set from the callees transitively.
+	@# Its own self-test runs FIRST, so a pin that has stopped working cannot
+	@# report a pass -- including the arm that proves it accepts main's shape
+	@# (an unconditional blocking call AFTER Power_Down is fine).
+	@$(PYTHON) $(PIN1092_I2C) --self-test >/dev/null \
+	  || { echo "ERROR: $(PIN1092_I2C) --self-test FAILED. The #1092 r4b"; \
+	       echo "       blocking-call pin is broken, so its verdict on the"; \
+	       echo "       firmware below would be meaningless. Fix the pin."; \
+	       $(PYTHON) $(PIN1092_I2C) --self-test; exit 1; }
+	@$(PYTHON) $(PIN1092_I2C) --power-src $(FW_POWER_SRC) --bq-src $(FW_BQ_SRC)
 	$(CC) $(CFLAGS) -o $(BUTTONLATCH_BIN) test_1092_button_poweroff_latch.c
 
 

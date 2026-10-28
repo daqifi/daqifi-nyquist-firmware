@@ -264,6 +264,21 @@ else
 fi
 restore
 
+echo "== M12: add the FULL status refresh back at the handler entry, KEEPING   =="
+echo "==      the PHY-only one. PIN 6 still passes (the entry refresh is       =="
+echo "==      present and correctly ordered), so only PIN 7 can catch this --  =="
+echo "==      which is the point: the hazard is the CALLEE, not the position.   =="
+echo "==      The renamed-wrapper variant is covered by the pin's own          =="
+echo "==      self-test, which cannot be expressed as a one-line sed here.     =="
+if sub "$P" '    Power_RefreshVbusFromPhy();' \
+          '    Power_RefreshVbusFromPhy();
+    Power_UpdateStatusFromGPIO();'; then
+    expect "M12 no blocking call before Power_Down" "transitively reaches a blocking sink"
+else
+    echo "  FAIL M12 anchor absent."; fail=$((fail+1))
+fi
+restore
+
 echo "== restored =="
 expect "post-restore baseline" CLEAN
 

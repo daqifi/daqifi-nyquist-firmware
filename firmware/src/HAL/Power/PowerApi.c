@@ -639,20 +639,42 @@ void Power_Down(void) {
  * Future: Issue #173 tracks adding interrupt-driven I2C for scenarios that
  * require BQ24297 register access (config changes, detailed diagnostics).
  */
-static void Power_UpdateStatusFromGPIO(void) {
-    /* Update battery voltage and charge percentage from ADC */
-    Power_UpdateChgPct();
-
-    /* Update external power status from hardware VBUS detection
-     * Read directly from USB hardware register - more reliable than software events
+/* ⛔ #1092 r4b: pgStat ALONE, from the USB PHY, with NOTHING ELSE ON THE PATH.
+ *
+ * This exists because the shutdown pass needs a fresh VBUS reading and must not
+ * be preceded by an unbounded transaction. Power_UpdateStatusFromGPIO() -- which
+ * r4 originally called here -- is NOT safe for that: it also runs
+ * Power_UpdateChgPct() and BQ24297_Read_I2C(REG08), and that read takes the I2C
+ * mutex with portMAX_DELAY (BQ24297.c:459) before a blocking Harmony transfer.
+ * Two unbounded waits. A held-low SCL5, or any task holding that mutex, would
+ * hang Power_Down() with the rails and the MCU self-hold still on.
+ *
+ * ⛔ r4's comment claimed this path was "one PHY read, no I2C". That was FALSE
+ * and I wrote it without reading the callee -- the register names were right
+ * there in the function I was citing. A claim about what a function does is a
+ * claim about its CALLEES, and the cost of checking was one grep.
+ *
+ * Kept as the single derivation of pgStat rather than duplicated at the two
+ * call sites, so a threshold change cannot reach one and miss the other. */
+static void Power_RefreshVbusFromPhy(void) {
+    /* Read directly from USB hardware register - more reliable than software events
      * which may not trigger correctly for wall chargers without USB data lines.
      *
      * Use USBHS_VBUS_BELOW_VBUSVALID threshold (~4.0V) instead of USBHS_VBUS_VALID
      * (~4.75V) to handle wall chargers with minor voltage sag. This aligns better
      * with BQ24297's pgStat threshold (3.88V) for external power detection. */
     USBHS_VBUS_LEVEL vbusLevel = PLIB_USBHS_VBUSLevelGet(USBHS_ID_0);
-    bool hasExternalPower = (vbusLevel >= USBHS_VBUS_BELOW_VBUSVALID);
-    pData->BQ24297Data.status.pgStat = hasExternalPower;
+    pData->BQ24297Data.status.pgStat =
+            (vbusLevel >= USBHS_VBUS_BELOW_VBUSVALID);
+}
+
+static void Power_UpdateStatusFromGPIO(void) {
+    /* Update battery voltage and charge percentage from ADC */
+    Power_UpdateChgPct();
+
+    /* Update external power status from hardware VBUS detection. */
+    Power_RefreshVbusFromPhy();
+    bool hasExternalPower = pData->BQ24297Data.status.pgStat;
 
     /* vsysStat — the BQ24297's authoritative low-battery signal (REG08 bit0:
      * 1 = BAT < VSYSMIN 3.0V). #564: read it over I2C; do NOT synthesize it from
@@ -743,12 +765,19 @@ static void Power_HandleStandbyState(void) {
      * Those are indistinguishable from the CACHED pgStat: both read false and
      * then true. So no predicate over the cache can serve both -- the
      * ambiguity is entirely an artifact of reading a stale value, and the fix
-     * is to stop reading one. pgStat comes straight from the USB PHY
-     * (PLIB_USBHS_VBUSLevelGet) with no I2C, and this handler already called
-     * this function a few lines further down, before the power-up decision --
-     * so this is the SAME read hoisted to cover the latch decision too, not a
-     * new cost. The call below is now redundant and says so. */
-    Power_UpdateStatusFromGPIO();
+     * is to stop reading one.
+     *
+     * ⛔ THIS MUST BE THE PHY READ ALONE, NOT THE FULL STATUS REFRESH. r4
+     * called Power_UpdateStatusFromGPIO() here and that was a HIGH of its own:
+     * the shutdown pass runs below, and that helper reaches
+     * BQ24297_Read_I2C(REG08), which waits on the I2C mutex with portMAX_DELAY
+     * (BQ24297.c:459) and then on a blocking Harmony transfer. Putting either
+     * ahead of Power_Down() means a stuck I2C bus leaves the rails and the MCU
+     * self-hold ON -- the exact failure this row is about, reintroduced by its
+     * own fix. Nothing on the path from here to Power_Down() may block
+     * unboundedly; tests/host/pin_1092_no_blocking_before_powerdown.py checks the
+     * CALLEES transitively, so renaming a wrapper cannot defeat it. */
+    Power_RefreshVbusFromPhy();
 
     /* #454: Auto-power-up on VBUS-present.  Fires at boot (if USB
      * plugged at power-on) and on VBUS-rising mid-session (cable
@@ -799,11 +828,15 @@ static void Power_HandleStandbyState(void) {
         pData->requestedPowerState == DO_POWER_UP_EXT_DOWN) {
 
         /* Refresh power status from GPIO/ADC before power-up decision.
-         * ⚠ #1092 r4: now REDUNDANT -- the handler refreshes on entry so the
-         * latch decision above sees a fresh VBUS reading. Kept because it is
-         * harmless (one PHY read, no I2C) and because deleting it would make
-         * this arm depend on a caller several branches away for its own
-         * precondition. */
+         *
+         * ⚠ #1092 r4b: NOT redundant with the entry refresh, and the r4 comment
+         * that said so was wrong twice over. The entry call refreshes pgStat
+         * ONLY; this one also updates the battery ADC, reads vsysStat over I2C
+         * and derives chgStat -- and Power_HasSufficientPower() below consults
+         * vsysStat. The unbounded I2C wait that makes the full refresh unsafe
+         * on the shutdown path is acceptable here: this arm is powering UP, so
+         * a stuck bus delays a power-up instead of stranding a power-down with
+         * the rails on. */
         Power_UpdateStatusFromGPIO();
 
         if (Power_HasSufficientPower()) {
