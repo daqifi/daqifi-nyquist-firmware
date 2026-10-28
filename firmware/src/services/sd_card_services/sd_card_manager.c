@@ -860,6 +860,30 @@ typedef struct {
      * records. False -- the common case -- means no content read is ever
      * needed, which is what keeps this off the rotation path. */
     volatile bool foreignManifestsPresent;
+    /* ⛔⛔ #1124 r25 AUDIT HIGH (:2890): SOME FOREIGN RECORD'S INDEX IS AT OR
+     * ABOVE THE BITSET'S RANGE, so the bitset cannot answer for it.
+     *
+     * r22-r24 established "an index past our part limit cannot be ours, so
+     * SKIP it". That rested on fileCounter being bounded by bucket capacity --
+     * (MAX_BUCKET + 1) * MAX_DIR_FILES = 4160 -- and IT IS NOT. Measured: the
+     * existing-target REOPEN path suppresses BOTH the bucket roll (the
+     * `while (bucketOk && !reopenExisting && ...)` advance) and the
+     * filesInCurBucket++ that feeds it, so a session that keeps re-opening
+     * existing targets advances fileCounter without ever consuming bucket
+     * capacity. fileCounter is a uint32_t and generateFilename budgets TEN
+     * digits for it, so there is no ceiling below 2^32.
+     *
+     * ⭐ SO THE SKIP WAS A FALSE NEGATIVE IN THE CORE CHECK -- the opposite
+     * direction from the faults the last three rounds removed, and worse: a
+     * fault refuses a session loudly, a false negative lets a collision
+     * through silently. Fixing a fail-closed habit six times made me apply it
+     * once where the premise did not hold.
+     *
+     * Sizing the bitset to the true maximum is not available (2^32 bits), so
+     * an index we cannot RECORD routes to the exact comparison instead. The
+     * rule from r23 still holds exactly as written: a foreign name never
+     * FAULTS -- it becomes "check exactly", not "refuse". */
+    volatile bool foreignAboveLimitRecord;
     // #689: bucketing state. curBucket is the subdirectory index currently
     // being filled (0 == the configured directory itself); bucketPath is its
     // full path, rebuilt only when the bucket changes. bucketFileCountAtStart
@@ -1843,6 +1867,7 @@ bool sd_card_manager_Init(sd_card_manager_settings_t *pSettings) {
     gSDCardData.overwriteAuthorizedManifest[0] = '\0';
     gSDCardData.foreignScanPending = false;
     gSDCardData.foreignManifestsPresent = false;
+    gSDCardData.foreignAboveLimitRecord = false;
     sd_ForeignBitsClear();
     /* #981: and the fault-injection arm, for the same reason plus a stronger
      * one -- this is the line that makes "a reboot always clears it" TRUE.
@@ -2886,9 +2911,18 @@ static sd_InspectResult sd_ManifestRecordsName(const char *manifestPath,
                  * is only safe when the thing that cannot happen is OURS to
                  * produce. For anything a FOREIGN file can legitimately be,
                  * the fail-closed branch becomes a denial of service. */
-                if ((idx != SDMANIFEST_PART_NONE)
-                        && (idx < SD_FOREIGN_PART_LIMIT)) {
-                    sd_ForeignBitSet(idx);
+                if (idx != SDMANIFEST_PART_NONE) {
+                    if (idx < SD_FOREIGN_PART_LIMIT) {
+                        sd_ForeignBitSet(idx);
+                    } else {
+                        /* ⛔ r25 (:2890): NOT a skip. We have no bit for it, so
+                         * we remember that the bitset is incomplete and let the
+                         * exact comparison decide at the open. Skipping here
+                         * was a false negative, because fileCounter is not
+                         * bounded by bucket capacity -- see
+                         * foreignAboveLimitRecord. */
+                        gSDCardData.foreignAboveLimitRecord = true;
+                    }
                 }
             }
             lineLen = 0u;
@@ -3236,6 +3270,7 @@ static bool sd_TargetSafeToOpenForWrite(const char *dataPath) {
          * must not silently reuse half-filled bits either -- hence the clear
          * on the fault path too. */
         sd_ForeignBitsClear();
+        gSDCardData.foreignAboveLimitRecord = false;
         const sd_InspectResult pass = sd_ScanForeignManifests(NULL);
         taskENTER_CRITICAL();
         gSDCardData.foreignScanPending = false;
@@ -3243,6 +3278,7 @@ static bool sd_TargetSafeToOpenForWrite(const char *dataPath) {
         taskEXIT_CRITICAL();
         if (pass != SD_INSPECT_CLEAR) {
             sd_ForeignBitsClear();
+            gSDCardData.foreignAboveLimitRecord = false;
             gSDCardData.writeRefuseReason = SD_REFUSE_MANIFEST_UNPARSABLE;
             return false;
         }
@@ -3252,8 +3288,16 @@ static bool sd_TargetSafeToOpenForWrite(const char *dataPath) {
      * the path, because the bucket a part lands in is not known at scan time.
      * `foreignManifestsPresent` here means "the bits are valid"; without a
      * completed pass there is nothing to test. */
+    /* ⛔ r25 (:2890): two ways the exact comparison is owed. The bit, as
+     * before; or an index this session may be at which no bit could represent,
+     * when some foreign record also sits up there. The second term costs
+     * nothing in the ordinary case: it needs BOTH a counter past the bitset
+     * (only reachable through the reopen path, which bypasses bucket capacity)
+     * AND a foreign record that far out. */
     if (gSDCardData.foreignManifestsPresent
-            && sd_ForeignBitTest(gSDCardData.fileCounter)) {
+            && (sd_ForeignBitTest(gSDCardData.fileCounter)
+                || ((gSDCardData.fileCounter >= SD_FOREIGN_PART_LIMIT)
+                    && gSDCardData.foreignAboveLimitRecord))) {
         const sd_InspectResult rec = sd_ScanForeignManifests(dataPath);
         if (rec != SD_INSPECT_CLEAR) {
             gSDCardData.writeRefuseReason =
@@ -7303,6 +7347,7 @@ static bool sd_UpdateSettingsImpl(sd_card_manager_settings_t *pSettings,
              * next to a fresh `pending` is the kind of pair a later reader has
              * to reason about, and clearing it removes the question. */
             gSDCardData.foreignManifestsPresent = false;
+            gSDCardData.foreignAboveLimitRecord = false;
         }
         taskEXIT_CRITICAL();
     }

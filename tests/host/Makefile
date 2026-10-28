@@ -1416,6 +1416,11 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	 fi
 	@# ⛔⛔ PIN 18 -- THE BIT IS A NECESSARY CONDITION, NEVER THE DECISION.
 	@#
+	@# r25: the GATE widened (an index above the bitset's range also owes the
+	@# exact check -- audit :2890), so the key moved to the gate's TAIL. The
+	@# invariant is unchanged and is what the key still asserts: whatever decides
+	@# that a check is owed, the thing immediately after it is the EXACT scan.
+	@#
 	@# gForeignPartBits is indexed by PART INDEX, and the index does not
 	@# determine the path: a part goes to <bucket>/<stem>-<N><ext>, and which
 	@# bucket depends on how full the buckets are when it is opened, which the
@@ -1431,7 +1436,7 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	@# result and not from the bit.
 	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
 	 case "$$pp" in \
-	   *"&& sd_ForeignBitTest(gSDCardData.fileCounter)) { const sd_InspectResult rec = sd_ScanForeignManifests(dataPath);"*) ;; \
+	   *"&& gSDCardData.foreignAboveLimitRecord))) { const sd_InspectResult rec = sd_ScanForeignManifests(dataPath);"*) ;; \
 	   *) echo "ERROR: #1124 r21 PIN 18: a set foreign-part bit no longer gates"; \
 	      echo "       an EXACT scan of the real target path. The bit is only a"; \
 	      echo "       necessary condition -- the part index does not determine"; \
@@ -1666,6 +1671,19 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	@# entitled to a file called exp-5000.csv. FAULT is a refusal, so one such
 	@# record disarmed every capture in the directory.
 	@#
+	@# ⛔⛔ r25 REWROTE THIS PIN, BECAUSE ITS FIRST FORM PINNED A DEFECT. It
+	@# asserted "an over-limit index is SKIPPED" as exact text -- and r25 found
+	@# that to be a FALSE NEGATIVE: fileCounter is NOT bounded by bucket
+	@# capacity (the existing-target reopen path suppresses the roll and the
+	@# count that drives it), so an index above the bitset CAN be ours, and
+	@# skipping it misses the collision silently.
+	@#
+	@# ⭐ So this pin was DEFENDING the bug, exactly as test_924's "index 0
+	@# cannot be in a bucket" row did one round earlier. A guard written at the
+	@# same time as the code it guards inherits that code's wrong premise and
+	@# then makes it look deliberate. The surviving half of the invariant is the
+	@# half that was always right: an over-limit index must not FAULT.
+	@#
 	@# ⭐ THE GENERAL RULE, and the reason this is pinned rather than just
 	@# fixed: "this cannot happen, so assert" is only safe when the impossible
 	@# thing is OURS TO PRODUCE. For anything a FOREIGN file may legitimately be,
@@ -1673,12 +1691,21 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	@# rounds (the manifest-count cap was the first).
 	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
 	 case "$$pp" in \
-	   *"if ((idx != SDMANIFEST_PART_NONE) && (idx < SD_FOREIGN_PART_LIMIT)) { sd_ForeignBitSet(idx); }"*) ;; \
-	   *) echo "ERROR: #1124 r22 PIN 25: an index past SD_FOREIGN_PART_LIMIT is no"; \
-	      echo "       longer simply SKIPPED in the index pass. If it faults, one"; \
-	      echo "       foreign record named exp-5000.csv refuses every capture in"; \
-	      echo "       that directory (audit :2871). It cannot be one of our"; \
-	      echo "       parts, so there is nothing to check -- do not set a bit."; \
+	   *"gSDCardData.foreignAboveLimitRecord = true;"*) ;; \
+	   *) echo "ERROR: #1124 r25 PIN 25: an index past SD_FOREIGN_PART_LIMIT no"; \
+	      echo "       longer routes to the exact check. Skipping it is a FALSE"; \
+	      echo "       NEGATIVE (audit :2890) -- fileCounter is not bounded by"; \
+	      echo "       bucket capacity, because the reopen path suppresses the"; \
+	      echo "       roll and the count that drives it, so such an index CAN be"; \
+	      echo "       ours. Faulting on it is also wrong (audit :2871). It must"; \
+	      echo "       set foreignAboveLimitRecord and let the open decide."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"if (idx < SD_FOREIGN_PART_LIMIT) { sd_ForeignBitSet(idx); } else {"*) ;; \
+	   *) echo "ERROR: #1124 r25 PIN 25: the index pass no longer splits in-range"; \
+	      echo "       from above-range indices. In-range sets a bit; above-range"; \
+	      echo "       must be remembered, not dropped and not faulted."; \
 	      exit 1;; \
 	 esac
 	@# ⛔⛔ PIN 26 -- r22 AUDIT MEDIUM (:2930): A BUCKET-SHAPED CONFIGURED
@@ -1884,6 +1911,48 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	      echo "       faults, one over-long filename in the directory refuses"; \
 	      echo "       every capture there. A foreign NAME must never fault the"; \
 	      echo "       scan -- see PIN 27."; \
+	      exit 1;; \
+	 esac
+	@# ⛔⛔ PIN 32 -- r25 AUDIT HIGH (SdManifest.h:258): THE GRANT REQUIRES
+	@# ASCII-ONLY, IN BOTH THE FILENAME AND THE DIRECTORY.
+	@#
+	@# SdManifest_FoldChar folds ASCII only, and says so. FatFs on a FAT volume
+	@# folds the OEM code page (CP437 here), where e.g. 0x82 and 0x90 are the
+	@# same character and our folder leaves them distinct. Two names FatFs calls
+	@# equal therefore compare unequal to us -- the same divergence as an 8.3
+	@# alias, with the same consequence: a foreign record naming our file is not
+	@# matched.
+	@#
+	@# ⚠ REFUSE THE FORM; DO NOT MODEL CP437. A code-page table would be a
+	@# fifth naming rule AND would have to agree with whatever FF_CODE_PAGE is
+	@# set to, going silently wrong if that changes. Refusing the destructive
+	@# opt-in for a non-ASCII name costs nothing anyone needs; ordinary
+	@# refuse-by-default logging still accepts such names.
+	@#
+	@# ⚠ UNSIGNED BYTES ARE LOAD-BEARING: `char` is signed on this target, so a
+	@# plain `c > 0x7E` is FALSE for every high byte and the check would pass
+	@# exactly what it exists to catch. Pinned on the cast.
+	@pp=`$(CC) -fpreprocessed -E $(SD_BENCH_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 n=`printf '%s' "$$pp" | grep -o '(const unsigned char \*)' | grep -c .`; \
+	 if [ "$$n" -lt 2 ]; then \
+	   echo "ERROR: #1124 r25 PIN 32: fewer than 2 unsigned-char casts in the"; \
+	   echo "       SD:FILE ASCII checks (found $$n). Both the FILENAME and the"; \
+	   echo "       DIRECTORY must be range-checked, and on UNSIGNED bytes --"; \
+	   echo "       char is signed here, so a high byte compares as negative and"; \
+	   echo "       a signed test passes everything it exists to catch."; \
+	   exit 1; \
+	 fi; \
+	 case "$$pp" in \
+	   *"if ((u[i] < 0x20u) || (u[i] > 0x7Eu)) { return true; }"*) ;; \
+	   *) echo "ERROR: #1124 r25 PIN 32a: the DIRECTORY no longer refuses the"; \
+	      echo "       grant on a non-ASCII byte (SdManifest.h:258). FatFs folds"; \
+	      echo "       case by code page; this firmware folds ASCII only."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"[SD1124] scope name is not ASCII"*) ;; \
+	   *) echo "ERROR: #1124 r25 PIN 32b: the FILENAME no longer refuses the"; \
+	      echo "       grant on a non-ASCII byte (SdManifest.h:258)."; \
 	      exit 1;; \
 	 esac
 	$(CC) $(CFLAGS) -o $(GATE1124_BIN) test_1124_overwrite_gate.c

@@ -649,6 +649,35 @@ static bool SD_DirHasNonCanonicalForm(const char *dir)
     if (strchr(dir, '~') != NULL) {
         return true;
     }
+    /* ⛔⛔ #1124 r25 AUDIT HIGH (SdManifest.h:258): NON-ASCII IS A FORM WE
+     * REFUSE, because our case-folding and FatFs's do not agree on it.
+     *
+     * SdManifest_FoldChar folds ASCII only -- 'A'-'Z' -> 'a'-'z' -- and says so
+     * in its own header. FatFs on a FAT volume folds the OEM code page (CP437
+     * here), where e.g. 0x82 and 0x90 are the same character and our folder
+     * leaves them distinct. So two names FatFs considers equal compare unequal
+     * to us, which is the same divergence as an 8.3 alias and the same
+     * consequence: a foreign record naming our file is not matched.
+     *
+     * ⚠ REFUSE THE FORM; DO NOT MODEL CP437. Teaching the comparator a code
+     * page would mean carrying a 128-entry table that has to agree with
+     * whatever FF_CODE_PAGE is set to -- a fifth naming rule, and one that
+     * silently goes wrong if that setting changes. Refusing the grant for a
+     * non-ASCII name costs nothing anyone needs: this is the destructive
+     * opt-in, not ordinary logging, which still accepts these names.
+     *
+     * Bytes are tested unsigned: `char` is signed on this target, so a plain
+     * `c > 0x7E` comparison would be FALSE for every high byte -- the check
+     * would pass everything it exists to catch. */
+    {
+        const unsigned char *u = (const unsigned char *)dir;
+        size_t i;
+        for (i = 0u; u[i] != '\0'; i++) {
+            if ((u[i] < 0x20u) || (u[i] > 0x7Eu)) {
+                return true;
+            }
+        }
+    }
     if (dir[len - 1u] == '/') {
         return true;                    /* trailing separator */
     }
@@ -1124,6 +1153,28 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
          * r21's audit). The audit asking "find out why it isn't firing" has the
          * answer "because it was never there", and that is worth saying plainly
          * rather than presenting this as a repair. */
+        /* ⛔ r25 (SdManifest.h:258): the same ASCII-only rule for the NAME.
+         * Same reasoning as the directory arm in SD_DirHasNonCanonicalForm:
+         * our folder is ASCII-only and FatFs folds CP437, so a non-ASCII name
+         * can be FatFs-equal to a record we would not match. Unsigned bytes
+         * for the same signed-char reason. */
+        {
+            const unsigned char *u = (const unsigned char *)pBuff;
+            size_t i;
+            for (i = 0u; i < fileLen; i++) {
+                if ((u[i] < 0x20u) || (u[i] > 0x7Eu)) {
+                    /* log_budget: max=40 */
+                    LOG_E("[SD1124] scope name is not ASCII");
+                    SCPI_ExecutionError(context,
+                                        "SYST:STOR:SD:FILE: overwrite not allowed "
+                                        "for a name containing non-ASCII bytes - "
+                                        "FatFs folds case by code page and this "
+                                        "firmware folds ASCII only");
+                    result = SCPI_RES_ERR;
+                    goto __exit_point;
+                }
+            }
+        }
         if (memchr(pBuff, '~', fileLen) != NULL) {
             /* log_budget: max=40 */
             LOG_E("[SD1124] scope name has a tilde");
@@ -1140,7 +1191,8 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
             SCPI_ExecutionError(context,
                                 "SYST:STOR:SD:FILE: overwrite not allowed while "
                                 "SYST:STOR:SD:DIR contains '~', '//', a '.' or "
-                                "'..' component, or a trailing '/'");
+                                "'..' component, a trailing '/', or any "
+                                "non-ASCII byte");
             result = SCPI_RES_ERR;
             goto __exit_point;
         }

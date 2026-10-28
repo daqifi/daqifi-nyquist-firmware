@@ -110,6 +110,11 @@ typedef struct {
     bool     bucketChildRecordsTarget;
     /* r23 audit (:424): a foreign record whose index OVERFLOWS the parse. */
     bool     foreignOverflowRecord;
+    /* r25 audit (:2890): THIS session's own part counter is at or above the
+     * bitset's range. Reachable because the existing-target REOPEN path
+     * suppresses the bucket roll AND the count that feeds it, so the counter
+     * is not bounded by bucket capacity. */
+    bool     counterAboveLimit;
     /* observations */
     bool    opened;          /* the WRITE_PLUS open happened (truncating) */
     bool    manifestRemoved; /* something was unlinked */
@@ -167,61 +172,70 @@ typedef struct {
     /* r23 audit MEDIUM (:424): an overflowing index is SKIPPED. False
      * reproduces r22, which faulted -- so `exp-4294967296.csv` refused. */
     bool overflowIsSkipped;
+    /* r25 audit HIGH (:2890): an index the bitset cannot represent routes to
+     * the EXACT comparison. False reproduces r24, which SKIPPED it -- a FALSE
+     * NEGATIVE in the core check, which is a silent miss rather than a loud
+     * refusal and so strictly worse than the faults r22-r24 removed. */
+    bool aboveLimitRoutesToExact;
 } Shape;
 
 static const Shape SHAPE_R18 = { true,  false, false, false, false, false,
                                  false, false, false, false, false,
                                  false, false, 
-                                 false, false };
+                                 false, false, false };
 /* r19 as shipped: refuse-by-default and the disarm, but the gate still derived
  * the manifest name independently, honoured an opt-in on a recorded set's
  * part, let an inspector fault read as permissive, and never consumed. */
 static const Shape SHAPE_R19 = { false, true,  false, false, false, false,
                                  false, false, false, false, false,
                                  false, false, 
-                                 false, false };
+                                 false, false, false };
 /* r20 as shipped: everything r19 lacked, and none of r21's three. This is the
  * baseline every r21 test is differential against -- without it, "the fix
  * works" would be a claim about a shape nobody ever ran. */
 static const Shape SHAPE_R20 = { false, true,  true,  true,  true,  true,
                                  false, false, false, false, false,
                                  false, false, 
-                                 false, false };
+                                 false, false, false };
 /* What the r21 audit BLOCKED: every r21 property, and neither audit fix. This
  * is the baseline the two arms below are differential against. */
 static const Shape SHAPE_R21_AUDITED = { false, true, true, true, true, true,
                                          true, true, true, false, false,
                                          false, false, 
-                                         false, false };
+                                         false, false, false };
 /* What the r22 audit BLOCKED: every r21 fix plus both r21-audit fixes, and
  * neither r22-audit fix. The baseline the arms below are differential against. */
 /* What the r23 BLIND leg found at: every fix through r22's audit, and neither
  * r23 fix. (r23's steered leg failed on capacity, so that round is INCOMPLETE
  * coverage -- this baseline is named for what it contains, not for a clean
  * round.) */
+/* What r25's blind leg found at: every fix through r24, and not r25's. */
+static const Shape SHAPE_R24_AUDITED = { false, true, true, true, true, true,
+                                         true, true, true, true, true,
+                                         true, true, true, true, false };
 static const Shape SHAPE_R23_AUDITED = { false, true, true, true, true, true,
                                          true, true, true, true, true,
-                                         true, true, false, false };
+                                         true, true, false, false, false };
 static const Shape SHAPE_R22_AUDITED = { false, true, true, true, true, true,
                                          true, true, true, true, true,
                                          false, false, 
-                                         false, false };
+                                         false, false, false };
 static const Shape SHAPE_C   = { false, true,  true,  true,  true,  true,
                                  true,  true,  true,  true,  true,
                                  true,  true,  
-                                 true,  true };
+                                 true,  true, true };
 /* r21 with the scan's fail-closed arm removed: the one-line mistake that makes
  * an unparseable manifest read as empty. Everything else intact. */
 static const Shape SHAPE_C_SCAN_SKIPS = { false, true, true, true, true, true,
                                           true, true, false, true, true,
                                           true, true, 
-                                          true, true };
+                                          true, true, true };
 /* C's gate without the disarm: what this PR shipped before conv-ts asked
  * whether a refused session leaves the card usable. */
 static const Shape SHAPE_C_NO_DISARM = { false, false, true, true, true, true,
                                          true, true, true, true, true,
                                          true, true, 
-                                         true, true };
+                                         true, true, true };
 
 static World world(FsState data, FsState mfst, bool ours, bool asked) {
     World w;
@@ -343,6 +357,17 @@ static void model_open_target(World *w, Shape s) {
             && !s.overflowIsSkipped) {
         w->refusal = REFUSE_MANIFEST_UNPARSABLE;
         return;
+    }
+    /* ⛔⛔ r25 audit HIGH (:2890): a foreign record ABOVE the bitset's range,
+     * and OUR counter is up there too. The bitset cannot represent it, so
+     * SKIPPING it is a false negative -- it must route to the exact check. */
+    if (s.refuseForeignRecord && w->foreignOverLimitRecord
+            && w->counterAboveLimit) {
+        if (s.aboveLimitRoutesToExact) {
+            w->refusal = REFUSE_FOREIGN_RECORD;
+            return;
+        }
+        /* r24's behaviour: skipped, so the collision went unseen. */
     }
     /* r23 audit HIGH (:2980): the record lives in a manifest INSIDE one of our
      * bucket children, written by a session configured there. The mirror of
@@ -1163,6 +1188,59 @@ TEST(the_scan_looks_up_from_a_bucket_and_down_from_its_parent) {
     ASSERT_EQ(plain.refusal, REFUSE_NONE);
 }
 
+/* ---- r25 audit HIGH (:2890): a skip that was a FALSE NEGATIVE ----------- */
+
+/* ⛔⛔ THE DIRECTION MATTERS. r22-r24 removed six fail-CLOSED branches, where a
+ * foreign name refused a session loudly. This is the opposite and is worse: the
+ * collision is missed SILENTLY. Fixing a habit six times is what made me apply
+ * it once where its premise did not hold -- fileCounter is NOT bounded by
+ * bucket capacity, because the existing-target reopen path suppresses both the
+ * bucket roll and the count that drives it. */
+TEST(the_audited_r24_missed_a_collision_above_the_bitset_range) {
+    World w = world(FS_ABSENT, FS_ABSENT, false, false);
+    w.foreignOverLimitRecord = true;
+    w.counterAboveLimit = true;
+    model_arm_session(&w, SHAPE_R24_AUDITED);
+    model_open_target(&w, SHAPE_R24_AUDITED);
+    ASSERT_TRUE(w.opened);            /* skipped -- the collision went unseen */
+    ASSERT_EQ(w.refusal, REFUSE_NONE);
+}
+
+TEST(an_index_above_the_bitset_range_routes_to_the_exact_check) {
+    World w = world(FS_ABSENT, FS_ABSENT, false, false);
+    w.foreignOverLimitRecord = true;
+    w.counterAboveLimit = true;
+    model_arm_session(&w, SHAPE_C);
+    model_open_target(&w, SHAPE_C);
+    model_finish_refusal(&w, SHAPE_C);
+    ASSERT_FALSE(w.opened);
+    ASSERT_EQ(w.refusal, REFUSE_FOREIGN_RECORD);
+    ASSERT_FALSE(model_is_busy(&w));
+}
+
+/* ⭐ THE CONTROL, and it is the whole reason this is not just "always do the
+ * exact check". An over-limit foreign record while OUR counter is in range
+ * cannot collide -- different indices -- so it must still ARM, with no scan.
+ * Without this row the fix above is satisfied by refusing every session that
+ * shares a directory with a long-named foreign record. */
+TEST(an_over_limit_record_still_arms_when_our_counter_is_in_range) {
+    World w = world(FS_ABSENT, FS_ABSENT, false, false);
+    w.foreignOverLimitRecord = true;   /* counterAboveLimit stays false */
+    model_arm_session(&w, SHAPE_C);
+    model_open_target(&w, SHAPE_C);
+    model_finish_refusal(&w, SHAPE_C);
+    ASSERT_TRUE(w.opened);
+    ASSERT_EQ(w.refusal, REFUSE_NONE);
+    ASSERT_TRUE(model_is_busy(&w));
+
+    /* and the converse: our counter out of range with no such foreign record */
+    World b = world(FS_ABSENT, FS_ABSENT, false, false);
+    b.counterAboveLimit = true;
+    model_open_target(&b, SHAPE_C);
+    ASSERT_TRUE(b.opened);
+    ASSERT_EQ(b.refusal, REFUSE_NONE);
+}
+
 int main(void) {
     RUN(r18_truncates_an_existing_target_without_being_asked);
     RUN(c_refuses_an_existing_target);
@@ -1220,5 +1298,8 @@ int main(void) {
     RUN(the_audited_r23_missed_a_manifest_inside_a_bucket_child);
     RUN(a_manifest_inside_a_bucket_child_is_found_without_the_opt_in);
     RUN(the_scan_looks_up_from_a_bucket_and_down_from_its_parent);
+    RUN(the_audited_r24_missed_a_collision_above_the_bitset_range);
+    RUN(an_index_above_the_bitset_range_routes_to_the_exact_check);
+    RUN(an_over_limit_record_still_arms_when_our_counter_is_in_range);
     return TEST_SUMMARY();
 }

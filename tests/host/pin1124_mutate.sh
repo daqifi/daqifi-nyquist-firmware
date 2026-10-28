@@ -1168,6 +1168,58 @@ else
 fi
 restore
 
+echo "== R68 (PIN 25): SKIP an above-limit index again -- the r25 audit HIGH,  =="
+echo "==      and the only FALSE NEGATIVE this row has produced. The session   =="
+echo "==      still arms, still logs, still refuses every other collision; it  =="
+echo "==      simply stops seeing one, silently. Nothing else notices.         =="
+if sub "$F" '                        gSDCardData.foreignAboveLimitRecord = true;' \
+            '                        (void)0;'; then
+    expect "R68 an above-limit index routes to the exact check" \
+           "no longer routes to the exact check"
+else
+    echo "  FAIL R68 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R69 (PIN 18): widen the gate but drop the exact scan behind it, so    =="
+echo "==      the above-limit route REFUSES on the flag alone. Over-refuses    =="
+echo "==      correct sessions; the bit arm still looks right.                 =="
+if sub "$F" '        const sd_InspectResult rec = sd_ScanForeignManifests(dataPath);' \
+            '        (void)sd_ScanForeignManifests(dataPath);
+        const sd_InspectResult rec = SD_INSPECT_HAZARD;'; then
+    expect "R69 the widened gate still ends in the exact scan" "no longer gates"
+else
+    echo "  FAIL R69 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R70 (PIN 32a): drop the DIRECTORY ASCII refusal. A non-ASCII dir      =="
+echo "==      component then gets the opt-in, and FatFs folds it by code page  =="
+echo "==      while we fold ASCII only -- so a foreign record naming our file  =="
+echo "==      is not matched. The filename arm still passes.                   =="
+if sub "$S" '            if ((u[i] < 0x20u) || (u[i] > 0x7Eu)) {
+                return true;
+            }' '            if (false) {
+                return true;
+            }'; then
+    expect "R70 a non-ASCII directory refuses the grant" "PIN 32a: the DIRECTORY no longer"
+else
+    echo "  FAIL R70 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R71 (PIN 32): use SIGNED chars for the ASCII range test. Every high   =="
+echo "==      byte then compares as negative, so `> 0x7E` is false and the     =="
+echo "==      check passes exactly the input it exists to catch -- present,    =="
+echo "==      plausible, and inert.                                            =="
+if sub "$S" '        const unsigned char *u = (const unsigned char *)dir;' \
+            '        const char *u = dir;'; then
+    expect "R71 the ASCII test uses unsigned bytes" "unsigned-char casts"
+else
+    echo "  FAIL R71 anchor absent."; fail=$((fail+1))
+fi
+restore
+
 echo "== restored =="
 expect "post-restore baseline" CLEAN
 
