@@ -249,6 +249,185 @@ static inline size_t SdManifest_CanonicalDirLen(const char *dir)
     return len;
 }
 
+/* #1124 r21: ASCII case-fold, one definition. Folded the same way
+ * SdManifest_PathsEqualCaseInsensitive folds, and for the same reason: FAT does
+ * not distinguish case, and strcasecmp is not assumed present in this XC32
+ * newlib. */
+static inline char SdManifest_FoldChar(char c)
+{
+    return ((c >= 'A') && (c <= 'Z')) ? (char)(c - 'A' + 'a') : c;
+}
+
+static inline bool SdManifest_SegmentEqualFolded(const char *a, const char *b,
+                                                  size_t n)
+{
+    size_t i;
+    for (i = 0u; i < n; i++) {
+        if (SdManifest_FoldChar(a[i]) != SdManifest_FoldChar(b[i])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/* ⛔⛔ #1124 r21 / THE PURE HALF OF THE FOREIGN-RECORD GUARD.
+ *
+ * Given a name RECORDED in some manifest, decide which part index of a session
+ * based at `dir` + `file` that name could be -- i.e. "is this one of the names
+ * that session will itself write, and if so, which one?"
+ *
+ * This exists so the expensive question is asked ONCE PER SESSION instead of
+ * once per rotation. The caller reads each foreign manifest a single time at
+ * the session's first open, maps every record through this function, and sets
+ * a bit per index; each later open then tests one bit. See the cost note at
+ * sd_ScanForeignManifests.
+ *
+ * ⭐ A BIT IS A NECESSARY CONDITION, NOT A SUFFICIENT ONE, and the caller must
+ * treat it that way. The index does NOT determine the path: a part is written
+ * to <bucket>/<stem>-<N><ext>, and which bucket depends on how full the
+ * buckets are when that part is opened, which is not known at scan time. So a
+ * record and a part can share dir, stem, ext and N and still be different
+ * files -- `D/exp-1.csv` (a foreign session whose BASE name was exp-1.csv)
+ * versus `D/P001/exp-1.csv` (our part 1, after bucket 0 filled). A set bit
+ * therefore means "an exact check is owed for this index", never "refuse".
+ *
+ * Returns the index, or SDMANIFEST_PART_NONE when the name cannot be one of
+ * that session's own names. `*fault` is set when the name HAS the part shape
+ * but its index cannot be represented -- refuse, never ignore.
+ *
+ * DELIBERATELY A SUPERSET in one respect: any single intermediate segment is
+ * accepted as a possible bucket, rather than matching "P%03u" exactly, so this
+ * header needs no dependency on sd_card_manager.h. Over-matching only costs an
+ * extra exact check; under-matching would miss a collision, so the slack is on
+ * the safe side.
+ *
+ * ⚠ LIMITATION, stated rather than papered over: the comparison is TEXTUAL
+ * (case-folded). Every record this firmware writes comes from its own
+ * canonical construction, so an exact textual match is sound for them. A
+ * hand-edited or third-party .mfst could hold a name that is FatFs-EQUAL to a
+ * part but textually different -- a trailing dot or space, a duplicated
+ * separator, an 8.3 alias -- and this would not match it. Chasing the full
+ * FatFs equivalence set here is the naming-rule treadmill that cost rounds
+ * 16-19, and the exposure is narrow: without the overwrite opt-in the
+ * per-open existence check still refuses an existing target, so it takes a
+ * granted session AND a hand-edited manifest to reach.
+ */
+#define SDMANIFEST_PART_NONE  0xFFFFFFFFu
+
+static inline uint32_t SdManifest_PartIndexOf(const char *name,
+                                               const char *dir,
+                                               const char *file,
+                                               bool *fault)
+{
+    const char *rest;
+    const char *leaf;
+    const char *slash;
+    const char *dot;
+    const char *d;
+    const char *digitsEnd;
+    size_t dirLen;
+    size_t stemLen;
+    size_t extLen;
+    size_t leafLen;
+    uint32_t idx = 0u;
+
+    if (fault != NULL) {
+        *fault = false;
+    }
+    if (name == NULL || dir == NULL || file == NULL) {
+        return SDMANIFEST_PART_NONE;
+    }
+
+    /* Must sit at or below the session's directory. */
+    dirLen = SdManifest_CanonicalDirLen(dir);
+    if (strlen(name) <= (dirLen + 1u)) {
+        return SDMANIFEST_PART_NONE;
+    }
+    if (!SdManifest_SegmentEqualFolded(name, dir, dirLen)
+            || name[dirLen] != '/') {
+        return SDMANIFEST_PART_NONE;
+    }
+    rest = name + dirLen + 1u;
+
+    /* At most ONE intermediate segment (a rotation bucket). */
+    slash = strchr(rest, '/');
+    if (slash == NULL) {
+        leaf = rest;
+    } else {
+        if (strchr(slash + 1, '/') != NULL) {
+            return SDMANIFEST_PART_NONE;    /* deeper than we ever write */
+        }
+        leaf = slash + 1;
+    }
+
+    /* Index 0 is the configured name itself, and ONLY directly in the
+     * directory: generateFilename's counter==0 arm joins onto the bucket path,
+     * and the counter is 0 exactly once, while bucket 0 IS the directory. */
+    if (slash == NULL) {
+        if (strlen(leaf) == strlen(file)
+                && SdManifest_SegmentEqualFolded(leaf, file, strlen(file))) {
+            return 0u;
+        }
+    }
+
+    /* Otherwise "<stem>-<N><ext>", with N unpadded decimal as "%u" emits. */
+    dot = strrchr(file, '.');
+    stemLen = (dot != NULL) ? (size_t)(dot - file) : strlen(file);
+    extLen = (dot != NULL) ? strlen(dot) : 0u;
+    leafLen = strlen(leaf);
+    if (stemLen == 0u) {
+        return SDMANIFEST_PART_NONE;
+    }
+    /* stem + '-' + at least one digit + ext */
+    if (leafLen < (stemLen + 2u + extLen)) {
+        return SDMANIFEST_PART_NONE;
+    }
+    if (!SdManifest_SegmentEqualFolded(leaf, file, stemLen)) {
+        return SDMANIFEST_PART_NONE;
+    }
+    if (leaf[stemLen] != '-') {
+        return SDMANIFEST_PART_NONE;
+    }
+    if (extLen != 0u) {
+        if (!SdManifest_SegmentEqualFolded(leaf + (leafLen - extLen), dot,
+                                            extLen)) {
+            return SDMANIFEST_PART_NONE;
+        }
+    }
+    d = leaf + stemLen + 1u;
+    digitsEnd = leaf + (leafLen - extLen);
+    if (d >= digitsEnd) {
+        return SDMANIFEST_PART_NONE;
+    }
+    /* A leading zero is NOT our formatter's output ("%u" never pads), so such
+     * a name is one we can never open -- NONE, not a fault. Only an index we
+     * cannot REPRESENT is a fault, because then we cannot tell whether it is
+     * one of ours. */
+    if ((d[0] == '0') && ((digitsEnd - d) > 1)) {
+        return SDMANIFEST_PART_NONE;
+    }
+    for (; d < digitsEnd; d++) {
+        if ((*d < '0') || (*d > '9')) {
+            return SDMANIFEST_PART_NONE;
+        }
+        if (idx > ((0xFFFFFFFFu - (uint32_t)(*d - '0')) / 10u)) {
+            if (fault != NULL) {
+                *fault = true;
+            }
+            return SDMANIFEST_PART_NONE;
+        }
+        idx = (idx * 10u) + (uint32_t)(*d - '0');
+    }
+    if (idx == SDMANIFEST_PART_NONE) {
+        if (fault != NULL) {
+            *fault = true;              /* cannot be distinguished from NONE */
+        }
+        return SDMANIFEST_PART_NONE;
+    }
+    return idx;
+}
+
+
 static inline int SdManifest_FormatLine(char *out, size_t outLen,
                                         const char *name,
                                         uint64_t bytes, uint32_t crc,

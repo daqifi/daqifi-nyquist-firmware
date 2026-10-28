@@ -851,6 +851,49 @@ else
 fi
 restore
 
+echo "== R46 (PIN 18): make the BIT the decision -- delete the exact scan and   =="
+echo "==      refuse on the bit. The tempting simplification: it removes a      =="
+echo "==      whole second pass, and EVERY refusal test still passes, because   =="
+echo "==      the refusal still happens in the cases they cover. What it adds   =="
+echo "==      is refusals of CORRECT sessions, because the part index does not  =="
+echo "==      determine the path -- the bucket is unknown when the bits are     =="
+echo "==      built. Only PIN 18 sees it.                                       =="
+if sub "$F" '        const sd_InspectResult rec = sd_ScanForeignManifests(dataPath);' \
+            '        const sd_InspectResult rec = SD_INSPECT_HAZARD;'; then
+    expect "R46 the bit only gates an exact scan" \
+           "no longer gates"
+else
+    echo "  FAIL R46 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R47 (PIN 19): restore the PREFILTER early exit, so the index pass      =="
+echo "==      stops at the first foreign manifest. Correct for the old          =="
+echo "==      presence check, wrong now: the bitset becomes a PARTIAL record    =="
+echo "==      of which indices are claimed, so a collision recorded in a later  =="
+echo "==      manifest is never checked. Silent -- every test with ONE foreign  =="
+echo "==      manifest still passes.                                            =="
+if sub "$F" '        const int w = snprintf(path, sizeof(path), "%.*s/%s",' \
+            '        if (needle == NULL) { out = SD_INSPECT_HAZARD; break; }
+        const int w = snprintf(path, sizeof(path), "%.*s/%s",'; then
+    expect "R47 the index pass reads every manifest" "stops at the FIRST"
+else
+    echo "  FAIL R47 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R48 (PIN 20): leave a FAULTED pass's half-filled bits in place. This   =="
+echo "==      open still refuses, so nothing visible changes -- and a retry     =="
+echo "==      then reads a PARTIAL set as a complete answer.                    =="
+if sub "$F" '        if (pass != SD_INSPECT_CLEAR) {
+            sd_ForeignBitsClear();' \
+            '        if (pass != SD_INSPECT_CLEAR) {'; then
+    expect "R48 a faulted pass clears the bits" "no longer clears"
+else
+    echo "  FAIL R48 anchor absent."; fail=$((fail+1))
+fi
+restore
+
 echo "== restored =="
 expect "post-restore baseline" CLEAN
 

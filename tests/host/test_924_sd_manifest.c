@@ -1261,6 +1261,152 @@ TEST(the_extension_test_agrees_with_the_manifest_construction) {
     }
 }
 
+/* ---- #1124 r21: SdManifest_PartIndexOf -------------------------------------
+ *
+ * The pure half of the foreign-record guard, and the reason the expensive
+ * question is asked once per session instead of once per rotation. Real tests,
+ * not a model: it depends on nothing but <string.h>.
+ *
+ * Both error directions are live, and they are NOT symmetric:
+ *   - a MISS (returning NONE for a name that really is one of our parts) means
+ *     the bit is never set, the exact check never runs, and a foreign record is
+ *     silently invalidated. Fails OPEN.
+ *   - a false HIT only costs one exact scan, which then decides correctly.
+ * So the tests below lean on the miss direction.
+ */
+TEST(part_index_recognises_the_names_a_session_writes) {
+    bool f = true;
+    /* index 0 is the configured name itself, directly in the directory */
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp.csv", "DAQiFi", "exp.csv", &f), 0u);
+    ASSERT_FALSE(f);
+    /* rotation parts, bucket 0 (the directory itself) and a bucket */
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-1.csv", "DAQiFi", "exp.csv", &f), 1u);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-65.csv", "DAQiFi", "exp.csv", &f), 65u);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/P001/exp-65.csv", "DAQiFi", "exp.csv", &f), 65u);
+    /* a trailing slash on the directory must not change the answer */
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-7.csv", "DAQiFi/", "exp.csv", &f), 7u);
+    /* a name with no extension at all */
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/log-3", "DAQiFi", "log", &f), 3u);
+}
+
+/* FAT is case-insensitive, so a record reaching us upper-cased is the same
+ * file. A case-SENSITIVE match here would MISS it -- the fail-open direction. */
+TEST(part_index_folds_case_on_both_sides) {
+    bool f;
+    ASSERT_EQ(SdManifest_PartIndexOf("daqifi/EXP-1.CSV", "DAQiFi", "exp.csv", &f), 1u);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQIFI/exp-1.csv", "daqifi", "EXP.CSV", &f), 1u);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/Exp.Csv", "DAQiFi", "exp.csv", &f), 0u);
+}
+
+TEST(part_index_rejects_names_this_session_cannot_write) {
+    bool f;
+    /* another capture entirely */
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/other.csv", "DAQiFi", "exp.csv", &f), SDMANIFEST_PART_NONE);
+    /* right stem, wrong extension */
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-1.txt", "DAQiFi", "exp.csv", &f), SDMANIFEST_PART_NONE);
+    /* not an index */
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-x.csv", "DAQiFi", "exp.csv", &f), SDMANIFEST_PART_NONE);
+    /* no index at all */
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-.csv", "DAQiFi", "exp.csv", &f), SDMANIFEST_PART_NONE);
+    /* a different directory */
+    ASSERT_EQ(SdManifest_PartIndexOf("OTHER/exp-1.csv", "DAQiFi", "exp.csv", &f), SDMANIFEST_PART_NONE);
+    /* deeper than we ever write */
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/a/b/exp-1.csv", "DAQiFi", "exp.csv", &f), SDMANIFEST_PART_NONE);
+    /* ⚠ index 0 ONLY directly in the directory: generateFilename's counter==0
+     * arm runs exactly once, while bucket 0 IS the directory, so the
+     * configured name never appears inside a bucket. */
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/P001/exp.csv", "DAQiFi", "exp.csv", &f), SDMANIFEST_PART_NONE);
+    /* a padded index is not what "%u" emits, so it is a name we can never
+     * open -- NONE, and deliberately NOT a fault. */
+    f = true;
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-05.csv", "DAQiFi", "exp.csv", &f), SDMANIFEST_PART_NONE);
+    ASSERT_FALSE(f);
+    /* but a bare "0" index is legal digits (and still not index 0's name) */
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-0.csv", "DAQiFi", "exp.csv", &f), 0u);
+}
+
+/* An index we cannot REPRESENT is a FAULT, not a NONE: we cannot tell whether
+ * it is one of ours, and "cannot tell" has to refuse. */
+TEST(part_index_faults_on_an_unrepresentable_index) {
+    bool f = false;
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-99999999999.csv", "DAQiFi", "exp.csv", &f), SDMANIFEST_PART_NONE);
+    ASSERT_TRUE(f);
+    f = false;
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-4294967296.csv", "DAQiFi", "exp.csv", &f), SDMANIFEST_PART_NONE);
+    ASSERT_TRUE(f);
+    /* and the sentinel value itself cannot be returned as a real index */
+    f = false;
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-4294967295.csv", "DAQiFi", "exp.csv", &f), SDMANIFEST_PART_NONE);
+    ASSERT_TRUE(f);
+}
+
+TEST(part_index_is_null_safe) {
+    bool f;
+    ASSERT_EQ(SdManifest_PartIndexOf(NULL, "DAQiFi", "exp.csv", &f), SDMANIFEST_PART_NONE);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-1.csv", NULL, "exp.csv", &f), SDMANIFEST_PART_NONE);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-1.csv", "DAQiFi", NULL, &f), SDMANIFEST_PART_NONE);
+    /* the fault out-param is optional */
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-1.csv", "DAQiFi", "exp.csv", NULL), 1u);
+}
+
+/* ⭐⭐ THE ROUND TRIP, and the only arm that ties this parser to the FORMATTER.
+ *
+ * Every other test above encodes my belief about what generateFilename emits.
+ * This one builds the name the same way it does -- "%.*s/%s-%u%s" for a part
+ * and "%.*s/%s" for index 0 -- and requires the parser to recover the index.
+ * If the formatter is ever changed, THIS is the arm that notices; a pin on the
+ * format string would only notice an edit to the string it names.
+ *
+ * Checked across bucket 0 and a bucket, and over index boundaries where an
+ * unpadded "%u" changes width. */
+TEST(part_index_round_trips_the_filename_formatter) {
+    const uint32_t idxs[] = { 1u, 2u, 9u, 10u, 11u, 64u, 65u, 99u, 100u, 999u,
+                              1000u, 4096u, 4160u };
+    const char *dir = "DAQiFi";
+    const char *file = "exp.csv";
+    const char *stem = "exp";
+    const char *ext = ".csv";
+    char path[128];
+    unsigned i;
+    bool f;
+    int n;
+
+    /* index 0 lands directly in the directory */
+    n = snprintf(path, sizeof(path), "%s/%s", dir, file);
+    ASSERT_TRUE(n > 0 && (size_t)n < sizeof(path));
+    ASSERT_EQ(SdManifest_PartIndexOf(path, dir, file, &f), 0u);
+
+    for (i = 0; i < (sizeof(idxs) / sizeof(idxs[0])); i++) {
+        /* bucket 0: the bucket path IS the directory */
+        n = snprintf(path, sizeof(path), "%s/%s-%u%s", dir, stem,
+                     (unsigned)idxs[i], ext);
+        ASSERT_TRUE(n > 0 && (size_t)n < sizeof(path));
+        ASSERT_EQ(SdManifest_PartIndexOf(path, dir, file, &f), idxs[i]);
+        ASSERT_FALSE(f);
+        /* bucket n: "<dir>/P%03u" */
+        n = snprintf(path, sizeof(path), "%s/P%03u/%s-%u%s", dir, 1u, stem,
+                     (unsigned)idxs[i], ext);
+        ASSERT_TRUE(n > 0 && (size_t)n < sizeof(path));
+        ASSERT_EQ(SdManifest_PartIndexOf(path, dir, file, &f), idxs[i]);
+        ASSERT_FALSE(f);
+    }
+}
+
+/* ⛔ THE COLLISION THAT MOTIVATES THE WHOLE GUARD, as a test rather than prose.
+ *
+ * A foreign session configured "exp-1.csv" records exactly that name, in
+ * exp-1.csv.mfst -- a DIFFERENT manifest from ours, so neither the
+ * manifest-name check nor r20's recorded-part check can see it -- and it is
+ * OUR part 1. This is the record whose index must be recognised. */
+TEST(a_foreign_base_name_that_is_one_of_our_parts_is_recognised) {
+    bool f;
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-1.csv", "DAQiFi", "exp.csv", &f), 1u);
+    /* ...and symmetrically, OUR base name is THEIR part 1, which is the case
+     * r20's sd_NameIsRotationPartOfExistingManifest covers from the other
+     * side. Both directions exist; neither subsumes the other. */
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-1-1.csv", "DAQiFi", "exp-1.csv", &f), 1u);
+}
+
 int main(void)
 {
     printf("=== #924 SD session integrity manifest ===\n");
@@ -1302,5 +1448,12 @@ int main(void)
     RUN(the_manifest_extension_test_ignores_case);
     RUN(the_manifest_extension_test_rejects_everything_else);
     RUN(the_extension_test_agrees_with_the_manifest_construction);
+    RUN(part_index_recognises_the_names_a_session_writes);
+    RUN(part_index_folds_case_on_both_sides);
+    RUN(part_index_rejects_names_this_session_cannot_write);
+    RUN(part_index_faults_on_an_unrepresentable_index);
+    RUN(part_index_is_null_safe);
+    RUN(part_index_round_trips_the_filename_formatter);
+    RUN(a_foreign_base_name_that_is_one_of_our_parts_is_recognised);
     return TEST_SUMMARY();
 }

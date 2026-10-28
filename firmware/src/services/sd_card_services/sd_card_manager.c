@@ -155,6 +155,103 @@ _Static_assert(offsetof(SYS_FS_FSTAT, lfname) >= sizeof(FILINFO),
          + SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX \
          + sizeof(SD_MANIFEST_EXT) + 2u)
 
+#define SD_FOREIGN_SCAN_MAX_MANIFESTS   16u
+/* ⛔⛔ #1124 r21: A CORRUPTION GUARD, NOT A CAPACITY POLICY -- and deliberately
+ * NOT CountDirEntries' bound.
+ *
+ * My first version reused that function's readCap
+ * (MAX_DIR_FILES + MAX_BUCKET + 2 = 130) and returned FAULT beyond it, which
+ * REFUSED every write session in a directory holding more than 130 entries.
+ * That was a regression, and the measurement is what found it: #689's
+ * CountDirEntries never reaches its own 130 on plain files, because it exits at
+ * `count < cap` (64) and the module then ROLLS TO A BUCKET. So a 500-entry
+ * user directory logs fine today, and the prefilter would have refused it.
+ *
+ * 130 encodes #689's OWN layout -- how many entries this firmware puts in a
+ * directory. This walk reads EVERYTHING in the directory and must therefore
+ * tolerate whatever a user left there, so it needs a bound of a different
+ * kind: one that exists only to stop an unterminated walk on a corrupt
+ * filesystem, set far above any plausible real directory. Reusing a number
+ * because it was nearby, rather than because it answered this question, is the
+ * whole defect. */
+#define SD_FOREIGN_SCAN_MAX_DIR_ENTRIES 65536u
+
+/* ⛔⛔ #1124 r21: THIS CAP WAS WRONG BY ~64x AND THE ERROR WAS A FALSE
+ * REFUSAL, found by actually deriving the cost rather than asserting it.
+ *
+ * It read (SD_CARD_MANAGER_MAX_DIR_FILES + 1u) = 65, which is the cap on files
+ * in ONE DIRECTORY. A manifest does not record one directory: it lives in the
+ * parent and records the WHOLE SESSION, which #689 spreads across buckets
+ * 0..SD_CARD_MANAGER_MAX_BUCKET. So a perfectly ordinary long session produces
+ * a manifest of thousands of lines, this cap called it unparsable, and the
+ * scan returned FAULT -- refusing a session over a manifest that was entirely
+ * well-formed. A bound taken from the wrong dimension is not a conservative
+ * bound; it is a bug that only shows up on the longest, most valuable runs.
+ *
+ * Derived from both dimensions now, so it tracks either macro moving: buckets
+ * 0..MAX_BUCKET inclusive, MAX_DIR_FILES files each, plus one. */
+#define SD_FOREIGN_SCAN_MAX_LINES \
+        (((SD_CARD_MANAGER_MAX_BUCKET + 1u) * SD_CARD_MANAGER_MAX_DIR_FILES) + 1u)
+
+/* ⛔⛔ #1124 r21 / OPTION B: THE EXPENSIVE QUESTION IS ASKED ONCE PER SESSION.
+ *
+ * The first shape of this guard re-read every foreign manifest at EVERY
+ * truncating open, because the target path is only known then. Deriving the
+ * cost is what killed that: one foreign manifest at the line cap is ~166 KB,
+ * and a session that creates 4161 files would re-read it 4161 times -- about
+ * 690 MB. Bounded, correct, and unusable in the tail.
+ *
+ * So the scan now runs ONCE, at the session's first open, and records WHICH
+ * part indices a foreign manifest already claims -- one bit per index, via the
+ * pure SdManifest_PartIndexOf(). Each later open tests one bit.
+ *
+ * ⭐ A SET BIT IS A NECESSARY CONDITION, NOT A SUFFICIENT ONE. The index does
+ * not determine the path: a part goes to <bucket>/<stem>-<N><ext>, and which
+ * bucket depends on how full the buckets are when that part is opened, which
+ * is not known at scan time. `D/exp-1.csv` (a foreign session whose BASE name
+ * was exp-1.csv) and `D/P001/exp-1.csv` (our part 1 after bucket 0 filled)
+ * share dir, stem, ext and index and are different files. So a set bit means
+ * "an exact check is OWED for this index", and the exact content comparison
+ * still decides. Treating the bit as the decision would refuse sessions that
+ * are fine.
+ *
+ * Net: a clear bit costs a bit test and no I/O, which is the overwhelmingly
+ * common case; a set bit costs one exact scan, and needs a foreign manifest
+ * sharing our stem, ext AND a part index to happen at all.
+ *
+ * ⛔ WHY ONCE IS SOUND: single-session exclusivity. Nothing creates a manifest
+ * except a session, and sd_card_manager_TryClaim() decides from both the SCPI
+ * claim flag and sd_card_manager_IsBusyLocked() inside one critical section,
+ * so no second session can arm while this one holds the manager. That is
+ * pinned (tests/host/Makefile, #1124 r21 PIN 15) precisely because this latch
+ * rests on it: weaken it and the recorded answer goes stale with no symptom.
+ *
+ * Sized to the most parts one session can produce, so an index beyond it
+ * cannot be one of ours. Static, not on app_SDCardTask's stack (1024 words,
+ * 468 profiled peak -- app_freertos.c). 4161 bits = 522 bytes. */
+#define SD_FOREIGN_PART_LIMIT   SD_FOREIGN_SCAN_MAX_LINES
+#define SD_FOREIGN_BITS_WORDS   ((SD_FOREIGN_PART_LIMIT + 31u) / 32u)
+static uint32_t gForeignPartBits[SD_FOREIGN_BITS_WORDS];
+
+static inline void sd_ForeignBitsClear(void) {
+    memset(gForeignPartBits, 0, sizeof(gForeignPartBits));
+}
+
+static inline void sd_ForeignBitSet(uint32_t idx) {
+    gForeignPartBits[idx >> 5u] |= (uint32_t)1u << (idx & 31u);
+}
+
+static inline bool sd_ForeignBitTest(uint32_t idx) {
+    if (idx >= SD_FOREIGN_PART_LIMIT) {
+        /* Cannot be one of ours, so nothing recorded it as ours. The scan
+         * FAULTs on such an index rather than silently dropping it, so this
+         * arm is only reached by a counter we could not have written. */
+        return false;
+    }
+    return (gForeignPartBits[idx >> 5u] & ((uint32_t)1u << (idx & 31u))) != 0u;
+}
+
+
 /* #924: how many SYS_FS_FileWrite calls one manifest line may take. A short
  * write has already put bytes on the card, so abandoning the line leaves a
  * fragment the NEXT record concatenates onto -- see sd_AppendManifestLine.
@@ -1722,6 +1819,7 @@ bool sd_card_manager_Init(sd_card_manager_settings_t *pSettings) {
     gSDCardData.overwriteAuthorizedManifest[0] = '\0';
     gSDCardData.foreignScanPending = false;
     gSDCardData.foreignManifestsPresent = false;
+    sd_ForeignBitsClear();
     /* #981: and the fault-injection arm, for the same reason plus a stronger
      * one -- this is the line that makes "a reboot always clears it" TRUE.
      * SYST:REBoot is RCON_SoftwareReset(), the same reset class #409 is about,
@@ -2593,43 +2691,6 @@ static sd_InspectResult sd_NameIsRotationPartOfExistingManifest(const char *name
  * foreign manifest records nothing this session would ever write. That costs
  * reads, never a refusal: the refusal is decided by the exact comparison.
  */
-#define SD_FOREIGN_SCAN_MAX_MANIFESTS   16u
-/* ⛔⛔ #1124 r21: A CORRUPTION GUARD, NOT A CAPACITY POLICY -- and deliberately
- * NOT CountDirEntries' bound.
- *
- * My first version reused that function's readCap
- * (MAX_DIR_FILES + MAX_BUCKET + 2 = 130) and returned FAULT beyond it, which
- * REFUSED every write session in a directory holding more than 130 entries.
- * That was a regression, and the measurement is what found it: #689's
- * CountDirEntries never reaches its own 130 on plain files, because it exits at
- * `count < cap` (64) and the module then ROLLS TO A BUCKET. So a 500-entry
- * user directory logs fine today, and the prefilter would have refused it.
- *
- * 130 encodes #689's OWN layout -- how many entries this firmware puts in a
- * directory. This walk reads EVERYTHING in the directory and must therefore
- * tolerate whatever a user left there, so it needs a bound of a different
- * kind: one that exists only to stop an unterminated walk on a corrupt
- * filesystem, set far above any plausible real directory. Reusing a number
- * because it was nearby, rather than because it answered this question, is the
- * whole defect. */
-#define SD_FOREIGN_SCAN_MAX_DIR_ENTRIES 65536u
-/* ⛔⛔ #1124 r21: THIS CAP WAS WRONG BY ~64x AND THE ERROR WAS A FALSE
- * REFUSAL, found by actually deriving the cost rather than asserting it.
- *
- * It read (SD_CARD_MANAGER_MAX_DIR_FILES + 1u) = 65, which is the cap on files
- * in ONE DIRECTORY. A manifest does not record one directory: it lives in the
- * parent and records the WHOLE SESSION, which #689 spreads across buckets
- * 0..SD_CARD_MANAGER_MAX_BUCKET. So a perfectly ordinary long session produces
- * a manifest of thousands of lines, this cap called it unparsable, and the
- * scan returned FAULT -- refusing a session over a manifest that was entirely
- * well-formed. A bound taken from the wrong dimension is not a conservative
- * bound; it is a bug that only shows up on the longest, most valuable runs.
- *
- * Derived from both dimensions now, so it tracks either macro moving: buckets
- * 0..MAX_BUCKET inclusive, MAX_DIR_FILES files each, plus one. */
-#define SD_FOREIGN_SCAN_MAX_LINES \
-        (((SD_CARD_MANAGER_MAX_BUCKET + 1u) * SD_CARD_MANAGER_MAX_DIR_FILES) + 1u)
-
 /* Build this session's own manifest FILE NAME (no directory), for telling our
  * manifest apart from a foreign one while reading directory entries.
  *
@@ -2651,6 +2712,9 @@ static bool sd_SessionManifestLeaf(char *out, size_t outLen) {
  * an empty name field, a read error, or more lines than a conforming manifest
  * can have are all FAULT -- never "skip this line and carry on", which would
  * make an unparseable manifest read as one recording nothing. */
+/* `needle != NULL`: does this manifest record exactly that path?
+ * `needle == NULL`: record, in gForeignPartBits, which of THIS session's part
+ *                   indices this manifest already claims. */
 static sd_InspectResult sd_ManifestRecordsName(const char *manifestPath,
                                                const char *needle) {
     /* 256 and not 64: the read count is what this costs, and a 4x bigger
@@ -2727,9 +2791,41 @@ static sd_InspectResult sd_ManifestRecordsName(const char *manifestPath,
                 break;
             }
             *sep = '\0';
-            if (SdManifest_PathsEqualCaseInsensitive(line, needle)) {
-                out = SD_INSPECT_HAZARD;
-                break;
+            if (needle != NULL) {
+                if (SdManifest_PathsEqualCaseInsensitive(line, needle)) {
+                    out = SD_INSPECT_HAZARD;
+                    break;
+                }
+            } else {
+                /* Index-recording pass. A record that cannot be one of this
+                 * session's own names is irrelevant -- this session can never
+                 * open it -- so it is ignored. A record with the part SHAPE
+                 * whose index cannot be represented is a FAULT: we cannot tell
+                 * whether it is one of ours, and "cannot tell" has to refuse. */
+                bool idxFault = false;
+                const uint32_t idx = SdManifest_PartIndexOf(
+                        line, gpSDCardSettings->directory,
+                        gpSDCardSettings->file, &idxFault);
+                if (idxFault) {
+                    LOG_E("[SD1124] unparsable index at %u", (unsigned)lines);
+                    out = SD_INSPECT_FAULT;
+                    break;
+                }
+                if (idx != SDMANIFEST_PART_NONE) {
+                    if (idx >= SD_FOREIGN_PART_LIMIT) {
+                        /* Unreachable by construction: this session cannot
+                         * produce an index past its own part limit, so a
+                         * recorded one past it cannot be ours. Asserted rather
+                         * than assumed -- if the limit and the formatter ever
+                         * disagree, a silently dropped index is a missed
+                         * collision. */
+                        LOG_E("[SD1124] unparsable index %u over limit",
+                              (unsigned)idx);
+                        out = SD_INSPECT_FAULT;
+                        break;
+                    }
+                    sd_ForeignBitSet(idx);
+                }
             }
             lineLen = 0u;
             if (atEnd) { break; }
@@ -2747,10 +2843,12 @@ static sd_InspectResult sd_ManifestRecordsName(const char *manifestPath,
 
 /* The guard proper.
  *
- * `needle == NULL`  -> THE PREFILTER: is there a foreign manifest in this
- *                      session's directory at all? HAZARD means "yes, content
- *                      reads will be needed", not "refuse".
- * `needle != NULL`  -> THE DECISION: does any foreign manifest record exactly
+ * `needle == NULL`  -> THE INDEX PASS, run ONCE per session: read every foreign
+ *                      manifest and record which of this session's part indices
+ *                      they already claim, into gForeignPartBits. CLEAR means
+ *                      the bits are now valid, NOT that nothing was found.
+ * `needle != NULL`  -> THE DECISION, run only when the bit for this open's
+ *                      index is set: does any foreign manifest record exactly
  *                      this path? HAZARD means refuse.
  *
  * FAULT always means refuse, in both modes.
@@ -2824,11 +2922,10 @@ static sd_InspectResult sd_ScanForeignManifests(const char *needle) {
             out = SD_INSPECT_FAULT;
             break;
         }
-        if (needle == NULL) {
-            /* Prefilter: one is enough, and no content is read. */
-            out = SD_INSPECT_HAZARD;
-            break;
-        }
+        /* ⛔ NO EARLY EXIT IN THE INDEX PASS. Finding one foreign manifest is
+         * not the answer any more -- every one of them has to be read, or the
+         * bits are a partial record of what is claimed, which is a missed
+         * collision rather than a slow scan. The old prefilter stopped here. */
         const int w = snprintf(path, sizeof(path), "%.*s/%s",
                                (int)dirLen, dir, st.fname);
         if (w < 0 || (size_t)w >= sizeof(path)) {
@@ -2933,20 +3030,30 @@ static bool sd_TargetSafeToOpenForWrite(const char *dataPath) {
      * recorded. The truncation case needs the grant; the creation case does
      * not, so neither does this check. */
     if (gSDCardData.foreignScanPending) {
-        const sd_InspectResult pre = sd_ScanForeignManifests(NULL);
-        if (pre == SD_INSPECT_FAULT) {
+        /* The index pass, once per session. It reads every foreign manifest in
+         * the directory and fills gForeignPartBits. Cleared FIRST so a FAULT
+         * cannot leave the pass owed for ever: this open refuses, and a retry
+         * must not silently reuse half-filled bits either -- hence the clear
+         * on the fault path too. */
+        sd_ForeignBitsClear();
+        const sd_InspectResult pass = sd_ScanForeignManifests(NULL);
+        taskENTER_CRITICAL();
+        gSDCardData.foreignScanPending = false;
+        gSDCardData.foreignManifestsPresent = (pass == SD_INSPECT_CLEAR);
+        taskEXIT_CRITICAL();
+        if (pass != SD_INSPECT_CLEAR) {
+            sd_ForeignBitsClear();
             gSDCardData.writeRefuseReason = SD_REFUSE_MANIFEST_UNPARSABLE;
             return false;
         }
-        /* Latched, so the directory enumeration is paid ONCE per session
-         * rather than once per rotation. Both writes together, so an open can
-         * never see "no longer pending" beside a stale answer. */
-        taskENTER_CRITICAL();
-        gSDCardData.foreignManifestsPresent = (pre == SD_INSPECT_HAZARD);
-        gSDCardData.foreignScanPending = false;
-        taskEXIT_CRITICAL();
     }
-    if (gSDCardData.foreignManifestsPresent) {
+    /* ⭐ THE BIT IS A NECESSARY CONDITION ONLY -- an exact check is still what
+     * refuses. See the gForeignPartBits header: the index does not determine
+     * the path, because the bucket a part lands in is not known at scan time.
+     * `foreignManifestsPresent` here means "the bits are valid"; without a
+     * completed pass there is nothing to test. */
+    if (gSDCardData.foreignManifestsPresent
+            && sd_ForeignBitTest(gSDCardData.fileCounter)) {
         const sd_InspectResult rec = sd_ScanForeignManifests(dataPath);
         if (rec != SD_INSPECT_CLEAR) {
             gSDCardData.writeRefuseReason =

@@ -1391,6 +1391,76 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	   echo "            unparsable notafile note   (note = NOT a refusal)"; \
 	   exit 1; \
 	 fi
+	@# ⛔⛔ PIN 18 -- THE BIT IS A NECESSARY CONDITION, NEVER THE DECISION.
+	@#
+	@# gForeignPartBits is indexed by PART INDEX, and the index does not
+	@# determine the path: a part goes to <bucket>/<stem>-<N><ext>, and which
+	@# bucket depends on how full the buckets are when it is opened, which the
+	@# once-per-session pass cannot know. So `D/exp-1.csv` (a foreign session
+	@# whose BASE name was exp-1.csv) and `D/P001/exp-1.csv` (our part 1 after
+	@# bucket 0 filled) share dir, stem, ext and index and are DIFFERENT FILES.
+	@#
+	@# Refusing on the bit alone would therefore refuse sessions that are fine,
+	@# and it is the tempting simplification -- it deletes the second scan and
+	@# every test of the refusal still passes, because the refusal still happens
+	@# in the cases those tests cover. This pins that the bit only GATES the
+	@# exact comparison, and that the refusal reason is set from the scan's
+	@# result and not from the bit.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"&& sd_ForeignBitTest(gSDCardData.fileCounter)) { const sd_InspectResult rec = sd_ScanForeignManifests(dataPath);"*) ;; \
+	   *) echo "ERROR: #1124 r21 PIN 18: a set foreign-part bit no longer gates"; \
+	      echo "       an EXACT scan of the real target path. The bit is only a"; \
+	      echo "       necessary condition -- the part index does not determine"; \
+	      echo "       the path, because the bucket is not known when the bits"; \
+	      echo "       are built. Refusing on the bit alone refuses sessions"; \
+	      echo "       that are correct, and every refusal test still passes."; \
+	      exit 1;; \
+	 esac
+	@# ⛔⛔ PIN 19 -- THE INDEX PASS READS EVERY FOREIGN MANIFEST.
+	@#
+	@# The pass this replaced was a PREFILTER and stopped at the first foreign
+	@# manifest, because one was enough to answer "is a content read owed?".
+	@# The index pass answers a different question -- WHICH indices are claimed
+	@# -- so stopping early leaves the bitset a partial record of what is
+	@# claimed. That is a MISSED COLLISION, not a slow scan, and it is silent:
+	@# every test with one foreign manifest still passes.
+	@#
+	@# Pinned as the ABSENCE of the old early exit in the walker, plus the
+	@# presence of the loop's own terminator, so the arm cannot pass by having
+	@# nothing to look at.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"if (needle == NULL) { out = SD_INSPECT_HAZARD; break; }"*) \
+	      echo "ERROR: #1124 r21 PIN 19: the index pass stops at the FIRST"; \
+	      echo "       foreign manifest again. That was correct for the old"; \
+	      echo "       presence prefilter and is wrong now: the bitset would be"; \
+	      echo "       a PARTIAL record of which part indices are claimed, so a"; \
+	      echo "       collision recorded in a later manifest is never checked."; \
+	      echo "       Silent -- every test with one foreign manifest passes."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"out = sd_ManifestRecordsName(path, needle); }"*) ;; \
+	   *) echo "ERROR: #1124 r21 PIN 19: the walker no longer ends its loop by"; \
+	      echo "       scanning each manifest, so the absence arm above is"; \
+	      echo "       checking a loop that may not exist."; \
+	      exit 1;; \
+	 esac
+	@# ⛔ PIN 20 -- A FAULTED PASS LEAVES NO BITS BEHIND. A pass that gave up
+	@# half way has recorded SOME indices and not others, and those bits are
+	@# indistinguishable from a complete answer. Using them would turn one
+	@# refused open into a session that silently checks only part of what is
+	@# claimed, so the bits are cleared on the fault path as well as before the
+	@# pass.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"if (pass != SD_INSPECT_CLEAR) { sd_ForeignBitsClear();"*) ;; \
+	   *) echo "ERROR: #1124 r21 PIN 20: a FAULTED index pass no longer clears"; \
+	      echo "       the bitset, so a partially-filled set could be read as a"; \
+	      echo "       complete answer."; \
+	      exit 1;; \
+	 esac
 	$(CC) $(CFLAGS) -o $(GATE1124_BIN) test_1124_overwrite_gate.c
 
 $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h \
@@ -1649,15 +1719,33 @@ test "$$raw" -eq 0 && test "$$canon" -eq $(SD1124_CANON) && test "$$acc" -eq $(S
 	@#           SdManifest_CanonicalDirLen() -- checked, not assumed, and the
 	@#           join/accessor counters above moved 9 -> 8 in the same edit,
 	@#           which is the coincidence this ledger is for.
-	@# CLASSIFICATION: all of them are the ordinary canonicalisation-DEPENDENT
+	@#   +1 r21  sd_ScanForeignManifests()'s index pass hands the directory to
+	@#           SdManifest_PartIndexOf(), to decide which of THIS session's
+	@#           part indices a foreign record claims.
+	@#           ⚠ I first wrote +2 here, counting the ->file argument that
+	@#           goes to the same call. This grep counts ->directory and
+	@#           ->opDirectory ONLY, so ->file is not in it -- and the ledger
+	@#           caught the arithmetic, which is the entire reason it states a
+	@#           number instead of a direction.
+	@#           ⛔ CLASSIFICATION DIFFERS FROM EVERY ENTRY ABOVE, which is why
+	@#           it is called out rather than folded in: this read is NOT a
+	@#           join. It is a read that reaches a CALLEE, which is exactly the
+	@#           case this ledger exists for and the join/accessor counters
+	@#           above are structurally blind to. SdManifest_PartIndexOf()
+	@#           canonicalises the directory ITSELF, with the same accessor
+	@#           (SdManifest_CanonicalDirLen) -- verified by reading it, not
+	@#           assumed from the argument's name -- so the invariant holds at
+	@#           the point of use. The join counters did NOT move for this
+	@#           edit, and that is correct, not a discrepancy.
+	@# CLASSIFICATION: the rest are the ordinary canonicalisation-DEPENDENT
 	@# join shape, already routed through SdManifest_CanonicalDirLen(). A NET
 	@# would let a future edit add one read and drop an unrelated one unseen,
 	@# which is the one thing a count ledger exists to notice.
 	@n=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null \
 	    | grep -oE '(gpSDCardSettings|cfg)->(directory|opDirectory)' | wc -l`; \
-	 test "$$n" -eq 20 \
+	 test "$$n" -eq 21 \
 	  || { echo "ERROR: $(SD_MANAGER_SRC) now has $$n raw reads of ->directory /"; \
-	       echo "       ->opDirectory, not the 20 classified in this recipe (#1124)."; \
+	       echo "       ->opDirectory, not the 21 classified in this recipe (#1124)."; \
 	       echo "       The canonicalisation invariant is about every USE, not just"; \
 	       echo "       every join: a read can reach a callee that neither joins nor"; \
 	       echo "       canonicalises, and no join-keyed check sees it. (Until r13 the"; \
