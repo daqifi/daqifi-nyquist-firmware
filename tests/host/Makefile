@@ -1483,12 +1483,36 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	@# which #689 rolls at MAX_DIR_FILES entries -- neither of which refuses in
 	@# the ordinary case, which is exactly what the deleted cap lacked.
 	@#
-	@# Pinned by NAME, so re-introducing the macro fails even if the comparison
-	@# is spelled differently.
+	@# ⚠ PINNED ON THE PROPERTY, NOT ON THE MACRO NAME -- mutant R49 is why.
+	@# The first version only counted mentions of
+	@# SD_FOREIGN_SCAN_MAX_MANIFESTS, so a cap written with a LITERAL
+	@# (`if (++manifests > 16u)`) reintroduced the whole defect and the pin
+	@# passed clean. The name is incidental; what matters is that the counter
+	@# is never COMPARED. So: the increment must stand alone as a statement,
+	@# and the counter must appear in no relational test at all.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"manifests++;"*) ;; \
+	   *) echo "ERROR: #1124 r21 PIN 21: the manifest counter is no longer a"; \
+	      echo "       plain increment, so it is being USED for something."; \
+	      echo "       It exists for the log only -- a count of pre-existing"; \
+	      echo "       manifests must never refuse a session (audit :2915)."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"manifests >"*|*"manifests <"*|*"manifests =="*|*"manifests !="*) \
+	      echo "ERROR: #1124 r21 PIN 21: the manifest COUNT is compared, so it"; \
+	      echo "       can refuse a session. FAULT is a refusal, so a cap here"; \
+	      echo "       disarms every capture in a directory that has simply"; \
+	      echo "       been used a lot -- 17 short sessions, 34 files, and the"; \
+	      echo "       card stops logging (audit :2915). Bound the BYTES per"; \
+	      echo "       manifest; the directory already bounds the count."; \
+	      exit 1;; \
+	 esac
 	@n=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null \
 	    | grep -c 'SD_FOREIGN_SCAN_MAX_MANIFESTS'`; \
 	 if [ "$$n" != "0" ]; then \
-	   echo "ERROR: #1124 r21 PIN 21: a manifest-COUNT cap is back ($$n"; \
+	   echo "ERROR: #1124 r21 PIN 21: the manifest-count MACRO is back ($$n"; \
 	   echo "       mention(s) of SD_FOREIGN_SCAN_MAX_MANIFESTS)."; \
 	   echo "       A count of pre-existing manifests must never refuse a"; \
 	   echo "       session: FAULT is a refusal, so a cap here disarms every"; \
@@ -1538,8 +1562,9 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	@pp=`$(CC) -fpreprocessed -E $(SD_BENCH_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
 	 case "$$pp" in \
 	   *"if ((fileLen > 0) && (memchr(pBuff, '/', fileLen) != NULL)) {"*) ;; \
-	   *) echo "ERROR: #1124 r21 PIN 23: SD:FILE no longer refuses the overwrite"; \
-	      echo "       opt-in for a name containing '/'. The manifest for"; \
+	   *) echo "ERROR: #1124 r21 PIN 23a: the opt-in accepts a SEPARATOR in the name."; \
+	      echo "       SD:FILE no longer refuses the overwrite opt-in for a"; \
+	      echo "       name containing '/'. The manifest for"; \
 	      echo "       sub/exp.csv lives in <dir>/sub, which the foreign-record"; \
 	      echo "       scan does not read, so the one check protecting it is"; \
 	      echo "       blind (audit :2905)."; \
@@ -1547,9 +1572,10 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	 esac; \
 	 case "$$pp" in \
 	   *"if (SD_DirHasBucketComponent(pSDCardRuntimeConfig->directory)) {"*) ;; \
-	   *) echo "ERROR: #1124 r21 PIN 23: SD:FILE no longer refuses the overwrite"; \
-	      echo "       opt-in while the configured directory is a rotation"; \
-	      echo "       bucket. The manifest owning records in D/P001 lives in D,"; \
+	   *) echo "ERROR: #1124 r21 PIN 23b: the opt-in accepts a BUCKET directory."; \
+	      echo "       SD:FILE no longer refuses the overwrite opt-in while the"; \
+	      echo "       configured directory is a rotation bucket. The manifest"; \
+	      echo "       owning records in D/P001 lives in D,"; \
 	      echo "       which the scan does not read (audit :2874)."; \
 	      exit 1;; \
 	 esac
@@ -1576,9 +1602,9 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	 ; do \
 	   case "$$pp" in \
 	     *"$$probe"*) ;; \
-	     *) echo "ERROR: #1124 r21 PIN 24: the SD:FILE directory-generation"; \
-	        echo "       check lost a part (audit :972). Missing:"; \
-	        echo "         $$probe"; \
+	     *) echo "ERROR: #1124 r21 PIN 24 lost: $$probe"; \
+	        echo "       The SD:FILE directory-generation check (audit :972) is"; \
+	        echo "       incomplete."; \
 	        echo "       Without all three, an SD:DIR landing between the"; \
 	        echo "       operand resolution and the commit grants overwrite on a"; \
 	        echo "       file the client never named."; \

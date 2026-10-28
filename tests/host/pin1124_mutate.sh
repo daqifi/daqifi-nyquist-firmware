@@ -906,7 +906,7 @@ echo "==      opt-in or not. Nothing else notices: the scan still works, the   =
 echo "==      bits are still exact, every refusal test still passes.           =="
 if sub "$F" '        manifests++;        /* counted for the log only -- never a refusal */' \
             '        if (++manifests > 16u) { out = SD_INSPECT_FAULT; break; }'; then
-    expect "R49 no manifest-count cap" "a manifest-COUNT cap is back"
+    expect "R49 no manifest-count cap" "the manifest COUNT is compared"
 else
     echo "  FAIL R49 anchor absent."; fail=$((fail+1))
 fi
@@ -929,7 +929,8 @@ echo "==      so the only check protecting it is blind. This is the state the  =
 echo "==      audit MEASURED as accepted.                                      =="
 if sub "$S" "        if ((fileLen > 0) && (memchr(pBuff, '/', fileLen) != NULL)) {" \
             "        if (false) {"; then
-    expect "R51 the opt-in refuses a separator in the name" "a name containing"
+    expect "R51 the opt-in refuses a separator in the name" \
+           "PIN 23a: the opt-in accepts a SEPARATOR"
 else
     echo "  FAIL R51 anchor absent."; fail=$((fail+1))
 fi
@@ -939,7 +940,8 @@ echo "== R52 (PIN 23b): accept \",1\" while SD:DIR is a rotation bucket. The    
 echo "==      manifest owning the records in D/P001 lives in D, unscanned.    =="
 if sub "$S" '        if (SD_DirHasBucketComponent(pSDCardRuntimeConfig->directory)) {' \
             '        if (false) {'; then
-    expect "R52 the opt-in refuses a bucket directory" "is a rotation"
+    expect "R52 the opt-in refuses a bucket directory" \
+           "PIN 23b: the opt-in accepts a BUCKET"
 else
     echo "  FAIL R52 anchor absent."; fail=$((fail+1))
 fi
@@ -953,7 +955,7 @@ if sub "$S" '        dirMoved = (gSdDirGeneration != dirGenAtStrip);
         if (!benchOwnsTarget && !dirMoved) {' \
             '        if (!benchOwnsTarget) {'; then
     expect "R53 the generation compare is inside the commit section" \
-           "lost a part"
+           "PIN 24 lost: dirMoved = (gSdDirGeneration != dirGenAtStrip);"
 else
     echo "  FAIL R53 anchor absent."; fail=$((fail+1))
 fi
@@ -964,7 +966,8 @@ echo "==      compare in place. They then always agree, so the check is        =
 echo "==      present and can never fire -- the inert-guard shape.            =="
 if sub "$S" """        gSdDirGeneration++;""" \
             """        (void)0;"""; then
-    expect "R54 the generation is bumped on every dir write" "lost a part"
+    expect "R54 the generation is bumped on every dir write" \
+           "PIN 24 lost: pSDCardRuntimeConfig->directory[pathLen]"
 else
     echo "  FAIL R54 anchor absent."; fail=$((fail+1))
 fi
