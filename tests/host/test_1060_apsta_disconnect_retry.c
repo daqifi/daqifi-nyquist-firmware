@@ -74,23 +74,29 @@ typedef struct {
     bool clearsModeFlags;    /* this PR's fix: the link state becomes honest */
     bool retryAcrossSettle;  /* r2: bounded re-attempt during the settle */
     bool teardownPendingFlag;/* r3: a dedicated flag drives an UNBOUNDED retry */
+    bool flagSurvivesEntry;  /* r4: ENTRY's ResetAllEventFlags preserves it */
 } Shape;
 
 /* BASE -- before this PR. The stale STA_CONNECTED is left set, which reports a
  * link that does not exist (the #1060 defect) and ALSO, by accident, routes
  * every ERROR -> REINIT through STA reconfiguration, which retries the
  * disconnect indefinitely. So the base self-heals, for the wrong reason. */
-static const Shape SHAPE_BASE = { false, false, false };
+static const Shape SHAPE_BASE = { false, false, false, false };
 /* r1 -- flags cleared, one logged attempt. Honest link state, and the
  * accidental unbounded retry is gone with it: a transient fault is permanent. */
-static const Shape SHAPE_R1   = { true,  false, false };
+static const Shape SHAPE_R1   = { true,  false, false, false };
 /* r2 -- the retry is BOUNDED to the settle window. Better, and still permanent
  * for any fault that outlasts the window. This is what the r2 audit rejected. */
-static const Shape SHAPE_R2   = { true,  true,  false };
-/* r3 -- bounded retry PLUS a dedicated teardown-pending flag that makes every
- * later REINIT re-attempt it. Unbounded again, with the link state still
- * honest, because the retry is driven by its own fact. */
-static const Shape SHAPE_NEW  = { true,  true,  true  };
+static const Shape SHAPE_R2   = { true,  true,  false, false };
+/* r3 -- bounded retry PLUS a dedicated teardown-pending flag. It claimed to
+ * re-attempt on every REINIT pass, and it did not: a FAILED REINIT-side
+ * attempt falls through to fresh-init, whose MainState ENTRY memsets the whole
+ * flag word and erases the marker. One failed retry and the unbounded retry is
+ * gone again -- the r3 audit's HIGH. */
+static const Shape SHAPE_R3   = { true,  true,  true,  false };
+/* r4 -- the marker survives ENTRY, preserved there exactly as the
+ * firmware-update request already was. Only now is the retry truly unbounded. */
+static const Shape SHAPE_NEW  = { true,  true,  true,  true  };
 
 static Chip chip(bool connected, unsigned failures) {
     Chip c;
@@ -167,6 +173,20 @@ static bool model_dhcp_would_be_refused(const Chip *c) {
     return c->chipConnected;
 }
 
+/* ⛔ MainState ENTRY. ResetAllEventFlags() is a memset of the whole flag word,
+ * so EVERY flag in it dies here unless something preserves it -- the
+ * firmware-update request is read into a local before the reset and re-set
+ * after, and r4 does the same for the teardown marker.
+ *
+ * ⭐ THE MODEL COULD NOT REPRESENT THIS TRANSITION, which is exactly why it
+ * passed r3 while r3's central claim was false. A model that cannot express a
+ * state change cannot test any property that depends on one. */
+static void model_mainstate_entry(Chip *c, Shape s) {
+    if (!s.flagSurvivesEntry) {
+        c->teardownPending = false;      /* erased by the memset */
+    }
+}
+
 /* One ERROR -> REINIT pass. THREE different things can happen here, and which
  * one is the whole subject of this round:
  *   BASE  the stale STA_CONNECTED routes into STA reconfiguration, which
@@ -180,7 +200,12 @@ static void model_reinit_pass(Chip *c, Shape s) {
         Status st = model_disconnect(c);
         if (status_is_done(st)) {
             c->teardownPending = false;
+            return;
         }
+        /* The retry FAILED, so REINIT falls through to the fresh-init arm,
+         * which re-enters MainState and runs its ENTRY. This fall-through is
+         * the step the model was missing. */
+        model_mainstate_entry(c, s);
         return;
     }
     if (!s.clearsModeFlags && c->staConnectedFlag) {
@@ -421,6 +446,72 @@ TEST(the_common_path_is_unchanged_in_calls_and_timing) {
     ASSERT_EQ(c.attempts, before);         /* not one extra disconnect */
 }
 
+/* ---- r3's HIGH: the marker did not survive the ENTRY reset ------------- */
+/*
+ * ⭐ THE SEQUENCE THE r3 AUDIT NAMED: the window's attempts all fail, then ONE
+ * REINIT-side attempt also fails -- which is what drops through to fresh-init
+ * and erases the flag -- and THEN the transport recovers. r3 ends wedged
+ * despite having a flag whose entire purpose was to prevent that; r4 recovers.
+ *
+ * One failed REINIT attempt is the smallest input that separates them, and r3's
+ * own test suite contained nothing that could produce it, because the model had
+ * no ENTRY.
+ */
+TEST(r3_loses_the_marker_after_a_single_failed_reinit_attempt) {
+    Chip c = chip(true, SETTLE_SLICES + 2u);   /* window + 1 REINIT, then ok */
+    model_apsta_switch(&c, SHAPE_R3);
+    ASSERT_TRUE(c.teardownPending);            /* set on exhaustion... */
+    model_reinit_pass(&c, SHAPE_R3);           /* ...this attempt fails... */
+    ASSERT_FALSE(c.teardownPending);           /* ...and ENTRY erased it */
+    for (unsigned i = 0; i < REINIT_PASSES; i++) {
+        model_reinit_pass(&c, SHAPE_R3);
+    }
+    ASSERT_TRUE(model_dhcp_would_be_refused(&c));   /* wedged, transport fine */
+}
+
+TEST(r4_keeps_the_marker_and_recovers_after_a_failed_reinit_attempt) {
+    Chip c = chip(true, SETTLE_SLICES + 2u);
+    model_apsta_switch(&c, SHAPE_NEW);
+    ASSERT_TRUE(c.teardownPending);
+    model_reinit_pass(&c, SHAPE_NEW);          /* fails, ENTRY runs... */
+    ASSERT_TRUE(c.teardownPending);            /* ...and the marker survives */
+    for (unsigned i = 0; i < REINIT_PASSES; i++) {
+        model_reinit_pass(&c, SHAPE_NEW);
+    }
+    ASSERT_FALSE(model_dhcp_would_be_refused(&c));
+    ASSERT_FALSE(model_link_reported_connected(&c));
+    ASSERT_FALSE(c.teardownPending);
+}
+
+/* ⭐ The marker may be cleared ONLY by a disconnect that reached the chip. Any
+ * number of ENTRYs, on their own, must not clear it -- that is the invariant
+ * r3 violated, stated directly rather than only through a scenario. */
+TEST(only_a_successful_disconnect_clears_the_marker) {
+    Chip c = chip(true, 100000u);              /* never recovers */
+    model_apsta_switch(&c, SHAPE_NEW);
+    ASSERT_TRUE(c.teardownPending);
+    for (unsigned i = 0; i < 20u; i++) {
+        model_mainstate_entry(&c, SHAPE_NEW);  /* ENTRY alone, 20 times */
+        ASSERT_TRUE(c.teardownPending);
+    }
+    c.failuresLeft = 0;                        /* transport heals */
+    model_reinit_pass(&c, SHAPE_NEW);
+    ASSERT_FALSE(c.teardownPending);           /* cleared, and only now */
+}
+
+/* r4 must heal whatever MIX of window and REINIT failures occurs, which is the
+ * general form of the audit's scenario rather than its one instance. */
+TEST(r4_heals_across_any_split_of_window_and_reinit_failures) {
+    for (unsigned extra = 0; extra <= REINIT_PASSES; extra++) {
+        Chip c = chip(true, SETTLE_SLICES + extra);
+        model_apsta_switch(&c, SHAPE_NEW);
+        for (unsigned i = 0; i < REINIT_PASSES + 1u; i++) {
+            model_reinit_pass(&c, SHAPE_NEW);
+        }
+        ASSERT_FALSE(model_dhcp_would_be_refused(&c));
+    }
+}
+
 int main(void) {
     RUN(r1_loses_recovery_when_the_disconnect_itself_fails);
     RUN(new_shape_recovers_once_the_transport_does);
@@ -439,5 +530,9 @@ int main(void) {
     RUN(r3_heals_at_any_fault_duration_within_the_reinit_passes);
     RUN(a_transport_that_NEVER_recovers_stays_wedged_the_1181_residual);
     RUN(the_common_path_is_unchanged_in_calls_and_timing);
+    RUN(r3_loses_the_marker_after_a_single_failed_reinit_attempt);
+    RUN(r4_keeps_the_marker_and_recovers_after_a_failed_reinit_attempt);
+    RUN(only_a_successful_disconnect_clears_the_marker);
+    RUN(r4_heals_across_any_split_of_window_and_reinit_failures);
     return TEST_SUMMARY();
 }

@@ -984,10 +984,17 @@ $(APSTA1060_BIN): test_1060_apsta_disconnect_retry.c test_framework.h \
 	      echo "       500 ms window is PERMANENT -- a regression this PR would"; \
 	      echo "       be introducing, not inheriting."; exit 1;; \
 	 esac
-	@# ⛔ PIN 7 -- the teardown flag is SET on exhaustion and CLEARED on success.
+	@# ⛔ PIN 7 -- the teardown flag is SET somewhere and CLEARED somewhere.
 	@# Set-only would retry for ever after one failure; clear-only would never
 	@# retry at all. Both directions, because one of them passing says nothing
 	@# about the other.
+	@#
+	@# ⚠ THIS IS A PRESENCE CHECK AND IT IS NOT POSITIONAL -- measured by its own
+	@# mutant. There are TWO set sites (the exhaustion marker and the ENTRY
+	@# restore), so deleting just one leaves this pin satisfied; what catches
+	@# that is PIN 10's exactly-four COUNT. The two pins are complementary and
+	@# neither is sufficient: this one says "both directions exist", PIN 10 says
+	@# "and all four writes are still there, each under a lock".
 	@pp=`$(CC) -fpreprocessed -E $(WIFI_MGR_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
 	 case "$$pp" in \
 	   *"SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING)"*) ;; \
@@ -1034,6 +1041,72 @@ $(APSTA1060_BIN): test_1060_apsta_disconnect_retry.c test_framework.h \
 	       echo "       only \"is a teardown outstanding?\"."; \
 	       echo "       ZERO means the pattern or the path is broken, not that"; \
 	       echo "       the code is clean."; exit 1; }
+	@# ⛔ PIN 9 -- r4: THE TEARDOWN MARKER SURVIVES MainState ENTRY.
+	@# ResetAllEventFlags() is a memset of the whole flag word, so without an
+	@# explicit preserve the marker dies on the fresh-init fall-through -- and
+	@# that falsifies r3's central claim that the disconnect is re-attempted on
+	@# every REINIT pass. It is re-attempted ONCE, then the marker is erased.
+	@# Checked as the file's own idiom: read into a local BEFORE the reset and
+	@# re-set AFTER, the same shape the firmware-update request uses.
+	@pp=`$(CC) -fpreprocessed -E $(WIFI_MGR_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"bool teardownPending = GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING);"*) ;; \
+	   *) echo "ERROR: MainState ENTRY does not preserve the #1060 teardown"; \
+	      echo "       marker across ResetAllEventFlags() (r4). That memset"; \
+	      echo "       erases the whole flag word, so a FAILED REINIT-side"; \
+	      echo "       retry -- which falls through to fresh-init and re-enters"; \
+	      echo "       MainState -- loses the marker and the disconnect is"; \
+	      echo "       never retried again. The flag records a fact about the"; \
+	      echo "       CHIP and may be cleared ONLY by a disconnect that"; \
+	      echo "       reached it."; exit 1;; \
+	 esac
+	@# ⛔ PIN 10 -- ⭐ EVERY write of the marker is inside a CRITICAL SECTION,
+	@# counted and positional, per PIN 8's lesson.
+	@#
+	@# Set/ResetEventFlag are plain read-modify-writes on one shared 16-bit word
+	@# ($(WIFI_MGR_SRC):948 and :952). A higher-priority USB-task
+	@# SYST:COMM:LAN:FWUpdate setting WIFI_FW_UPDATE_REQUESTED between a load
+	@# and its store is ERASED. This PR already documented that and took the
+	@# lock for two writes, and r3 then added three more without it.
+	@#
+	@# ⛔ NOT A DEPTH COUNTER. A depth counter is the wrong MODEL of this file:
+	@# critical sections here have MULTIPLE EXIT PATHS (an early return inside
+	@# the section needs its own taskEXIT_CRITICAL), so ENTER and EXIT are
+	@# deliberately unbalanced -- measured 27 ENTER against 31 EXIT. A counter
+	@# therefore goes negative near the top of the file and reads every later
+	@# write as unprotected. My first version did exactly that and reported all
+	@# four sites unprotected, including ones I had just wrapped; a direct read
+	@# of the four sites disproved it.
+	@#
+	@# The sound test is the NEAREST PRECEDING MARKER: a write is inside a
+	@# section iff the last ENTER/EXIT seen before it was an ENTER. That is
+	@# correct under multiple exits and needs no balance assumption.
+	@#
+	@# The COUNT is asserted too, so a write that moves out of the scanned
+	@# region -- or a pattern that stops matching -- fails instead of passing
+	@# quietly.
+	@$(CC) -fpreprocessed -E $(WIFI_MGR_SRC) 2>/dev/null \
+	  | awk '/taskENTER_CRITICAL/{last="in"} \
+	         /taskEXIT_CRITICAL/{last="out"} \
+	         /WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING\)?;?$$/ { \
+	             if (prev ~ /(Set|Reset)EventFlag\(/) { n++; if (last != "in") bad++ } } \
+	         {prev=$$0} \
+	         END{printf "%d %d\n", n+0, bad+0}' > /tmp/.p1060cs.$$$$; \
+	 read n bad < /tmp/.p1060cs.$$$$; rm -f /tmp/.p1060cs.$$$$; \
+	 test "$$n" -eq 4 \
+	  || { echo "ERROR: found $$n write(s) of the #1060 teardown marker,"; \
+	       echo "       expected 4 (set+clear at the AP->STA site, the clear in"; \
+	       echo "       the REINIT retry, and the ENTRY restore). A different"; \
+	       echo "       count means this pin is no longer looking at the writes"; \
+	       echo "       it was written for -- which is a failure, not a pass."; \
+	       exit 1; }; \
+	 test "$$bad" -eq 0 \
+	  || { echo "ERROR: $$bad write(s) of the #1060 teardown marker are OUTSIDE"; \
+	       echo "       a critical section. Set/ResetEventFlag are plain"; \
+	       echo "       read-modify-writes on one shared 16-bit word, so a"; \
+	       echo "       higher-priority task's flag write in that window is"; \
+	       echo "       silently erased -- including the FWUpdate request this"; \
+	       echo "       file already preserves by hand."; exit 1; }
 	$(CC) $(CFLAGS) -o $(APSTA1060_BIN) test_1060_apsta_disconnect_retry.c
 
 $(BIN): test_circularbuffer.c test_framework.h stubs/Logger.h stubs/osal/osal.h $(FW_UTIL)/CircularBuffer.c $(FW_UTIL)/CircularBuffer.h $(RECIPES)

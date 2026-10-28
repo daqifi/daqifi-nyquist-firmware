@@ -1137,6 +1137,27 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             // Preserve WiFi firmware update mode request flag across state reset
             bool wifiFwUpdateRequested = GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_REQUESTED);
 
+            /* ⛔ #1060 r4: THE TEARDOWN MARKER MUST SURVIVE THIS RESET, and r3
+             * did not make it so -- which falsified r3's own central claim.
+             *
+             * r3 said the disconnect is "re-attempted on every REINIT pass
+             * while set". It is not: if the REINIT-side attempt ALSO fails,
+             * REINIT falls through to the fresh-init arm, which re-enters
+             * MainState, and this ENTRY runs ResetAllEventFlags() -- a memset
+             * of the whole flag word. The marker is erased, the driver is
+             * reused with isConnected still true, and nothing ever retries.
+             * One failed retry and the unbounded retry was gone again.
+             *
+             * This flag is not session state like the others in that word. It
+             * records a fact about the CHIP -- "a disconnect we issued never
+             * reached it" -- and no state transition on our side makes that
+             * false. It may be cleared ONLY by a disconnect that reached the
+             * chip. So it is preserved here exactly as the firmware-update
+             * request above is, which is this file's existing idiom for a flag
+             * that outlives a state reset; I added a third writer to that word
+             * without looking for the pattern that already handled the second. */
+            bool teardownPending = GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING);
+
             ResetAllEventFlags(&pInstance->eventFlags);
             // #475 step 3 — bulk-clear includes TCP_SOCKET_OPEN flag, so
             // pair it with the matching tick clear to keep observable in
@@ -1152,6 +1173,17 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             // stale deadline would unnecessarily delay the next REINIT
             // attempt by up to 30 s.  Qodo round-3 finding (medium).
             pInstance->retryAfterTick = 0;
+
+            /* #1060 r4: restore the chip-truth marker the memset above cleared.
+             * Unconditional and independent of the branches below -- an
+             * outstanding teardown is outstanding whatever this state machine
+             * does next. Critical section per the RMW rule below. */
+            if (teardownPending) {
+                taskENTER_CRITICAL();
+                SetEventFlag(&pInstance->eventFlags,
+                             WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING);
+                taskEXIT_CRITICAL();
+            }
 
             if (wifiFwUpdateRequested) {
                 SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_REQUESTED);
@@ -1760,8 +1792,13 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                         WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
                 if ((WDRV_WINC_STATUS_OK == retryStatus) ||
                     (WDRV_WINC_STATUS_REQUEST_ERROR == retryStatus)) {
+                    /* #1060 r4: same RMW rule as the AP->STA site. The LOG_I
+                     * stays OUTSIDE the lock -- logging from a critical
+                     * section is its own hazard. */
+                    taskENTER_CRITICAL();
                     ResetEventFlag(&pInstance->eventFlags,
                             WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING);
+                    taskEXIT_CRITICAL();
                     LOG_I("WiFi: outstanding teardown completed (#1060)");
                 }
                 /* Still failing: the flag stays set and the next REINIT tries
@@ -2060,6 +2097,16 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                             discStatus = WDRV_WINC_BSSDisconnect(
                                     pInstance->wdrvHandle);
                         }
+                        /* ⛔ #1060 r4: CRITICAL SECTION, because
+                         * Set/ResetEventFlag are plain read-modify-writes on
+                         * one shared 16-bit word (:948 and :952). A
+                         * higher-priority USB-task SYST:COMM:LAN:FWUpdate
+                         * setting WIFI_FW_UPDATE_REQUESTED between this load
+                         * and its store would be ERASED. The two STA flag
+                         * clears a few lines up already take this lock and say
+                         * exactly this -- I added writers to the same word
+                         * without extending it to them. */
+                        taskENTER_CRITICAL();
                         if ((WDRV_WINC_STATUS_OK == discStatus) ||
                             (WDRV_WINC_STATUS_REQUEST_ERROR == discStatus)) {
                             /* Reached the chip: nothing is outstanding. */
@@ -2072,6 +2119,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                             SetEventFlag(&pInstance->eventFlags,
                                     WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING);
                         }
+                        taskEXIT_CRITICAL();
                         if ((WDRV_WINC_STATUS_OK != discStatus) &&
                             (WDRV_WINC_STATUS_REQUEST_ERROR != discStatus)) {
                             /* ⛔ SHORTENED TWICE, AND THE SECOND TIME BY THE
