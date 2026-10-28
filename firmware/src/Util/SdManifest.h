@@ -567,12 +567,21 @@ static inline uint32_t SdManifest_ParsePartIndexDigits(const char *d,
         }
         idx = (idx * 10u) + (uint32_t)(*d - '0');
     }
-    /* Belt and braces: the accumulator cannot leave [1, MAX] given the tests
-     * above, and saying so here is what makes the RANGE the post-condition
-     * rather than a property of the loop's arithmetic. */
-    if ((idx < 1u) || (idx > SDMANIFEST_PART_INDEX_MAX)) {
-        return SDMANIFEST_PART_NONE;
-    }
+    /* ⛔ THE RANGE [1, SDMANIFEST_PART_INDEX_MAX] IS A POST-CONDITION OF THE
+     * TWO GUARDS ABOVE, AND THERE IS DELIBERATELY NO THIRD TEST RESTATING IT.
+     *
+     * Lower bound: `d[0] == '0'` is rejected, so the first digit is 1-9 and
+     * idx is >= 1 after one iteration and only grows. Upper bound: the
+     * in-loop test rejects any digit that would carry idx past the ceiling.
+     *
+     * ⚠ A `if ((idx < 1u) || (idx > SDMANIFEST_PART_INDEX_MAX))` WAS written
+     * here, as "belt and braces". A mutant (R83) then neutered it and the
+     * whole suite still passed -- which is the proof that it was unreachable,
+     * i.e. dead code pretending to be a safety net. It is removed rather than
+     * kept with a comment, because an unreachable guard invites the next
+     * reader to weaken a REACHABLE one in the belief that this still catches
+     * it. R83 now mutates the in-loop ceiling, which is the line that
+     * actually enforces. */
     return idx;
 }
 

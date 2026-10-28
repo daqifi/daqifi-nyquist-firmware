@@ -1700,6 +1700,12 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	@#
 	@# Each arm by its OWN exact form -- fileLen for the name, pathLen for the
 	@# directory -- because a by-name count cannot tell WHICH arm complies.
+	@# ⚠ ONE ERROR LINE PER ARM. first_error() in pin1124_mutate.sh reads only
+	@# the FIRST '^ERROR' line, so a single shared opening line makes three
+	@# different mutants (R60, R78, R79) indistinguishable -- each would "come
+	@# from this pin" while proving nothing about WHICH refusal was removed.
+	@# That is the same by-name-vs-by-arm failure the pins themselves guard
+	@# against, one level up, and it was found by those mutants.
 	@pp=`$(CC) -fpreprocessed -E $(SD_BENCH_SRC) 2>/dev/null`; \
 	 nalias=`printf '%s\n' "$$pp" | grep -c 'SdManifest_PathHasAliasRiskLen('`; \
 	 lgrant=`printf '%s\n' "$$pp" | grep -n 'SD_DirHasBucketComponent(' | head -1 | cut -d: -f1`; \
@@ -1707,72 +1713,137 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	 ldir=`printf '%s\n' "$$pp" | grep -n 'SdManifest_PathHasAliasRiskLen(pBuff, pathLen)' | head -1 | cut -d: -f1`; \
 	 lmfst=`printf '%s\n' "$$pp" | grep -n 'SdManifest_NameHasManifestExtLen(pBuff, fileLen)' | head -1 | cut -d: -f1`; \
 	 nold=`printf '%s\n' "$$pp" | grep -c "memchr(pBuff, '~', fileLen)"`; \
-	 ok=1; \
-	 test "$$nalias" -eq 2 || ok=0; \
-	 test -n "$$lfile" && test -n "$$ldir" && test -n "$$lmfst" || ok=0; \
-	 test -n "$$lgrant" || ok=0; \
-	 if [ -n "$$lgrant" ] && [ -n "$$lfile" ]; then \
-	   test "$$lfile" -gt "$$lgrant" || ok=0; \
+	 if [ -z "$$ldir" ]; then \
+	   echo "ERROR: #1124 r28 PIN 23d: the DIRECTORY setter no longer refuses '~'."; \
+	   echo "       SCPI_StorageSDDirectorySet must refuse it UNCONDITIONALLY."; \
+	   echo "       r28 main :1119's repro names the alias AS THE DIRECTORY, with"; \
+	   echo "       no opt-in in sight, and every manifest path is built from the"; \
+	   echo "       configured directory text -- so this is also what makes the"; \
+	   echo "       claim 'a device-written manifest cannot contain an alias'"; \
+	   echo "       true by construction instead of by assumption (blind :501)."; \
+	   exit 1; \
 	 fi; \
-	 if [ -n "$$lgrant" ] && [ -n "$$lmfst" ]; then \
-	   test "$$lmfst" -gt "$$lgrant" || ok=0; \
+	 if [ -z "$$lfile" ]; then \
+	   echo "ERROR: #1124 r28 PIN 23d: the FILE setter no longer refuses '~' in the name."; \
+	   echo "       An 8.3 alias names the same file as a long name while"; \
+	   echo "       comparing textually unequal to it, and all record matching"; \
+	   echo "       here is textual. Needed on the ORDINARY path, not just the"; \
+	   echo "       grant: a session rotates without an opt-in."; \
+	   exit 1; \
 	 fi; \
-	 test "$$nold" -eq 0 || ok=0; \
-	 test "$$ok" -eq 1 \
-	  || { echo "ERROR: #1124 r28 PIN 23d: the alias / manifest-extension"; \
-	       echo "       refusals in $(SD_BENCH_SRC) are missing, duplicated, or"; \
-	       echo "       have drifted back INSIDE the overwrite opt-in block."; \
-	       echo "         PathHasAliasRiskLen( call sites: $$nalias (expected 2)"; \
-	       echo "         name arm  (pBuff, fileLen) at line: $$lfile"; \
-	       echo "         dir arm   (pBuff, pathLen) at line: $$ldir"; \
-	       echo "         .mfst arm (pBuff, fileLen) at line: $$lmfst"; \
-	       echo "         end of the opt-in block        at line: $$lgrant"; \
-	       echo "         superseded memchr('~') sites: $$nold (expected 0)"; \
-	       echo "       Both setters must refuse UNCONDITIONALLY: the name and"; \
-	       echo "       the directory arms, each after the opt-in block, and the"; \
-	       echo "       r22 memchr form must be gone rather than kept alongside"; \
-	       echo "       -- a second copy makes the general rule look conditional."; \
-	       echo "       An alias needs no grant: a session rotates without one,"; \
-	       echo "       and one configured by alias writes records no later"; \
-	       echo "       long-named session can match (r28 :1119 / :501)."; \
-	       exit 1; }
+	 if [ -z "$$lmfst" ]; then \
+	   echo "ERROR: #1124 r28 PIN 23d: the FILE setter no longer refuses a name"; \
+	   echo "       ending in the manifest extension."; \
+	   echo "       The manifest name is '<file>' + SD_MANIFEST_EXT, so a DATA"; \
+	   echo "       file 'exp.csv.mfst' is the manifest name of a session"; \
+	   echo "       configured 'exp.csv' (r28 :3894). It also keeps the scan's"; \
+	   echo "       name test and its first-line content test in agreement,"; \
+	   echo "       which holds only while no data file bears the extension."; \
+	   exit 1; \
+	 fi; \
+	 if [ "$$nalias" -ne 2 ]; then \
+	   echo "ERROR: #1124 r28 PIN 23d: expected exactly 2 alias-risk call sites"; \
+	   echo "       in $(SD_BENCH_SRC), found $$nalias -- one per setter."; \
+	   exit 1; \
+	 fi; \
+	 if [ "$$nold" -ne 0 ]; then \
+	   echo "ERROR: #1124 r28 PIN 23d: the superseded r22 memchr('~') form is"; \
+	   echo "       back ($$nold site(s)) alongside the general refusal. A second"; \
+	   echo "       copy makes the unconditional rule look conditional again."; \
+	   exit 1; \
+	 fi; \
+	 if [ -z "$$lgrant" ]; then \
+	   echo "ERROR: #1124 r28 PIN 23d: cannot locate the end of the opt-in block"; \
+	   echo "       (SD_DirHasBucketComponent), so the POSITION arm below cannot"; \
+	   echo "       be evaluated. A pin that cannot evaluate its invariant fails."; \
+	   exit 1; \
+	 fi; \
+	 if [ "$$lfile" -lt "$$lgrant" ] || [ "$$lmfst" -lt "$$lgrant" ]; then \
+	   echo "ERROR: #1124 r28 PIN 23d: a refusal has drifted back INSIDE the"; \
+	   echo "       overwrite opt-in block (name at $$lfile, .mfst at $$lmfst,"; \
+	   echo "       block ends $$lgrant)."; \
+	   echo "       Scoping these to the grant WAS the r28 defect: it protected"; \
+	   echo "       only the destructive route while ordinary refuse-by-default"; \
+	   echo "       logging both accepted an alias-spelled target and WROTE"; \
+	   echo "       records spelled that way."; \
+	   exit 1; \
+	 fi
 	@# ⛔⛔ PIN 23f -- r28: AND THE SAME TWO REFUSALS AT USE, WHICH IS THE HALF
 	@# A SETTER-ONLY FIX MISSES. An NVM restore populates the settings struct
 	@# directly and never reaches a setter -- the route-around that
 	@# SD_ValidatePathParam's own header names as having sunk a setter-only fix
 	@# for the directory half.
 	@#
-	@# ⚠ AND THE WRITE-ONLY GUARD IS PINNED TOO, because getting it wrong is a
+	@# ⚠ THE WRITE-ONLY GUARD IS PINNED TOO, because getting it wrong is a
 	@# worse regression than the hazard: the same OPEN_FILE guard serves SD:GET,
 	@# SD:CRC and SD:DELete through opFile, so an unguarded refusal would make a
-	@# manifest unreadable and an in-the-way file undeletable. `usesOperandName`
-	@# selects those modes, so the refusals must sit under `!usesOperandName`.
-	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null`; \
-	 nuse=`printf '%s\n' "$$pp" | grep -c 'SdManifest_PathHasAliasRisk('`; \
-	 nmfst=`printf '%s\n' "$$pp" | grep -c 'SdManifest_NameHasManifestExt(nameOperand)'`; \
-	 lmode=`printf '%s\n' "$$pp" | grep -n 'if (!usesOperandName)' | head -1 | cut -d: -f1`; \
-	 lrisk=`printf '%s\n' "$$pp" | grep -n 'SdManifest_PathHasAliasRisk(' | head -1 | cut -d: -f1`; \
-	 ok=1; \
-	 test "$$nuse" -eq 2 || ok=0; \
-	 test "$$nmfst" -eq 1 || ok=0; \
-	 test -n "$$lmode" && test -n "$$lrisk" || ok=0; \
-	 if [ -n "$$lmode" ] && [ -n "$$lrisk" ]; then \
-	   test "$$lrisk" -gt "$$lmode" || ok=0; \
+	@# manifest unreadable and an in-the-way file undeletable.
+	@#
+	@# ⛔⛔ AND EACH ARM BY ITS EXACT FORM, NOT BY A COUNT OF CALL SITES. Found
+	@# by mutant R81: prefixing the directory arm with `false &&` disables the
+	@# refusal while LEAVING THE CALL TEXT PRESENT, so a count stays at 2 and a
+	@# count-keyed pin passes with half the refusal gone. Matched on the
+	@# whitespace-FLATTENED text, because the source wraps these lines at 80
+	@# columns and `-E` preserves that geometry.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null \
+	     | grep -v '^#' | tr '\n' ' ' | tr -s ' '`; \
+	 lp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null`; \
+	 lmode=`printf '%s\n' "$$lp" | grep -n 'if (!usesOperandName)' | head -1 | cut -d: -f1`; \
+	 lrisk=`printf '%s\n' "$$lp" | grep -n 'SdManifest_PathHasAliasRisk(' | head -1 | cut -d: -f1`; \
+	 case "$$pp" in \
+	   *"const bool aliasInName = SdManifest_PathHasAliasRisk(nameOperand);"*) ;; \
+	   *) echo "ERROR: #1124 r28 PIN 23f: the at-use NAME arm is gone or altered."; \
+	      echo "       Expected exactly:"; \
+	      echo "         const bool aliasInName ="; \
+	      echo "                 SdManifest_PathHasAliasRisk(nameOperand);"; \
+	      echo "       A setter-only refusal is not a refusal: an NVM restore"; \
+	      echo "       never passes through SCPI."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"const bool aliasInDir = SdManifest_PathHasAliasRisk(gpSDCardSettings->directory);"*) ;; \
+	   *) echo "ERROR: #1124 r28 PIN 23f: the at-use DIRECTORY arm is gone or"; \
+	      echo "       altered. Expected exactly:"; \
+	      echo "         const bool aliasInDir ="; \
+	      echo "                 SdManifest_PathHasAliasRisk(gpSDCardSettings->directory);"; \
+	      echo "       Pinned by FORM, not by a call-site count: mutant R81"; \
+	      echo "       prefixes this with 'false &&', which disables the refusal"; \
+	      echo "       while leaving the call text present -- a count stays at 2"; \
+	      echo "       and passes with half the refusal gone. main :1119's repro"; \
+	      echo "       is the DIRECTORY arm specifically."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"if (aliasInName || aliasInDir) {"*) ;; \
+	   *) echo "ERROR: #1124 r28 PIN 23f: the two at-use alias arms are computed"; \
+	      echo "       but no longer USED together. Expected:"; \
+	      echo "         if (aliasInName || aliasInDir) {"; \
+	      echo "       Two correct reads feeding nothing is the inert-guard"; \
+	      echo "       shape this row has hit before."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"if (SdManifest_NameHasManifestExt(nameOperand)) {"*) ;; \
+	   *) echo "ERROR: #1124 r28 PIN 23f: the at-use manifest-extension refusal"; \
+	      echo "       is gone. A session whose configured name ends in"; \
+	      echo "       SD_MANIFEST_EXT writes its data file over another"; \
+	      echo "       session's manifest name (r28 :3894)."; \
+	      exit 1;; \
+	 esac; \
+	 if [ -z "$$lmode" ]; then \
+	   echo "ERROR: #1124 r28 PIN 23f: the WRITE-ONLY guard '!usesOperandName'"; \
+	   echo "       is gone, so these refusals now also reject SD:GET, SD:CRC"; \
+	   echo "       and SD:DELete operands. Refusing to READ a manifest, or to"; \
+	   echo "       DELETE the file that is in the way, is a worse outcome than"; \
+	   echo "       the hazard the refusals close."; \
+	   exit 1; \
 	 fi; \
-	 test "$$ok" -eq 1 \
-	  || { echo "ERROR: #1124 r28 PIN 23f: the AT-USE alias / manifest-extension"; \
-	       echo "       refusals in $(SD_MANAGER_SRC) are wrong."; \
-	       echo "         PathHasAliasRisk( sites: $$nuse (expected 2 -- the"; \
-	       echo "           configured name AND the configured directory)"; \
-	       echo "         NameHasManifestExt(nameOperand) sites: $$nmfst (expected 1)"; \
-	       echo "         if (!usesOperandName) at line: $$lmode"; \
-	       echo "         first alias check     at line: $$lrisk (must be after)"; \
-	       echo "       A setter-only refusal is not a refusal: an NVM restore"; \
-	       echo "       never passes through SCPI. And the refusals must stay"; \
-	       echo "       under !usesOperandName -- unguarded they would refuse"; \
-	       echo "       SD:GET of a manifest and SD:DELete of the file in the"; \
-	       echo "       way, which is worse than the hazard they close."; \
-	       exit 1; }
+	 if [ -n "$$lrisk" ] && [ "$$lrisk" -lt "$$lmode" ]; then \
+	   echo "ERROR: #1124 r28 PIN 23f: an at-use alias check sits BEFORE the"; \
+	   echo "       write-only guard (check at $$lrisk, guard at $$lmode), so it"; \
+	   echo "       applies to the read/CRC/delete operands too."; \
+	   exit 1; \
+	 fi
 	@# ⛔⛔ PIN 24 -- r21 AUDIT HIGH (:972): THE DIRECTORY GENERATION IS
 	@# SNAPSHOTTED BEFORE THE RESOLUTION AND RE-CHECKED AT THE COMMIT.
 	@#

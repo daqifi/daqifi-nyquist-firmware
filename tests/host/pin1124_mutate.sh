@@ -171,9 +171,24 @@ first_error() {
     if [ -n "$err" ]; then
         printf '%s' "$err"
     elif [ "$rc" -ne 0 ]; then
-        # No diagnostic of ours, but the build did not succeed: that is NOT a
-        # clean run and must never satisfy a CLEAN expectation.
-        printf '<<DID NOT RUN: make exited %s with no ERROR line>>' "$rc"
+        # ⛔ r28: A FAILING ASSERTION IS A DIAGNOSTIC TOO, AND UNTIL NOW IT WAS
+        # INVISIBLE HERE. Every arm in this script used to be structural -- a
+        # Makefile pin printing '^ERROR' -- so only those lines were read. The
+        # shared part-suffix parser is host-reachable, so its mutants are
+        # caught BY VALUE, by a test; those arms reported
+        # "<<DID NOT RUN: make exited 2 with no ERROR line>>", i.e. they failed
+        # for a reason the arm could not name. That is the same "fails for the
+        # wrong reason" defect these arms exist to catch, one level up.
+        #
+        # ⚠ ONLY when make FAILED and no ERROR line exists, so this cannot
+        # loosen CLEAN: that branch still requires exactly "<<NO ERROR>>", and
+        # a successful run prints no [FAIL] lines to find.
+        tfail=$(printf '%s\n' "$out" | grep -m1 '^\[FAIL\]')
+        if [ -n "$tfail" ]; then
+            printf '%s' "$tfail"
+        else
+            printf '<<DID NOT RUN: make exited %s with no ERROR line>>' "$rc"
+        fi
     else
         printf '<<NO ERROR>>'
     fi
@@ -1052,7 +1067,7 @@ echo "==      also WRITES records spelled by alias. REWRITTEN at r28: the old  =
 echo "==      arm neutered the opt-in-only memchr, which no longer exists.     =="
 if sub "$S" "        if (SdManifest_PathHasAliasRiskLen(pBuff, fileLen)) {" \
             "        if (false) {"; then
-    expect "R60 the name arm refuses a tilde" "are missing, duplicated, or"
+    expect "R60 the name arm refuses a tilde" "the FILE setter no longer refuses '~' in the name"
 else
     echo "  FAIL R60 anchor absent."; fail=$((fail+1))
 fi
@@ -1063,7 +1078,7 @@ echo "==      main :1119's repro names the alias as the DIRECTORY, not the     =
 echo "==      file, and a by-name count cannot tell which arm complies.        =="
 if sub "$S" "    if (SdManifest_PathHasAliasRiskLen(pBuff, pathLen)) {" \
             "    if (false) {"; then
-    expect "R78 the directory arm refuses a tilde" "are missing, duplicated, or"
+    expect "R78 the directory arm refuses a tilde" "the DIRECTORY setter no longer refuses '~'"
 else
     echo "  FAIL R78 anchor absent."; fail=$((fail+1))
 fi
@@ -1074,7 +1089,7 @@ echo "==      session named exp.csv.mfst writes exp.csv.mfst.mfst and leaves   =
 echo "==      its data file occupying a later exp.csv session's manifest name. =="
 if sub "$S" "        if (SdManifest_NameHasManifestExtLen(pBuff, fileLen)) {" \
             "        if (false) {"; then
-    expect "R79 the setter refuses a .mfst name" "are missing, duplicated, or"
+    expect "R79 the setter refuses a .mfst name" "no longer refuses a name ending in the manifest extension"
 else
     echo "  FAIL R79 anchor absent."; fail=$((fail+1))
 fi
@@ -1095,8 +1110,8 @@ echo "== R81 (PIN 23f): keep the NAME arm at use and drop the DIRECTORY arm.   =
 echo "==      This is the half a single \"||\" expression would have hidden:      =="
 echo "==      the call text stays present, so only a per-arm pin sees it.      =="
 if sub "$F" "                            SdManifest_PathHasAliasRisk(gpSDCardSettings->directory);" \
-            "                            false;"; then
-    expect "R81 the at-use directory arm exists" "PIN 23f"
+            "                            false && SdManifest_PathHasAliasRisk(gpSDCardSettings->directory);"; then
+    expect "R81 the at-use directory arm exists" "PIN 23f: the at-use DIRECTORY arm"
 else
     echo "  FAIL R81 anchor absent."; fail=$((fail+1))
 fi
@@ -1108,17 +1123,20 @@ echo "==      behaviour, not by a pin: this is the one arm where the rule's    =
 echo "==      body is host-reachable and can be tested by value.               =="
 if sub "$U" "    if (d[0] == '0') {" \
             "    if (false) {"; then
-    expect "R82 the parser rejects a leading zero" "a_padded_index_is_never_one_of_our_parts"
+    expect "R82 the parser rejects a leading zero" "[FAIL] part_suffix_parser_accepts_only_what_the_formatter_emits"
 else
     echo "  FAIL R82 anchor absent."; fail=$((fail+1))
 fi
 restore
 
-echo "== R83 (test_924): unbound the parser's index, so a foreign name with an =="
-echo "==      absurd suffix maps onto an index no session can write.           =="
-if sub "$U" "    if ((idx < 1u) || (idx > SDMANIFEST_PART_INDEX_MAX)) {" \
-            "    if (false) {"; then
-    expect "R83 the parser bounds its index" "part_suffix_parser_bounds_the_index"
+echo "== R83 (test_924): restore the OLD uint32_t ceiling in the in-loop guard, =="
+echo "==      so a foreign name with an absurd suffix maps onto an index no    =="
+echo "==      session can write. Targets the line that ENFORCES: a first draft =="
+echo "==      of this arm neutered a final range test instead, the whole suite =="
+echo "==      still passed, and that is how the dead guard was found.          =="
+if sub "$U" "        if (idx > ((SDMANIFEST_PART_INDEX_MAX - (uint32_t)(*d - '0')) / 10u)) {" \
+            "        if (idx > ((0xFFFFFFFFu - (uint32_t)(*d - '0')) / 10u)) {"; then
+    expect "R83 the parser bounds its index" "[FAIL] part_suffix_parser_bounds_the_index_to_what_a_session_can_write"
 else
     echo "  FAIL R83 anchor absent."; fail=$((fail+1))
 fi
