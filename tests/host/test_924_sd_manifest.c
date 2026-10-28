@@ -1204,6 +1204,63 @@ TEST(a_delimiter_in_the_directory_would_corrupt_the_record)
     ASSERT_TRUE(manifest_guard_refuses("DAQiFi/sub", "exp.csv") == false);
 }
 
+/* ---- #1124 r21: SdManifest_NameHasManifestExt --------------------------
+ *
+ * A REAL test, not a model: this helper is a pure function in the header, so
+ * there is no excuse for asserting against a re-implementation of it.
+ *
+ * It decides which directory entries the r21 foreign-record scan reads. Both
+ * error directions are live:
+ *   - too NARROW (e.g. case-sensitive) and a real manifest reads as an
+ *     ordinary file, so the scan inspects nothing and the guard silently
+ *     passes everything;
+ *   - too WIDE and the scan opens and parses arbitrary files, where an
+ *     unparseable one is a FAULT and refuses a session that was fine.
+ */
+TEST(the_manifest_extension_test_accepts_what_we_write) {
+    ASSERT_TRUE(SdManifest_NameHasManifestExt("exp.csv" SD_MANIFEST_EXT));
+    ASSERT_TRUE(SdManifest_NameHasManifestExt("a" SD_MANIFEST_EXT));
+    ASSERT_TRUE(SdManifest_NameHasManifestExt("exp.csv.mfst"));
+}
+
+/* FAT does not distinguish case, so an entry reaching us upper-cased is the
+ * same file. A case-SENSITIVE test here would make the scan read nothing on a
+ * card whose entries come back as 8.3 aliases -- a guard that inspects no
+ * manifests passes every session, which is the silent-permissive direction. */
+TEST(the_manifest_extension_test_ignores_case) {
+    ASSERT_TRUE(SdManifest_NameHasManifestExt("EXP.CSV.MFST"));
+    ASSERT_TRUE(SdManifest_NameHasManifestExt("exp.csv.MFST"));
+    ASSERT_TRUE(SdManifest_NameHasManifestExt("exp.csv.MfSt"));
+}
+
+TEST(the_manifest_extension_test_rejects_everything_else) {
+    ASSERT_FALSE(SdManifest_NameHasManifestExt("exp.csv"));
+    ASSERT_FALSE(SdManifest_NameHasManifestExt("exp.mfs"));
+    ASSERT_FALSE(SdManifest_NameHasManifestExt("exp.mfstx"));
+    ASSERT_FALSE(SdManifest_NameHasManifestExt("mfst"));
+    ASSERT_FALSE(SdManifest_NameHasManifestExt(""));
+    ASSERT_FALSE(SdManifest_NameHasManifestExt(NULL));
+    /* ⚠ The bare extension with no stem. Every manifest this firmware creates
+     * is <something>.mfst, so a file called exactly ".mfst" is somebody
+     * else's; reading it as a manifest would let its contents decide a
+     * refusal. */
+    ASSERT_FALSE(SdManifest_NameHasManifestExt(SD_MANIFEST_EXT));
+}
+
+/* ⭐ The property that actually matters at the call site: whatever name the
+ * manifest construction produces, this test must accept its final segment.
+ * Keyed off SdManifest_FormatLine's own extension macro rather than a literal,
+ * so renaming the extension cannot leave the two disagreeing. */
+TEST(the_extension_test_agrees_with_the_manifest_construction) {
+    char path[128];
+    const char *files[] = { "exp.csv", "log.txt", "a", "sub/exp.csv" };
+    for (unsigned i = 0; i < 4; i++) {
+        int n = snprintf(path, sizeof(path), "%s" SD_MANIFEST_EXT, files[i]);
+        ASSERT_TRUE(n > 0 && (size_t)n < sizeof(path));
+        ASSERT_TRUE(SdManifest_NameHasManifestExt(path));
+    }
+}
+
 int main(void)
 {
     printf("=== #924 SD session integrity manifest ===\n");
@@ -1241,5 +1298,9 @@ int main(void)
     RUN(the_manifest_name_is_usable_however_the_file_is_spelled);
     RUN(a_recorded_name_retrieves_the_file_it_describes);
     RUN(a_delimiter_in_the_directory_would_corrupt_the_record);
+    RUN(the_manifest_extension_test_accepts_what_we_write);
+    RUN(the_manifest_extension_test_ignores_case);
+    RUN(the_manifest_extension_test_rejects_everything_else);
+    RUN(the_extension_test_agrees_with_the_manifest_construction);
     return TEST_SUMMARY();
 }

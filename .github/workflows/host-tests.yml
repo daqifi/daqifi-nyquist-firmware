@@ -450,6 +450,15 @@ on:
       - 'firmware/src/Util/CRC32.c'
       - 'firmware/src/Util/CRC32.h'
       - 'firmware/src/services/sd_card_services/sd_card_manager.c'
+      # #1124 r21: PIN 13 READS FF_FS_REENTRANT OUT OF ffconf.h, and refuses
+      # to pass on an unread or non-zero value. The pin asserts WHERE the
+      # foreign-record scan may run: FatFs is not thread-safe here, so the
+      # scan's I/O belongs on app_SDCardTask and must not be called from the
+      # arm (which runs on the SCPI/streaming task). That placement is a
+      # CONSEQUENCE of this setting, so turning reentrancy on has to re-open
+      # the question -- and without this filter entry the job that asks would
+      # not even run on the commit that changed it.
+      - 'firmware/src/config/default/system/fs/fat_fs/file_system/ffconf.h'
       - 'firmware/src/services/sd_card_services/sd_card_manager.h'
       # #1142: test_1141_hex_record_upper_panel_error.c's Makefile target
       # depends on the bootloader's own nvm.c/nvm.h/system_config.h (see
@@ -567,6 +576,15 @@ on:
       - 'firmware/src/Util/CRC32.c'
       - 'firmware/src/Util/CRC32.h'
       - 'firmware/src/services/sd_card_services/sd_card_manager.c'
+      # #1124 r21: PIN 13 READS FF_FS_REENTRANT OUT OF ffconf.h, and refuses
+      # to pass on an unread or non-zero value. The pin asserts WHERE the
+      # foreign-record scan may run: FatFs is not thread-safe here, so the
+      # scan's I/O belongs on app_SDCardTask and must not be called from the
+      # arm (which runs on the SCPI/streaming task). That placement is a
+      # CONSEQUENCE of this setting, so turning reentrancy on has to re-open
+      # the question -- and without this filter entry the job that asks would
+      # not even run on the commit that changed it.
+      - 'firmware/src/config/default/system/fs/fat_fs/file_system/ffconf.h'
       - 'firmware/src/services/sd_card_services/sd_card_manager.h'
       # #1142: see the matching entry under pull_request above.
       - 'bootloader/firmware/src/system_config/usbdevice_pic32mz_ef_sk/**'

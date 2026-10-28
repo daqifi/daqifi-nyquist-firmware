@@ -2857,12 +2857,10 @@ static bool sd_TargetSafeToOpenForWrite(const char *dataPath) {
     overwriteAsked = gSDCardData.overwriteAuthorizedForSession;
     taskEXIT_CRITICAL();
 
-    /* ⛔⛔ #1124 r21: the opt-in's two preconditions, checked BEFORE anything
-     * below acts on `overwriteAsked`. Everything in this block is reached only
-     * WITH the grant, so a default session's open is unchanged -- no extra
-     * stat, no directory read, no parse. */
+    /* ⛔ #1124 r21 / ITEM 1: THE GRANT MUST BE FOR THIS PATH, checked before
+     * anything below acts on `overwriteAsked`. Reached only WITH the grant, so
+     * a default session pays nothing for it. */
     if (overwriteAsked) {
-        /* ---- ITEM 1: the grant must be FOR THIS PATH --------------------- */
         char authNow[SD_SESSION_MANIFEST_PATH_MAX];
         if (!sd_SessionManifestPath(authNow, sizeof(authNow))
                 || gSDCardData.overwriteAuthorizedManifest[0] == '\0'
@@ -2885,32 +2883,39 @@ static bool sd_TargetSafeToOpenForWrite(const char *dataPath) {
             LOG_E("[SD1124] grant not for this path: '%s'", authNow);
             return false;
         }
+    }
 
-        /* ---- ITEM 3: no foreign manifest may RECORD this target ---------- */
-        if (gSDCardData.foreignScanPending) {
-            const sd_InspectResult pre = sd_ScanForeignManifests(NULL);
-            if (pre == SD_INSPECT_FAULT) {
-                gSDCardData.writeRefuseReason = SD_REFUSE_MANIFEST_UNPARSABLE;
-                return false;
-            }
-            /* Latched, so the directory enumeration is paid ONCE per session
-             * rather than once per rotation. Both writes together, so an open
-             * can never see "no longer pending" beside a stale answer. */
-            taskENTER_CRITICAL();
-            gSDCardData.foreignManifestsPresent = (pre == SD_INSPECT_HAZARD);
-            gSDCardData.foreignScanPending = false;
-            taskEXIT_CRITICAL();
+    /* ⛔⛔ #1124 r21 / ITEM 3: NO FOREIGN MANIFEST MAY RECORD THIS TARGET.
+     *
+     * OUTSIDE the `overwriteAsked` block above, deliberately -- see the scope
+     * argument at the arm. A granted session can TRUNCATE a foreign-recorded
+     * file; ANY session can CREATE one at a recorded-but-deleted name, and
+     * both leave that manifest asserting a size and CRC32 over bytes it never
+     * recorded. The truncation case needs the grant; the creation case does
+     * not, so neither does this check. */
+    if (gSDCardData.foreignScanPending) {
+        const sd_InspectResult pre = sd_ScanForeignManifests(NULL);
+        if (pre == SD_INSPECT_FAULT) {
+            gSDCardData.writeRefuseReason = SD_REFUSE_MANIFEST_UNPARSABLE;
+            return false;
         }
-        if (gSDCardData.foreignManifestsPresent) {
-            const sd_InspectResult rec = sd_ScanForeignManifests(dataPath);
-            if (rec != SD_INSPECT_CLEAR) {
-                gSDCardData.writeRefuseReason =
-                        (rec == SD_INSPECT_FAULT) ? SD_REFUSE_MANIFEST_UNPARSABLE
-                                                  : SD_REFUSE_FOREIGN_RECORD;
-                /* log_budget: max=87 */
-                LOG_E("[SD1124] recorded elsewhere: '%s'", dataPath);
-                return false;
-            }
+        /* Latched, so the directory enumeration is paid ONCE per session
+         * rather than once per rotation. Both writes together, so an open can
+         * never see "no longer pending" beside a stale answer. */
+        taskENTER_CRITICAL();
+        gSDCardData.foreignManifestsPresent = (pre == SD_INSPECT_HAZARD);
+        gSDCardData.foreignScanPending = false;
+        taskEXIT_CRITICAL();
+    }
+    if (gSDCardData.foreignManifestsPresent) {
+        const sd_InspectResult rec = sd_ScanForeignManifests(dataPath);
+        if (rec != SD_INSPECT_CLEAR) {
+            gSDCardData.writeRefuseReason =
+                    (rec == SD_INSPECT_FAULT) ? SD_REFUSE_MANIFEST_UNPARSABLE
+                                              : SD_REFUSE_FOREIGN_RECORD;
+            /* log_budget: max=87 */
+            LOG_E("[SD1124] recorded elsewhere: '%s'", dataPath);
+            return false;
         }
     }
 
@@ -6914,7 +6919,38 @@ static bool sd_UpdateSettingsImpl(sd_card_manager_settings_t *pSettings,
              * the per-open check would have let run correctly for hours before
              * ever reaching the colliding part -- if it ever did. That is a
              * refusal bought with no safety gained. */
-            gSDCardData.foreignScanPending = granted;
+            /* ⛔⛔ #1124 r21 / ITEM 3, AND THE CORRECTION TO MY OWN FIRST
+             * ANSWER ON SCOPE. Owed by EVERY write session, not only a granted
+             * one -- `true` here, not `granted`.
+             *
+             * I first scoped this to granted sessions, on the argument that a
+             * session without the grant provably cannot truncate an existing
+             * file (sd_TargetSafeToOpenForWrite step 1 refuses on
+             * SD_REFUSE_TARGET_EXISTS), so there was nothing for a scan to
+             * prevent. The truncation half of that is correct and still holds.
+             * It is not the whole invariant:
+             *
+             *   ⚠ A FOREIGN RECORD IS INVALIDATED BY CREATION TOO, WITH NO
+             *     TRUNCATION ANYWHERE. If another capture's manifest records
+             *     DAQiFi/exp-1.csv and that data file has since been DELETED
+             *     while its manifest was kept, then a default session rotating
+             *     onto that name finds it ABSENT, creates it, and the foreign
+             *     manifest now asserts a size and a CRC32 over our bytes. Step
+             *     1 never fires, because there was nothing there to refuse.
+             *
+             * Reachable: a foreign session configured as "exp-1.csv" records
+             * exactly that name, in exp-1.csv.mfst -- a different manifest from
+             * ours, so neither step 3 nor r20's recorded-part check can see it
+             * -- and it is our session's part 1. Narrow, but it needs only an
+             * ordinary name and a user deleting a data file to free space.
+             *
+             * So the question is not "can this session truncate?" but "can
+             * this session make a foreign record describe bytes it did not
+             * record?", and creation answers yes. Cost stays once per session:
+             * the prefilter is a directory enumeration, and content reads
+             * happen only where a foreign manifest actually shares the
+             * directory. */
+            gSDCardData.foreignScanPending = true;
             /* The previous session's latched answer must not outlive it. It is
              * only ever READ after the prefilter above has refreshed it, so
              * this is hygiene rather than a fix -- but a stale `true` sitting
