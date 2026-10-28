@@ -2388,7 +2388,7 @@ static sd_InspectResult sd_RemoveStaleManifestAt(const char *path) {
          * -- nothing stale" and authorised the truncation. */
         const SYS_FS_ERROR e = SYS_FS_Error();
         if (e != SYS_FS_ERROR_NO_PATH && e != SYS_FS_ERROR_NO_FILE) {
-            LOG_E("[SD] #1124 manifest stat failed (err=%d) - refusing", (int)e);
+            LOG_E("[SD1124] unreadable mfststat e=%d", (int)e);
             return SD_INSPECT_FAULT;
         }
         return SD_INSPECT_CLEAR;        /* genuinely absent -- nothing stale */
@@ -2401,22 +2401,22 @@ static sd_InspectResult sd_RemoveStaleManifestAt(const char *path) {
              * inspector was right; this caller discarded the distinction.
              * r21: the distinction is now in the VALUE, so discarding it needs
              * a `case` that says so rather than an ignored out-param. */
-            LOG_E("[SD] #1124 manifest could not be inspected - refusing");
+            LOG_E("[SD1124] unparsable inspect");
             return SD_INSPECT_FAULT;
         case SD_INSPECT_HAZARD:
             /* ⚠ Deliberately CLEAR, as this function's header argues: a
              * NON-manifest file at this name is not removed, and cannot be
              * mistaken for a correct record of the new data either. Deleting a
              * user file would be strictly worse. */
-            LOG_E("[SD] #1124 manifest path holds a non-manifest file - left as is");
+            LOG_E("[SD1124] note not a manifest - left as is");
             return SD_INSPECT_CLEAR;
         case SD_INSPECT_CLEAR:
         default:
             break;
     }
     if (SYS_FS_FileDirectoryRemove(path) != SYS_FS_RES_SUCCESS) {
-        LOG_E("[SD] #1124 stale manifest not removed (err=%d) - refusing to "
-              "truncate its data file", (int)SYS_FS_Error());
+        LOG_E("[SD1124] notours stale not removed e=%d",
+              (int)SYS_FS_Error());
         return SD_INSPECT_HAZARD;       /* a stale record we could not clear */
     }
     LOG_I("[SD] #1124 removed a prior session's manifest for this name");
@@ -2533,7 +2533,7 @@ static sd_InspectResult sd_NameIsRotationPartOfExistingManifest(const char *name
     const SYS_FS_ERROR e = SYS_FS_Error();
     if (e != SYS_FS_ERROR_NO_PATH && e != SYS_FS_ERROR_NO_FILE) {
         /* log_budget: max=90 */
-        LOG_E("[SD1124] owner stat e=%d: '%s'", (int)e, owner);
+        LOG_E("[SD1124] unreadable owner e=%d: '%s'", (int)e, owner);
         return SD_INSPECT_FAULT;
     }
     return SD_INSPECT_CLEAR;
@@ -2594,6 +2594,25 @@ static sd_InspectResult sd_NameIsRotationPartOfExistingManifest(const char *name
  * reads, never a refusal: the refusal is decided by the exact comparison.
  */
 #define SD_FOREIGN_SCAN_MAX_MANIFESTS   16u
+/* ⛔⛔ #1124 r21: A CORRUPTION GUARD, NOT A CAPACITY POLICY -- and deliberately
+ * NOT CountDirEntries' bound.
+ *
+ * My first version reused that function's readCap
+ * (MAX_DIR_FILES + MAX_BUCKET + 2 = 130) and returned FAULT beyond it, which
+ * REFUSED every write session in a directory holding more than 130 entries.
+ * That was a regression, and the measurement is what found it: #689's
+ * CountDirEntries never reaches its own 130 on plain files, because it exits at
+ * `count < cap` (64) and the module then ROLLS TO A BUCKET. So a 500-entry
+ * user directory logs fine today, and the prefilter would have refused it.
+ *
+ * 130 encodes #689's OWN layout -- how many entries this firmware puts in a
+ * directory. This walk reads EVERYTHING in the directory and must therefore
+ * tolerate whatever a user left there, so it needs a bound of a different
+ * kind: one that exists only to stop an unterminated walk on a corrupt
+ * filesystem, set far above any plausible real directory. Reusing a number
+ * because it was nearby, rather than because it answered this question, is the
+ * whole defect. */
+#define SD_FOREIGN_SCAN_MAX_DIR_ENTRIES 65536u
 /* ⛔⛔ #1124 r21: THIS CAP WAS WRONG BY ~64x AND THE ERROR WAS A FALSE
  * REFUSAL, found by actually deriving the cost rather than asserting it.
  *
@@ -2649,14 +2668,14 @@ static sd_InspectResult sd_ManifestRecordsName(const char *manifestPath,
     SYS_FS_HANDLE h = SYS_FS_FileOpen(manifestPath, SYS_FS_FILE_OPEN_READ);
     if (h == SYS_FS_HANDLE_INVALID) {
         /* log_budget: max=87 */
-        LOG_E("[SD1124] mfst open fail: '%s'", manifestPath);
+        LOG_E("[SD1124] unparsable open '%s'", manifestPath);
         return SD_INSPECT_FAULT;
     }
 
     while (out == SD_INSPECT_CLEAR && !sawEof) {
         const size_t got = SYS_FS_FileRead(h, chunk, sizeof(chunk));
         if (got == (size_t)-1) {
-            LOG_E("[SD1124] mfst read fail");
+            LOG_E("[SD1124] unparsable read");
             out = SD_INSPECT_FAULT;
             break;
         }
@@ -2679,7 +2698,7 @@ static sd_InspectResult sd_ManifestRecordsName(const char *manifestPath,
                     /* Over the longest line this firmware can emit. Refuse
                      * rather than truncate-and-parse, which would compare a
                      * PREFIX of a recorded name against the target. */
-                    LOG_E("[SD1124] mfst line over %u bytes",
+                    LOG_E("[SD1124] unparsable line over %u bytes",
                           (unsigned)(sizeof(line) - 1u));
                     out = SD_INSPECT_FAULT;
                     break;
@@ -2695,7 +2714,7 @@ static sd_InspectResult sd_ManifestRecordsName(const char *manifestPath,
                 continue;           /* a blank line records nothing */
             }
             if (++lines > SD_FOREIGN_SCAN_MAX_LINES) {
-                LOG_E("[SD1124] mfst over %u lines",
+                LOG_E("[SD1124] unparsable lines over %u",
                       (unsigned)SD_FOREIGN_SCAN_MAX_LINES);
                 out = SD_INSPECT_FAULT;
                 break;
@@ -2703,7 +2722,7 @@ static sd_InspectResult sd_ManifestRecordsName(const char *manifestPath,
             char *sep = strchr(line, ',');
             if (sep == NULL || sep == line) {
                 /* No name field, or an empty one. */
-                LOG_E("[SD1124] mfst line unparsable at %u", (unsigned)lines);
+                LOG_E("[SD1124] unparsable line %u", (unsigned)lines);
                 out = SD_INSPECT_FAULT;
                 break;
             }
@@ -2721,7 +2740,7 @@ static sd_InspectResult sd_ManifestRecordsName(const char *manifestPath,
         /* FF_FS_LOCK is 10: a handle that fails to close keeps its lock slot,
          * and the slot is what some later open needs. Same reasoning, and the
          * same deliberately path-free message, as the manifest probe above. */
-        LOG_E("[SD1124] mfst scan close failed - a FatFs lock slot may stick");
+        LOG_E("[SD1124] note close failed - a FatFs lock slot may stick");
     }
     return out;
 }
@@ -2761,24 +2780,24 @@ static sd_InspectResult sd_ScanForeignManifests(const char *needle) {
             return SD_INSPECT_CLEAR;    /* no directory yet: no records in it */
         }
         /* log_budget: max=40 */
-        LOG_E("[SD1124] scan DirOpen e=%d: '%s'", (int)e, dir);
+        LOG_E("[SD1124] unparsable diropen e=%d: '%s'", (int)e, dir);
         return SD_INSPECT_FAULT;
     }
 
-    /* The same read bound CountDirEntries uses, for the same reason: a
-     * directory that never ends is a fault, not a long scan. */
-    const uint32_t readCap = SD_CARD_MANAGER_MAX_DIR_FILES
-                             + SD_CARD_MANAGER_MAX_BUCKET + 2u;
+    /* NOT CountDirEntries' bound -- see SD_FOREIGN_SCAN_MAX_DIR_ENTRIES. */
+    const uint32_t readCap = SD_FOREIGN_SCAN_MAX_DIR_ENTRIES;
     while (out == SD_INSPECT_CLEAR) {
         if (scanned >= readCap) {
-            LOG_E("[SD1124] scan over %u entries", (unsigned)readCap);
+            /* Not a capacity refusal: at this count the directory is not
+             * terminating, which is a filesystem fault. */
+            LOG_E("[SD1124] unparsable entries over %u", (unsigned)readCap);
             out = SD_INSPECT_FAULT;
             break;
         }
         scanned++;
         memset(&st, 0, sizeof(st));     /* also NULLs the legacy lfname field */
         if (SYS_FS_DirRead(dh, &st) == SYS_FS_RES_FAILURE) {
-            LOG_E("[SD1124] scan DirRead e=%d", (int)SYS_FS_Error());
+            LOG_E("[SD1124] unparsable dirread e=%d", (int)SYS_FS_Error());
             out = SD_INSPECT_FAULT;
             break;
         }
@@ -2800,7 +2819,7 @@ static sd_InspectResult sd_ScanForeignManifests(const char *needle) {
              * foreign manifests than this, entered WITH the overwrite opt-in,
              * is refused rather than permitted to re-read them at every
              * rotation -- which is how #689's create wedge happened. */
-            LOG_E("[SD1124] over %u foreign mfst",
+            LOG_E("[SD1124] unparsable mfst over %u",
                   (unsigned)SD_FOREIGN_SCAN_MAX_MANIFESTS);
             out = SD_INSPECT_FAULT;
             break;
@@ -2814,7 +2833,7 @@ static sd_InspectResult sd_ScanForeignManifests(const char *needle) {
                                (int)dirLen, dir, st.fname);
         if (w < 0 || (size_t)w >= sizeof(path)) {
             /* A name we cannot even address is a name we cannot clear. */
-            LOG_E("[SD1124] foreign mfst name too long");
+            LOG_E("[SD1124] unparsable name too long");
             out = SD_INSPECT_FAULT;
             break;
         }
@@ -2900,7 +2919,7 @@ static bool sd_TargetSafeToOpenForWrite(const char *dataPath) {
              * consecutive rounds. This compare does not depend on it. */
             gSDCardData.writeRefuseReason = SD_REFUSE_AUTH_PATH_CHANGED;
             /* log_budget: max=87 */
-            LOG_E("[SD1124] grant not for this path: '%s'", authNow);
+            LOG_E("[SD1124] authpath '%s'", authNow);
             return false;
         }
     }
@@ -2934,7 +2953,7 @@ static bool sd_TargetSafeToOpenForWrite(const char *dataPath) {
                     (rec == SD_INSPECT_FAULT) ? SD_REFUSE_MANIFEST_UNPARSABLE
                                               : SD_REFUSE_FOREIGN_RECORD;
             /* log_budget: max=87 */
-            LOG_E("[SD1124] recorded elsewhere: '%s'", dataPath);
+            LOG_E("[SD1124] foreign '%s'", dataPath);
             return false;
         }
     }
@@ -2952,7 +2971,7 @@ static bool sd_TargetSafeToOpenForWrite(const char *dataPath) {
              * truncating the tail, and a client can discriminate this refusal
              * from every other -200 by SYSTem:LOG?. */
             /* log_budget: max=90 */
-            LOG_E("[SD1124] refuse overwrite: '%s'", dataPath);
+            LOG_E("[SD1124] exists '%s'", dataPath);
             return false;
         }
     } else {
@@ -2963,7 +2982,7 @@ static bool sd_TargetSafeToOpenForWrite(const char *dataPath) {
              * even look at, beside a manifest that still describes it. */
             gSDCardData.writeRefuseReason = SD_REFUSE_TARGET_UNREADABLE;
             /* log_budget: max=90 */
-            LOG_E("[SD1124] stat err=%d: '%s'", (int)e, dataPath);
+            LOG_E("[SD1124] unreadable stat e=%d: '%s'", (int)e, dataPath);
             return false;
         }
         /* Genuinely absent: creating it destroys nothing. Fall through -- a
@@ -2984,7 +3003,7 @@ static bool sd_TargetSafeToOpenForWrite(const char *dataPath) {
                 ? SD_REFUSE_TARGET_UNREADABLE
                 : SD_REFUSE_MANIFEST_NOT_OURS;
         /* log_budget: max=90 */
-        LOG_E("[SD1124] refuse, recorded part: '%s'", dataPath);
+        LOG_E("[SD1124] ourpart '%s'", dataPath);
         return false;
     }
 
@@ -3016,7 +3035,7 @@ static bool sd_TargetSafeToOpenForWrite(const char *dataPath) {
         if (e != SYS_FS_ERROR_NO_PATH && e != SYS_FS_ERROR_NO_FILE) {
             gSDCardData.writeRefuseReason = SD_REFUSE_TARGET_UNREADABLE;
             /* log_budget: max=88 */
-            LOG_E("[SD1124] mfst stat e=%d: '%s'", (int)e, target);
+            LOG_E("[SD1124] unreadable mfst e=%d: '%s'", (int)e, target);
             return false;
         }
         return true;                    /* no manifest at that name */
@@ -3028,7 +3047,7 @@ static bool sd_TargetSafeToOpenForWrite(const char *dataPath) {
     if (!overwriteAsked) {
         gSDCardData.writeRefuseReason = SD_REFUSE_MANIFEST_NOT_OURS;
         /* log_budget: max=88 */
-        LOG_E("[SD1124] refuse prior mfst: '%s'", target);
+        LOG_E("[SD1124] notours '%s'", target);
         return false;
     }
     /* Explicitly authorised: now the existing predicate applies, and its verb
@@ -4325,7 +4344,7 @@ void sd_card_manager_ProcessState() {
                      * (Logger.c), so the actionable half must survive a long
                      * name. 62 fixed bytes + a 40-byte name = 102 worst case. */
                     /* log_budget: max=40 -- SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX */
-                    LOG_E("[SD] #1124 name must not end in '/' - '%s' names no file",
+                    LOG_E("[SD1124] notafile '%s' ends in a separator",
                           nameOperand);
                     gSDCardData.writeRefuseReason = SD_REFUSE_NAME_NOT_A_FILE;
                     gSDCardData.lastOperationSuccess = false;

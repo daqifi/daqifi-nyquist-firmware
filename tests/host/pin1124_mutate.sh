@@ -315,11 +315,18 @@ echo "==      sd_ManifestPathSafeToOverwrite drops 3 -> 2 and its own '>= 3'    
 echo "==      pin DOES fire too, so this arm asserts PIN C's message            =="
 echo "==      specifically rather than merely that something failed.            =="
 echo "==     r20: the predicate call gained a FAULT out-param.                  =="
-echo "==     r21: and lost it again -- the predicate RETURNS sd_InspectResult,   =="
-echo "==     consumed by a switch, so the mutation now forces the switch onto    =="
-echo "==     a value the predicate never produces rather than negating a bool.   =="
-if sub "$F" '    switch (sd_InspectManifestPathOverwritable(path)) {' \
-            '    switch (SD_INSPECT_CLEAR) {'; then
+echo "==     r21: and lost it again -- the predicate RETURNS sd_InspectResult.   =="
+echo "==     \u26d4 THE MUTATION HAD TO CHANGE SHAPE, not just names. Removing the    =="
+echo "==     CALL (my first r21 attempt) drops the count 3 -> 2, and the '>= 3'  =="
+echo "==     pin fires FIRST with its own diagnostic -- so the arm reported      =="
+echo "==     'did not come from this pin' and proved nothing about PIN C. This   =="
+echo "==     instead KEEPS the call, and deletes only the FAULT arm's refusal,   =="
+echo "==     so the count is untouched and a fault falls through to the remove.  =="
+echo "==     That is r19's :2249 defect exactly: a refusal become permission.    =="
+if sub "$F" '            LOG_E("[SD1124] unparsable inspect");
+            return SD_INSPECT_FAULT;' \
+            '            LOG_E("[SD1124] unparsable inspect");
+            break;'; then
     expect "R23 unlink-predicate arm" "no longer gates its unlink"
 else
     echo "  FAIL R23 anchor absent -- source drifted from this harness."; fail=$((fail+1))
@@ -746,7 +753,8 @@ if sub "$F" '            gSDCardData.foreignScanPending = true;' \
         taskEXIT_CRITICAL();
         if ((arm == SD_WRITE_ARM_STREAMING) || (arm == SD_WRITE_ARM_PLAIN)) {
             gSDCardData.foreignScanPending = true;'; then
-    expect "R38 the arm block ends under the lock" "the arm block no longer ENDS inside"
+    expect "R38 the arm block ends under the lock" \
+           "the grant, its subject and the scan flag are"
 else
     echo "  FAIL R38 anchor absent."; fail=$((fail+1))
 fi
@@ -825,6 +833,21 @@ if sub "$F" '    gSDCardData.overwriteAuthorizedForSession = false;' \
            "the overwrite authorisation and its"
 else
     echo "  FAIL R44 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R45 (PIN 17): restore the token form conv-ts found broken -- a comma   =="
+echo "==      attached to the reason token. An exact token match for `refuse`    =="
+echo "==      then MISSES this line, i.e. fails open, and `refuse` is shared by  =="
+echo "==      three reasons anyway. The message is still present, still tagged,  =="
+echo "==      still leads with [SD1124], so PIN 4 passes and only PIN 17 sees   =="
+echo "==      that the line no longer identifies WHICH refusal it reports.      =="
+if sub "$F" "[SD1124] ourpart '%s'" \
+            "[SD1124] refuse, recorded part: '%s'"; then
+    expect "R45 the reason token is punctuation-free and closed-set" \
+           "do not begin with"
+else
+    echo "  FAIL R45 anchor absent."; fail=$((fail+1))
 fi
 restore
 

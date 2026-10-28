@@ -1348,6 +1348,49 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	      echo "       authorised to overwrite."; \
 	      exit 1;; \
 	 esac
+	@# ⛔⛔ PIN 17 -- THE REFUSAL-REASON TOKEN CONTRACT.
+	@#
+	@# A client discriminates one #1124 refusal from another through
+	@# SYSTem:LOG?, so the log line IS the contract. r21 grew this surface from 4
+	@# sites to 24, and conv-ts found it had stopped discriminating:
+	@#   - "refuse, recorded part" carried a COMMA on the second token, so an
+	@#     exact token match for `refuse` MISSED it -- i.e. failed open;
+	@#   - `refuse` was shared by three different reasons, and `recorded` by two
+	@#     with OPPOSITE causes ("recorded elsewhere" = a foreign manifest,
+	@#     "refuse, recorded part" = our own target).
+	@#
+	@# So the second whitespace token now NAMES THE REASON, is punctuation-free,
+	@# and comes from a closed set. `note` is in the set deliberately and means
+	@# THIS LINE IS NOT A REFUSAL -- without it a lock-slot diagnostic reads as
+	@# one, which is the same fail-open in the other direction.
+	@#
+	@# Token -> reason: exists=TARGET_EXISTS, unreadable=TARGET_UNREADABLE,
+	@# notours/ourpart=MANIFEST_NOT_OURS, authpath=AUTH_PATH_CHANGED,
+	@# foreign=FOREIGN_RECORD, unparsable=MANIFEST_UNPARSABLE,
+	@# notafile=NAME_NOT_A_FILE, note=not a refusal.
+	@toks=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null \
+	   | grep -oE 'LOG_E\("\[SD1124\] [^ "]+' \
+	   | sed 's/.*\[SD1124\] //'`; \
+	 n=`printf '%s\n' "$$toks" | grep -c .`; \
+	 if [ "$$n" -lt 20 ]; then \
+	   echo "ERROR: #1124 r21 PIN 17 found only $$n [SD1124] LOG_E sites."; \
+	   echo "       It expects at least 20. Either the surface shrank a lot or"; \
+	   echo "       the extraction broke -- and an extraction that matches"; \
+	   echo "       nothing would pass the token check below vacuously."; \
+	   exit 1; \
+	 fi; \
+	 bad=`printf '%s\n' "$$toks" | grep -vxE 'exists|unreadable|notours|ourpart|authpath|foreign|unparsable|notafile|note' | sort -u`; \
+	 if [ -n "$$bad" ]; then \
+	   echo "ERROR: #1124 r21 PIN 17: these [SD1124] messages do not begin with"; \
+	   echo "       a reason token from the closed set, or carry punctuation on"; \
+	   echo "       it. A client reading SYSTem:LOG? then cannot tell which"; \
+	   echo "       refusal it got -- and a token with a trailing comma fails an"; \
+	   echo "       exact match, i.e. fails OPEN:"; \
+	   printf '         %s\n' $$bad; \
+	   echo "       Set: exists unreadable notours ourpart authpath foreign"; \
+	   echo "            unparsable notafile note   (note = NOT a refusal)"; \
+	   exit 1; \
+	 fi
 	$(CC) $(CFLAGS) -o $(GATE1124_BIN) test_1124_overwrite_gate.c
 
 $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h \
