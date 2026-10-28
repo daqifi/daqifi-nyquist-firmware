@@ -165,7 +165,7 @@ SD_MANAGER_SRC := ../../firmware/src/services/sd_card_services/sd_card_manager.c
 #   POLICY         we determined the answer, and it is a refusal
 SD1124_TOK_NOTE   := note
 SD1124_TOK_FAULT  := unparsable unreadable
-SD1124_TOK_POLICY := authpath exists foreign notafile notours ourpart scope
+SD1124_TOK_POLICY := alias authpath exists foreign mfstname notafile notours ourpart scope
 
 SD1124_CANON := 9
 # ⛔⛔ r22: THE TWO COUNTERS NOW LEGITIMATELY DIVERGE, and that needs saying
@@ -1661,16 +1661,6 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	      exit 1;; \
 	 esac; \
 	 case "$$pp" in \
-	   *"if (memchr(pBuff, '~', fileLen) != NULL) {"*) ;; \
-	   *) echo "ERROR: #1124 r22 PIN 23d: the opt-in accepts a TILDE in the name."; \
-	      echo "       A FatFs 8.3 alias (LONGFI~1.CSV) names the same file as"; \
-	      echo "       a long name while comparing unequal to it, which is the"; \
-	      echo "       one divergence the textual record comparison cannot see"; \
-	      echo "       (audit :2862). This rule was DESCRIBED in an earlier"; \
-	      echo "       round and never written -- hence the pin."; \
-	      exit 1;; \
-	 esac; \
-	 case "$$pp" in \
 	   *"if (SD_DirHasNonCanonicalForm(pSDCardRuntimeConfig->directory)) {"*) ;; \
 	   *) echo "ERROR: #1124 r22 PIN 23e: the opt-in accepts a NON-CANONICAL"; \
 	      echo "       directory form. '//', a '.' or '..' component, or a"; \
@@ -1689,6 +1679,100 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	      echo "       which the scan does not read (audit :2874)."; \
 	      exit 1;; \
 	 esac
+	@# ⛔⛔⛔ PIN 23d, REPLACED AT r28: THE '~' REFUSAL IS NOT PART OF THE OPT-IN
+	@# ANY MORE, AND PINNING IT THERE WAS PINNING THE DEFECT.
+	@#
+	@# r22 added `memchr(pBuff, '~', fileLen)` inside `if (overwriteAsked)` and
+	@# this pin asserted that exact text in that exact place. r28's audit found
+	@# the SCOPE wrong on both legs (main SCPIStorageSD.c:1119, blind
+	@# SdManifest.h:501): an alias needs no grant to do damage, because a
+	@# session rotates without one, and a session configured by alias WRITES
+	@# alias-spelled records that outlive it. The refusal therefore moved to the
+	@# configuration -- both setters, unconditionally, plus at use -- and the old
+	@# pin would have FAILED THE FIX while reporting the defect as protected.
+	@# That is the "a test can require the defect" shape, caught here by the fix
+	@# breaking the pin; it is recorded rather than quietly edited.
+	@#
+	@# BY POSITION, not merely by presence: "the call exists somewhere in the
+	@# file" cannot see that it has drifted back inside the grant block. The
+	@# file-setter arm must sit AFTER the last opt-in-only check
+	@# (SD_DirHasBucketComponent), which is the end of that block.
+	@#
+	@# Each arm by its OWN exact form -- fileLen for the name, pathLen for the
+	@# directory -- because a by-name count cannot tell WHICH arm complies.
+	@pp=`$(CC) -fpreprocessed -E $(SD_BENCH_SRC) 2>/dev/null`; \
+	 nalias=`printf '%s\n' "$$pp" | grep -c 'SdManifest_PathHasAliasRiskLen('`; \
+	 lgrant=`printf '%s\n' "$$pp" | grep -n 'SD_DirHasBucketComponent(' | head -1 | cut -d: -f1`; \
+	 lfile=`printf '%s\n' "$$pp" | grep -n 'SdManifest_PathHasAliasRiskLen(pBuff, fileLen)' | head -1 | cut -d: -f1`; \
+	 ldir=`printf '%s\n' "$$pp" | grep -n 'SdManifest_PathHasAliasRiskLen(pBuff, pathLen)' | head -1 | cut -d: -f1`; \
+	 lmfst=`printf '%s\n' "$$pp" | grep -n 'SdManifest_NameHasManifestExtLen(pBuff, fileLen)' | head -1 | cut -d: -f1`; \
+	 nold=`printf '%s\n' "$$pp" | grep -c "memchr(pBuff, '~', fileLen)"`; \
+	 ok=1; \
+	 test "$$nalias" -eq 2 || ok=0; \
+	 test -n "$$lfile" && test -n "$$ldir" && test -n "$$lmfst" || ok=0; \
+	 test -n "$$lgrant" || ok=0; \
+	 if [ -n "$$lgrant" ] && [ -n "$$lfile" ]; then \
+	   test "$$lfile" -gt "$$lgrant" || ok=0; \
+	 fi; \
+	 if [ -n "$$lgrant" ] && [ -n "$$lmfst" ]; then \
+	   test "$$lmfst" -gt "$$lgrant" || ok=0; \
+	 fi; \
+	 test "$$nold" -eq 0 || ok=0; \
+	 test "$$ok" -eq 1 \
+	  || { echo "ERROR: #1124 r28 PIN 23d: the alias / manifest-extension"; \
+	       echo "       refusals in $(SD_BENCH_SRC) are missing, duplicated, or"; \
+	       echo "       have drifted back INSIDE the overwrite opt-in block."; \
+	       echo "         PathHasAliasRiskLen( call sites: $$nalias (expected 2)"; \
+	       echo "         name arm  (pBuff, fileLen) at line: $$lfile"; \
+	       echo "         dir arm   (pBuff, pathLen) at line: $$ldir"; \
+	       echo "         .mfst arm (pBuff, fileLen) at line: $$lmfst"; \
+	       echo "         end of the opt-in block        at line: $$lgrant"; \
+	       echo "         superseded memchr('~') sites: $$nold (expected 0)"; \
+	       echo "       Both setters must refuse UNCONDITIONALLY: the name and"; \
+	       echo "       the directory arms, each after the opt-in block, and the"; \
+	       echo "       r22 memchr form must be gone rather than kept alongside"; \
+	       echo "       -- a second copy makes the general rule look conditional."; \
+	       echo "       An alias needs no grant: a session rotates without one,"; \
+	       echo "       and one configured by alias writes records no later"; \
+	       echo "       long-named session can match (r28 :1119 / :501)."; \
+	       exit 1; }
+	@# ⛔⛔ PIN 23f -- r28: AND THE SAME TWO REFUSALS AT USE, WHICH IS THE HALF
+	@# A SETTER-ONLY FIX MISSES. An NVM restore populates the settings struct
+	@# directly and never reaches a setter -- the route-around that
+	@# SD_ValidatePathParam's own header names as having sunk a setter-only fix
+	@# for the directory half.
+	@#
+	@# ⚠ AND THE WRITE-ONLY GUARD IS PINNED TOO, because getting it wrong is a
+	@# worse regression than the hazard: the same OPEN_FILE guard serves SD:GET,
+	@# SD:CRC and SD:DELete through opFile, so an unguarded refusal would make a
+	@# manifest unreadable and an in-the-way file undeletable. `usesOperandName`
+	@# selects those modes, so the refusals must sit under `!usesOperandName`.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null`; \
+	 nuse=`printf '%s\n' "$$pp" | grep -c 'SdManifest_PathHasAliasRisk('`; \
+	 nmfst=`printf '%s\n' "$$pp" | grep -c 'SdManifest_NameHasManifestExt(nameOperand)'`; \
+	 lmode=`printf '%s\n' "$$pp" | grep -n 'if (!usesOperandName)' | head -1 | cut -d: -f1`; \
+	 lrisk=`printf '%s\n' "$$pp" | grep -n 'SdManifest_PathHasAliasRisk(' | head -1 | cut -d: -f1`; \
+	 ok=1; \
+	 test "$$nuse" -eq 2 || ok=0; \
+	 test "$$nmfst" -eq 1 || ok=0; \
+	 test -n "$$lmode" && test -n "$$lrisk" || ok=0; \
+	 if [ -n "$$lmode" ] && [ -n "$$lrisk" ]; then \
+	   test "$$lrisk" -gt "$$lmode" || ok=0; \
+	 fi; \
+	 test "$$ok" -eq 1 \
+	  || { echo "ERROR: #1124 r28 PIN 23f: the AT-USE alias / manifest-extension"; \
+	       echo "       refusals in $(SD_MANAGER_SRC) are wrong."; \
+	       echo "         PathHasAliasRisk( sites: $$nuse (expected 2 -- the"; \
+	       echo "           configured name AND the configured directory)"; \
+	       echo "         NameHasManifestExt(nameOperand) sites: $$nmfst (expected 1)"; \
+	       echo "         if (!usesOperandName) at line: $$lmode"; \
+	       echo "         first alias check     at line: $$lrisk (must be after)"; \
+	       echo "       A setter-only refusal is not a refusal: an NVM restore"; \
+	       echo "       never passes through SCPI. And the refusals must stay"; \
+	       echo "       under !usesOperandName -- unguarded they would refuse"; \
+	       echo "       SD:GET of a manifest and SD:DELete of the file in the"; \
+	       echo "       way, which is worse than the hazard they close."; \
+	       exit 1; }
 	@# ⛔⛔ PIN 24 -- r21 AUDIT HIGH (:972): THE DIRECTORY GENERATION IS
 	@# SNAPSHOTTED BEFORE THE RESOLUTION AND RE-CHECKED AT THE COMMIT.
 	@#
@@ -2184,15 +2268,76 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	@# (sd_DirLeafIsBucket, SD_DirHasBucketComponent) must do the OPPOSITE --
 	@# buckets are "P%03u" and `P001` is padded by design. Adding the rule to all
 	@# four would have broken bucket matching.
-	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | grep -v '^#' | tr '\n' ' ' | tr -s ' '`; \
-	 case "$$pp" in \
-	   *"if ((dash[1] == '0') && ((end - dash) > 2)) {"*) ;; \
-	   *) echo "ERROR: #1124 r28 PIN 37: the recorded-part check no longer"; \
-	      echo "       rejects a PADDED suffix (audit :2728). It would then strip"; \
-	      echo "       exp-01 to exp, find an unrelated exp.csv.mfst, and refuse"; \
-	      echo "       a fresh file this firmware could never have written."; \
-	      exit 1;; \
-	 esac
+	@# ⛔⛔⛔ REWRITTEN AT r28's SECOND PASS: THE RULE IS NO LONGER WRITTEN HERE
+	@# AT ALL, SO PINNING ITS TEXT HERE WOULD PIN A COPY.
+	@#
+	@# The first version of this pin asserted the literal
+	@# `if ((dash[1] == '0') && ((end - dash) > 2))` in the manager. The audit
+	@# then found that condition INCOMPLETE IN BOTH CONSUMERS -- it lets a lone
+	@# "-0" through, and bounds nothing -- so pinning the text would have held
+	@# the two copies in agreement about a rule that was wrong in both. The
+	@# rule now has ONE body, SdManifest_ParsePartIndexDigits, and what is
+	@# worth pinning is that both consumers CALL it and neither re-implements
+	@# it.
+	@#
+	@# ⭐ THIS IS THE THIRD ROUND ON THIS ONE PREDICATE, and each round the
+	@# defect was the copy rather than the condition: r21 fixed PartIndexOf,
+	@# r28 found the manager's copy never updated, and r28's second pass found
+	@# the freshly-copied rule still wrong in both. So the pin counts
+	@# IMPLEMENTATIONS, not spellings.
+	@#
+	@# ⚠ ARM 2 IS THE OPPOSITE DIRECTION, and it is why "fix every consumer"
+	@# needed care: sd_DirLeafIsBucket and SD_DirHasBucketComponent are digit
+	@# loops over names that must NOT get this rule, because buckets are
+	@# "P%03u" and `P001` is padded BY DESIGN. If either ever calls the shared
+	@# parser, bucket matching breaks silently -- so that is pinned to zero.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null`; \
+	 ncall=`printf '%s\n' "$$pp" | grep -c 'SdManifest_ParsePartIndexDigits('`; \
+	 nold=`printf '%s\n' "$$pp" | grep -c "dash\[1\] == '0'"`; \
+	 hp=`$(CC) -fpreprocessed -E -I$(FW_UTIL) $(FW_UTIL)/SdManifest.h 2>/dev/null \
+	     | grep -c 'SdManifest_ParsePartIndexDigits('`; \
+	 lbucket=`printf '%s\n' "$$pp" | grep -n 'sd_DirLeafIsBucket' | head -1 | cut -d: -f1`; \
+	 ok=1; \
+	 test "$$ncall" -eq 1 || ok=0; \
+	 test "$$nold" -eq 0 || ok=0; \
+	 test "$$hp" -ge 2 || ok=0; \
+	 test "$$ok" -eq 1 \
+	  || { echo "ERROR: #1124 r28 PIN 37: the part-suffix rule is not SHARED."; \
+	       echo "         SdManifest_ParsePartIndexDigits( calls in the manager:"; \
+	       echo "           $$ncall (expected exactly 1 -- the recorded-part check)"; \
+	       echo "         re-implemented \`dash[1] == '0'\` tests: $$nold (expected 0)"; \
+	       echo "         definition + use in the header: $$hp (expected >= 2)"; \
+	       echo "       This predicate has cost THREE rounds, and every time the"; \
+	       echo "       defect was a COPY of the rule rather than the rule:"; \
+	       echo "         r21  PartIndexOf learns to reject a padded suffix;"; \
+	       echo "         r28  the manager's copy is found never updated;"; \
+	       echo "         r28  the fresh copy is found wrong in BOTH places --"; \
+	       echo "              '-0' (counter 0 emits the UNSUFFIXED name) and an"; \
+	       echo "              out-of-range index were still accepted."; \
+	       echo "       So there is ONE body and both consumers call it. Do not"; \
+	       echo "       re-inline the condition here, even 'temporarily'."; \
+	       exit 1; }
+	@# ARM 2 -- the OPPOSITE rule, pinned to zero. Buckets are "P%03u" and
+	@# `P001` is padded BY DESIGN, so the two bucket-name digit loops must never
+	@# adopt the part-suffix rule. Giving all four sites one rule was the
+	@# enumeration trap this row recorded; this is what stops it.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null`; \
+	 sl=`printf '%s\n' "$$pp" | grep -n 'sd_DirLeafIsBucket' | head -1 | cut -d: -f1`; \
+	 if [ -n "$$sl" ]; then \
+	   bad=`printf '%s\n' "$$pp" | sed -n "$$sl,$$((sl+40))p" \
+	        | grep -c 'SdManifest_ParsePartIndexDigits('`; \
+	 else bad=0; fi; \
+	 bp=`$(CC) -fpreprocessed -E $(SD_BENCH_SRC) 2>/dev/null \
+	     | grep -c 'SdManifest_ParsePartIndexDigits('`; \
+	 test "$$bad" -eq 0 && test "$$bp" -eq 0 \
+	  || { echo "ERROR: #1124 r28 PIN 37 ARM 2: a BUCKET-name check adopted the"; \
+	       echo "       part-suffix rule."; \
+	       echo "         in sd_DirLeafIsBucket: $$bad (must be 0)"; \
+	       echo "         in $(SD_BENCH_SRC):    $$bp (must be 0)"; \
+	       echo "       Buckets are \"P%03u\" -- 'P001' is PADDED BY DESIGN, and"; \
+	       echo "       the part-suffix parser rejects padding. Adopting it here"; \
+	       echo "       makes every bucket stop matching, silently."; \
+	       exit 1; }
 	$(CC) $(CFLAGS) -o $(GATE1124_BIN) test_1124_overwrite_gate.c
 
 $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h \
@@ -2469,15 +2614,31 @@ test "$$raw" -eq 0 && test "$$canon" -eq $(SD1124_CANON) && test "$$acc" -eq $(S
 	@#           assumed from the argument's name -- so the invariant holds at
 	@#           the point of use. The join counters did NOT move for this
 	@#           edit, and that is correct, not a discrepancy.
+	@# 21 -> 22 at #1124 r28 (AUDIT HIGH, SCPIStorageSD.c:1119 and
+	@# SdManifest.h:501): the AT-USE alias refusal in the OPEN_FILE guard reads
+	@# the configured directory to ask SdManifest_PathHasAliasRisk() whether it
+	@# contains '~'.
+	@# CLASSIFICATION: canonicalisation-INDEPENDENT, by the same argument the
+	@# r14 delimiter-guard entry above makes and for the same kind of predicate
+	@# -- memchr() asks whether '~' appears ANYWHERE in the string, and
+	@# stripping a trailing or doubled separator can neither add nor remove one.
+	@# SdManifest_CanonicalDirLen() would add nothing. Classified by what the
+	@# predicate ASKS, not by the argument's name, which is the rule this ledger
+	@# already records a lost round over.
+	@# ⚠ The '~' refusal also exists in SCPI_StorageSDDirectorySet, and that one
+	@# is NOT in this count (different file). Both are needed: the setter gives
+	@# the operator an immediate error, and this one closes the NVM-restore
+	@# route that never reaches a setter -- the route SD_ValidatePathParam's own
+	@# header names as what sank a setter-only fix for the directory half.
 	@# CLASSIFICATION: the rest are the ordinary canonicalisation-DEPENDENT
 	@# join shape, already routed through SdManifest_CanonicalDirLen(). A NET
 	@# would let a future edit add one read and drop an unrelated one unseen,
 	@# which is the one thing a count ledger exists to notice.
 	@n=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null \
 	    | grep -oE '(gpSDCardSettings|cfg)->(directory|opDirectory)' | wc -l`; \
-	 test "$$n" -eq 21 \
+	 test "$$n" -eq 22 \
 	  || { echo "ERROR: $(SD_MANAGER_SRC) now has $$n raw reads of ->directory /"; \
-	       echo "       ->opDirectory, not the 21 classified in this recipe (#1124)."; \
+	       echo "       ->opDirectory, not the 22 classified in this recipe (#1124)."; \
 	       echo "       The canonicalisation invariant is about every USE, not just"; \
 	       echo "       every join: a read can reach a callee that neither joins nor"; \
 	       echo "       canonicalises, and no join-keyed check sees it. (Until r13 the"; \

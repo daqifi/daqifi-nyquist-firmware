@@ -1311,8 +1311,27 @@ TEST(part_index_rejects_names_this_session_cannot_write) {
     /* a padded index is not what "%u" emits, so it is a name we can never
      * open -- NONE. */
     ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-05.csv", "DAQiFi", "exp.csv"), SDMANIFEST_PART_NONE);
-    /* but a bare "0" index is legal digits (and still not index 0's name) */
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-0.csv", "DAQiFi", "exp.csv"), 0u);
+    /* ⛔⛔ #1124 r28 AUDIT MEDIUM, BOTH LEGS: THIS LINE USED TO REQUIRE THE
+     * DEFECT, and the comment above it argued for the defect.
+     *
+     * It asserted `exp-0.csv` -> 0u, reasoned as "a bare 0 is legal digits
+     * (and still not index 0's name)". The parenthetical is false. 0 IS index
+     * 0 everywhere it matters -- it is the bit the scan sets for the
+     * UNSUFFIXED target -- so returning it for `exp-0.csv` claimed a foreign
+     * record named this session's `exp.csv`. And no session can write
+     * "<stem>-0<ext>" at any counter value, because generateFilename's
+     * counter==0 arm emits the unsuffixed name.
+     *
+     * The same misreading in the other consumer was the live half of the
+     * finding: sd_NameIsRotationPartOfExistingManifest stripped "-0" and
+     * refused a perfectly fresh `exp-0.csv` capture over an unrelated
+     * `exp.csv.mfst`, with no opt-in able to override it.
+     *
+     * ⚠ So this assertion was changed because it was WRONG, not because the
+     * fix was inconvenient -- the distinction this row has had to make before.
+     * The old value is recorded here so the flip is auditable rather than
+     * silent. */
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-0.csv", "DAQiFi", "exp.csv"), SDMANIFEST_PART_NONE);
 }
 
 /* ⛔⛔ #1124 r23 AUDIT MEDIUM (:424): AN OVERFLOWING INDEX IS SKIPPED, NOT
@@ -1337,8 +1356,23 @@ TEST(part_index_skips_an_overflowing_index_rather_than_faulting) {
     ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-4294967295.csv", "DAQiFi", "exp.csv"), SDMANIFEST_PART_NONE);
     /* and absurd digit counts, which are just long strings */
     ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-000000000000000000001.csv", "DAQiFi", "exp.csv"), SDMANIFEST_PART_NONE);
-    /* ⭐ the boundary stays a NUMBER on the representable side */
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-4294967294.csv", "DAQiFi", "exp.csv"), 4294967294u);
+    /* ⛔ r28: THE BOUNDARY MOVED FROM uint32_t's TO OURS, and this assertion
+     * moved with it. It used to require 4294967294u -- "the boundary stays a
+     * NUMBER on the representable side" -- which was the right INVARIANT
+     * (never a fault) expressed against the wrong ceiling. uint32_t is not a
+     * property of this firmware; SDMANIFEST_PART_INDEX_MAX is, and it is
+     * cross-tied by a _Static_assert to the highest index a session can write.
+     *
+     * ⭐ THE INVARIANT THIS TEST EXISTS FOR IS UNCHANGED AND STILL ASSERTED:
+     * an out-of-range index is SKIPPED (NONE), never a fault, and the function
+     * still has no fault channel to use. What changed is only where "out of
+     * range" begins -- and narrowing it cannot lose a collision, because a
+     * session whose own counter passes the limit falls back to the per-open
+     * exact content scan (sd_card_manager.c's above-limit route). */
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-4294967294.csv", "DAQiFi", "exp.csv"), SDMANIFEST_PART_NONE);
+    /* the real boundary, both sides, by the one constant that defines it */
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-10063.csv", "DAQiFi", "exp.csv"), SDMANIFEST_PART_INDEX_MAX);
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-10064.csv", "DAQiFi", "exp.csv"), SDMANIFEST_PART_NONE);
 }
 
 TEST(part_index_is_null_safe) {
@@ -1489,10 +1523,17 @@ TEST(part_index_says_none_to_a_near_miss) {
  * separation of concerns explicit rather than incidental. */
 TEST(part_index_treats_a_large_index_as_a_number_not_a_fault) {
     ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-5000.csv", "DAQiFi", "exp.csv"), 5000u);
-    /* at, and either side of, the firmware's part limit -- all just numbers */
+    /* at, and either side of, the OLD 4160 part limit -- all just numbers, and
+     * all still well inside the real ceiling */
     ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-4160.csv", "DAQiFi", "exp.csv"), 4160u);
     ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-4161.csv", "DAQiFi", "exp.csv"), 4161u);
-    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-999999.csv", "DAQiFi", "exp.csv"), 999999u);
+    /* ⛔ r28: 999999 is now out of range, so it is SKIPPED rather than
+     * returned. The test's name is still exactly right -- it is a NUMBER, not
+     * a FAULT -- and that is what this asserts: a value past the ceiling comes
+     * back as NONE through the ordinary return, with no fault channel involved
+     * and no refusal caused. Only the ceiling changed, from uint32_t's to the
+     * firmware's own (SDMANIFEST_PART_INDEX_MAX). */
+    ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/exp-999999.csv", "DAQiFi", "exp.csv"), SDMANIFEST_PART_NONE);
     /* ...and in a bucket, which is where a long foreign session's parts live */
     ASSERT_EQ(SdManifest_PartIndexOf("DAQiFi/P078/exp-5000.csv", "DAQiFi", "exp.csv"), 5000u);
 }
@@ -1707,14 +1748,152 @@ TEST(a_padded_index_is_never_one_of_our_parts) {
     ASSERT_EQ(SdManifest_PartIndexOf("D/exp-01.csv", "D", "exp.csv"), SDMANIFEST_PART_NONE);
     ASSERT_EQ(SdManifest_PartIndexOf("D/exp-007.csv", "D", "exp.csv"), SDMANIFEST_PART_NONE);
     ASSERT_EQ(SdManifest_PartIndexOf("D/P001/exp-01.csv", "D", "exp.csv"), SDMANIFEST_PART_NONE);
-    /* ...but a bare 0 and ordinary indices are fine */
-    ASSERT_EQ(SdManifest_PartIndexOf("D/exp-0.csv", "D", "exp.csv"), 0u);
+    /* ⛔ r28: "-0" JOINS THE PADDED CASES RATHER THAN BEING THE EXCEPTION TO
+     * THEM. This line used to assert 0u, under "but a bare 0 ... is fine". It
+     * is not fine: counter 0 emits the UNSUFFIXED name, so no session writes
+     * "<stem>-0<ext>", and returning 0 handed a foreign record the index of
+     * this session's own unsuffixed target. One leading-zero test now covers
+     * both, which is also why the shared parser tests `d[0] == '0'` alone
+     * instead of the old `d[0] == '0' && run > 1`. */
+    ASSERT_EQ(SdManifest_PartIndexOf("D/exp-0.csv", "D", "exp.csv"), SDMANIFEST_PART_NONE);
+    /* ...ordinary indices are unaffected */
     ASSERT_EQ(SdManifest_PartIndexOf("D/exp-10.csv", "D", "exp.csv"), 10u);
+}
+
+/* ⛔⛔⛔ #1124 r28: THE SHARED PART-SUFFIX PARSER, TESTED AS ITSELF.
+ *
+ * It is tested directly as well as through SdManifest_PartIndexOf because it
+ * now has TWO consumers and the second one (the manager's recorded-part check)
+ * is not host-includable. Testing it here is the only place both consumers'
+ * shared behaviour can be pinned by value rather than by grep. */
+TEST(part_suffix_parser_accepts_only_what_the_formatter_emits) {
+    const char *d = "1";
+    ASSERT_EQ(SdManifest_ParsePartIndexDigits(d, d + 1), 1u);
+    d = "42";
+    ASSERT_EQ(SdManifest_ParsePartIndexDigits(d, d + 2), 42u);
+    /* padding: "%u" never emits it */
+    d = "01";
+    ASSERT_EQ(SdManifest_ParsePartIndexDigits(d, d + 2), SDMANIFEST_PART_NONE);
+    d = "007";
+    ASSERT_EQ(SdManifest_ParsePartIndexDigits(d, d + 3), SDMANIFEST_PART_NONE);
+    /* the lone zero: counter 0 emits the UNSUFFIXED name, so this is no part */
+    d = "0";
+    ASSERT_EQ(SdManifest_ParsePartIndexDigits(d, d + 1), SDMANIFEST_PART_NONE);
+    /* non-digits */
+    d = "1x";
+    ASSERT_EQ(SdManifest_ParsePartIndexDigits(d, d + 2), SDMANIFEST_PART_NONE);
+    /* empty run, and a reversed/degenerate range */
+    d = "1";
+    ASSERT_EQ(SdManifest_ParsePartIndexDigits(d, d), SDMANIFEST_PART_NONE);
+    ASSERT_EQ(SdManifest_ParsePartIndexDigits(d + 1, d), SDMANIFEST_PART_NONE);
+    ASSERT_EQ(SdManifest_ParsePartIndexDigits(NULL, NULL), SDMANIFEST_PART_NONE);
+}
+
+/* ⭐ THE RANGE IS THE POST-CONDITION, and it is asserted at both edges by the
+ * one constant that defines it -- not by a literal, so moving the ceiling
+ * cannot leave this test asserting the old one. */
+TEST(part_suffix_parser_bounds_the_index_to_what_a_session_can_write) {
+    char buf[32];
+    uint32_t i;
+
+    snprintf(buf, sizeof(buf), "%u", (unsigned)SDMANIFEST_PART_INDEX_MAX);
+    ASSERT_EQ(SdManifest_ParsePartIndexDigits(buf, buf + strlen(buf)),
+              SDMANIFEST_PART_INDEX_MAX);
+    snprintf(buf, sizeof(buf), "%u", (unsigned)SDMANIFEST_PART_INDEX_MAX + 1u);
+    ASSERT_EQ(SdManifest_ParsePartIndexDigits(buf, buf + strlen(buf)),
+              SDMANIFEST_PART_NONE);
+    /* an arbitrarily long digit run neither overflows nor is accepted */
+    ASSERT_EQ(SdManifest_ParsePartIndexDigits("99999999999999999999",
+                                               "99999999999999999999" + 20),
+              SDMANIFEST_PART_NONE);
+    /* and every index a session CAN write round-trips through the formatter's
+     * inverse -- the property the two consumers both depend on */
+    for (i = 1u; i <= 64u; i++) {
+        snprintf(buf, sizeof(buf), "%u", (unsigned)i);
+        ASSERT_EQ(SdManifest_ParsePartIndexDigits(buf, buf + strlen(buf)), i);
+    }
+}
+
+/* ⛔⛔⛔ #1124 r28 AUDIT HIGH, BOTH LEGS: THE ALIAS-RISK PREDICATE. */
+TEST(alias_risk_sees_a_tilde_anywhere_in_the_path) {
+    ASSERT_TRUE(SdManifest_PathHasAliasRisk("LONGDI~1"));
+    ASSERT_TRUE(SdManifest_PathHasAliasRisk("LONGDI~1/exp.csv"));
+    ASSERT_TRUE(SdManifest_PathHasAliasRisk("D/EXP-1~1.CSV"));
+    ASSERT_TRUE(SdManifest_PathHasAliasRisk("~"));
+    ASSERT_FALSE(SdManifest_PathHasAliasRisk("LongDirectoryName/exp.csv"));
+    ASSERT_FALSE(SdManifest_PathHasAliasRisk(""));
+    ASSERT_FALSE(SdManifest_PathHasAliasRisk(NULL));
+}
+
+/* ⛔⛔ AND THE LENGTH-TAKING FORMS MUST NOT READ PAST THE LENGTH.
+ *
+ * This is the half with a real hazard behind it. SCPI_ParamCharacters returns
+ * a pointer INTO the command buffer with a length and NO terminator, so the
+ * setters call the ...Len entry points. A first draft of this fix called the
+ * strlen forms on that operand, which reads the rest of the command line --
+ * it would have refused a perfectly good name because a later argument
+ * happened to contain '~', and read out of bounds when the operand sat at the
+ * end of the buffer.
+ *
+ * ⭐ Asserted with a DELIBERATELY UNTERMINATED buffer, because a test using a
+ * C string cannot tell the two entry points apart -- it would pass either way,
+ * which is exactly how the draft looked correct. */
+TEST(the_length_taking_predicates_stop_at_the_length) {
+    /* no NUL anywhere in this array */
+    const char raw[8] = { 'e', 'x', 'p', '~', 'b', 'a', 'd', '!' };
+
+    /* the '~' is at index 3, so a 3-byte operand must NOT see it */
+    ASSERT_FALSE(SdManifest_PathHasAliasRiskLen(raw, 3u));
+    ASSERT_TRUE(SdManifest_PathHasAliasRiskLen(raw, 4u));
+    ASSERT_FALSE(SdManifest_PathHasAliasRiskLen(raw, 0u));
+    ASSERT_FALSE(SdManifest_PathHasAliasRiskLen(NULL, 4u));
+
+    /* the manifest extension, bounded the same way: the first 8 bytes of
+     * "exp.mfst.csv" ARE a manifest name, the whole 12 are not */
+    ASSERT_TRUE(SdManifest_NameHasManifestExtLen("exp.mfst.csv", 8u));
+    ASSERT_FALSE(SdManifest_NameHasManifestExtLen("exp.mfst.csv", 12u));
+    /* and a name whose extension lies PAST the length is not matched */
+    ASSERT_FALSE(SdManifest_NameHasManifestExtLen("exp.csv.mfst", 7u));
+    ASSERT_TRUE(SdManifest_NameHasManifestExtLen("exp.csv.mfst", 12u));
+}
+
+/* ⛔⛔⛔ #1124 r28 AUDIT HIGH (sd_card_manager.c:3894): A DATA FILE MAY NOT BEAR
+ * THE MANIFEST EXTENSION, because the manifest name is "<file>" + ".mfst" and
+ * so a data file called "exp.csv.mfst" IS the manifest name of a session
+ * configured as "exp.csv". Recording the former leaves "exp.csv.mfst.mfst"
+ * describing it; a later "exp.csv" session recreates "exp.csv.mfst" as its own
+ * manifest while that record survives, asserting a dead capture's size and
+ * CRC over bytes it never saw.
+ *
+ * ⭐ The refusal also makes an EXISTING invariant true rather than assumed: the
+ * foreign scan identifies manifests by name AND by first-line content, and
+ * those two can only agree while no data file carries the extension. */
+TEST(the_manifest_extension_is_recognised_whatever_its_case) {
+    ASSERT_TRUE(SdManifest_NameHasManifestExt("exp.csv.mfst"));
+    ASSERT_TRUE(SdManifest_NameHasManifestExt("exp.csv.MFST"));
+    ASSERT_TRUE(SdManifest_NameHasManifestExt("exp.csv.MfSt"));
+    ASSERT_TRUE(SdManifest_NameHasManifestExt("sub/exp.csv.mfst"));
+    /* a session named "exp.csv.mfst" would produce THIS, which is the
+     * manifest-of-a-manifest the refusal exists to prevent */
+    ASSERT_TRUE(SdManifest_NameHasManifestExt("exp.csv.mfst.mfst"));
+    ASSERT_FALSE(SdManifest_NameHasManifestExt("exp.csv"));
+    ASSERT_FALSE(SdManifest_NameHasManifestExt("exp.mfst.csv"));
+    /* the bare extension is NOT a manifest -- every writer emits
+     * <something>.mfst, so a file called ".mfst" is some other file and
+     * reading it as a manifest would let its contents decide a refusal */
+    ASSERT_FALSE(SdManifest_NameHasManifestExt(".mfst"));
+    ASSERT_FALSE(SdManifest_NameHasManifestExt(""));
+    ASSERT_FALSE(SdManifest_NameHasManifestExt(NULL));
 }
 
 int main(void)
 {
     printf("=== #924 SD session integrity manifest ===\n");
+    RUN(part_suffix_parser_accepts_only_what_the_formatter_emits);
+    RUN(part_suffix_parser_bounds_the_index_to_what_a_session_can_write);
+    RUN(alias_risk_sees_a_tilde_anywhere_in_the_path);
+    RUN(the_length_taking_predicates_stop_at_the_length);
+    RUN(the_manifest_extension_is_recognised_whatever_its_case);
     RUN(zlib_vectors);
     RUN(chunked_equals_whole);
     RUN(chunked_equals_whole_every_length);

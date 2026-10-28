@@ -207,9 +207,20 @@ static inline bool SdManifest_NameIsUsable(const char *name)
  * manifest: SdManifest_FormatLine's callers always write <something>.mfst, so
  * a bare extension is some other file and reading it as a manifest would make
  * its contents decide a refusal. */
-static inline bool SdManifest_NameHasManifestExt(const char *name)
+/* ⛔ #1124 r28: THE LENGTH-TAKING CORE EXISTS BECAUSE THE SCPI SETTER HAS NO
+ * TERMINATOR. SCPI_ParamCharacters hands back a pointer INTO the command
+ * buffer plus a length, not a C string -- which is why SD_ValidatePathParam
+ * takes a length and why the '~' check this fix generalises was written with
+ * memchr. A strlen-based predicate called on that operand reads past the
+ * operand into the rest of the command line.
+ *
+ * So the rule has one body and two entry points, rather than a bounded copy at
+ * the setter and a terminated copy at use. A second implementation of "does
+ * this end in the manifest extension" is precisely the shape that cost this
+ * row three rounds on the part-suffix rule. */
+static inline bool SdManifest_NameHasManifestExtLen(const char *name,
+                                                     size_t nameLen)
 {
-    size_t nameLen;
     const size_t extLen = sizeof(SD_MANIFEST_EXT) - 1u;
     const char *tail;
     const char *ext = SD_MANIFEST_EXT;
@@ -218,7 +229,6 @@ static inline bool SdManifest_NameHasManifestExt(const char *name)
     if (name == NULL) {
         return false;
     }
-    nameLen = strlen(name);
     if (nameLen <= extLen) {
         return false;
     }
@@ -233,6 +243,69 @@ static inline bool SdManifest_NameHasManifestExt(const char *name)
         }
     }
     return true;
+}
+
+static inline bool SdManifest_NameHasManifestExt(const char *name)
+{
+    if (name == NULL) {
+        return false;
+    }
+    return SdManifest_NameHasManifestExtLen(name, strlen(name));
+}
+
+/* ⛔⛔⛔ #1124 r28 AUDIT HIGH, BOTH LEGS (SCPIStorageSD.c:1119, this file:501):
+ * COULD THIS PATH COMPONENT BE A FatFs 8.3 ALIAS?
+ *
+ * FatFs resolves a requested name against each directory entry's STORED 8.3
+ * alias as well as its long name (`dir_find`'s SFN arm), so "LONGDI~1" and
+ * "LongDirectoryName" can be the same directory while NO text transform
+ * relates the two. Every record comparison in this row is textual, so an alias
+ * anywhere in a configured path breaks the comparison in BOTH directions:
+ *
+ *   - the SESSION names the alias, a record holds the long name
+ *     (r28 main :1119): PartIndexOf compares "LongDirectoryName/exp-1.csv"
+ *     against a configured "LONGDI~1" prefix, returns NONE, no bit is set and
+ *     the exact check never runs -- so rotation truncates a recorded file.
+ *   - the SESSION names the long form, a record holds the alias
+ *     (r28 blind :501): the record was written by an EARLIER session that was
+ *     configured by alias, so it is a device-written record this firmware
+ *     cannot match.
+ *
+ * ⛔ WHAT WAS WRONG BEFORE, AND IT WAS A CLAIM, NOT JUST A MISSING CHECK. r22
+ * added this refusal to the overwrite opt-in's whitelist ONLY, and the
+ * reasoning written down around it -- here, and in the PR's documented
+ * residual -- was that alias exposure therefore required a HAND-EDITED or
+ * third-party manifest, because "manifests this firmware writes always use
+ * long names in every component". That is false. SYST:STOR:SD:DIR accepts
+ * "LONGDI~1" with no opt-in anywhere in sight, every manifest path is built
+ * from the CONFIGURED directory text, and so ordinary refuse-by-default
+ * logging produces an alias-bearing record. The residual rested on a property
+ * nothing enforced.
+ *
+ * ⭐ So the rule moves from the GRANT to the CONFIGURATION: no session logs
+ * with '~' in its directory or its name, opt-in or not. That makes the
+ * "device-written manifests use long names" claim TRUE BY CONSTRUCTION instead
+ * of by assumption, which is the only version of it worth relying on.
+ *
+ * Whole-string rather than per-segment, deliberately: '~' is not a character
+ * this firmware ever needs to write, so there is nothing to gain from being
+ * precise about which component carries it.
+ *
+ * ⚠ THE RESIDUAL THAT REMAINS, stated exactly: a record written by SOMETHING
+ * ELSE -- a third party, or a build of this firmware predating this check --
+ * may still hold an alias while this session names the long form. That cannot
+ * be closed by a string rule at all; it needs directory-entry identity. */
+static inline bool SdManifest_PathHasAliasRiskLen(const char *p, size_t len)
+{
+    return (p != NULL) && (memchr(p, '~', len) != NULL);
+}
+
+static inline bool SdManifest_PathHasAliasRisk(const char *p)
+{
+    if (p == NULL) {
+        return false;
+    }
+    return SdManifest_PathHasAliasRiskLen(p, strlen(p));
 }
 
 static inline size_t SdManifest_CanonicalDirLen(const char *dir)
@@ -406,6 +479,103 @@ static inline bool SdManifest_SegmentsEqual(const char *a, size_t la,
  */
 #define SDMANIFEST_PART_NONE  0xFFFFFFFFu
 
+/* ⛔⛔⛔ #1124 r28 AUDIT MEDIUM, BOTH LEGS (:2752): THE HIGHEST PART INDEX A
+ * SESSION CAN EVER WRITE. Cross-tied by a _Static_assert in sd_card_manager.c
+ * to SD_FOREIGN_PART_LIMIT - 1, which is where the number comes from: the
+ * rotation ceiling (SD_CARD_MANAGER_MAX_SPLIT_FILES) plus the #958
+ * discriminator's probe span (SD_CARD_MANAGER_UNIQUE_TARGET_MAX). It is
+ * spelled literally here because this header is host-includable and must not
+ * depend on the manager's; the assert is what keeps that from being a second
+ * source of truth. Move either macro and the FIRMWARE BUILD breaks -- which is
+ * the point, because a drift here is silent in every other instrument. */
+#define SDMANIFEST_PART_INDEX_MAX  10063u
+
+/* ⛔⛔⛔ #1124 r28: THE ONE PARSER FOR OUR "-%u" PART SUFFIX. THREE ROUNDS WENT
+ * ON THIS PREDICATE BECAUSE IT EXISTED TWICE.
+ *
+ * `[d, digitsEnd)` is the digit run between the '-' and the extension. Returns
+ * the index it denotes, or SDMANIFEST_PART_NONE when that run is not something
+ * generateFilename's "%s-%u%s" can emit FOR A ROTATION PART.
+ *
+ * ⛔ WHY ONE FUNCTION AND NOT ONE RULE WRITTEN TWICE, measured over r21-r28:
+ *
+ *   r21  PartIndexOf learns to reject a PADDED suffix ("-01").
+ *   r28  sd_NameIsRotationPartOfExistingManifest, one file away, is found
+ *        still accepting it -- written at r20, never updated. Fixed by
+ *        COPYING the rule across.
+ *   r28  the copy is found incomplete in BOTH places, for two more reasons
+ *        neither had: "-0" and an out-of-range index.
+ *
+ * The copy was the defect. Two consumers of one rule drift by default, and the
+ * second round of copying would have been the fourth. So the rule now has a
+ * single body and both call it; a future reason to reject lands in one place
+ * or in neither.
+ *
+ * THE THREE REASONS A DIGIT RUN IS NOT OURS, each with its own consequence:
+ *
+ *  1. PADDED ("-01", "-007"). "%u" never pads, so no session emits it.
+ *  2. ZERO ("-0"). counter 0 emits the UNSUFFIXED name -- generateFilename's
+ *     counter==0 arm writes "<stem><ext>" -- so "<stem>-0<ext>" is a name no
+ *     session can produce at any counter value. This is the r28 finding: the
+ *     r21 rule tested `d[0]=='0' && run > 1`, which lets a LONE '0' through,
+ *     and the two consumers then disagreed about what index 0 meant --
+ *     PartIndexOf returned 0, the index reserved for the unsuffixed name, so a
+ *     foreign `D/exp-0.csv` claimed to be our `D/exp.csv`.
+ *  3. OUT OF RANGE (> SDMANIFEST_PART_INDEX_MAX, which includes anything that
+ *     would not fit a uint32_t). No session reaches such a counter, and the
+ *     bitset has no bit for it -- sd_ForeignBitTest already returns false
+ *     above the limit, and a session whose own counter passes the limit falls
+ *     back to the per-open exact content scan, so bounding here cannot lose a
+ *     collision.
+ *
+ * ⛔ ALL THREE ARE "NONE", NEVER A FAULT. Both consumers reason about a name
+ * the OUTSIDE WORLD chose: for PartIndexOf a foreign record, for the rotation
+ * check a freshly configured filename. The r28 finding is the fourth and fifth
+ * instance of a refusal fired by a foreign name -- `exp-0.csv` and
+ * `exp-4294967296.csv` are both valid fresh filenames that the predicate
+ * stripped down to an unrelated `exp.csv.mfst` and refused the capture over,
+ * with no opt-in able to override it. See PartIndexOf's header: A FOREIGN NAME
+ * CAN NEVER FAULT THE SCAN, and by the same argument it can never refuse a
+ * capture it does not name.
+ *
+ * ⚠ NOT FOR BUCKET NAMES. Buckets are "P%03u" and `P001` is padded BY DESIGN,
+ * so sd_DirLeafIsBucket and SD_DirHasBucketComponent need the OPPOSITE rule
+ * and must not call this. That is the enumeration trap r28 named: "every
+ * consumer" means every consumer of THIS rule, not every site that looks
+ * similar. The Makefile pins both directions. */
+static inline uint32_t SdManifest_ParsePartIndexDigits(const char *d,
+                                                        const char *digitsEnd)
+{
+    uint32_t idx = 0u;
+
+    if (d == NULL || digitsEnd == NULL || d >= digitsEnd) {
+        return SDMANIFEST_PART_NONE;        /* no digits at all */
+    }
+    /* Reason 1 AND reason 2 in one test: a leading '0' is either padding or
+     * the lone zero, and neither is our formatter's output. */
+    if (d[0] == '0') {
+        return SDMANIFEST_PART_NONE;
+    }
+    for (; d < digitsEnd; d++) {
+        if ((*d < '0') || (*d > '9')) {
+            return SDMANIFEST_PART_NONE;    /* "-foo" is not a part index */
+        }
+        /* Reason 3, bounded by OUR ceiling rather than by uint32_t's, so an
+         * arbitrarily long digit run can neither overflow nor be accepted. */
+        if (idx > ((SDMANIFEST_PART_INDEX_MAX - (uint32_t)(*d - '0')) / 10u)) {
+            return SDMANIFEST_PART_NONE;
+        }
+        idx = (idx * 10u) + (uint32_t)(*d - '0');
+    }
+    /* Belt and braces: the accumulator cannot leave [1, MAX] given the tests
+     * above, and saying so here is what makes the RANGE the post-condition
+     * rather than a property of the loop's arithmetic. */
+    if ((idx < 1u) || (idx > SDMANIFEST_PART_INDEX_MAX)) {
+        return SDMANIFEST_PART_NONE;
+    }
+    return idx;
+}
+
 /* How many FatFs segments does `p` have? Uses the one iterator, so a doubled
  * or trailing separator does not change the count. */
 static inline unsigned SdManifest_CountSegments(const char *p)
@@ -567,30 +737,14 @@ static inline uint32_t SdManifest_PartIndexOf(const char *name,
                                                extLen)) {
         return SDMANIFEST_PART_NONE;
     }
+    /* ⛔ r28: THE SHARED PARSER, not a second copy of the rule. The padded /
+     * zero / out-of-range reasons and the "never a fault" property are stated
+     * once, in SdManifest_ParsePartIndexDigits, because this and
+     * sd_NameIsRotationPartOfExistingManifest spent three rounds disagreeing
+     * about them. r23's overflow note lives there too. */
     d = leaf + stemLen + 1u;
     digitsEnd = leaf + (leafLen - extLen);
-    if (d >= digitsEnd) {
-        return SDMANIFEST_PART_NONE;
-    }
-    /* A leading zero is NOT our formatter's output ("%u" never pads), so such
-     * a name is one we can never open -- NONE, not a fault. */
-    if ((d[0] == '0') && ((digitsEnd - d) > 1)) {
-        return SDMANIFEST_PART_NONE;
-    }
-    for (; d < digitsEnd; d++) {
-        if ((*d < '0') || (*d > '9')) {
-            return SDMANIFEST_PART_NONE;
-        }
-        /* ⛔ r23 (:424): an index we cannot represent is SKIPPED, never a
-         * fault. A FOREIGN NAME CAN NEVER FAULT THE SCAN. */
-        if (idx > ((0xFFFFFFFFu - (uint32_t)(*d - '0')) / 10u)) {
-            return SDMANIFEST_PART_NONE;
-        }
-        idx = (idx * 10u) + (uint32_t)(*d - '0');
-    }
-    if (idx == SDMANIFEST_PART_NONE) {
-        return SDMANIFEST_PART_NONE;    /* indistinguishable from "no index" */
-    }
+    idx = SdManifest_ParsePartIndexDigits(d, digitsEnd);
     return idx;
 }
 

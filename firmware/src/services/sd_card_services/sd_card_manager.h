@@ -403,6 +403,28 @@ extern "C" {
          * unparseable record is not an empty one; reading it as covering
          * nothing is what turns a scan into a clean-bill generator. */
         SD_REFUSE_MANIFEST_UNPARSABLE,
+        /* ⛔ #1124 r28 AUDIT HIGH, BOTH LEGS (SCPIStorageSD.c:1119 /
+         * SdManifest.h:501): the configured directory or name contains '~', so
+         * it may be a FatFs 8.3 ALIAS. An alias names the same file as a long
+         * name while comparing textually UNEQUAL to it, and every record
+         * comparison in this row is textual -- so a session configured by
+         * alias can truncate a file another manifest records under its long
+         * name, and a session configured by alias WRITES records that a later
+         * long-named session cannot match either. Refused on the ordinary
+         * creation path too, not only for the opt-in: that was the defect.
+         * Appended at the END -- these values cross the SCPI boundary through
+         * sd_card_manager_WriteRefuseReasonText(). */
+        SD_REFUSE_NAME_ALIAS_RISK,
+        /* ⛔ #1124 r28 AUDIT HIGH (sd_card_manager.c:3894): the configured
+         * logging name ends in the manifest extension, so this session's own
+         * manifest name would be "<name>.mfst.mfst" while the DATA file it
+         * writes occupies "<name>" -- which is exactly the manifest name of a
+         * differently-configured session. One session's data file is then
+         * another's sidecar: recording `exp.csv.mfst` leaves
+         * `exp.csv.mfst.mfst` describing it, and a later `exp.csv` session
+         * recreates `exp.csv.mfst` as its own manifest while that record
+         * survives, asserting the old size and CRC over unrelated bytes. */
+        SD_REFUSE_NAME_IS_MANIFEST,
     } SdWriteRefuseReason;
 
     SdWriteRefuseReason sd_card_manager_WriteRefuseReason(void);

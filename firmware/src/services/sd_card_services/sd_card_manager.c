@@ -349,6 +349,25 @@ _Static_assert(offsetof(SYS_FS_FSTAT, lfname) >= sizeof(FILINFO),
  * either macro moves the result is a cost change, never a missed collision. */
 #define SD_FOREIGN_PART_LIMIT \
         (SD_CARD_MANAGER_MAX_SPLIT_FILES + SD_CARD_MANAGER_UNIQUE_TARGET_MAX + 1u)
+
+/* ⛔⛔ #1124 r28: THE SHARED PART-SUFFIX PARSER'S CEILING IS THIS ONE.
+ *
+ * SdManifest_ParsePartIndexDigits bounds the index it will return, so that a
+ * foreign name carrying an absurd suffix is skipped rather than refused. That
+ * bound has to be the HIGHEST INDEX A SESSION CAN WRITE, and the number lives
+ * here -- the rotation ceiling plus the #958 discriminator's probe span. The
+ * header spells it literally because it is host-includable and cannot see this
+ * file, and this assert is what stops that from being a second source of
+ * truth: move either macro and the build fails here, loudly, instead of the
+ * parser silently accepting or skipping an index it should not.
+ *
+ * MAX rather than LIMIT because the limit is one PAST the last valid index
+ * (sd_ForeignBitTest refuses >= LIMIT), and the parser returns an index, not a
+ * bound. */
+_Static_assert(SDMANIFEST_PART_INDEX_MAX == (SD_FOREIGN_PART_LIMIT - 1u),
+               "#1124: SdManifest_ParsePartIndexDigits' ceiling must be the "
+               "highest index a session can write (SD_FOREIGN_PART_LIMIT - 1)");
+
 #define SD_FOREIGN_BITS_WORDS   ((SD_FOREIGN_PART_LIMIT + 31u) / 32u)
 static uint32_t gForeignPartBits[SD_FOREIGN_BITS_WORDS];
 
@@ -2725,34 +2744,36 @@ static sd_InspectResult sd_NameIsRotationPartOfExistingManifest(const char *name
     if (dash == NULL || (dash + 1) >= end) {
         return SD_INSPECT_CLEAR;        /* no "-N" tail: not a part */
     }
-    /* ⛔⛔ #1124 r28 AUDIT MEDIUM (:2728): ONLY A CANONICAL UNPADDED SUFFIX.
+    /* ⛔⛔⛔ #1124 r28 AUDIT MEDIUM, BOTH LEGS (:2752): ONE PARSER, SHARED WITH
+     * SdManifest_PartIndexOf, BECAUSE COPYING THE RULE IS WHAT KEPT FAILING.
      *
-     * generateFilename emits the index with "%u", which never pads. So
-     * `exp-01.csv` is a name this firmware CANNOT produce -- and this function
-     * accepted it, stripped "-01", found an unrelated `exp.csv.mfst`, and
-     * refused a fresh `exp-01.csv` even with the overwrite opt-in granted.
-     * Fourth instance of a FOREIGN name tripping a refusal.
+     * The suffix must be something generateFilename's "%u" can emit for a real
+     * rotation part. Three rounds of history, and all three rejections now
+     * live in SdManifest_ParsePartIndexDigits rather than here:
      *
-     * ⛔ AND THE RULE ALREADY EXISTED, one file away. SdManifest_PartIndexOf
-     * has rejected leading zeros since r21; this r20 function never got it.
-     * One rule, two consumers, one updated -- the same enumeration failure as
-     * r27's ceiling, three rounds later.
+     *   r21  PartIndexOf learns to reject PADDED ("-01").
+     *   r28  this function -- written r20, one file away -- is found still
+     *        accepting it: it stripped "-01", found an unrelated
+     *        `exp.csv.mfst` and refused a fresh `exp-01.csv` even WITH the
+     *        opt-in granted. Fourth instance of a FOREIGN name tripping a
+     *        refusal.
+     *   r28  and the rule was incomplete in BOTH copies: `exp-0.csv` (counter
+     *        0 emits the UNSUFFIXED name, so "-0" is no part at any counter)
+     *        and `exp-4294967296.csv` (cannot fit fileCounter) were also
+     *        stripped and refused. Fifth and sixth instances.
      *
-     * ⚠ ENUMERATED THIS TIME, by behaviour rather than by name: the part-suffix
-     * rule has exactly TWO consumers (this and PartIndexOf). There are two
-     * other digit loops over names -- sd_DirLeafIsBucket here and
-     * SD_DirHasBucketComponent in SCPIStorageSD.c -- and they must do the
-     * OPPOSITE, because buckets are "P%03u" and `P001` is padded BY DESIGN.
-     * Adding this rule to all four would have broken bucket matching, which is
-     * why "find every consumer" has to mean every consumer of THIS rule, not
-     * every site that looks similar. */
-    if ((dash[1] == '0') && ((end - dash) > 2)) {
-        return SD_INSPECT_CLEAR;        /* padded: never one of our parts */
-    }
-    for (const char *d = dash + 1; d < end; d++) {
-        if ((*d < '0') || (*d > '9')) {
-            return SD_INSPECT_CLEAR;    /* "-foo" is not a part index */
-        }
+     * Copying it a second time would have been the fourth round of the same
+     * shape, so the body is now singular and this calls it.
+     *
+     * ⚠ ENUMERATED BY BEHAVIOUR, NOT BY NAME: this rule has exactly TWO
+     * consumers (here and PartIndexOf). Two other digit loops over names --
+     * sd_DirLeafIsBucket below and SD_DirHasBucketComponent in SCPIStorageSD.c
+     * -- must do the OPPOSITE, because buckets are "P%03u" and `P001` is
+     * padded BY DESIGN. Giving all four the same rule would have broken bucket
+     * matching, which is why "find every consumer" has to mean every consumer
+     * of THIS rule, not every site that looks similar. */
+    if (SdManifest_ParsePartIndexDigits(dash + 1, end) == SDMANIFEST_PART_NONE) {
+        return SD_INSPECT_CLEAR;        /* not a suffix any session emits */
     }
     /* Rebuild "<base><ext>.mfst" in the configured directory. */
     const int w = snprintf(owner, sizeof(owner), "%.*s/%.*s%s" SD_MANIFEST_EXT,
@@ -4829,6 +4850,57 @@ void sd_card_manager_ProcessState() {
                     gSDCardData.currentProcessState =
                             SD_CARD_MANAGER_PROCESS_STATE_ERROR;
                     break;
+                }
+
+                /* ⛔⛔⛔ #1124 r28 AUDIT HIGH x2: THE TWO CONFIGURATIONS WHOSE
+                 * PATHS THIS ROW'S TEXTUAL COMPARISONS CANNOT BE TRUSTED ON.
+                 *
+                 * WRITE ONLY, and that asymmetry is the whole reason this is a
+                 * separate block rather than two more lines inside
+                 * SdManifest_NameIsUsable. Both rules exist to stop a session
+                 * from CREATING a hazard:
+                 *   - an alias-spelled path makes record comparison unsound,
+                 *   - a name ending in the manifest extension makes this
+                 *     session's data file another session's sidecar.
+                 * Neither is a reason to refuse READING, CRC-ing or DELETING
+                 * such a file. Folding them into NameIsUsable would have done
+                 * exactly that, because this guard serves SD:GET, SD:CRC and
+                 * SD:DELete through `opFile` as well -- and refusing to read a
+                 * manifest, or to delete the very file that is in the way, is
+                 * a worse outcome than the hazard. So: `usesOperandName`
+                 * selects those modes, and this block is skipped for them.
+                 *
+                 * AT USE, not only in the SCPI setters, for the reason
+                 * SD_ValidatePathParam's own header gives: an NVM restore
+                 * populates the settings struct directly and never passes
+                 * through a setter. That route-around is what made a
+                 * setter-only fix unacceptable for the trailing-separator rule
+                 * one block above, and it applies identically to these two.
+                 * The setters refuse as well, so the operator gets an
+                 * immediate SCPI error instead of a surprise at START. */
+                if (!usesOperandName) {
+                    if (SdManifest_PathHasAliasRisk(nameOperand)
+                            || SdManifest_PathHasAliasRisk(
+                                    gpSDCardSettings->directory)) {
+                        /* log_budget: max=40 */
+                        LOG_E("[SD1124] alias risk in dir or name '%s'", nameOperand);
+                        gSDCardData.writeRefuseReason =
+                                SD_REFUSE_NAME_ALIAS_RISK;
+                        gSDCardData.lastOperationSuccess = false;
+                        gSDCardData.currentProcessState =
+                                SD_CARD_MANAGER_PROCESS_STATE_ERROR;
+                        break;
+                    }
+                    if (SdManifest_NameHasManifestExt(nameOperand)) {
+                        /* log_budget: max=40 */
+                        LOG_E("[SD1124] mfstname '%s' is a manifest name", nameOperand);
+                        gSDCardData.writeRefuseReason =
+                                SD_REFUSE_NAME_IS_MANIFEST;
+                        gSDCardData.lastOperationSuccess = false;
+                        gSDCardData.currentProcessState =
+                                SD_CARD_MANAGER_PROCESS_STATE_ERROR;
+                        break;
+                    }
                 }
             }
             if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE) {
@@ -7774,6 +7846,14 @@ const char* sd_card_manager_WriteRefuseText(void) {
         case SD_REFUSE_MANIFEST_UNPARSABLE:
             return "a manifest in this directory could not be read or did not "
                    "parse - refused rather than assumed to cover nothing";
+        case SD_REFUSE_NAME_ALIAS_RISK:
+            return "the configured directory or logging name contains '~', so "
+                   "it may be an 8.3 alias naming a different file than it "
+                   "spells - use the long name";
+        case SD_REFUSE_NAME_IS_MANIFEST:
+            return "the configured logging name ends in '" SD_MANIFEST_EXT
+                   "', which is the manifest extension - a data file by that "
+                   "name is another session's integrity record";
         case SD_REFUSE_NONE:
         default:
             /* The enum documents NONE as "not refused", so returning a refusal

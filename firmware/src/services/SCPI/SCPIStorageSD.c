@@ -1175,16 +1175,14 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
                 }
             }
         }
-        if (memchr(pBuff, '~', fileLen) != NULL) {
-            /* log_budget: max=40 */
-            LOG_E("[SD1124] scope name has a tilde");
-            SCPI_ExecutionError(context,
-                                "SYST:STOR:SD:FILE: overwrite not allowed for a "
-                                "name containing '~' - it may be an 8.3 alias "
-                                "of a different file; use the long name");
-            result = SCPI_RES_ERR;
-            goto __exit_point;
-        }
+        /* ⛔ r28: THE '~' REFUSAL USED TO BE HERE, AND BEING HERE WAS THE
+         * DEFECT. It is now unconditional, below, with the length and
+         * SD_ValidatePathParam checks -- see the block headed "ALIAS RISK AND
+         * MANIFEST-NAME COLLISION ARE NOT OPT-IN QUESTIONS". Scoping it to the
+         * grant protected only the destructive route, while ordinary
+         * refuse-by-default logging both accepted an alias-spelled target and
+         * WROTE records spelled that way. Do not re-add it here: a second copy
+         * would make the general rule look conditional again. */
         if (SD_DirHasNonCanonicalForm(pSDCardRuntimeConfig->directory)) {
             /* log_budget: max=40 */
             LOG_E("[SD1124] scope dir form not canonical");
@@ -1232,6 +1230,68 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
         }
         if (!SD_ValidatePathParam(pBuff, fileLen, true)) {   /* #612 */
             SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+            result = SCPI_RES_ERR;
+            goto __exit_point;
+        }
+        /* ⛔⛔⛔ #1124 r28 AUDIT HIGH x2: ALIAS RISK AND MANIFEST-NAME COLLISION
+         * ARE NOT OPT-IN QUESTIONS.
+         *
+         * Both refusals were previously scoped to the overwrite grant (the '~'
+         * one literally, since r22) or absent (the extension one). The grant
+         * is the wrong scope for either, because neither hazard needs a grant
+         * to be reached:
+         *
+         *   '~'  (:1119 / SdManifest.h:501) -- an 8.3 alias names the same file
+         *        as a long name while comparing textually unequal to it, and
+         *        all record matching here is textual. Without the opt-in a
+         *        session still ROTATES, and a rotated part recreates a name
+         *        whose foreign record went unmatched. Worse, a session
+         *        configured by alias WRITES records spelled by alias, which no
+         *        later long-named session can match -- so the hazard outlives
+         *        the session that created it. See SdManifest_PathHasAliasRisk,
+         *        which also records the false claim this corrects.
+         *
+         *   .mfst (:3894) -- the manifest name is "<file>" + SD_MANIFEST_EXT,
+         *        so a DATA file named "exp.csv.mfst" is the manifest name of a
+         *        session configured as "exp.csv". Recording the former leaves
+         *        "exp.csv.mfst.mfst" describing it; a later "exp.csv" session
+         *        then recreates "exp.csv.mfst" as its own manifest while that
+         *        record survives, asserting the dead capture's size and CRC
+         *        over a file it never saw. Refusing the name is the only fix
+         *        that does not require the scan to decide which of two
+         *        plausible owners a ".mfst.mfst" belongs to.
+         *
+         * ⭐ The extension refusal also makes an existing invariant true rather
+         * than assumed: the foreign scan identifies manifests by name AND by
+         * first-line content, and those two can only agree if no data file
+         * bears the manifest extension. Now none can.
+         *
+         * Refused for the NAME here and for the DIRECTORY in
+         * SCPI_StorageSDDirectorySet; both are re-checked AT USE in
+         * sd_card_manager.c, because an NVM restore reaches neither setter. */
+        /* ⚠ THE LENGTH-TAKING ENTRY POINTS, NOT THE strlen ONES.
+         * SCPI_ParamCharacters returns a pointer INTO the command buffer with
+         * a length and NO terminator -- which is why SD_ValidatePathParam
+         * above takes a length, and why the '~' check this replaces was
+         * written with memchr. strlen here would read past the operand. */
+        if (SdManifest_PathHasAliasRiskLen(pBuff, fileLen)) {
+            /* log_budget: max=40 */
+            LOG_E("[SD1124] alias risk: the name has a tilde");
+            SCPI_ExecutionError(context,
+                                "SYST:STOR:SD:FILE: a name containing '~' is "
+                                "refused - it may be an 8.3 alias of a "
+                                "different file; use the long name");
+            result = SCPI_RES_ERR;
+            goto __exit_point;
+        }
+        if (SdManifest_NameHasManifestExtLen(pBuff, fileLen)) {
+            /* log_budget: max=40 */
+            LOG_E("[SD1124] mfstname refused in SD:FILE");
+            SCPI_ExecutionError(context,
+                                "SYST:STOR:SD:FILE: a name ending in '"
+                                SD_MANIFEST_EXT "' is refused - that is the "
+                                "manifest extension, and such a file is "
+                                "another session's integrity record");
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
@@ -3428,6 +3488,37 @@ scpi_result_t SCPI_StorageSDDirectorySet(scpi_t * context) {
 
     if (!SD_ValidatePathParam(pBuff, pathLen, false)) {   /* #612 */
         SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+
+    /* ⛔⛔⛔ #1124 r28 AUDIT HIGH, BOTH LEGS (:1119 / SdManifest.h:501): '~' IN
+     * THE DIRECTORY IS REFUSED HERE, UNCONDITIONALLY.
+     *
+     * It was refused only as part of the overwrite opt-in's whitelist, via
+     * SD_DirHasNonCanonicalForm, and that scope was the defect. This setter is
+     * where a session's directory is NAMED, and the hazard needs no grant:
+     *
+     *   - naming the ALIAS ("LONGDI~1") makes every record comparison compare
+     *     it against a long-named record and return "not ours", so rotation
+     *     recreates a recorded part with no exact check -- main :1119;
+     *   - naming the alias also makes this session WRITE records spelled by
+     *     alias, which a later session naming the long directory cannot match
+     *     -- blind :501, and the reason the PR's residual claim that
+     *     "a device-written manifest cannot contain the form" was FALSE.
+     *
+     * Refusing at the setter makes that claim true by construction. The same
+     * refusal runs AT USE in sd_card_manager.c, because an NVM restore
+     * populates this struct without passing through here -- the route-around
+     * SD_ValidatePathParam's own header documents.
+     *
+     * Length-taking form: pBuff is the raw SCPI operand with no terminator. */
+    if (SdManifest_PathHasAliasRiskLen(pBuff, pathLen)) {
+        /* log_budget: max=40 */
+        LOG_E("[SD1124] alias risk: the directory has a tilde");
+        SCPI_ExecutionError(context,
+                            "SYST:STOR:SD:DIRectory: a path containing '~' is "
+                            "refused - it may be an 8.3 alias of a different "
+                            "directory; use the long name");
         return SCPI_RES_ERR;
     }
 
