@@ -1046,13 +1046,93 @@ else
 fi
 restore
 
-echo "== R60 (PIN 23d): accept a TILDE, so an 8.3 alias can be granted         =="
-echo "==      overwrite on a file whose long name compares unequal to it.      =="
-if sub "$S" "        if (memchr(pBuff, '~', fileLen) != NULL) {" \
+echo "== R60 (PIN 23d): accept a TILDE in the NAME, so an 8.3 alias names a    =="
+echo "==      file whose long name compares unequal to it -- and the session   =="
+echo "==      also WRITES records spelled by alias. REWRITTEN at r28: the old  =="
+echo "==      arm neutered the opt-in-only memchr, which no longer exists.     =="
+if sub "$S" "        if (SdManifest_PathHasAliasRiskLen(pBuff, fileLen)) {" \
             "        if (false) {"; then
-    expect "R60 the opt-in refuses a tilde" "accepts a TILDE"
+    expect "R60 the name arm refuses a tilde" "are missing, duplicated, or"
 else
     echo "  FAIL R60 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R78 (PIN 23d): accept a TILDE in the DIRECTORY. Its OWN arm, because  =="
+echo "==      main :1119's repro names the alias as the DIRECTORY, not the     =="
+echo "==      file, and a by-name count cannot tell which arm complies.        =="
+if sub "$S" "    if (SdManifest_PathHasAliasRiskLen(pBuff, pathLen)) {" \
+            "    if (false) {"; then
+    expect "R78 the directory arm refuses a tilde" "are missing, duplicated, or"
+else
+    echo "  FAIL R78 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R79 (PIN 23d): accept a name ending in the MANIFEST EXTENSION, so a   =="
+echo "==      session named exp.csv.mfst writes exp.csv.mfst.mfst and leaves   =="
+echo "==      its data file occupying a later exp.csv session's manifest name. =="
+if sub "$S" "        if (SdManifest_NameHasManifestExtLen(pBuff, fileLen)) {" \
+            "        if (false) {"; then
+    expect "R79 the setter refuses a .mfst name" "are missing, duplicated, or"
+else
+    echo "  FAIL R79 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R80 (PIN 23f): drop the WRITE-ONLY guard on the at-use refusals, so   =="
+echo "==      SD:GET of a manifest and SD:DELete of the file in the way are    =="
+echo "==      refused too -- a worse regression than the hazard they close.    =="
+if sub "$F" "                if (!usesOperandName) {" \
+            "                if (true) {"; then
+    expect "R80 the at-use refusals are write-only" "PIN 23f"
+else
+    echo "  FAIL R80 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R81 (PIN 23f): keep the NAME arm at use and drop the DIRECTORY arm.   =="
+echo "==      This is the half a single \"||\" expression would have hidden:      =="
+echo "==      the call text stays present, so only a per-arm pin sees it.      =="
+if sub "$F" "                            SdManifest_PathHasAliasRisk(gpSDCardSettings->directory);" \
+            "                            false;"; then
+    expect "R81 the at-use directory arm exists" "PIN 23f"
+else
+    echo "  FAIL R81 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R82 (test_924): let the SHARED PARSER accept a leading zero again,    =="
+echo "==      which is BOTH the padded case and the lone \"-0\". Caught by       =="
+echo "==      behaviour, not by a pin: this is the one arm where the rule's    =="
+echo "==      body is host-reachable and can be tested by value.               =="
+if sub "$U" "    if (d[0] == '0') {" \
+            "    if (false) {"; then
+    expect "R82 the parser rejects a leading zero" "a_padded_index_is_never_one_of_our_parts"
+else
+    echo "  FAIL R82 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R83 (test_924): unbound the parser's index, so a foreign name with an =="
+echo "==      absurd suffix maps onto an index no session can write.           =="
+if sub "$U" "    if ((idx < 1u) || (idx > SDMANIFEST_PART_INDEX_MAX)) {" \
+            "    if (false) {"; then
+    expect "R83 the parser bounds its index" "part_suffix_parser_bounds_the_index"
+else
+    echo "  FAIL R83 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R84 (PIN 37): remove the _Static_assert tying the parser's ceiling to =="
+echo "==      SD_FOREIGN_PART_LIMIT. Without it the header's literal is a      =="
+echo "==      SECOND source of truth and a drift is silent in every other      =="
+echo "==      instrument -- the host suite never compiles that .c file.        =="
+if sub "$F" "_Static_assert(SDMANIFEST_PART_INDEX_MAX == (SD_FOREIGN_PART_LIMIT - 1u)," \
+            "_Static_assert(1 == 1,"; then
+    expect "R84 the ceiling is cross-tied" "PIN 37"
+else
+    echo "  FAIL R84 anchor absent."; fail=$((fail+1))
 fi
 restore
 
@@ -1292,12 +1372,14 @@ else
 fi
 restore
 
-echo "== R77 (PIN 37): accept a PADDED suffix again, so exp-01.csv strips to   =="
-echo "==      exp, finds an unrelated exp.csv.mfst, and refuses a fresh file   =="
-echo "==      this firmware could never have written.                          =="
-if sub "$F" """    if ((dash[1] == '0') && ((end - dash) > 2)) {""" \
+echo "== R77 (PIN 37): stop calling the SHARED parser, so EVERY digit run is   =="
+echo "==      a part again -- exp-01.csv, exp-0.csv and exp-4294967296.csv all =="
+echo "==      strip to exp, find an unrelated exp.csv.mfst, and refuse a fresh =="
+echo "==      capture this firmware could never have written. REWRITTEN at r28: =="
+echo "==      the old arm neutered an inlined condition that is now gone.      =="
+if sub "$F" "    if (SdManifest_ParsePartIndexDigits(dash + 1, end) == SDMANIFEST_PART_NONE) {" \
             '    if (false) {'; then
-    expect "R77 a padded suffix is not a part" "no longer"
+    expect "R77 the recorded-part check calls the shared parser" "is not SHARED"
 else
     echo "  FAIL R77 anchor absent."; fail=$((fail+1))
 fi

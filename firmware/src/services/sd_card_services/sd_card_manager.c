@@ -4879,9 +4879,18 @@ void sd_card_manager_ProcessState() {
                  * The setters refuse as well, so the operator gets an
                  * immediate SCPI error instead of a surprise at START. */
                 if (!usesOperandName) {
-                    if (SdManifest_PathHasAliasRisk(nameOperand)
-                            || SdManifest_PathHasAliasRisk(
-                                    gpSDCardSettings->directory)) {
+                    /* ⚠ ONE CALL PER LINE, deliberately: each arm is a
+                     * separate invariant and pin1124_mutate.sh neuters them
+                     * INDEPENDENTLY. Folded into one `||` expression, a mutant
+                     * that removes the directory arm leaves the call text
+                     * present and the count-based pin cannot see it -- a pin
+                     * that only counts call sites would pass while half the
+                     * refusal was gone. */
+                    const bool aliasInName =
+                            SdManifest_PathHasAliasRisk(nameOperand);
+                    const bool aliasInDir =
+                            SdManifest_PathHasAliasRisk(gpSDCardSettings->directory);
+                    if (aliasInName || aliasInDir) {
                         /* log_budget: max=40 */
                         LOG_E("[SD1124] alias risk in dir or name '%s'", nameOperand);
                         gSDCardData.writeRefuseReason =

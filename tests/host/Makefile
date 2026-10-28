@@ -2297,16 +2297,20 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	 hp=`$(CC) -fpreprocessed -E -I$(FW_UTIL) $(FW_UTIL)/SdManifest.h 2>/dev/null \
 	     | grep -c 'SdManifest_ParsePartIndexDigits('`; \
 	 lbucket=`printf '%s\n' "$$pp" | grep -n 'sd_DirLeafIsBucket' | head -1 | cut -d: -f1`; \
+	 nassert=`printf '%s\n' "$$pp" | grep -c '_Static_assert(SDMANIFEST_PART_INDEX_MAX'`; \
 	 ok=1; \
 	 test "$$ncall" -eq 1 || ok=0; \
 	 test "$$nold" -eq 0 || ok=0; \
 	 test "$$hp" -ge 2 || ok=0; \
+	 test "$$nassert" -eq 1 || ok=0; \
 	 test "$$ok" -eq 1 \
 	  || { echo "ERROR: #1124 r28 PIN 37: the part-suffix rule is not SHARED."; \
 	       echo "         SdManifest_ParsePartIndexDigits( calls in the manager:"; \
 	       echo "           $$ncall (expected exactly 1 -- the recorded-part check)"; \
 	       echo "         re-implemented \`dash[1] == '0'\` tests: $$nold (expected 0)"; \
 	       echo "         definition + use in the header: $$hp (expected >= 2)"; \
+	       echo "         _Static_assert tying the ceiling to"; \
+	       echo "           SD_FOREIGN_PART_LIMIT: $$nassert (expected 1)"; \
 	       echo "       This predicate has cost THREE rounds, and every time the"; \
 	       echo "       defect was a COPY of the rule rather than the rule:"; \
 	       echo "         r21  PartIndexOf learns to reject a padded suffix;"; \
