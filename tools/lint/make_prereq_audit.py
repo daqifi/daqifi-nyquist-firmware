@@ -344,6 +344,25 @@ def strip_make_comment(line):
     return "".join(out)
 
 
+def auditable_lines(text):
+    """[(lineno, text)] -- the ONE line set every scan here may look at.
+
+    ⛔ ONE ITERATOR, BECAUSE TWO SCOPES DIVERGED. The policy read non-recipe,
+    comment-stripped lines while find_evasions() read raw text, so a `value`
+    mention in a COMMENT or a RECIPE -- which the policy deliberately exempts,
+    having measured two such lines in the real Makefile -- still produced a
+    refusal from the other scan. A false NO VERDICT, and the mirror image of
+    the bug it was added to fix.
+
+    Both scans now take their lines from here, so the scopes cannot drift
+    apart again: a construct is either in this set for everyone or in it for
+    nobody.
+    """
+    return [(lineno, strip_make_comment(ln))
+            for lineno, ln in logical_lines(text)
+            if not is_recipe_line(ln)]
+
+
 def policy_violations(text):
     """[(lineno, kind, why, excerpt)] -- constructs this scanner refuses to
     reason about. Pure, so every predicate is pinned and mutated.
@@ -361,12 +380,9 @@ def policy_violations(text):
         if TRAILING_BSLASH_RUN_RE.search(strip_make_comment(raw)):
             found.append((lineno, "backslash parity", TRAILING_BSLASH_PARITY_WHY,
                           raw.strip()[:120]))
-    # Everything else reads LOGICAL lines, so a construct cannot hide behind a
-    # continuation -- the same reason every other scan here does.
-    for lineno, ln in logical_lines(text):
-        if is_recipe_line(ln):
-            continue
-        bare = strip_make_comment(ln)
+    # Everything else reads the shared auditable line set, so a construct
+    # cannot hide behind a continuation and the two scans cannot diverge.
+    for lineno, bare in auditable_lines(text):
         for kind, rx, why in POLICY:
             if rx.search(bare):
                 found.append((lineno, kind, why, bare.strip()[:120]))
@@ -466,11 +482,13 @@ def find_evasions(makefile, goal="run"):
     files, problems = gather_sources(makefile, goal)
     hits = []
     for path, text in files:
-        # LOGICAL lines -- see logical_lines() for the three times a
-        # physical-line scan was defeated by a continuation.
-        for lineno, ln in logical_lines(text):
-            if VALUE_RE.search(ln):
-                hits.append((path, lineno, ln.strip()[:120]))
+        # ⛔ THE SHARED LINE SET, not a second scope. A `value` mention in a
+        # comment or a recipe is exempt here for exactly the reason the policy
+        # exempts it, and scanning raw text made this scan refuse files the
+        # policy had deliberately passed.
+        for lineno, bare in auditable_lines(text):
+            if VALUE_RE.search(bare):
+                hits.append((path, lineno, bare.strip()[:120]))
     return hits, problems
 
 
@@ -479,24 +497,35 @@ def report(makefile, goal="run"):
     print(f"goal     : {goal}  (warnings are goal-independent -- prerequisite "
           f"lists expand when each rule is READ)")
 
-    # ⛔ THE POLICY RUNS FIRST, over the file as given. If the Makefile is
-    # outside the subset this scanner is correct on, nothing below is entitled
-    # to an opinion -- including a clean one.
-    try:
-        with open(makefile, "r", errors="replace") as fh:
-            policy_hits = policy_violations(fh.read())
-    except OSError as exc:
-        print(f"ERROR: cannot read {makefile}: {exc.strerror}")
+    # ⛔ THE POLICY RUNS FIRST, AND OVER EVERY DISCOVERED SOURCE -- not just
+    # the root. Applying it to the root alone left the narrowing with a hole
+    # the exact size of an `include`: an included file carrying nested defines
+    # plus a split `value` call was handed straight to the lexer the policy
+    # exists to stop trusting, and the lexer closes a nested define at the
+    # INNER endef. A subset the build graph only partly obeys is not a subset.
+    #
+    # Sources come from make's own MAKEFILE_LIST, so "every file make read" is
+    # make's answer, not a guess from reading include lines.
+    sources, src_problems = gather_sources(makefile, goal)
+    for path, why in src_problems:
+        print(f"::error file={os.path.basename(path)}::the set of files make "
+              f"actually read could not be established, so part of this "
+              f"Makefile may never have been scanned ({why})")
+    if src_problems:
+        print(f"ERROR: {len(src_problems)} file-list problem(s). NO VERDICT.")
         return 2
-    for lineno, kind, why, excerpt in policy_hits:
-        print(f"::error file={os.path.basename(makefile)},line={lineno}::"
+    policy_hits = [(path,) + hit
+                   for path, text in sources
+                   for hit in policy_violations(text)]
+    for path, lineno, kind, why, excerpt in policy_hits:
+        print(f"::error file={os.path.basename(path)},line={lineno}::"
               f"outside the audited subset ({kind}): {why} -- {excerpt}")
     if policy_hits:
         print(f"ERROR: {len(policy_hits)} construct(s) outside the subset this "
-              f"checker is correct on. NO VERDICT -- this is a deliberate "
-              f"narrowing after five rounds of a hand-written Make lexer "
-              f"losing to Make's grammar; extend the policy on purpose, or "
-              f"keep the file inside it.")
+              f"checker is correct on, across {len(sources)} file(s) make "
+              f"read. NO VERDICT -- this is a deliberate narrowing after five "
+              f"rounds of a hand-written Make lexer losing to Make's grammar; "
+              f"extend the policy on purpose, or keep the build inside it.")
         return 2
 
     evasions, unresolved = find_evasions(makefile, goal)
@@ -826,6 +855,35 @@ def self_test():
               "inc.mk": "FROM_INC := inc.c\nguard: base.c $(value LATE)\n"
                         "\t@true\nLATE := late.c\n",
               "child.mk": "all:\n\t@true\n"}, 2),
+            # ⛔ r7 HIGH: the policy must hold over the WHOLE build graph. The
+            # root here is policy-clean, and the INCLUDED file carries nested
+            # defines plus a split value call -- the construct the lexer gets
+            # wrong (it closes at the inner endef). Root-only policy handed
+            # this straight to that lexer.
+            # ⚠ THE SPLIT CALL SITS AFTER THE INNER endef, and that placement
+            # is the whole fixture. My first attempt put it inside the inner
+            # body, where the old merge still produced one line containing
+            # `$(call value` -- so find_evasions caught it anyway and the arm
+            # was INERT (old head also exited 2, proving nothing). Here the
+            # premature close at the inner endef STRANDS the call: `$(call`
+            # alone on one logical line, `value,LATE)` on the next, and
+            # neither matches. Measured at 8b7ca3a08: exit 0, `(none)`.
+            ("REFUSE    an INCLUDED file is inside the policy too",
+             {"Makefile": "include inc.mk\nok: base.c $(FROM_INC)\n\t@true\n",
+              "inc.mk": "FROM_INC := inc.c\ndefine OUTER\ndefine INNER\nx\n"
+                        "endef\n$(call\nvalue,LATE)\nendef\nLATE := late.c\n"},
+             2),
+            # ⛔ r7 MEDIUM: the two scans had DIFFERENT scopes, so a `value`
+            # the policy exempts still drew a refusal from find_evasions.
+            # These are the exemptions, now shared by one iterator -- and they
+            # are the same two shapes measured in the real Makefile.
+            ("CONTROL   a `value` mention in a COMMENT does not refuse",
+             {"Makefile": "EARLY := base.c\n"
+                          "# $(value LATE) in a comment is never expanded\n"
+                          "ok: base.c $(EARLY)\n\t@true\n"}, 0),
+            ("CONTROL   a `value` echo in a RECIPE does not refuse",
+             {"Makefile": "EARLY := base.c\nok: base.c $(EARLY)\n"
+                          "\t@echo 'no bank for this $(value LATE)'\n"}, 0),
         ]
         for name, files, want_rc in refusal_arms:
             got, out = _fixture_exit(files)
