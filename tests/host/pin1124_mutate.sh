@@ -1018,8 +1018,8 @@ restore
 echo "== R57 (PIN 26): drop the PARENT walk, so a DEFAULT session logging into =="
 echo "==      a bucket can recreate a part the parent's manifest still         =="
 echo "==      records. No opt-in involved, so every opt-in test passes.        =="
-if sub "$F" '                    out = sd_ScanOneDirectory(parent, false, needle);' \
-            '                    (void)parent;'; then
+if sub "$F" '            out = sd_ScanOneDirectory(parent, false, needle);' \
+            '            (void)parent;'; then
     expect "R57 a bucket dir scans its parent" "PIN 26a: the PARENT walk is gone"
 else
     echo "  FAIL R57 anchor absent."; fail=$((fail+1))
@@ -1030,8 +1030,8 @@ echo "== R58 (PIN 26, the isOwnDir arm): scan the parent but EXCLUDE our own   =
 echo "==      manifest leaf there. The walk is present and looks right; it     =="
 echo "==      simply skips the one manifest it went to find -- a session       =="
 echo "==      configured at the PARENT with the same name.                     =="
-if sub "$F" '                    out = sd_ScanOneDirectory(parent, false, needle);' \
-            '                    out = sd_ScanOneDirectory(parent, true, needle);'; then
+if sub "$F" '            out = sd_ScanOneDirectory(parent, false, needle);' \
+            '            out = sd_ScanOneDirectory(parent, true, needle);'; then
     expect "R58 the parent walk does not exclude our leaf" \
            "PIN 26b: the parent walk no longer passes"
 else
@@ -1083,7 +1083,7 @@ if sub "$U" 'static inline bool SdManifest_NameHasManifestExt(const char *name)'
 {
     (void)dir; (void)file;
     if (fault != NULL) { *fault = (name == NULL); }
-    return SDMANIFEST_PART_NONE;
+    return 0u;
 }
 
 static inline bool SdManifest_NameHasManifestExt(const char *name)'; then
