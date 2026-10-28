@@ -196,16 +196,43 @@ ENDEF_RE = re.compile(r"^\s*endef\b")
 # matches 0 lines, so it costs nothing today. Whoever later needs one of these
 # constructs either extends the policy deliberately or loses this gate's
 # verdict -- and the refusal says which construct and why.
+# ⛔ NO COMMENT OR RECIPE EXEMPTION, AND THAT IS THE POINT.
+#
+# r6 scoped the policy to non-recipe, comment-stripped lines, and r8 found both
+# halves of that scoping wrong: a TAB-INDENTED ASSIGNMENT is not a recipe (make
+# accepts one before any rule), and a `#` inside `$(subst #,...)` is not a
+# comment, so the stripper truncated the line and hid what followed. The scope
+# filter had become the lexer treadmill's new home.
+#
+# Both exemptions existed only because the `value` predicate was too broad --
+# it matched the word anywhere after any `$(`, which hit two innocent lines.
+# The precise predicate needs no exemption: every route to the builtin puts the
+# literal token in a CALL POSITION. Measured over all 4102 lines of the audited
+# Makefile with NO stripping and NO exemption: 0 hits for every predicate here.
+#
+# So is_recipe_line() and strip_make_comment() are GONE, and with them both r8
+# findings. The policy reads logical lines exactly as they are written.
 POLICY = (
     ("define body", DEFINE_RE,
      "a `define` body -- bodies hold real newlines, nest, and take prefix "
      "forms, and this scanner is only correct without them"),
     ("endef", ENDEF_RE,
      "an `endef` -- see `define body`"),
-    ("value call", re.compile(r"\$[({][^\n]*\bvalue\b"),
-     "a `value` reference inside an expansion -- the builtin is invisible to "
+    ("value call", VALUE_RE,
+     "a `value` call -- the builtin is invisible to "
      "--warn-undefined-variables however it is spelled, so it is never "
-     "auditable here"),
+     "auditable here. NOTE: this is matched in COMMENTS and RECIPES too, "
+     "deliberately -- the scanner no longer tries to decide what is a comment "
+     "or a recipe, because getting that wrong is what hid a real `value` call. "
+     "If this hit is a comment, REWORD THE COMMENT rather than looking for a "
+     "defect that is not there"),
+    # The one route to the builtin with no literal `value` anywhere: a call
+    # whose FUNCTION NAME is itself an expansion. `$(call $(FN),X)` with
+    # FN=value is the builtin and contains the word nowhere, so the token scan
+    # cannot see it -- refused rather than reasoned about. 0 uses today.
+    ("computed function name", re.compile(r"[$][({]\s*call\s*[$][({]"),
+     "a `call` whose function NAME is computed -- it can reach the `value` "
+     "builtin without the word appearing anywhere, so no token scan can see it"),
 )
 
 # Backslash PARITY, which only a physical line can answer: `\\` at end of line
@@ -310,57 +337,24 @@ def gather_sources(makefile, goal="run"):
     return files, problems
 
 
-def is_recipe_line(line):
-    """A TAB-indented line is a RECIPE. Pure.
-
-    Recipes expand at execution time, after the parse, so nothing in one can
-    empty a prerequisite list -- which is the only thing this tool is about.
-    Scoping the policy to non-recipe lines is not a convenience: unscoped, it
-    matched 2 lines of the real Makefile, both harmless (one comment, one
-    recipe passing a C string literal that contains the word "value").
-    """
-    return line.startswith("\t")
-
-
-def strip_make_comment(line):
-    """The line with its comment removed. Pure.
-
-    make has NO string quoting, so an unescaped `#` starts a comment even
-    inside what looks like a quoted string -- `X := "a#b"` really is `X := "a`.
-    This is make's rule, not an approximation of it, and a comment's text is
-    never expanded, so a `value` call after one is inert.
-    """
-    out, i = [], 0
-    while i < len(line):
-        c = line[i]
-        if c == "\\" and i + 1 < len(line):
-            out.append(line[i:i + 2])
-            i += 2
-            continue
-        if c == "#":
-            break
-        out.append(c)
-        i += 1
-    return "".join(out)
-
-
 def auditable_lines(text):
-    """[(lineno, text)] -- the ONE line set every scan here may look at.
+    """[(lineno, text)] -- the ONE line set every scan here looks at.
 
-    ⛔ ONE ITERATOR, BECAUSE TWO SCOPES DIVERGED. The policy read non-recipe,
-    comment-stripped lines while find_evasions() read raw text, so a `value`
-    mention in a COMMENT or a RECIPE -- which the policy deliberately exempts,
-    having measured two such lines in the real Makefile -- still produced a
-    refusal from the other scan. A false NO VERDICT, and the mirror image of
-    the bug it was added to fix.
+    ⛔ ONE ITERATOR, AND NO EXEMPTIONS. Two separate things went wrong before.
+    The policy and the `value` scan read DIFFERENT line sets, so a construct
+    one exempted the other refused. And the exemptions were themselves a
+    lexer: `is_recipe_line` called a TAB-INDENTED ASSIGNMENT a recipe (make
+    accepts one before any rule), and `strip_make_comment` truncated at a `#`
+    inside `$(subst #,...)`, hiding whatever followed -- the treadmill moved
+    into the scope filter.
 
-    Both scans now take their lines from here, so the scopes cannot drift
-    apart again: a construct is either in this set for everyone or in it for
-    nobody.
+    Both are gone. Every scan reads logical lines as written, so a construct is
+    in scope for everyone and there is nothing left to get wrong about what is
+    a comment or a recipe. The predicates are precise enough not to need it:
+    measured 0 hits for every one of them across all 4102 lines of the audited
+    Makefile, with no stripping and no exemption.
     """
-    return [(lineno, strip_make_comment(ln))
-            for lineno, ln in logical_lines(text)
-            if not is_recipe_line(ln)]
+    return logical_lines(text)
 
 
 def policy_violations(text):
@@ -372,20 +366,17 @@ def policy_violations(text):
     audit below is entitled to an opinion.
     """
     found = []
-    physical = text.splitlines()
     # Parity is a property of a PHYSICAL line ending, so it is checked there.
-    for lineno, raw in enumerate(physical, 1):
-        if is_recipe_line(raw):
-            continue
-        if TRAILING_BSLASH_RUN_RE.search(strip_make_comment(raw)):
+    for lineno, raw in enumerate(text.splitlines(), 1):
+        if TRAILING_BSLASH_RUN_RE.search(raw):
             found.append((lineno, "backslash parity", TRAILING_BSLASH_PARITY_WHY,
                           raw.strip()[:120]))
     # Everything else reads the shared auditable line set, so a construct
     # cannot hide behind a continuation and the two scans cannot diverge.
-    for lineno, bare in auditable_lines(text):
+    for lineno, ln in auditable_lines(text):
         for kind, rx, why in POLICY:
-            if rx.search(bare):
-                found.append((lineno, kind, why, bare.strip()[:120]))
+            if rx.search(ln):
+                found.append((lineno, kind, why, ln.strip()[:120]))
     return sorted(found)
 
 
@@ -486,9 +477,9 @@ def find_evasions(makefile, goal="run"):
         # comment or a recipe is exempt here for exactly the reason the policy
         # exempts it, and scanning raw text made this scan refuse files the
         # policy had deliberately passed.
-        for lineno, bare in auditable_lines(text):
-            if VALUE_RE.search(bare):
-                hits.append((path, lineno, bare.strip()[:120]))
+        for lineno, ln in auditable_lines(text):
+            if VALUE_RE.search(ln):
+                hits.append((path, lineno, ln.strip()[:120]))
     return hits, problems
 
 
@@ -873,17 +864,49 @@ def self_test():
               "inc.mk": "FROM_INC := inc.c\ndefine OUTER\ndefine INNER\nx\n"
                         "endef\n$(call\nvalue,LATE)\nendef\nLATE := late.c\n"},
              2),
-            # ⛔ r7 MEDIUM: the two scans had DIFFERENT scopes, so a `value`
-            # the policy exempts still drew a refusal from find_evasions.
-            # These are the exemptions, now shared by one iterator -- and they
-            # are the same two shapes measured in the real Makefile.
-            ("CONTROL   a `value` mention in a COMMENT does not refuse",
+            # ⛔ r8: THE EXEMPTIONS ARE GONE, so these two now REFUSE -- the
+            # opposite of what r7 pinned, and deliberately. r8 showed the
+            # exemptions were a lexer (a tab-indented ASSIGNMENT is not a
+            # recipe; a `#` inside $(subst #,...) is not a comment), and the
+            # refusal message tells a future author to reword the comment
+            # rather than hunt a defect that is not there.
+            ("POLICY    a literal $(value X) in a COMMENT refuses, by design",
              {"Makefile": "EARLY := base.c\n"
                           "# $(value LATE) in a comment is never expanded\n"
-                          "ok: base.c $(EARLY)\n\t@true\n"}, 0),
-            ("CONTROL   a `value` echo in a RECIPE does not refuse",
+                          "ok: base.c $(EARLY)\n\t@true\n"}, 2),
+            ("POLICY    a literal $(value X) in a RECIPE refuses too",
              {"Makefile": "EARLY := base.c\nok: base.c $(EARLY)\n"
-                          "\t@echo 'no bank for this $(value LATE)'\n"}, 0),
+                          "\t@echo 'no bank for this $(value LATE)'\n"}, 2),
+            # ⛔ AND THE SHAPES THAT MUST STILL PASS, which is what makes the
+            # two above a narrowing rather than a blunt instrument. Both are
+            # measured in the real Makefile: the word in prose (43 lines), and
+            # a guard pinning an exact FIRMWARE log string, which is NOT
+            # rewordable -- the word `value` there belongs to the firmware.
+            ("CONTROL   the WORD value in prose still passes",
+             {"Makefile": "EARLY := base.c\n"
+                          "# the return value of $(EARLY) is discarded\n"
+                          "ok: base.c $(EARLY)\n\t@true\n"}, 0),
+            ("CONTROL   a recipe pinning a firmware string still passes",
+             {"Makefile": "EARLY := base.c\nok: base.c $(EARLY)\n"
+                          "\t@check $(EARLY) 'LOG_E(\"USECal %d: no "
+                          "calibration bank for this value\",' 1\n"}, 0),
+            # r8 note (a): $(eval) with the $$ form, which defers the call.
+            # The literal `$(value` substring is present in `$$(value`, so the
+            # call-position predicate sees it -- proved rather than assumed.
+            ("REFUSE    $(eval X := $$(value L)) is still a value call",
+             {"Makefile": "EARLY := base.c\n$(eval X := $$(value LATE))\n"
+                          "ok: base.c $(EARLY)\n\t@true\nLATE := late.c\n"}, 2),
+            # r8 note (a): a call whose NAME is computed reaches the builtin
+            # with the word appearing nowhere. Both bracket spellings.
+            ("REFUSE    $(call $(FN),X) -- computed function name",
+             {"Makefile": "FN := value\nok: base.c $(call $(FN),LATE)\n"
+                          "\t@true\nLATE := late.c\n"}, 2),
+            ("REFUSE    $(call ${FN},X) -- the other bracket spelling",
+             {"Makefile": "FN := value\nok: base.c $(call ${FN},LATE)\n"
+                          "\t@true\nLATE := late.c\n"}, 2),
+            ("CONTROL   an ordinary $(call fn,args) still passes",
+             {"Makefile": "double = $(1)$(1)\nEARLY := base.c\n"
+                          "ok: base.c $(EARLY)\n\t@echo $(call double,x)\n"}, 0),
         ]
         for name, files, want_rc in refusal_arms:
             got, out = _fixture_exit(files)
