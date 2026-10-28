@@ -11693,3 +11693,47 @@ carried real weight.
 
 **DECISION POINT SET:** if round 8's audit surfaces another new layer in that one file, revert the
 cherry-pick and let it converge on its own row. fw#1152 is merged, so nothing waits on it being here.
+
+## ts#458 SPLIT — the imported test comes out; rounds 6-9 were self-inflicted (2026-10-28)
+
+Decision comment: https://github.com/daqifi/daqifi-python-test-suite/pull/458#issuecomment-6477236308
+Preserved pre-split state: `origin/preserve/ts458-r9-with-1152-support` = `b1d706f23258840e0b21c4ebd3c3132b0beee48b` (verified; this repo's `delete_branch_on_merge` is **false**, unlike the firmware repo's **true**).
+
+⛔⛔ **I IMPORTED AN UNREVIEWED ARTIFACT INTO A ROW AT ITS ROUND CAP.** The routing was "flip the
+assertion, cherry-pick, push". I also folded in a 196-line hardware device test from a PR-less,
+never-audited branch. Rounds 6-9 then produced ~19 findings, almost all in that file. The #1148 work
+had already absorbed rounds 1-5 (7,7,3,2,3); the import restarted that process from zero inside a
+row that had already paid for it.
+
+⭐⭐ **EVERY DEFECT IN THAT FILE HAD ONE SHAPE: a wrong verdict in some reachable AMBIENT DEVICE
+STATE.** r7 streaming interface unselected; r8 error queue undrained; r9 `CONF:VOLT:PREC` unpinned
+and `SYST:LOG:LEV` unpinned. That space is not enumerated anywhere, so each round found another
+member. Not an implementation failure -- it is what validating a HARDWARE test OFFLINE costs: the
+fake grows a knob per ambient state and drifts toward being a second implementation of the firmware.
+**The fix for that class is to enumerate and pin ALL ambient state in one pass, not fix the reported
+ones** -- attack the generator, not the instances.
+
+⛔⭐⭐ **AN AUDIT'S FINDING LIST IS NOT A CUMULATIVE LEDGER.** r8's finding 1 (stale error-queue entry
+misattributed to the probe, HIGH, false-PASS direction) **vanished from r9's report unfixed** -- I
+touched only CI between them. Verified live by READING. What made it look handled: **two different
+functions named `drain`** -- the module's `drain(sc)` pops `SYST:ERR?`, while `stream_sample_values`'
+trailing `sc.drain(1.0)` is `ReliableSCPI.drain`, a TRANSPORT drain over `ser.in_waiting` bytes.
+So the falling counts 6,5,4,3 I had reported were **partly a sampling artefact, not progress**.
+Carry findings forward BY HAND across rounds.
+
+⭐ **PROVENANCE, corrected by the coordinator and worth keeping.** I headed the decision comment
+"Operator decision". The operator's actual words were *"i suppose do your recommendation"* -- an
+endorsement of a recommendation I wrote, not a ruling they authored. Retitled to a lane decision
+adopted by the operator. When the coordinator then relayed *"i told nq-b to split"*, I logged it as
+**SECOND-HAND**, because the standard that produced the correction has to apply to a quote that
+FAVOURS me or it is only ever applied to unflattering ones.
+Cap correction in the other direction: coordinator had "r10 of 15"; operator said to me, verbatim,
+*"you can use up to 20 rounds if needed."* Record the QUOTE, not the digit.
+
+⭐ Dependency order found by checking, not assuming: `test_usecal_teardown_defects.py` is NEW in
+ts#458 and NOT on main, so the r8 row cannot run in parallel -- ts#458 merges first, then that row
+builds on it. My own first plan had them parallel, which would have duplicated the driver.
+
+⭐ Enumerate before deleting: `log_on_failure`/`seed_log` LOOK 1152-ish but serve a **test_1148**
+check (r6 finding 2). Removing the 1152 surface by name prefix would have silently deleted that
+coverage.
