@@ -2327,13 +2327,43 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                         // included), so pInstance->eventFlags does have a
                         // cross-task writer (see the #1060 AP->STA branch's
                         // critical-section comment, which cites this same
-                        // site). This particular sequence stays unwrapped
-                        // because a torn read against that one unrelated bit
-                        // is the only exposure and is judged benign here, not
-                        // because the word has a single writer — don't cite
-                        // "single-threaded" as the reason if this is copied
-                        // elsewhere.  Also clear UDP_SOCKET_CONNECTED so it
-                        // doesn't outlast UDP_SOCKET_OPEN.
+                        // site).
+                        //
+                        // ⛔ CORRECTED (#1060 r5). This comment used to say the
+                        // exposure was "a torn read against that one unrelated
+                        // bit" and was "judged benign here". BOTH HALVES WERE
+                        // WRONG, and the disposition was the dangerous half.
+                        //
+                        // Not a torn read: docs/MCU_REFERENCE.md says an
+                        // aligned 16/32-bit load or store on PIC32MZ IS
+                        // atomic, so tearing cannot happen here. What is NOT
+                        // atomic is the read-modify-write — ResetEventFlag is
+                        // `value &= ~flag`, which that same doc lists as
+                        // exactly the form requiring taskENTER_CRITICAL().
+                        //
+                        // Not benign: the failure is a LOST WRITE, not a
+                        // corrupted read. USB SCPI (priority 7) running
+                        // SYST:COMM:LAN:FWUpdate between this load and its
+                        // store has its WIFI_FW_UPDATE_REQUESTED set ERASED.
+                        // The user asked for firmware-update mode, the request
+                        // is silently dropped, and the device carries on in
+                        // the wrong mode with nothing logged. "One unrelated
+                        // bit" understated it: that bit is a mode request.
+                        //
+                        // The race is PRE-EXISTING — this sequence and its
+                        // unprotected RMW are both present on origin/main — so
+                        // it is NOT wrapped here, which would be out of scope
+                        // for this PR. It is tracked at #1182, together with
+                        // the ~44 other unprotected flag writes in this file
+                        // and the suggestion that the right fix is to make
+                        // Set/ResetEventFlag themselves atomic rather than to
+                        // wrap forty call sites.
+                        //
+                        // Don't cite "single-threaded" as the reason if this is
+                        // copied elsewhere — and don't cite "benign" either.
+                        //
+                        // Also clear UDP_SOCKET_CONNECTED so it doesn't
+                        // outlast UDP_SOCKET_OPEN.
                         RESET_TCP_SOCKET_OPEN(pInstance);
                         ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN);
                         ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_CONNECTED);
