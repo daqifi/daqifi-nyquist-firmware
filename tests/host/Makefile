@@ -13,6 +13,20 @@
 CC       ?= gcc
 CFLAGS   ?= -std=c11 -Wall -Wextra -O0 -g
 FW_UTIL  := ../../firmware/src/Util
+
+# #1055 (operator ruling 5->A): the session-end loss summary was ONE 212-byte
+# LOG_E against Logger's 125-byte content ceiling, and Logger truncates the
+# TAIL -- so the breakdown AND the "(all post-grace)" qualifier were what an
+# operator lost. Split into three lines; this target measures all three.
+SUMBUDGET_BIN  := run_1055_tests
+SCPISD_START_SRC := ../../firmware/src/services/SCPI/SCPIInterface.c
+STREAMING_SRC  := ../../firmware/src/services/streaming.c
+LOGGER_HDR     := ../../firmware/src/Util/Logger.h
+APP_FREERTOS_SRC := ../../firmware/src/app_freertos.c
+# Read out of the real Logger.h, never hand-copied: this whole test is an
+# assertion about a budget, and a budget checked against a stale capacity
+# checks nothing. Empty is fatal in the recipe.
+LOG_MSG_SIZE   := $(shell sed -n 's/^[[:space:]]*#define[[:space:]]\{1,\}LOG_MESSAGE_SIZE[[:space:]]\{1,\}\([0-9]\{1,\}\).*/\1/p' ../../firmware/src/Util/Logger.h | head -1)
 FW_ADC   := ../../firmware/src/HAL/ADC
 FW_SVC   := ../../firmware/src/services
 INCLUDES := -Istubs -I$(FW_UTIL)
@@ -832,6 +846,41 @@ START_BIN := run_998_tests
 START_CLAIMED_SRC := ../../firmware/src/services/SCPI/SCPIInterface.c
 START_CLAIMED_BEGIN := if (!sd_card_manager_TryClaim()) {
 START_CLAIMED_END := while (!sd_card_manager_IsWriteReady() && readyWait < 500) {
+# ⛔ MERGE (#1055 x main): RECOMPUTED FROM THE MERGED SLICE, and the answer
+# is THIS BRANCH'S value -- which I did not assume, and first guessed wrong.
+# MEASURED, with main's own recipe, on the merged working tree:
+#
+#   CRLF slice (what CI hashes)  6450eeb12fbf76b3ec202676df7dafc25c9bac768cdcb0f5446632a0854f7d0f
+#   LF   slice (same bytes)      3867c7f228c29b849c068b98f85f62b70afa23929876367bda32e2b7615626f8
+#
+# main's pin 404e01fd... is STALE for the merge, not wrong for main: main
+# changed this pin and the comment below it, but nothing INSIDE the slice,
+# while this branch turned two `return SCPI_RES_ERR;` into
+# `return SCPI_StartFailedAfterStop();` so every post-stop exit emits the
+# owed session summary. The merged slice is therefore this branch's content,
+# and its hash is this branch's hash. I had written 'it matches NEITHER side'
+# here before computing it; that was a guess, and recomputing is what caught
+# it. Never carry either side's pin through a merge on the strength of which
+# side looks newer -- re-derive, because the pin describes CONTENT.
+#
+# The extraction was checked for well-formedness before the hash was believed:
+# exactly ONE occurrence of each anchor, opening at :5968 below... above the
+# closing at :6087, 120 lines of slice. An anchor that had moved or vanished
+# would make the sed range run to EOF and report a misleading 'the code
+# changed' -- the hash would be real and meaningless.
+#
+# AND THE THREE MODELLED ORDERINGS WERE RE-VERIFIED ON THE MERGED SOURCE,
+# because both sides' notes stated them at line numbers the merge invalidated
+# (ours said 5909/5969/5972/5973/6028, main's 5823/5935/5836/5880; the merged
+# file has the slice at 5968-6087). Measured here:
+#   - exactly ONE code-level sd_card_manager_TryClaim(), at :5968. A raw grep
+#     reports TWO; the second is prose at :5633 inside a block comment, and
+#     the comment-stripped count is the authoritative one. The Makefile's own
+#     anchor-count check pins this separately and passed.
+#   - ClearStartupDirFull @:5988 precedes ReleaseClaim @:6032.
+#   - the claim @:5968 precedes the poll head @:6087.
+# Line numbers are recorded as OF THIS MERGE and will drift again; the
+# properties are what matter, and each is re-derivable with the greps above.
 # ⚠ THIS VALUE IS THE **CRLF** SLICE, AND THAT IS NOT INCIDENTAL -- DO NOT
 # "CORRECT" IT TO THE LF ONE. I did exactly that in this branch and broke CI;
 # this comment is here so the next reader does not repeat it.
@@ -875,7 +924,7 @@ START_CLAIMED_END := while (!sd_card_manager_IsWriteReady() && readyWait < 500) 
 # slice (SCPIInterface.c:5816-5935): refusal at 5823 before the poll at 5935,
 # ClearStartupDirFull at 5836 before ReleaseClaim at 5880, and exactly one
 # TryClaim in the file, which the anchor-count check above pins separately.
-START_CLAIMED_SHA := 404e01fdd3b7c9c8eb26cfca959b498ebe9b3e921b77daa0ddd3bca72938d490
+START_CLAIMED_SHA := 6450eeb12fbf76b3ec202676df7dafc25c9bac768cdcb0f5446632a0854f7d0f
 
 $(BIN): test_circularbuffer.c test_framework.h stubs/Logger.h stubs/osal/osal.h $(FW_UTIL)/CircularBuffer.c $(FW_UTIL)/CircularBuffer.h $(RECIPES)
 	cp $(FW_UTIL)/CircularBuffer.c $(UUT)
@@ -2806,6 +2855,9 @@ $(SDLOG_BIN): test_1000_sd_log_arm_budget.c test_framework.h $(SCPI_IFACE_SRC) $
 	 printf '#endif\n' >> $(GEN_1000)
 	$(CC) $(CFLAGS) -o $(SDLOG_BIN) test_1000_sd_log_arm_budget.c
 
+# Plus fw#1055's $(SUMBUDGET_BIN) (the session-end loss summary's 125-byte
+# budget), unioned in on the same principle as every collision above: each
+# side's target rule left INTACT, only `run` and `clean` merged.
 $(LOG1039_GEN): gen_1039_log_budget.py $(LOG_BUDGET_GATE) $(FW_APP_SRC) \
                 $(FW_ADC_SCPI) $(FW_WIFI_SRC) $(FW_LOG_H) $(FW_LOG_C) \
                 $(RECIPES)
@@ -4542,10 +4594,11 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
      $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) \
      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) \
      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(USECALTYPE_BIN) $(ARM_BIN) $(NAME_BIN) \
-     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BUTTONLATCH_BIN) $(BIN970)
+     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN)
 	./$(SEQ908_BIN)
 	./$(BUTTONLATCH_BIN)
 	./$(TEAR904_BIN)
+	./$(SUMBUDGET_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
@@ -4579,6 +4632,265 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
 	./$(FAILNEXT_REAL_BIN)
 	./$(SCPIDAC_RAILGATE_BIN)
 
+$(SUMBUDGET_BIN): test_1055_stream_end_summary_budget.c test_framework.h \
+                 $(STREAMING_SRC) $(LOGGER_HDR) $(SCPISD_START_SRC) \
+                 $(APP_FREERTOS_SRC) $(SD_MANAGER_SRC) $(RECIPES)
+	@# The three formats are COPIED into the test (streaming.c is not
+	@# host-compilable: FreeRTOS, Harmony, the board graph). A copy that drifts
+	@# is a test of itself, so each literal must still be present in the real
+	@# source -- a reword comes back as a BUILD error that forces re-measurement
+	@# against the ceiling, not as a silently stale pass.
+	@for s in 'Stream end (post-grace): lost %u/%llu samples (%u%%); ' \
+	          'Stream end (post-grace) bytes lost: USB=%u WiFi=%u SD=%u' \
+	          'Stream end (post-grace) samples lost: encFail=%u encDrop=%u dioDrop=%u' \
+	          'eos=%u stale not lost' \
+	          'Stream end (post-grace): SD teardown incomplete after %u ms; ' \
+	          'SD discards not included'; do \
+	   grep -qF "$$s" $(STREAMING_SRC) \
+	    || { echo "ERROR: $(STREAMING_SRC) no longer contains the session-end"; \
+	         echo "       summary line test_1055_stream_end_summary_budget.c measures:"; \
+	         echo "         $$s"; \
+	         echo "       That test carries a COPY of each format, so a reword here"; \
+	         echo "       leaves it measuring text the firmware no longer emits."; \
+	         echo "       Re-measure the new wording against Logger's 125-byte"; \
+	         echo "       content ceiling and update both."; \
+	         exit 1; }; \
+	 done
+	@# And the defect must not come back as ONE line: the pre-split format is
+	@# the test's negative control, so its presence in the source means the
+	@# split was reverted.
+	@grep -qF 'bytes, encFail=%u encDrop=%u dioDrop=%u eos=%u (all post-grace)' $(STREAMING_SRC) \
+	  && { echo "ERROR: $(STREAMING_SRC) has the PRE-SPLIT 212-byte session-end"; \
+	       echo "       summary back in one LOG_E (#1055). Logger truncates the"; \
+	       echo "       TAIL at 125 bytes, which is where the breakdown and the"; \
+	       echo "       '(all post-grace)' qualifier live."; \
+	       exit 1; } || true
+	@test -n '$(LOG_MSG_SIZE)' \
+	  || { echo "ERROR: could not read LOG_MESSAGE_SIZE out of $(LOGGER_HDR)."; \
+	       echo "       test_1055_stream_end_summary_budget.c measures the summary"; \
+	       echo "       against a ceiling derived from it; a defaulted capacity"; \
+	       echo "       would make that measurement meaningless. The test also"; \
+	       echo "       carries an #error, so neither half can default."; \
+	       exit 1; }
+	@# ⛔ #1055 r4 finding 1: EVERY POST-STOP RETURN GOES THROUGH THE NAMED EXIT.
+	@# SCPI_StartStreamingClaimed tears the previous session down early, which
+	@# snapshots its counters into the pending record, and then has THIRTEEN
+	@# error returns after that point. r3 added an emit to the ONE the audit
+	@# named and left twelve siblings owing a summary nothing would print. So
+	@# the rule is structural: after the teardown there must be NO bare
+	@# `return SCPI_RES_ERR;` -- all of them route through
+	@# SCPI_StartFailedAfterStop(), which emits.
+	@#
+	@# ⚠ `[ \t\r]*$$`, not `[ \t]*$$`: these sources are CRLF, so a trailing
+	@# \r sits before the newline and an anchor without it makes the bare-return
+	@# arm DEAD -- it read 0 while a bare return was sitting right there, and
+	@# only the routed count caught the mutant. A guard arm that cannot fire is
+	@# worse than no arm, because the other arm makes the pair look healthy.
+	@#
+	@# ⚠ THE RANGE ENDS AT THE NEXT TOP-LEVEL DEFINITION, not at a named later
+	@# function. Ending it at SCPI_StopStreaming swept in the legitimate bare
+	@# returns of every function in between, so the pin FAILED ON CLEAN SOURCE --
+	@# found only because a mutant's RESTORE did not go back to green. Checking
+	@# that the restore is clean is part of the mutant, not a formality.
+	@#
+	@# COUNT BEFORE POSITION, both directions: zero bare returns AND at least
+	@# thirteen routed ones. The zero alone would also be satisfied by deleting
+	@# the returns, and the count alone cannot see a NEW bare one added later.
+	@awk '/Streaming_UpdateState\(\);  \/\/ Stop timer/{f=1} \
+	     f && /^[A-Za-z_][A-Za-z0-9_ \t*]*\(/{f=0} \
+	     f && /^[ \t]*return SCPI_RES_ERR;[ \t\r]*$$/{bare++} \
+	     f && /return SCPI_StartFailedAfterStop\(\);/{routed++} \
+	     END{printf "%d %d\n", bare+0, routed+0}' $(SCPISD_START_SRC) > /tmp/.p1055.$$$$; \
+	 read bare routed < /tmp/.p1055.$$$$; rm -f /tmp/.p1055.$$$$; \
+	 test "$$bare" -eq 0 && test "$$routed" -ge 13 \
+	  || { echo "ERROR: $(SCPISD_START_SRC): a post-stop error return in"; \
+	       echo "       SCPI_StartStreamingClaimed does not emit the owed session"; \
+	       echo "       summary (#1055 r4 finding 1)."; \
+	       echo "         bare 'return SCPI_RES_ERR;' after the teardown: $$bare (must be 0)"; \
+	       echo "         routed through SCPI_StartFailedAfterStop():      $$routed (need >= 13)"; \
+	       echo "       That function tears the PREVIOUS session down before it can"; \
+	       echo "       fail, so every failure exit after that point owes a summary."; \
+	       echo "       Route it through SCPI_StartFailedAfterStop() rather than"; \
+	       echo "       returning directly -- fixing one named site and leaving its"; \
+	       echo "       siblings is the mistake this row has already made twice."; \
+	       exit 1; }
+	@# ⛔ #1055 r4 finding 1, THE OTHER HALF: A SLOW TEARDOWN STILL OWES EXACTLY
+	@# ONE SUMMARY, so something must keep ASKING after STOP has given up.
+	@# Streaming_Stop() snapshots the record and raises the SD hold; the unforced
+	@# emitter then declines while the teardown drains. When the teardown outlives
+	@# SCPI_PerformStreamingStop()'s bounded wait, that call site has returned and
+	@# r3 left nothing to ask again -- a silent no-summary.
+	@#
+	@# The poll lives in app_SDCardTask's own while(1), the loop whose progress IS
+	@# the teardown. Verified: streaming.c has NO periodic path that survives a
+	@# stop -- streaming_Task blocks on ulTaskNotifyTake(portMAX_DELAY) and its
+	@# ONLY notifier is in the ISR-driven sampling chain, so post-stop it parks
+	@# forever. A poll there would have been dead code.
+	@#
+	@# POSITION, not presence: the call must be INSIDE that while(1). Mutant-
+	@# verified, all four arms, 2026-10-26 -- clean 1; call deleted 0; call moved
+	@# to another function 0; call moved into the task PROLOGUE (runs once, never
+	@# polls -- the plausible regression) 0; call duplicated 2, so a double poll
+	@# is visible too. The RESTORE returns to 1.
+	@#
+	@# ⚠ The range STARTS at the definition line (ends with `{`), not the name:
+	@# app_freertos.c forward-declares app_SDCardTask ~400 lines earlier, and
+	@# keying on the name alone would open the window there. It ENDS at the next
+	@# top-level definition, for the reason the pin above records.
+	@# ⚠ `[ \t\r]*$$` throughout: these sources are CRLF.
+	@n=`awk '/^static void app_SDCardTask\(.*\{[ \t\r]*$$/ { f=1; next } \
+	         f && /^[A-Za-z_][A-Za-z0-9_ \t*]*\(/ { f=0 } \
+	         f && /^[ \t]*while[ \t]*\(1\)[ \t]*\{[ \t\r]*$$/ { inloop=1 } \
+	         f && inloop && /Streaming_EmitSessionSummary\(\)[ \t]*;/ { n++ } \
+	         END { printf "%d\n", n+0 }' $(APP_FREERTOS_SRC)`; \
+	 test "$$n" -eq 1 \
+	  || { echo "ERROR: $(APP_FREERTOS_SRC): app_SDCardTask's while(1) loop has"; \
+	       echo "       $$n Streaming_EmitSessionSummary() calls, expected exactly 1."; \
+	       echo "       0 means a session whose SD teardown outlives STOP's bounded"; \
+	       echo "       wait never prints its loss summary at all (#1055 r4): the"; \
+	       echo "       record stays pending and nothing asks again. Note a call in"; \
+	       echo "       the task PROLOGUE also reads as 0 -- it must be in the loop,"; \
+	       echo "       because the point is to keep asking until the SD manager is"; \
+	       echo "       idle. More than 1 means the loop polls twice per iteration;"; \
+	       echo "       harmless for correctness (the emitter test-and-clears) but"; \
+	       echo "       it means two authors each added one, so re-read both."; \
+	       exit 1; }
+	@# ⛔ #1055 r6 PIN A: THE SD HOLD IS CONDITIONAL, NOT UNCONDITIONAL.
+	@# r4 set it with a literal `true` and justified that by claiming a non-SD
+	@# session would find the manager already idle. False: sd_card_manager_IsIdle()
+	@# is true for IDLE and INIT only, so a manager parked in DEINIT after a
+	@# power-down plus SD:ENA 0 held the summary FOREVER -- the failure the hold
+	@# was added to prevent. Both arms are pinned, because either alone passes the
+	@# wrong tree: the assignment must be from the predicate AND the literal form
+	@# must be absent.
+	@grep -qE '^[ \t]*gSessionRecordSdHold = sessionWasSdLogging;' $(STREAMING_SRC) \
+	  || { echo "ERROR: $(STREAMING_SRC): the SD hold is no longer set from the"; \
+	       echo "       sessionWasSdLogging predicate (#1055 r6). A hold on a"; \
+	       echo "       non-SD session can never be released by observing the SD"; \
+	       echo "       manager, because that manager may be parked off-idle."; \
+	       exit 1; }
+	@grep -qE '^[ \t]*gSessionRecordSdHold = true;' $(STREAMING_SRC) \
+	  && { echo "ERROR: $(STREAMING_SRC): the SD hold is set UNCONDITIONALLY"; \
+	       echo "       again (#1055 r6 regression). See PIN A's comment."; \
+	       exit 1; } || true
+	@# ⛔ #1055 r6 PIN B: THE HOLD IS BOUNDED. Without the bound, PIN A still
+	@# leaves "forever" reachable -- ActiveInterface can say SD while the SD
+	@# interface is disabled, and a real SD session can park its manager off-idle.
+	@# The bound must be COMPARED, not merely defined: a #define nothing reads is
+	@# the shape this row has already shipped once.
+	@grep -qE '^[ \t]*#define[ \t]+STREAMING_SD_HOLD_MAX_MS' $(STREAMING_SRC) \
+	  && grep -qE 'waited < pdMS_TO_TICKS\(STREAMING_SD_HOLD_MAX_MS\)' $(STREAMING_SRC) \
+	   || { echo "ERROR: $(STREAMING_SRC): the SD hold is unbounded (#1055 r6)."; \
+	        echo "       STREAMING_SD_HOLD_MAX_MS must be defined AND compared"; \
+	        echo "       against the elapsed hold, or a manager parked off-idle"; \
+	        echo "       withholds the summary indefinitely."; \
+	        exit 1; }
+	@# ⛔ #1055 r6 PIN C: NO FORCED FLUSH. A forced consume takes the record
+	@# MID-DRAIN, so a teardown still calling Streaming_ReportSdDiscard() writes
+	@# into a record nobody is waiting on and the loss is never printed OR
+	@# flagged. Keyed on the CALL at statement position, so the historical
+	@# mentions in comments (which begin ` * `) do not trip it -- a negative pin
+	@# keyed on a bare literal would fail on clean source here.
+	@grep -qE '^[ \t]*Streaming_FlushOwedSessionSummary\(\);' \
+	     $(STREAMING_SRC) $(SCPISD_START_SRC) \
+	  && { echo "ERROR: the forced session-summary flush is back (#1055 r6)."; \
+	       echo "       It consumes the record while the SD teardown may still"; \
+	       echo "       be reporting discards, and loses them silently. The"; \
+	       echo "       bounded hold plus app_SDCardTask's poll replace it."; \
+	       exit 1; } || true
+	@n=`grep -cE 'Streaming_EmitSessionSummaryImpl\(true\)' $(STREAMING_SRC)`; \
+	 test "$$n" -eq 1 \
+	  || { echo "ERROR: $(STREAMING_SRC) has $$n EmitSessionSummaryImpl(true)"; \
+	       echo "       call(s), expected exactly 1 -- Streaming_Start()'s"; \
+	       echo "       backstop, the only caller that must not wait because it"; \
+	       echo "       is about to wipe the record. 0 means that backstop lost"; \
+	       echo "       its emit and a restart drops the owed summary; more than"; \
+	       echo "       1 means a new path skips the wait (#1055 r6)."; \
+	       exit 1; }
+	@# ⛔ #1055 r7 PIN E: THE HOLD PREDICATE IS THE SESSION LATCH.
+	@# r6 keyed it on `ActiveInterface == SD || UsbAndSd`, which misses
+	@# `STR:INT 0` (USB) with SD enabled and a filename -- a session that DOES
+	@# log to SD, got no hold, and lost a stop-time discard. Both arms: the
+	@# derivation must read gSdExpectedThisSession AND must not mention
+	@# ActiveInterface, because a predicate that ORs the two back together
+	@# reintroduces r6's other error (iface == SD with the interface disabled
+	@# writes nothing, so there is nothing to wait for).
+	@grep -qE '^[ \t]*const bool sessionWasSdLogging = gSdExpectedThisSession;' $(STREAMING_SRC) \
+	  || { echo "ERROR: $(STREAMING_SRC): the SD hold predicate is no longer"; \
+	       echo "       gSdExpectedThisSession (#1055 r7). An ActiveInterface"; \
+	       echo "       test cannot see USB streaming that also logs to SD."; \
+	       exit 1; }
+	@awk '/const bool sessionWasSdLogging/ && /ActiveInterface/{n++} \
+	      END{exit (n+0)==0 ? 0 : 1}' $(STREAMING_SRC) \
+	  || { echo "ERROR: $(STREAMING_SRC): the SD hold derivation mentions"; \
+	       echo "       ActiveInterface again (#1055 r7). The latch already"; \
+	       echo "       folds in `iface != WiFi`; re-adding an interface test"; \
+	       echo "       can only make the predicate wrong again."; \
+	       exit 1; }
+	@# ⛔ #1055 r7 PIN F: THE LATCH FORMULA IS THE ONE THE TEST MODELS.
+	@# test_1055 copies `enable && mode == WRITE && iface != WiFi` because
+	@# streaming.c is not host-compilable. All three terms are checked
+	@# INDEPENDENTLY -- mutating any one flips exactly its own digit (verified
+	@# 2026-10-26), so a term silently dropped cannot hide behind the others.
+	@# ⚠ `[\r\n \t]`, NOT `[\n \t]`: the iface term wraps onto the next line
+	@# and these sources are CRLF, so the joined buffer carries a bare \r at the
+	@# wrap. Without \r in the class this pin read 110 on CLEAN source. Caught
+	@# only by running it against the real tree -- the version developed outside
+	@# the Makefile had been fed `sed 's/\r$$//'` output, so it passed there.
+	@f=`awk '/gSdExpectedThisSession[ \t]*=/{inasg=1} \
+	         inasg{buf = buf " " $$0} \
+	         inasg && /;/{inasg=0} \
+	         END{ e=(buf ~ /sdCfg->enable/); \
+	              w=(buf ~ /sdCfg->mode[ \t]*==[ \t]*SD_CARD_MANAGER_MODE_WRITE/); \
+	              i=(buf ~ /ActiveInterface[ \t]*!=[\r\n \t]*StreamingInterface_WiFi/); \
+	              printf "%d%d%d\n", e, w, i }' $(STREAMING_SRC)`; \
+	 test "$$f" = "111" \
+	  || { echo "ERROR: $(STREAMING_SRC): gSdExpectedThisSession's formula changed"; \
+	       echo "       (enable/mode-WRITE/iface-not-WiFi = $$f, expected 111)."; \
+	       echo "       test_1055_stream_end_summary_budget.c carries a COPY of it"; \
+	       echo "       as sd_hold_expected() and asserts both the SD-only and the"; \
+	       echo "       USB-plus-SD-logging cases against it. A formula change here"; \
+	       echo "       leaves that test modelling a predicate the firmware no"; \
+	       echo "       longer uses -- re-derive both together."; \
+	       exit 1; }
+	@# ⛔ #1055 r9 PIN G: NO sd_AbandonRotationWindow() CALL MAY BE PRECEDED BY A
+	@# PUBLISH OF AN IsIdle STATE (IDLE or INIT -- sd_card_manager_IsIdle accepts
+	@# both). That function reports its dropped bytes via
+	@# Streaming_ReportSdDiscard(), and streaming.c holds the session record until
+	@# sd_card_manager_IsIdle(). Publishing idle BEFORE the report opens a window
+	@# where an emitter observes idle, consumes the record, and the discard
+	@# survives only in the live counters -- r8 found exactly that in the
+	@# no-writable-bucket branch.
+	@#
+	@# A SWEEP, not a check of the single site r8 named: a twin added later would
+	@# be invisible, and "fix the named site, leave the sibling" is a mistake this
+	@# row has made twice. Calibrated 2026-10-26 -- a 20-line window gives 0 on
+	@# the fixed file and 1 on the pre-fix file, so it passes clean source and is
+	@# PROVEN able to fire. The presence check first stops the sweep passing
+	@# vacuously if the abandon call is simply deleted.
+	@grep -qF 'sd_AbandonRotationWindow("no writable bucket")' $(SD_MANAGER_SRC) \
+	  || { echo "ERROR: $(SD_MANAGER_SRC): the no-writable-bucket rotation abort"; \
+	       echo "       no longer abandons the rotation window (#757/#1055 r9)."; \
+	       echo "       Its buffered bytes would then never be reported at all,"; \
+	       echo "       and PIN G's sweep below would pass vacuously."; \
+	       exit 1; }
+	@n=`awk '{ hist[NR] = $$0 } \
+	         /sd_AbandonRotationWindow\(/ && !/static void/ && $$0 !~ /^[ \t]*\*/ { \
+	           for (k = NR - 1; k >= NR - 20 && k > 0; k--) { \
+	             if (hist[k] ~ /currentProcessState[ \t]*=[ \t]*SD_CARD_MANAGER_PROCESS_STATE_(IDLE|INIT)[ \t]*;/) { bad++; break } \
+	           } \
+	         } \
+	         END { printf "%d\n", bad+0 }' $(SD_MANAGER_SRC)`; \
+	 test "$$n" -eq 0 \
+	  || { echo "ERROR: $(SD_MANAGER_SRC): $$n sd_AbandonRotationWindow() call(s)"; \
+	       echo "       publish an IsIdle state BEFORE reporting discarded bytes"; \
+	       echo "       (#1055 r9, expected 0). sd_card_manager_IsIdle() is what"; \
+	       echo "       releases streaming.c's session-record hold, so it must mean"; \
+	       echo "       'done reporting'. Publish the state AFTER the abandon call,"; \
+	       echo "       which is what every other site in this file already does."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -DFW_LOG_MESSAGE_SIZE=$(LOG_MSG_SIZE) -o $(SUMBUDGET_BIN) test_1055_stream_end_summary_budget.c
+
 clean:
 	rm -f $(SEQ908_BIN)
 	rm -f $(TEAR904_BIN)
@@ -4587,6 +4899,6 @@ clean:
 	      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(GEN_1125) \
 	      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(SDLOG1029_GEN).tmp \
 	      $(USECALTYPE_BIN) $(NAME_BIN) $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(ARM_BIN) $(SCPIDAC_RAILGATE_BIN) \
-	      $(FORCEGATE_BIN) $(LOG1039_BIN) $(LOG1039_GEN) $(BUTTONLATCH_BIN) $(BIN970)
+	      $(FORCEGATE_BIN) $(LOG1039_BIN) $(LOG1039_GEN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN)
 
 .PHONY: run clean
