@@ -473,9 +473,34 @@ static inline bool SdManifest_SegmentsEqual(const char *a, size_t la,
  * part but textually different -- a trailing dot or space, a duplicated
  * separator, an 8.3 alias -- and this would not match it. Chasing the full
  * FatFs equivalence set here is the naming-rule treadmill that cost rounds
- * 16-19, and the exposure is narrow: without the overwrite opt-in the
- * per-open existence check still refuses an existing target, so it takes a
- * granted session AND a hand-edited manifest to reach.
+ * 16-19.
+ *
+ * ⛔⛔ AND THE SENTENCE THAT USED TO END THIS PARAGRAPH WAS FALSE, which is
+ * worth more than the limitation itself. It read: "the exposure is narrow:
+ * without the overwrite opt-in the per-open existence check still refuses an
+ * existing target, so it takes a granted session AND a hand-edited manifest to
+ * reach." Both halves failed on r28:
+ *
+ *   - "a granted session" -- no. A session ROTATES without any grant, and
+ *     generateFilename derives each part name from the configured stem, so an
+ *     unmatched record's name is recreated by ordinary refuse-by-default
+ *     logging whenever its data file was deleted while the record was kept.
+ *     The per-open existence check cannot refuse what does not exist.
+ *   - "a hand-edited manifest" -- no. SYST:STOR:SD:DIR accepted "LONGDI~1"
+ *     with no opt-in, and manifest paths are built from the configured
+ *     directory TEXT, so this firmware WROTE alias-bearing records itself.
+ *
+ * Both are now closed at the configuration rather than argued away:
+ * SdManifest_PathHasAliasRisk is applied in both SCPI setters and again at
+ * use, so a '~' never enters a configured path. What remains is a record
+ * written by something else -- a third party, or a build predating that check
+ * -- which no string rule can resolve; it needs directory-entry identity.
+ *
+ * ⭐ THE GENERAL LESSON, because this is the second residual in this row
+ * retracted for the same reason (the other was "nested buckets cannot arise"):
+ * A RESIDUAL JUSTIFIED BY "THIS FIRMWARE CANNOT PRODUCE THAT" IS ONLY AS GOOD
+ * AS THE CODE THAT REFUSES TO PRODUCE IT. If nothing enforces the premise, the
+ * residual is not narrow -- it is unmeasured.
  */
 #define SDMANIFEST_PART_NONE  0xFFFFFFFFu
 
