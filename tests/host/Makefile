@@ -147,6 +147,66 @@ SUSPEND_BIN := run_953_tests
 # missing.
 FAILNEXT_BIN := run_981_tests
 SD_MANAGER_SRC := ../../firmware/src/services/sd_card_services/sd_card_manager.c
+# #1124: the canonical-join ledger's expected counts, as ONE definition each.
+#
+# ⛔ r21: THESE EXIST BECAUSE THE CHECK AND ITS DIAGNOSTIC HAD ALREADY
+# DRIFTED. r20 moved the counts 9 -> 8 in the `test` expression and left the
+# echo saying "expected 9". The pin then failed while printing three lines that
+# all agreed with their stated expectations -- so the one artifact whose job is
+# to explain the failure actively pointed away from it, and cost a round-trip to
+# re-derive. A hand-copied expectation in a message is a second source of truth;
+# there is now one, substituted into both.
+# ⛔⛔ #1124 r26: THE [SD1124] TOKEN PARTITION, as three DISJOINT classes.
+#
+# conv-ts asked for a pin that the classes are disjoint and that every site's
+# token falls in exactly one, so a client can decide what a line MEANS from the
+# token alone rather than from a snapshot of the source.
+#
+# ⚠ TWO CORRECTIONS to the partition as it was reported to me, both verified by
+# enumerating the preprocessed sources rather than trusting the summary:
+#   - `scope` was MISSING from it, and it is 7 of the 25 sites -- the grant-scope
+#     refusals added across r22-r25 (separator, tilde, bucket dir,
+#     non-canonical dir, non-ASCII, empty operand). A partition that omits a
+#     class is not a partition.
+#   - `note` was grouped with the FAULTS. It is neither: it means THIS LINE IS
+#     NOT A REFUSAL, and a client treating it as a fault reports a failure where
+#     none happened -- the fail-open-in-the-other-direction that made `note`
+#     necessary in the first place.
+#
+# Hence three classes:
+#   NOT-A-REFUSAL  informational; no refusal occurred
+#   FAULT          we could not DETERMINE the answer, so we refused
+#   POLICY         we determined the answer, and it is a refusal
+SD1124_TOK_NOTE   := note
+SD1124_TOK_FAULT  := unparsable unreadable
+SD1124_TOK_POLICY := alias authpath exists foreign mfstname nonascii notafile notours ourpart scope
+
+# ⛔ 9 -> 10 at #1124 r30 (RESIDUAL 2 CLOSED, audit HIGH :3311 x3 rounds):
+# sd_ScanBaseAndNameSubdir builds `<base>/<the configured name's subdirectory
+# chain>` so the foreign scan reads the directory a filename-with-separators
+# actually places manifests in. CLASSIFICATION: canonicalisation-DEPENDENT and
+# already correct -- it takes SdManifest_CanonicalDirLen(base) and formats
+# "%.*s/%.*s", so it is the ordinary canonical-join class and moves BOTH
+# counters, which is what this ledger expects of a well-formed new site.
+SD1124_CANON := 10
+# ⛔⛔ r22: THE TWO COUNTERS NOW LEGITIMATELY DIVERGE, and that needs saying
+# out loud because this ledger's whole premise was that they move TOGETHER --
+# "a new site moving only ONE of them is the defect this pin exists to catch".
+#
+# r22's audit fix (:2930) scans the PARENT when the configured directory is
+# itself a rotation bucket, and to find the parent sd_ScanForeignManifests
+# needs the directory's CANONICAL LENGTH for arithmetic -- it walks back to the
+# last separator -- and then formats nothing. So it is the first site to use
+# the accessor WITHOUT a join: accessor +1, joins +0.
+#
+# The invariant is unharmed, because the invariant was never "the counts are
+# equal". It is "every JOIN goes through the accessor", and 9 joins with 10
+# accessor calls still satisfies it; the extra call is a consumer of the
+# canonical length, not a producer of a path. Equality was a useful proxy while
+# every caller was a join, and this is where the proxy stops holding. If a
+# future edit makes joins EXCEED the accessor count, that is still the defect.
+# 10 -> 11 at r30, the accessor call in that same join -- see SD1124_CANON.
+SD1124_ACC   := 11
 
 # #981 (post-audit): compiles and RUNS the ENTIRE real SDCardWrite() --
 # signature through closing brace, extracted verbatim from $(SD_MANAGER_SRC)
@@ -588,6 +648,37 @@ LOGCEIL_SRC3 := ../../firmware/src/services/wifi_services/wifi_manager.c
 # instead of arithmetic.
 RECIPES := Makefile
 
+# #924: the per-session SD integrity manifest. Same category as AD7609_BIN and
+# JSONESC_BIN -- the pure text operations were split into
+# firmware/src/Util/SdManifest.h so this test compiles the REAL header rather
+# than a copy of its shape (sd_card_manager.c is not includable on a host:
+# Harmony, FreeRTOS, FatFs and the whole board graph). CRC32.c is LINKED IN
+# for the same reason it needs no stub -- it includes nothing but its own
+# header -- so the accumulation claims are made against the real implementation
+# too, not a reference one.
+#
+# It DOES carry grep guards, and they pin something the two targets above have
+# no equivalent of. The suite proves the two pieces are correct; it cannot see
+# whether sd_card_manager.c still USES them. Two things would silently void the
+# whole feature while leaving every assertion here green:
+#   - the running CRC stops being folded in SDCardWrite(), the single funnel
+#     every stream-file byte passes through, so the recorded CRC covers only
+#     part of the file;
+#   - lines stop being rendered through SdManifest_FormatLine, so the format
+#     this suite pins is no longer the format written to the card.
+# Both are exactly the "test passes against a model the firmware no longer
+# has" failure the guards elsewhere in this file exist for, so they fail the
+# BUILD rather than being left to the bench.
+MANIFEST_BIN := run_924_tests
+GATE1124_BIN := run_1124_tests
+# #1124 r11 finding 4: the bucket-name prefix the test's guard must match, read
+# out of the REAL sd_card_manager.h at parse time. A hand-copied constant that
+# drifts keeps PASSING while checking nothing -- and this guard's correctness is
+# exactly "the prefix checked here is the prefix buckets are named with". Empty
+# is fatal in the recipe below, never a default.
+SD_BUCKET_PREFIX := $(shell sed -n 's/^[[:space:]]*#define[[:space:]]\{1,\}SD_CARD_MANAGER_BUCKET_PREFIX[[:space:]]\{1,\}\("[^"]*"\).*/\1/p' ../../firmware/src/services/sd_card_services/sd_card_manager.h | head -1)
+SD_MANAGER_SRC := ../../firmware/src/services/sd_card_services/sd_card_manager.c
+
 # #970: encoder consume-accounting. Like BENCH_BIN, streaming.c and
 # JSON_Encoder.c are not host-test candidates (FreeRTOS/libscpi/the whole
 # board graph), so this test re-implements the two relevant loop SHAPES
@@ -939,6 +1030,2857 @@ $(AD7609_BIN): test_ad7609_scale.c test_framework.h $(FW_ADC)/AD7609Scale.h $(RE
 $(JSONESC_BIN): test_json_string_escape.c test_framework.h $(FW_SVC)/JSON_StringEscape.h $(RECIPES)
 	$(CC) $(CFLAGS) -I$(FW_SVC) -o $(JSONESC_BIN) test_json_string_escape.c
 
+$(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
+                 $(SD_MANAGER_SRC) $(SD_MGR_HDR) $(SD_BENCH_SRC) $(RECIPES)
+	@# ⭐⭐⭐ READ THIS BEFORE EDITING ANY #1124 PIN: KEY A PIN ON THE QUESTION A
+	@# SITE ASKS, NOT ON THE SYMBOL IT CALLS.
+	@#
+	@# Earned across r28-r30, where a pin on this row fired on its OWN PR's
+	@# correct fix three times. Each time the pin was RIGHT to fire and the
+	@# instinct to restore the text it wanted was backwards:
+	@#
+	@#   r29  PIN 23d pinned `memchr(pBuff, '~', fileLen)` INSIDE the opt-in
+	@#        block. The fix made that refusal unconditional, so the pin broke
+	@#        -- while still reporting the defect as protected.
+	@#   r29  PIN 37 pinned the part-suffix rule's TEXT. The rule turned out to
+	@#        be wrong in BOTH of its copies, so the pin had been holding two
+	@#        copies in agreement about a defect.
+	@#   r30  PIN 23d pinned the setter's predicate by NAME. Splitting one
+	@#        predicate into two (because two consumers needed opposite answers
+	@#        for one input) renamed it, and the pin broke again.
+	@#
+	@# A symbol-keyed pin asserts "the code still says what it said", which is
+	@# satisfied by a defect and broken by a correct refactor -- exactly the
+	@# wrong way round. Prefer, in this order:
+	@#   1. a VALUE a host test can assert (best: it survives every rename);
+	@#   2. a STRUCTURAL property -- position relative to a block, one arm per
+	@#      line, a count PER CONSUMER rather than a total;
+	@#   3. the exact text, and only when neither of the above can express it.
+	@#
+	@# ⚠ THIS IS A PREFERENCE, NOT AN ABSOLUTE, and overstating it would be its
+	@# own defect. Some properties have no handle but the symbol -- "this file
+	@# calls SdManifest_NameIsUsable exactly once, at the OPEN_FILE guard"
+	@# (ARM 1 below) is a text pin because the invariant IS about which function
+	@# is called where, and there is nothing truer to key on. The test is
+	@# whether a CORRECT change could break the pin: if yes, find a different
+	@# key; if the only way to break it is to reintroduce the defect, text is
+	@# fine.
+	@#
+	@# ⛔ And when a pin does fire on your fix, say so in the commit and record
+	@# WHY it was keyed wrongly. Three of these were found by the fix breaking
+	@# the pin, which is the cheap way to find them; the expensive way is a pin
+	@# that silently stops protecting anything after a rename.
+	@#
+	@# ⛔ #1124 L=C PIN 1 -- the gate exists and the opt-in is what it reads.
+	@#
+	@# ⛔ RULING V=A: the gate reads the SESSION'S authorisation, not the staged
+	@# one. The staged flag is cleared when the session arms, so a gate still
+	@# reading the config would refuse the session that legitimately asked --
+	@# and would let an SD:FILE from the other transport grant or revoke
+	@# permission mid-rotation. This arm asserted `overwriteExisting` until r20,
+	@# so it encoded the pre-ruling design; it now asserts the session copy.
+	@#
+	@# ⚠ AND THIS COMMENT LIVES HERE, NOT BESIDE THE ARM IT DESCRIBES. A `@#`
+	@# line inside a `\`-continued recipe is NOT a comment -- make hands it to
+	@# the shell as part of the command, and the apostrophe in "SESSION'S" then
+	@# opens an unterminated quoted string. Twice this session. Comments go
+	@# BEFORE the first line of a continued command.
+	@# The model's entire premise: nothing is destroyed unless the client asked
+	@# for THIS target, so if the gate stops consulting overwriteExisting the
+	@# model is describing firmware that no longer exists.
+	@$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null \
+	   | awk '/^static bool sd_TargetSafeToOpenForWrite\(const char \*dataPath\) \{/{f=1} f{print} f&&/^\}/{exit}' \
+	   > /tmp/.g1124.$$$$; \
+	 test -s /tmp/.g1124.$$$$ \
+	  || { echo "ERROR: sd_TargetSafeToOpenForWrite() not found in"; \
+	       echo "       $(SD_MANAGER_SRC) (#1124 L=C). test_1124_overwrite_gate.c"; \
+	       echo "       models THAT function; with it renamed or gone this pin"; \
+	       echo "       measures nothing and must not report a pass."; \
+	       rm -f /tmp/.g1124.$$$$; exit 1; }; \
+	 grep -q 'overwriteAuthorizedForSession' /tmp/.g1124.$$$$ \
+	  || { echo "ERROR: the #1124 gate no longer reads the SESSION's overwrite"; \
+	       echo "       authorisation (ruling V=A). Reading the staged flag"; \
+	       echo "       instead would refuse the session that asked -- the arm"; \
+	       echo "       consumed it -- and would let a concurrent SD:FILE move"; \
+	       echo "       the permission mid-rotation."; \
+	       rm -f /tmp/.g1124.$$$$; exit 1; }; \
+	 rm -f /tmp/.g1124.$$$$
+	@# ⛔ PIN 2 -- FAIL CLOSED ON AN UNREADABLE PATH, TWICE: once for the data
+	@# file and once for the manifest. r18 finding 3 was exactly the conflation
+	@# of "cannot inspect" with "absent", and a two-valued existence test lands
+	@# on the PERMISSIVE value when the third state appears. Counted, not merely
+	@# present, because one of the two inspections having the guard tells you
+	@# nothing about the other.
+	@#
+	@# ⛔⛔ ARM 2 ADDED AT r33, AND ARM 1 ALONE WAS A PRESENCE CHECK. Arm 1
+	@# counts the guard's CONDITION. Mutant R30 -- re-anchored this round onto
+	@# the LOG_E + return pair -- flipped one `return false` to `return true`:
+	@# the condition stayed, the count stayed 2, and the ENTIRE SUITE passed
+	@# while a stat fault was again read as an absence. The pin's own heading
+	@# says FAIL CLOSED, which is a claim about the OUTCOME, so arm 2 asserts
+	@# each guard actually returns false. Found because a mutant got CLEANER,
+	@# not because anything was looking.
+	@#
+	@# ⚠ MEASURED OVER STATEMENTS, NOT OVER LINES OF THE PREPROCESSED TEXT.
+	@# `cc -fpreprocessed -E` strips comments but PRESERVES THEIR LINE
+	@# GEOMETRY, leaving blank lines behind, and it injects `# N "file"`
+	@# markers. My first version of this arm used a 4-LINE window and fired on
+	@# the UNMUTATED source, because the data-file guard carries a comment
+	@# block between the condition and its return. Blank lines and line markers
+	@# are dropped first, so the window counts statements and the distance
+	@# means what it says.
+	@$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null \
+	   | awk '/^static bool sd_TargetSafeToOpenForWrite\(const char \*dataPath\) \{/{f=1} f{print} f&&/^\}/{exit}' \
+	   > /tmp/.g1124b.$$$$; \
+	 n=`grep -c 'SYS_FS_ERROR_NO_PATH && e != SYS_FS_ERROR_NO_FILE' /tmp/.g1124b.$$$$`; \
+	 test "$$n" -eq 2 \
+	  || { echo "ERROR: the #1124 gate has $$n fail-closed inspection guard(s),"; \
+	       echo "       expected 2 -- one for the data file and one for the"; \
+	       echo "       manifest. A stat failure that is not NO_FILE/NO_PATH is"; \
+	       echo "       a FAULT, not an absence (r18 finding 3). Reading it as"; \
+	       echo "       absence truncates a file that could not even be looked"; \
+	       echo "       at, beside a manifest that still describes it."; \
+	       rm -f /tmp/.g1124b.$$$$; exit 1; }; \
+	 grep -vE '^[[:space:]]*$$|^# [0-9]+ ' /tmp/.g1124b.$$$$ > /tmp/.g1124c.$$$$; \
+	 bad=0; \
+	 for ln in `grep -n 'SYS_FS_ERROR_NO_PATH && e != SYS_FS_ERROR_NO_FILE' /tmp/.g1124c.$$$$ | cut -d: -f1`; do \
+	   sed -n "$$ln,$$((ln+3))p" /tmp/.g1124c.$$$$ | grep -q 'return false;' || bad=$$((bad+1)); \
+	 done; \
+	 rm -f /tmp/.g1124c.$$$$; \
+	 test "$$bad" -eq 0 \
+	  || { echo "ERROR: #1124 r33 PIN 2 ARM 2: $$bad fail-closed inspection"; \
+	       echo "       guard(s) do not RETURN FALSE within 4 lines."; \
+	       echo "       ⛔ ARM 1 counts the guard's CONDITION and is blind to"; \
+	       echo "       what the guard DOES. Mutant R30 flipped one of these"; \
+	       echo "       'return false' to 'return true' -- the condition stayed,"; \
+	       echo "       the count stayed 2, and the WHOLE SUITE passed while a"; \
+	       echo "       stat fault was read as an absence again (r18 finding 3)."; \
+	       echo "       This pin's heading says FAIL CLOSED, which is a claim"; \
+	       echo "       about the OUTCOME; counting the condition only asserts"; \
+	       echo "       that someone wrote an if. A presence-only guard guards"; \
+	       echo "       nothing."; \
+	       rm -f /tmp/.g1124b.$$$$; exit 1; }; \
+	 rm -f /tmp/.g1124b.$$$$
+	@# ⛔ PIN 3 -- EVERY refuse reason has a case in the text function.
+	@# A reason with no case falls into its `default:` arm and reports "no
+	@# refusal recorded" -- a silent WRONG answer about a refusal that did
+	@# happen, and the compiler cannot warn because that default exists. The
+	@# enum is the authority, so the list is DERIVED from the header rather
+	@# than written out here, where it would drift the same way.
+	@miss=''; \
+	 for r in `sed -n '/typedef enum {/,/} SdWriteRefuseReason;/p' $(SD_MGR_HDR) \
+	            | grep -oE 'SD_REFUSE_[A-Z_]+'`; do \
+	   grep -q "case $$r:" $(SD_MANAGER_SRC) || miss="$$miss $$r"; \
+	 done; \
+	 test -z "$$miss" \
+	  || { echo "ERROR: SdWriteRefuseReason value(s) with no case in"; \
+	       echo "       sd_card_manager_WriteRefuseReasonText():$$miss"; \
+	       echo "       They fall into its default: arm and report \"no refusal"; \
+	       echo "       recorded\" -- telling a caller nothing happened while a"; \
+	       echo "       refusal did. The default exists for SD_REFUSE_NONE, so"; \
+	       echo "       the compiler cannot warn about the gap."; exit 1; }
+	@# ⛔ PIN 4 -- the #1124 tag LEADS every refusal message. SYSTem:LOG? is the
+	@# only way a client can tell this refusal from any other -200, and the
+	@# logger clamps at 125 bytes by truncating the TAIL -- so a tag written
+	@# anywhere but first can be the part that is lost. conv-ts matches on it.
+	@bad=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null \
+	       | grep -oE 'LOG_E\("[^"]*SD1124[^"]*"' | grep -vcE 'LOG_E\("\[SD1124\]'`; \
+	 test "$$bad" -eq 0 \
+	  || { echo "ERROR: $$bad #1124 LOG_E message(s) do not START with the"; \
+	       echo "       [SD1124] tag. The logger truncates at 125 bytes from the"; \
+	       echo "       TAIL, so a tag that is not first is exactly what gets"; \
+	       echo "       lost on the longest paths -- and the tag is the only"; \
+	       echo "       thing distinguishing this refusal from every other -200"; \
+	       echo "       in SYSTem:LOG?."; exit 1; }
+	@# ⛔ PIN 5 -- the opt-in DEFAULTS TO WITHDRAWN on every SD:FILE. If the
+	@# parameter stops defaulting to 0, an authorisation granted for one target
+	@# silently carries onto the next name the client sets -- and the whole
+	@# reason it rides SD:FILE rather than being a standing mode is that it is
+	@# bound to the name it authorises.
+	@$(CC) -fpreprocessed -E $(SD_BENCH_SRC) 2>/dev/null \
+	   | tr '\n' ' ' | tr -s ' ' \
+	   | grep -q 'int overwriteParam = 0;' \
+	  || { echo "ERROR: SD:FILE's overwrite parameter no longer defaults to 0"; \
+	       echo "       (#1124 L=C). A one-argument client would then inherit"; \
+	       echo "       whatever the last caller asked for, and a bare SD:FILE"; \
+	       echo "       would carry a previous authorisation onto a new target."; \
+	       exit 1; }
+	@# ⛔ PIN 6 -- A REFUSAL MUST DISARM THE SESSION, and this is a WEDGE guard,
+	@# not a tidiness one. sd_card_manager_IsBusyLocked() tests
+	@# `mode != MODE_NONE` BEFORE any state, so a refusal that leaves mode ==
+	@# WRITE keeps IsBusy() true for ever: the generic failed-open arm unmounts,
+	@# re-INITs with the session still armed, re-enters OPEN_FILE and refuses
+	@# again. Every SD command is then rejected -- INCLUDING the SD:DELete that
+	@# would remove the file and the SD:FILE that would grant the opt-in. The
+	@# refusal would wedge the card against its own remedy.
+	@# Scoped to the refusal branch itself, because `mode = MODE_NONE` appears
+	@# at ten other sites in this file and a file-wide grep could not tell them
+	@# apart.
+	@awk '/if \(!sd_TargetSafeToOpenForWrite\(gSDCardData.filePath\)\)/{f=1} f{print} f&&/\} else \{/{exit}' \
+	     $(SD_MANAGER_SRC) > /tmp/.g1124c.$$$$; \
+	 test -s /tmp/.g1124c.$$$$ \
+	  || { echo "ERROR: could not extract the #1124 refusal branch from"; \
+	       echo "       $(SD_MANAGER_SRC) -- this pin measures nothing."; \
+	       rm -f /tmp/.g1124c.$$$$; exit 1; }; \
+	 grep -q 'mode = SD_CARD_MANAGER_MODE_NONE' /tmp/.g1124c.$$$$ \
+	  || { echo "ERROR: the #1124 refusal no longer disarms the session"; \
+	       echo "       (mode -> MODE_NONE). IsBusyLocked() tests mode BEFORE"; \
+	       echo "       any state, so the card stays BUSY for ever and every SD"; \
+	       echo "       command is refused -- including the SD:DELete and the"; \
+	       echo "       SD:FILE opt-in that are the only ways out. A refusal"; \
+	       echo "       that wedges the card against its own remedy is worse"; \
+	       echo "       than the truncation it prevents."; \
+	       rm -f /tmp/.g1124c.$$$$; exit 1; }; \
+	 rm -f /tmp/.g1124c.$$$$
+	@# ⛔ PIN 7 -- r19 finding 1: ONE derivation for the gate AND creation.
+	@# The gate stripped a subdirectory while sd_OpenSessionManifest did not, so
+	@# SD:FILE "sub/exp.csv" made the gate ask about <dir>/exp.csv.mfst -- a
+	@# different capture's sidecar. r19's body claimed one resolved path was
+	@# used for both; it was not, so this pin asserts the structure instead of
+	@# the intention. Both callers must go through sd_SessionManifestPath, and
+	@# NEITHER may build a manifest name itself.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null`; \
+	 n=`printf '%s' "$$pp" | grep -c 'sd_SessionManifestPath('`; \
+	 test "$$n" -ge 3 \
+	  || { echo "ERROR: sd_SessionManifestPath() is referenced $$n time(s),"; \
+	       echo "       expected >= 3 (the definition, the gate, and"; \
+	       echo "       sd_OpenSessionManifest). Fewer means a caller has gone"; \
+	       echo "       back to building the manifest name itself, which is"; \
+	       echo "       r18/r19 finding 1: the gate and the creation path"; \
+	       echo "       disagreeing about which sidecar is in question."; exit 1; }
+	@# ⛔ PIN 8 -- r19 finding 2: an opt-in on a part of a RECORDED SET is
+	@# refused, UNCONDITIONALLY. SD:FILE "exp-1.csv",1 truncates a part that a
+	@# previous session recorded in exp.csv.mfst, and that manifest is not at
+	@# this target's manifest name, so nothing else in the gate sees it. The
+	@# client authorised overwriting exp-1.csv; they did not authorise
+	@# invalidating a base they may never have named.
+	@#
+	@# ⚠ THE INVARIANT IS THE CONDITION, NOT THE POSITION. My first version of
+	@# this pin asserted the check appeared BEFORE the opt-in was honoured, and
+	@# it fired on correct code: the check sits after the existence branch and
+	@# refuses anyway, because its condition carries no opt-in term at all.
+	@# Order is irrelevant to an unconditional refusal; what would break it is a
+	@# conjunction. So this pins the exact condition -- the predicate alone --
+	@# on the flattened text, so a reflow is not an input.
+	@# ⛔ r21: the predicate now returns sd_InspectResult, so the call and the
+	@# refusal are two statements and BOTH are pinned. The call must pass only
+	@# the configured name (no opt-in term), and the refusal must test
+	@# `!= SD_INSPECT_CLEAR`.
+	@#
+	@# ⚠ `!= SD_INSPECT_CLEAR` IS THE LOAD-BEARING SPELLING, not a style
+	@# choice. `== SD_INSPECT_HAZARD` reads identically at a glance and
+	@# reinstates the exact r20 fail-open r21 removed: a FAULT on the owning
+	@# manifest would stop being a refusal and, with the opt-in, authorise the
+	@# truncation. So the permissive spelling is named here and rejected.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"sd_NameIsRotationPartOfExistingManifest(gpSDCardSettings->file);"*) ;; \
+	   *) echo "ERROR: the #1124 gate does not consult the recorded-part"; \
+	      echo "       predicate on the configured name alone (r19 finding 2)."; \
+	      echo "       Either the call is gone or it gained an argument."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"if (partOfOther != SD_INSPECT_CLEAR) {"*) ;; \
+	   *) echo "ERROR: the #1124 gate does not refuse a recorded set's part on"; \
+	      echo "       the predicate ALONE (r19 finding 2). Either the check is"; \
+	      echo "       gone, or its condition gained a term -- most likely an"; \
+	      echo "       opt-in conjunction, which is exactly what must NOT gate"; \
+	      echo "       it: the opt-in cannot authorise invalidating a manifest"; \
+	      echo "       whose base the client never named."; \
+	      echo "       NOTE: '== SD_INSPECT_HAZARD' also fails here, and must:"; \
+	      echo "       it would drop the FAULT arm and restore r20's fail-open."; \
+	      exit 1;; \
+	 esac
+	@# ⛔ PIN 9 -- r19 finding 4 / RULING V=A: an SD:DIR change WITHDRAWS the
+	@# authorisation, in the same critical section as the directory write. The
+	@# authorisation is bound to the RESOLVED target; without this, a grant
+	@# under one directory silently followed SD:DIR onto another directory's
+	@# file. Checked on the flattened text so where the statement wraps is not
+	@# an input.
+	@$(CC) -fpreprocessed -E $(SD_BENCH_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' ' \
+	   | grep -q 'overwriteExisting = false; } taskEXIT_CRITICAL' \
+	  || { echo "ERROR: SD:DIR does not withdraw the overwrite authorisation in"; \
+	       echo "       the same critical section as the directory write"; \
+	       echo "       (#1124 r19 finding 4). A grant made under one directory"; \
+	       echo "       would follow an SD:DIR onto a file the client never"; \
+	       echo "       named, and a reader could observe the new directory"; \
+	       echo "       still carrying the old authorisation."; exit 1; }
+	@# ⛔ PIN 10 -- RULING V=A: the authorisation is CONSUMED at the arm, as one
+	@# atomic transition. Two steps would be the #1182 read-modify-write race.
+	@# Both halves are asserted -- the session copy taken AND the staged flag
+	@# cleared -- because one without the other is either an authorisation that
+	@# never expires or one that never applies.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"const bool granted = pSettings->overwriteExisting; gSDCardData.overwriteAuthorizedForSession = granted; pSettings->overwriteExisting = false;"*) ;; \
+	   *) echo "ERROR: the #1124 overwrite authorisation is not consumed as one"; \
+	      echo "       atomic transition at the arm (ruling V=A). The session"; \
+	      echo "       copy must be taken and the staged flag cleared together;"; \
+	      echo "       split, a concurrent SD:FILE is lost between them, or an"; \
+	      echo "       authorisation the task already took is re-granted."; \
+	      exit 1;; \
+	 esac
+	@# ⛔ PIN 11 -- r21 ITEM 1: THE GRANT AND ITS SUBJECT ARE PUBLISHED
+	@# TOGETHER. A grant visible before the path it was granted for is an
+	@# interval in which the authorisation reads as applying to the PREVIOUS
+	@# session's target. Both halves are pinned: the conditional write of the
+	@# subject, and the fact that the block's TAIL is still inside the critical
+	@# section (so nothing in it was moved out from under the lock).
+	@#
+	@# The else-arm matters as much as the if-arm: a grant whose subject could
+	@# not be formed must leave the subject EMPTY, which the compare at the open
+	@# treats as a mismatch. Dropping the else would leave a stale path there
+	@# and silently authorise it.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"if (granted && armManifestOk) { memcpy(gSDCardData.overwriteAuthorizedManifest, armManifest, sizeof(armManifest)); } else { gSDCardData.overwriteAuthorizedManifest[0] = '\\0'; }"*) ;; \
+	   *) echo "ERROR: #1124 r21 item 1: the overwrite grant no longer records"; \
+	      echo "       the resolved path it was granted FOR, or stopped clearing"; \
+	      echo "       that path when it could not be formed. A grant with no"; \
+	      echo "       subject, or a stale one, authorises a file the client"; \
+	      echo "       never named."; \
+	      exit 1;; \
+	 esac
+	@# ⛔⛔ STRUCTURAL, NOT A SEQUENCE KEY -- and mutant R38 is why.
+	@# ⚠ NOTE THE LINE ABOVE ENDS `esac` WITH NO BACKSLASH. It used to carry
+	@# one, joining this arm to the next, and these `@#` lines were then INSIDE
+	@# that continuation -- where `@#` is not a comment at all: make hands it
+	@# straight to the shell, which reported `@#: not found`. A comment block
+	@# may only begin where a recipe line has actually ended.
+	@#
+	@# This arm first read: does the flattened text contain
+	@#   "foreignScanPending = true; foreignManifestsPresent = false; }
+	@#    taskEXIT_CRITICAL();"
+	@# R38 moved the scan flag OUT of the critical section by closing the
+	@# block early and reopening it, and that key STILL MATCHED -- the moved
+	@# statement took its neighbours with it, so the sequence existed verbatim
+	@# while a taskEXIT_CRITICAL() now sat BEFORE it. A key asserting that a
+	@# sequence EXISTS cannot see something inserted EARLIER; the mutant came
+	@# back <<NO ERROR>>, i.e. the pin was present and not effective.
+	@#
+	@# So the invariant is expressed as what it actually is: these three writes
+	@# must fall inside the FIRST critical section after the arm. The slice runs
+	@# from the arm-kind branch to the first taskEXIT_CRITICAL(), and every
+	@# write must be in it. An early unlock truncates the slice and the writes
+	@# fall outside it, whatever order they are left in.
+	@#
+	@# Line markers are stripped: `-fpreprocessed -E` emits `# N "file"` where
+	@# it removed comments, and those carry line numbers, so any multi-statement
+	@# key spanning one would be brittle to edits elsewhere in the file.
+	@$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | grep -v '^#' \
+	   | awk '/if \(arm == SD_WRITE_ARM_STREAMING\) \{/{f=1} f{print} \
+	          f&&/taskEXIT_CRITICAL\(\);/{exit}' > /tmp/.sd1124_cs.$$$$; \
+	 ok=1; \
+	 test -s /tmp/.sd1124_cs.$$$$ || ok=0; \
+	 for w in 'gSDCardData.overwriteAuthorizedForSession = granted;' \
+	          'gSDCardData.overwriteAuthorizedManifest' \
+	          'gSDCardData.foreignScanPending = true;'; do \
+	   grep -qF -- "$$w" /tmp/.sd1124_cs.$$$$ || ok=0; \
+	 done; \
+	 rm -f /tmp/.sd1124_cs.$$$$; \
+	 test "$$ok" -eq 1 \
+	  || { echo "ERROR: #1124 r21: the grant, its subject and the scan flag are"; \
+	       echo "       no longer all inside the FIRST critical section after the"; \
+	       echo "       arm, so they are not one atomic transition. A reader can"; \
+	       echo "       then observe a grant whose subject is still the previous"; \
+	       echo "       session's. An empty slice means the arm-kind branch was"; \
+	       echo "       renamed and this pin measured nothing."; \
+	       exit 1; }
+	@# ⛔ PIN 12 -- r21 ITEM 1: THE OPEN REFUSES ON A SUBJECT MISMATCH, and it
+	@# compares the way the FILESYSTEM does. A plain strcmp here would let a
+	@# config differing only in case read as a different path and refuse a
+	@# legitimate session -- and, worse, is the same mistake #924 fixed in the
+	@# self-collision guard. The empty-subject term is pinned too: without it
+	@# an unformed subject compares equal to nothing and falls through.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"gSDCardData.overwriteAuthorizedManifest[0] == '\\0' || !SdManifest_PathsEqualCaseInsensitive( authNow, gSDCardData.overwriteAuthorizedManifest)"*) ;; \
+	   *) echo "ERROR: #1124 r21 item 1: the open no longer refuses when the"; \
+	      echo "       grant names a different resolved path, or stopped using"; \
+	      echo "       the case-insensitive comparator, or dropped the"; \
+	      echo "       empty-subject term. All three let a grant apply to a file"; \
+	      echo "       it was not given for."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"SD_REFUSE_AUTH_PATH_CHANGED"*) ;; \
+	   *) echo "ERROR: #1124 r21: the subject-mismatch refusal reason is gone."; \
+	      exit 1;; \
+	 esac
+	@# ⛔⛔ PIN 13 -- r21 ITEM 3: THE SCAN MUST NOT RUN AT THE ARM.
+	@#
+	@# FF_FS_REENTRANT is 0, so FatFs is NOT thread-safe, and the arm runs on
+	@# the SCPI/streaming task while every other filesystem access in this
+	@# module runs on app_SDCardTask. Calling the scan from the arm would race
+	@# the SD task inside FatFs -- a defect no test on either side would show,
+	@# because each side is individually correct.
+	@#
+	@# A COUNT, not a file-wide absence: the scan has two legitimate call sites
+	@# (the prefilter and the per-open decision) and both are in
+	@# sd_TargetSafeToOpenForWrite, so "does not appear" is the wrong assertion
+	@# and would fire on correct code. The count is the invariant, and the
+	@# reentrancy premise is re-read from ffconf.h rather than trusted, because
+	@# the whole argument collapses if someone turns it on.
+	@ffr=`sed -n 's/^[[:space:]]*#define[[:space:]]\{1,\}FF_FS_REENTRANT[[:space:]]\{1,\}\([0-9]\{1,\}\).*/\1/p' ../../firmware/src/config/default/system/fs/fat_fs/file_system/ffconf.h | head -1`; \
+	 if [ -z "$$ffr" ]; then \
+	   echo "ERROR: #1124 r21 PIN 13 could not read FF_FS_REENTRANT from"; \
+	   echo "       ffconf.h. The premise behind running the scan on the SD"; \
+	   echo "       task is unverified; refusing to pass on an unread value."; \
+	   exit 1; \
+	 fi; \
+	 if [ "$$ffr" != "0" ]; then \
+	   echo "ERROR: #1124 r21 PIN 13: FF_FS_REENTRANT is now $$ffr, not 0."; \
+	   echo "       FatFs reentrancy changed, so re-derive where the"; \
+	   echo "       foreign-record scan may run. This pin exists because the"; \
+	   echo "       placement is a CONSEQUENCE of that setting, not a style"; \
+	   echo "       choice -- do not simply update the number."; \
+	   exit 1; \
+	 fi; \
+	 n=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | grep -c 'sd_ScanForeignManifests('`; \
+	 if [ "$$n" != "3" ]; then \
+	   echo "ERROR: #1124 r21 PIN 13: expected 3 mentions of"; \
+	   echo "       sd_ScanForeignManifests (1 definition + 2 call sites, both"; \
+	   echo "       in sd_TargetSafeToOpenForWrite), found $$n. A new call site"; \
+	   echo "       is the thing this pin is for: if it is in the arm path, it"; \
+	   echo "       runs FatFs from the wrong task (FF_FS_REENTRANT is 0)."; \
+	   exit 1; \
+	 fi
+	@# ⛔ PIN 14 -- r21 ITEM 3, CONSTRAINT (b): THE PARSER NEVER TRUSTS THE
+	@# MANIFEST. Every doubt is FAULT, which the caller turns into a refusal.
+	@# The failure this guards is the attractive one: "skip the unparseable
+	@# line and carry on", which makes a corrupt manifest read as one recording
+	@# NOTHING -- a clean-bill generator over exactly the input that should
+	@# refuse. Each bound is pinned by its own diagnostic so a dropped one
+	@# names itself.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 for probe in \
+	   "if (got == (size_t)-1) {" \
+	   "if (lineLen >= (sizeof(line) - 1u)) {" \
+	   "if (sep == NULL || sep == line) {" \
+	 ; do \
+	   case "$$pp" in \
+	     *"$$probe"*) ;; \
+	     *) echo "ERROR: #1124 r21 PIN 14: the manifest parser lost a bound."; \
+	        echo "       Missing: $$probe"; \
+	        echo "       Every one of these must REFUSE (SD_INSPECT_FAULT), not"; \
+	        echo "       skip. A manifest that cannot be parsed is not a"; \
+	        echo "       manifest that records nothing."; \
+	        exit 1;; \
+	   esac; \
+	 done
+	@# ⛔⛔ PIN 15 -- r21 CONSTRAINT (c): SINGLE-SESSION EXCLUSIVITY, THE
+	@# PREMISE THE ONCE-PER-SESSION PREFILTER RESTS ON.
+	@#
+	@# The prefilter is paid once and latched, which is only sound if no FOREIGN
+	@# manifest can appear mid-session. Nothing creates a manifest except a
+	@# session, and no second session can start while this one holds the
+	@# manager -- that is #829's claim protocol: TryClaim consults BOTH the SCPI
+	@# claim flag AND the busy predicate, inside ONE critical section, and the
+	@# busy predicate tests `mode != MODE_NONE`.
+	@#
+	@# All three terms are pinned. Any one of them weakening turns the latched
+	@# answer into a stale one, and the failure is silent: the session simply
+	@# stops noticing a manifest that appeared after its scan.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"taskENTER_CRITICAL(); got = !gSdScpiClaim && !sd_card_manager_IsBusyLocked(); if (got) { gSdScpiClaim = true; } taskEXIT_CRITICAL();"*) ;; \
+	   *) echo "ERROR: #1124 r21 PIN 15: sd_card_manager_TryClaim no longer"; \
+	      echo "       decides the claim from BOTH the claim flag and the busy"; \
+	      echo "       predicate inside one critical section (#829)."; \
+	      echo "       Single-session exclusivity is the premise that lets the"; \
+	      echo "       r21 foreign-manifest prefilter run ONCE per session and"; \
+	      echo "       latch its answer. Weaken this and that answer goes stale"; \
+	      echo "       with no symptom: a manifest appearing mid-session is"; \
+	      echo "       never seen, and its records can be truncated."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"if (gpSDCardSettings->mode != SD_CARD_MANAGER_MODE_NONE) { return true; }"*) ;; \
+	   *) echo "ERROR: #1124 r21 PIN 15: sd_card_manager_IsBusyLocked no longer"; \
+	      echo "       reports busy on an active mode, so a second session could"; \
+	      echo "       arm while one is running. See the note above: this is the"; \
+	      echo "       premise behind latching the prefilter answer."; \
+	      exit 1;; \
+	 esac
+	@# ⛔ PIN 16 -- r21: THE AUTHORISATION IS ON THE #409 RETAINED-RAM SCRUB
+	@# LIST. gSDCardData does not get its compile-time zero across an MCLR or an
+	@# IPE flash (the #924 paragraph in sd_card_manager_Init says so), so the
+	@# flag that decides whether an existing file is DESTROYED can come up set
+	@# with no client having asked. All four fields are pinned together: the
+	@# grant, its subject, and both scan flags.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"gSDCardData.overwriteAuthorizedForSession = false; gSDCardData.overwriteAuthorizedManifest[0] = '\\0'; gSDCardData.foreignScanPending = false; gSDCardData.foreignManifestsPresent = false;"*) ;; \
+	   *) echo "ERROR: #1124 r21 PIN 16: the overwrite authorisation and its"; \
+	      echo "       scan state are no longer scrubbed in sd_card_manager_Init."; \
+	      echo "       They live in gSDCardData, which that function's own #924"; \
+	      echo "       comment says does NOT keep its compile-time zero across"; \
+	      echo "       an MCLR or a flash -- so a device could boot already"; \
+	      echo "       authorised to overwrite."; \
+	      exit 1;; \
+	 esac
+	@# ⛔⛔ PIN 17 -- THE REFUSAL-REASON TOKEN CONTRACT.
+	@#
+	@# A client discriminates one #1124 refusal from another through
+	@# SYSTem:LOG?, so the log line IS the contract. r21 grew this surface from 4
+	@# sites to 24, and conv-ts found it had stopped discriminating:
+	@#   - "refuse, recorded part" carried a COMMA on the second token, so an
+	@#     exact token match for `refuse` MISSED it -- i.e. failed open;
+	@#   - `refuse` was shared by three different reasons, and `recorded` by two
+	@#     with OPPOSITE causes ("recorded elsewhere" = a foreign manifest,
+	@#     "refuse, recorded part" = our own target).
+	@#
+	@# So the second whitespace token now NAMES THE REASON, is punctuation-free,
+	@# and comes from a closed set. `note` is in the set deliberately and means
+	@# THIS LINE IS NOT A REFUSAL -- without it a lock-slot diagnostic reads as
+	@# one, which is the same fail-open in the other direction.
+	@#
+	@# Token -> reason: exists=TARGET_EXISTS, unreadable=TARGET_UNREADABLE,
+	@# notours/ourpart=MANIFEST_NOT_OURS, authpath=AUTH_PATH_CHANGED,
+	@# foreign=FOREIGN_RECORD, unparsable=MANIFEST_UNPARSABLE,
+	@# notafile=NAME_NOT_A_FILE, note=not a refusal.
+	@# r21 audit: BOTH files are scanned now. The audit's scope fixes put
+	@# [SD1124] lines in SCPIStorageSD.c, and a contract that covers only one
+	@# of the two files a client can see lines from is not a contract.
+	@# ⚠ BRACES, not just `;`. Written as `a; b | grep`, only b feeds the
+	@# pipeline and a's whole preprocessed output lands in the variable -- the
+	@# pin then reports garbage tokens like `&targetFsError);`. It FAILED
+	@# rather than passing, which is the only reason that was cheap to find.
+	@SD1124_ALL=`echo "$(SD1124_TOK_NOTE) $(SD1124_TOK_FAULT) $(SD1124_TOK_POLICY)" | tr ' ' '|'`; \
+	 toks=`{ $(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null; \
+	         $(CC) -fpreprocessed -E $(SD_BENCH_SRC) 2>/dev/null; } \
+	   | grep -oE 'LOG_E\("\[SD1124\] [^ "]+' \
+	   | sed 's/.*\[SD1124\] //'`; \
+	 n=`printf '%s\n' "$$toks" | grep -c .`; \
+	 if [ "$$n" -lt 20 ]; then \
+	   echo "ERROR: #1124 r21 PIN 17 found only $$n [SD1124] LOG_E sites."; \
+	   echo "       It expects at least 20. Either the surface shrank a lot or"; \
+	   echo "       the extraction broke -- and an extraction that matches"; \
+	   echo "       nothing would pass the token check below vacuously."; \
+	   exit 1; \
+	 fi; \
+	 bad=`printf '%s\n' "$$toks" | grep -vxE "$$SD1124_ALL" | sort -u`; \
+	 if [ -n "$$bad" ]; then \
+	   echo "ERROR: #1124 r21 PIN 17: these [SD1124] messages do not begin with"; \
+	   echo "       a reason token from the closed set, or carry punctuation on"; \
+	   echo "       it. A client reading SYSTem:LOG? then cannot tell which"; \
+	   echo "       refusal it got -- and a token with a trailing comma fails an"; \
+	   echo "       exact match, i.e. fails OPEN:"; \
+	   printf '         %s\n' $$bad; \
+	   echo "       NOT-A-REFUSAL: $(SD1124_TOK_NOTE)"; \
+	   echo "       FAULT:         $(SD1124_TOK_FAULT)"; \
+	   echo "       POLICY:        $(SD1124_TOK_POLICY)"; \
+	   exit 1; \
+	 fi; \
+	 for a in $(SD1124_TOK_NOTE) $(SD1124_TOK_FAULT) $(SD1124_TOK_POLICY); do \
+	   hits=0; \
+	   for b in $(SD1124_TOK_NOTE) $(SD1124_TOK_FAULT) $(SD1124_TOK_POLICY); do \
+	     [ "$$a" = "$$b" ] && hits=$$((hits+1)); \
+	   done; \
+	   if [ "$$hits" -ne 1 ]; then \
+	     echo "ERROR: #1124 PIN 17 PARTITION: token '$$a' appears in $$hits of the"; \
+	     echo "       three classes, not exactly 1. NOT-A-REFUSAL, FAULT and"; \
+	     echo "       POLICY must be DISJOINT, or a client cannot decide what a"; \
+	     echo "       line MEANS from its token -- which is the contract."; \
+	     exit 1; \
+	   fi; \
+	 done; \
+	 for cls in "$(SD1124_TOK_NOTE)" "$(SD1124_TOK_FAULT)" "$(SD1124_TOK_POLICY)"; do \
+	   if [ -z "$$cls" ]; then \
+	     echo "ERROR: #1124 PIN 17 PARTITION: a class is EMPTY, which makes the"; \
+	     echo "       disjointness check above vacuous for it."; \
+	     exit 1; \
+	   fi; \
+	 done; \
+	 for tok in $$toks; do \
+	   hits=0; \
+	   for a in $(SD1124_TOK_NOTE) $(SD1124_TOK_FAULT) $(SD1124_TOK_POLICY); do \
+	     [ "$$tok" = "$$a" ] && hits=$$((hits+1)); \
+	   done; \
+	   if [ "$$hits" -ne 1 ]; then \
+	     echo "ERROR: #1124 PIN 17 PARTITION: the site token '$$tok' falls in"; \
+	     echo "       $$hits classes, not exactly 1. Every [SD1124] line must be"; \
+	     echo "       classifiable as informational, a FAULT, or a POLICY"; \
+	     echo "       refusal -- a client keys its handling on exactly that."; \
+	     exit 1; \
+	   fi; \
+	 done
+	@# ⛔⛔ PIN 18 -- THE BIT IS A NECESSARY CONDITION, NEVER THE DECISION.
+	@#
+	@# r25: the GATE widened (an index above the bitset's range also owes the
+	@# exact check -- audit :2890), so the key moved to the gate's TAIL. The
+	@# invariant is unchanged and is what the key still asserts: whatever decides
+	@# that a check is owed, the thing immediately after it is the EXACT scan.
+	@#
+	@# gForeignPartBits is indexed by PART INDEX, and the index does not
+	@# determine the path: a part goes to <bucket>/<stem>-<N><ext>, and which
+	@# bucket depends on how full the buckets are when it is opened, which the
+	@# once-per-session pass cannot know. So `D/exp-1.csv` (a foreign session
+	@# whose BASE name was exp-1.csv) and `D/P001/exp-1.csv` (our part 1 after
+	@# bucket 0 filled) share dir, stem, ext and index and are DIFFERENT FILES.
+	@#
+	@# Refusing on the bit alone would therefore refuse sessions that are fine,
+	@# and it is the tempting simplification -- it deletes the second scan and
+	@# every test of the refusal still passes, because the refusal still happens
+	@# in the cases those tests cover. This pins that the bit only GATES the
+	@# exact comparison, and that the refusal reason is set from the scan's
+	@# result and not from the bit.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"&& gSDCardData.foreignAboveLimitRecord))) { const sd_InspectResult rec = sd_ScanForeignManifests(dataPath);"*) ;; \
+	   *) echo "ERROR: #1124 r21 PIN 18: a set foreign-part bit no longer gates"; \
+	      echo "       an EXACT scan of the real target path. The bit is only a"; \
+	      echo "       necessary condition -- the part index does not determine"; \
+	      echo "       the path, because the bucket is not known when the bits"; \
+	      echo "       are built. Refusing on the bit alone refuses sessions"; \
+	      echo "       that are correct, and every refusal test still passes."; \
+	      exit 1;; \
+	 esac
+	@# ⛔⛔ PIN 19 -- THE INDEX PASS READS EVERY FOREIGN MANIFEST.
+	@#
+	@# The pass this replaced was a PREFILTER and stopped at the first foreign
+	@# manifest, because one was enough to answer "is a content read owed?".
+	@# The index pass answers a different question -- WHICH indices are claimed
+	@# -- so stopping early leaves the bitset a partial record of what is
+	@# claimed. That is a MISSED COLLISION, not a slow scan, and it is silent:
+	@# every test with one foreign manifest still passes.
+	@#
+	@# Pinned as the ABSENCE of the old early exit in the walker, plus the
+	@# presence of the loop's own terminator, so the arm cannot pass by having
+	@# nothing to look at.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"if (needle == NULL) { out = SD_INSPECT_HAZARD; break; }"*) \
+	      echo "ERROR: #1124 r21 PIN 19: the index pass stops at the FIRST"; \
+	      echo "       foreign manifest again. That was correct for the old"; \
+	      echo "       presence prefilter and is wrong now: the bitset would be"; \
+	      echo "       a PARTIAL record of which part indices are claimed, so a"; \
+	      echo "       collision recorded in a later manifest is never checked."; \
+	      echo "       Silent -- every test with one foreign manifest passes."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"out = sd_ManifestRecordsName(path, needle); }"*) ;; \
+	   *) echo "ERROR: #1124 r21 PIN 19: the walker no longer ends its loop by"; \
+	      echo "       scanning each manifest, so the absence arm above is"; \
+	      echo "       checking a loop that may not exist."; \
+	      exit 1;; \
+	 esac
+	@# ⛔ PIN 20 -- A FAULTED PASS LEAVES NO BITS BEHIND. A pass that gave up
+	@# half way has recorded SOME indices and not others, and those bits are
+	@# indistinguishable from a complete answer. Using them would turn one
+	@# refused open into a session that silently checks only part of what is
+	@# claimed, so the bits are cleared on the fault path as well as before the
+	@# pass.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"if (pass != SD_INSPECT_CLEAR) { sd_ForeignBitsClear();"*) ;; \
+	   *) echo "ERROR: #1124 r21 PIN 20: a FAULTED index pass no longer clears"; \
+	      echo "       the bitset, so a partially-filled set could be read as a"; \
+	      echo "       complete answer."; \
+	      exit 1;; \
+	 esac
+	@# ⛔⛔ PIN 21 -- r21 AUDIT HIGH (:2915): NO CAP ON THE MANIFEST COUNT.
+	@#
+	@# This is the INVERSE of a pin: it asserts an absence, because the bound it
+	@# forbids is one PIN 14 used to require. r21 shipped
+	@# SD_FOREIGN_SCAN_MAX_MANIFESTS = 16 with a FAULT past it, and a FAULT is a
+	@# refusal -- so after 17 short sessions in ONE directory (34 files, well
+	@# under MAX_DIR_FILES) every later capture was disarmed, opt-in or not. The
+	@# guard meant to protect ordinary logging broke it.
+	@#
+	@# ⭐ THE RULE: A COUNT OF PRE-EXISTING WORK MUST NEVER REFUSE A NEW
+	@# SESSION. Using more of the card is not a fault condition. The cost is
+	@# bounded by the per-manifest line/byte caps and by the directory itself,
+	@# which #689 rolls at MAX_DIR_FILES entries -- neither of which refuses in
+	@# the ordinary case, which is exactly what the deleted cap lacked.
+	@#
+	@# ⚠ PINNED ON THE PROPERTY, NOT ON THE MACRO NAME -- mutant R49 is why.
+	@# The first version only counted mentions of
+	@# SD_FOREIGN_SCAN_MAX_MANIFESTS, so a cap written with a LITERAL
+	@# (`if (++manifests > 16u)`) reintroduced the whole defect and the pin
+	@# passed clean. The name is incidental; what matters is that the counter
+	@# is never COMPARED. So: the increment must stand alone as a statement,
+	@# and the counter must appear in no relational test at all.
+	@# ⛔⛔⛔ r30 RE-KEYED THIS PIN TWICE IN ONE ROUND, AND THE SECOND TIME IS
+	@# THE INTERESTING ONE.
+	@#
+	@# The counter was deleted (declared, incremented, never read, with a
+	@# comment claiming a log that did not exist), so the old arm -- which
+	@# required `manifests++;` to exist -- failed on a correct change. My first
+	@# rewrite asserted the IDENTIFIER's ABSENCE instead. Mutants R49/R55 then
+	@# showed that is still a SYMBOL key: a cap written with any other variable
+	@# name (`if (++nFound > 16u)`) passes an absence check on `manifests`
+	@# cleanly, and the whole defect is back.
+	@#
+	@# ⭐ THE QUESTION IS "CAN A COUNT OF PRE-EXISTING WORK REFUSE A SESSION?",
+	@# and in this scan a refusal is a FAULT. So the key is the scan's FAULT
+	@# SOURCES, enumerated and counted -- any new one, under any variable name,
+	@# moves the number. That is the property; the identifier never was.
+	@#
+	@# FOUR, in sd_ScanOneDirectory, and each is a filesystem fault rather than
+	@# a quantity:
+	@#   1. our own manifest path cannot be built  (return)
+	@#   2. SYS_FS_DirOpen failed, not absent      (return)
+	@#   3. the directory did not terminate within SD_FOREIGN_SCAN_MAX_DIR_ENTRIES
+	@#   4. SYS_FS_DirRead failed
+	@# ⚠ 3 IS A COUNT, and it is the exception that proves the rule: it bounds
+	@# ENTRIES READ, not work pre-existing on the card, and at 65536 a directory
+	@# that has not ended is a filesystem fault. If a fifth appears, decide
+	@# which kind it is before raising this number -- r21 shipped a cap of 16
+	@# manifests with a FAULT past it, so 17 short sessions in one directory
+	@# disarmed every later capture (audit :2915).
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null`; \
+	 body=`printf '%s\n' "$$pp" | awk '/static sd_InspectResult sd_ScanOneDirectory/,/^static sd_InspectResult sd_ScanBaseAndNameSubdir/'`; \
+	 nb=`printf '%s\n' "$$body" | grep -c .`; \
+	 nf=`printf '%s\n' "$$body" | grep -cE 'SD_INSPECT_FAULT'`; \
+	 if [ "$$nb" -lt 20 ]; then \
+	   echo "ERROR: #1124 r30 PIN 21: could not slice sd_ScanOneDirectory's body"; \
+	   echo "       ($$nb lines) -- the pin cannot evaluate its invariant, which"; \
+	   echo "       is a FAILURE, not a pass. Did the function or the one after"; \
+	   echo "       it get renamed?"; \
+	   exit 1; \
+	 fi; \
+	 test "$$nf" -eq 4 \
+	  || { echo "ERROR: #1124 r30 PIN 21: the foreign scan has $$nf FAULT sources,"; \
+	       echo "       not the 4 enumerated in this recipe."; \
+	       echo "       A FAULT here IS a refusal, and the rule is that A COUNT"; \
+	       echo "       OF PRE-EXISTING WORK MUST NEVER REFUSE A NEW SESSION."; \
+	       echo "       r21 shipped a cap of 16 manifests with a FAULT past it,"; \
+	       echo "       so 17 short sessions in one directory disarmed every"; \
+	       echo "       later capture (audit :2915)."; \
+	       echo "       ⛔ Keyed on the FAULT COUNT, not on a variable name: an"; \
+	       echo "       earlier version of this pin asserted that the identifier"; \
+	       echo "       'manifests' was absent, and a cap under any other name"; \
+	       echo "       walked straight past it (mutants R49/R55)."; \
+	       echo "       If you added a legitimate filesystem fault, enumerate it"; \
+	       echo "       above and raise the number. If you added a cap on work"; \
+	       echo "       already on the card, do not."; \
+	       exit 1; }
+	@# The old identifier arm is kept as a cheap second signal: the deleted
+	@# counter must not come back by name either.
+	 case "$$pp" in \
+	   *"manifests >"*|*"manifests <"*|*"manifests =="*|*"manifests !="*) \
+	      echo "ERROR: #1124 r21 PIN 21: the manifest COUNT is compared, so it"; \
+	      echo "       can refuse a session. FAULT is a refusal, so a cap here"; \
+	      echo "       disarms every capture in a directory that has simply"; \
+	      echo "       been used a lot -- 17 short sessions, 34 files, and the"; \
+	      echo "       card stops logging (audit :2915). Bound the BYTES per"; \
+	      echo "       manifest; the directory already bounds the count."; \
+	      exit 1;; \
+	 esac
+	@n=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null \
+	    | grep -c 'SD_FOREIGN_SCAN_MAX_MANIFESTS'`; \
+	 if [ "$$n" != "0" ]; then \
+	   echo "ERROR: #1124 r21 PIN 21: the manifest-count MACRO is back ($$n"; \
+	   echo "       mention(s) of SD_FOREIGN_SCAN_MAX_MANIFESTS)."; \
+	   echo "       A count of pre-existing manifests must never refuse a"; \
+	   echo "       session: FAULT is a refusal, so a cap here disarms every"; \
+	   echo "       capture in a directory that has simply been used a lot."; \
+	   echo "       That was audit finding :2915 -- 17 short sessions, 34 files,"; \
+	   echo "       and the card stops logging. Bound the BYTES per manifest"; \
+	   echo "       instead; the directory already bounds the count."; \
+	   exit 1; \
+	 fi
+	@# ⛔⛔ PIN 22 -- r21 AUDIT MEDIUM (:2909): A .mfst IS IDENTIFIED BY
+	@# CONTENT, NOT BY ITS EXTENSION. `old.mfst` is a legal DATA filename; parsed
+	@# as a manifest it fails, FAULTs, and blocks every later capture in that
+	@# directory, so one ordinarily-named user file became a brick.
+	@#
+	@# ⚠ AND NOT BY PAIRING WITH `X` EITHER, which the audit offered as an
+	@# alternative. A manifest whose data file was DELETED while the manifest
+	@# survived is precisely the stale record this scan was widened to catch, so
+	@# existence-pairing would have skipped it -- fixing the MEDIUM by silently
+	@# reopening the HIGH. The content test is the one the create path already
+	@# trusts for the same question, so there is one notion of "looks like a
+	@# manifest" rather than two free to disagree.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"if (!SdManifest_FirstLineLooksLikeManifest(chunk, got)) {"*) ;; \
+	   *) echo "ERROR: #1124 r21 PIN 22: the foreign scan no longer identifies a"; \
+	      echo "       manifest by its CONTENT before parsing it, so a data file"; \
+	      echo "       named *.mfst FAULTs and disarms every later capture in"; \
+	      echo "       that directory (audit :2909)."; \
+	      exit 1;; \
+	 esac
+	@# ⛔⛔ PIN 23 -- r21 AUDIT HIGH (:2874 / :2905): THE OPT-IN'S SCOPE IS
+	@# NARROWED SO THE SCAN STAYS SOUND.
+	@#
+	@# The foreign-record scan reads the CONFIGURED directory only, and that is
+	@# the complete set of relevant places just while two conditions hold:
+	@#   - the configured NAME carries no '/', because `sub/exp.csv` puts our
+	@#     manifest in <dir>/sub, which the scan never reads;
+	@#   - no component of the configured DIR is a rotation bucket, because with
+	@#     SD:DIR = D/P001 the manifest owning those records lives in D.
+	@# Both are refused for the OPT-IN only, which is the agreed fix direction:
+	@# NARROW the grant rather than widen the scan. Ordinary refuse-by-default
+	@# logging in such a layout is untouched.
+	@#
+	@# ⚠ The audit measured `"sub/exp.csv",1` as ACCEPTED, i.e. this whitelist
+	@# had never landed despite being described. Pinned now so the description
+	@# and the code cannot part company again.
+	@pp=`$(CC) -fpreprocessed -E $(SD_BENCH_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"if (memchr(pBuff, '/', fileLen) != NULL) {"*) ;; \
+	   *) echo "ERROR: #1124 r21 PIN 23a: the opt-in accepts a SEPARATOR in the name."; \
+	      echo "       SD:FILE no longer refuses the overwrite opt-in for a"; \
+	      echo "       name containing '/'. The manifest for"; \
+	      echo "       sub/exp.csv lives in <dir>/sub, which the foreign-record"; \
+	      echo "       scan does not read, so the one check protecting it is"; \
+	      echo "       blind (audit :2905)."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"if (fileLen == 0) {"*) ;; \
+	   *) echo "ERROR: #1124 r22 PIN 23c: the opt-in accepts an EMPTY operand."; \
+	      echo "       \`SD:FILE \"\",1\` then hands the grant to whatever name"; \
+	      echo "       was already staged -- including one the '/' or '~' rules"; \
+	      echo "       had just refused on its own command (audit :1129). A"; \
+	      echo "       grant that names nothing cannot be checked against"; \
+	      echo "       anything, and an unexaminable grant is not permission."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"if (SD_DirHasNonCanonicalForm(pSDCardRuntimeConfig->directory)) {"*) ;; \
+	   *) echo "ERROR: #1124 r22 PIN 23e: the opt-in accepts a NON-CANONICAL"; \
+	      echo "       directory form. '//', a '.' or '..' component, or a"; \
+	      echo "       trailing '/' are spellings where the TEXT and the PATH"; \
+	      echo "       diverge, and the record comparison is textual"; \
+	      echo "       (audit :2862). Refuse the form; do not model the"; \
+	      echo "       equivalence."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"if (SD_DirHasBucketComponent(pSDCardRuntimeConfig->directory)) {"*) ;; \
+	   *) echo "ERROR: #1124 r21 PIN 23b: the opt-in accepts a BUCKET directory."; \
+	      echo "       SD:FILE no longer refuses the overwrite opt-in while the"; \
+	      echo "       configured directory is a rotation bucket. The manifest"; \
+	      echo "       owning records in D/P001 lives in D,"; \
+	      echo "       which the scan does not read (audit :2874)."; \
+	      exit 1;; \
+	 esac
+	@# ⛔⛔⛔ PIN 23d, REPLACED AT r28: THE '~' REFUSAL IS NOT PART OF THE OPT-IN
+	@# ANY MORE, AND PINNING IT THERE WAS PINNING THE DEFECT.
+	@#
+	@# r22 added `memchr(pBuff, '~', fileLen)` inside `if (overwriteAsked)` and
+	@# this pin asserted that exact text in that exact place. r28's audit found
+	@# the SCOPE wrong on both legs (main SCPIStorageSD.c:1119, blind
+	@# SdManifest.h:501): an alias needs no grant to do damage, because a
+	@# session rotates without one, and a session configured by alias WRITES
+	@# alias-spelled records that outlive it. The refusal therefore moved to the
+	@# configuration -- both setters, unconditionally, plus at use -- and the old
+	@# pin would have FAILED THE FIX while reporting the defect as protected.
+	@# That is the "a test can require the defect" shape, caught here by the fix
+	@# breaking the pin; it is recorded rather than quietly edited.
+	@#
+	@# BY POSITION, not merely by presence: "the call exists somewhere in the
+	@# file" cannot see that it has drifted back inside the grant block. The
+	@# file-setter arm must sit AFTER the last opt-in-only check
+	@# (SD_DirHasBucketComponent), which is the end of that block.
+	@#
+	@# Each arm by its OWN exact form -- fileLen for the name, pathLen for the
+	@# directory -- because a by-name count cannot tell WHICH arm complies.
+	@# ⚠ ONE ERROR LINE PER ARM. first_error() in pin1124_mutate.sh reads only
+	@# the FIRST '^ERROR' line, so a single shared opening line makes three
+	@# different mutants (R60, R78, R79) indistinguishable -- each would "come
+	@# from this pin" while proving nothing about WHICH refusal was removed.
+	@# That is the same by-name-vs-by-arm failure the pins themselves guard
+	@# against, one level up, and it was found by those mutants.
+	@pp=`$(CC) -fpreprocessed -E $(SD_BENCH_SRC) 2>/dev/null`; \
+	 nalias=`printf '%s\n' "$$pp" | grep -c 'SdManifest_PathHasAliasRiskLen('`; \
+	 lgrant=`printf '%s\n' "$$pp" | grep -n 'SD_DirHasBucketComponent(' | head -1 | cut -d: -f1`; \
+	 lfile=`printf '%s\n' "$$pp" | grep -n 'SdManifest_PathHasAliasRiskLen(pBuff, fileLen)' | head -1 | cut -d: -f1`; \
+	 ldir=`printf '%s\n' "$$pp" | grep -n 'SdManifest_PathHasAliasRiskLen(pBuff, pathLen)' | head -1 | cut -d: -f1`; \
+	 lmfst=`printf '%s\n' "$$pp" | grep -n 'SdManifest_NameReservedForManifestsLen(pBuff, fileLen)' | head -1 | cut -d: -f1`; \
+	 nold=`printf '%s\n' "$$pp" | grep -c "memchr(pBuff, '~', fileLen)"`; \
+	 if [ -z "$$ldir" ]; then \
+	   echo "ERROR: #1124 r28 PIN 23d: the DIRECTORY setter no longer refuses '~'."; \
+	   echo "       SCPI_StorageSDDirectorySet must refuse it UNCONDITIONALLY."; \
+	   echo "       r28 main :1119's repro names the alias AS THE DIRECTORY, with"; \
+	   echo "       no opt-in in sight, and every manifest path is built from the"; \
+	   echo "       configured directory text -- so this is also what makes the"; \
+	   echo "       claim 'a device-written manifest cannot contain an alias'"; \
+	   echo "       true by construction instead of by assumption (blind :501)."; \
+	   exit 1; \
+	 fi; \
+	 if [ -z "$$lfile" ]; then \
+	   echo "ERROR: #1124 r28 PIN 23d: the FILE setter no longer refuses '~' in the name."; \
+	   echo "       An 8.3 alias names the same file as a long name while"; \
+	   echo "       comparing textually unequal to it, and all record matching"; \
+	   echo "       here is textual. Needed on the ORDINARY path, not just the"; \
+	   echo "       grant: a session rotates without an opt-in."; \
+	   exit 1; \
+	 fi; \
+	 if [ -z "$$lmfst" ]; then \
+	   echo "ERROR: #1124 r28 PIN 23d: the FILE setter no longer refuses a name"; \
+	   echo "       ending in the manifest extension."; \
+	   echo "       The manifest name is '<file>' + SD_MANIFEST_EXT, so a DATA"; \
+	   echo "       file 'exp.csv.mfst' is the manifest name of a session"; \
+	   echo "       configured 'exp.csv' (r28 :3894). It also keeps the scan's"; \
+	   echo "       name test and its first-line content test in agreement,"; \
+	   echo "       which holds only while no data file bears the extension."; \
+	   exit 1; \
+	 fi; \
+	 if [ "$$nalias" -ne 2 ]; then \
+	   echo "ERROR: #1124 r28 PIN 23d: expected exactly 2 alias-risk call sites"; \
+	   echo "       in $(SD_BENCH_SRC), found $$nalias -- one per setter."; \
+	   exit 1; \
+	 fi; \
+	 if [ "$$nold" -ne 0 ]; then \
+	   echo "ERROR: #1124 r28 PIN 23d: the superseded r22 memchr('~') form is"; \
+	   echo "       back ($$nold site(s)) alongside the general refusal. A second"; \
+	   echo "       copy makes the unconditional rule look conditional again."; \
+	   exit 1; \
+	 fi; \
+	 ndir=`printf '%s\n' "$$pp" | grep -c 'SdManifest_PathHasNonAsciiLen(pBuff, pathLen)'`; \
+	 nfile=`printf '%s\n' "$$pp" | grep -c 'SdManifest_PathHasNonAsciiLen(pBuff, fileLen)'`; \
+	 if [ "$$nfile" -ne 1 ]; then \
+	   echo "ERROR: #1124 AT PIN 23e: the FILE setter no longer refuses a"; \
+	   echo "       non-ASCII NAME unconditionally (found $$nfile, expected 1)."; \
+	   echo "       r25 scoped the ASCII rule to the overwrite opt-in; r30's"; \
+	   echo "       blind leg showed that closes nothing -- an UNGRANTED session"; \
+	   echo "       CREATES the non-ASCII file and FatFs stores a PURE-ASCII 8.3"; \
+	   echo "       alias for it (ExCvt[0x02] is 'E' in the TBL_CT437 we ship,"; \
+	   echo "       with no ~N tail), which a later ASCII-named session resolves"; \
+	   echo "       to. Creation is what manufactures the alias."; \
+	   exit 1; \
+	 fi; \
+	 if [ "$$ndir" -ne 1 ]; then \
+	   echo "ERROR: #1124 AT PIN 23e: the DIRECTORY setter no longer refuses a"; \
+	   echo "       non-ASCII path unconditionally (found $$ndir, expected 1)."; \
+	   echo "       Both must be UNCONDITIONAL. r25 scoped the ASCII rule to the"; \
+	   echo "       overwrite opt-in; r30's blind leg showed that closes nothing,"; \
+	   echo "       because an UNGRANTED session CREATES the non-ASCII file and"; \
+	   echo "       FatFs stores a PURE-ASCII 8.3 alias for it -- ExCvt[0x02] is"; \
+	   echo "       'E' in the TBL_CT437 we ship, with no ~N tail -- which a"; \
+	   echo "       later ASCII-named session resolves to. Creation is what"; \
+	   echo "       manufactures the alias, so the grant is the wrong scope."; \
+	   exit 1; \
+	 fi; \
+	 if [ -z "$$lgrant" ]; then \
+	   echo "ERROR: #1124 r28 PIN 23d: cannot locate the end of the opt-in block"; \
+	   echo "       (SD_DirHasBucketComponent), so the POSITION arm below cannot"; \
+	   echo "       be evaluated. A pin that cannot evaluate its invariant fails."; \
+	   exit 1; \
+	 fi; \
+	 if [ "$$lfile" -lt "$$lgrant" ] || [ "$$lmfst" -lt "$$lgrant" ]; then \
+	   echo "ERROR: #1124 r28 PIN 23d: a refusal has drifted back INSIDE the"; \
+	   echo "       overwrite opt-in block (name at $$lfile, .mfst at $$lmfst,"; \
+	   echo "       block ends $$lgrant)."; \
+	   echo "       Scoping these to the grant WAS the r28 defect: it protected"; \
+	   echo "       only the destructive route while ordinary refuse-by-default"; \
+	   echo "       logging both accepted an alias-spelled target and WROTE"; \
+	   echo "       records spelled that way."; \
+	   exit 1; \
+	 fi
+	@# ⛔⛔ PIN 23f -- r28: AND THE SAME TWO REFUSALS AT USE, WHICH IS THE HALF
+	@# A SETTER-ONLY FIX MISSES. An NVM restore populates the settings struct
+	@# directly and never reaches a setter -- the route-around that
+	@# SD_ValidatePathParam's own header names as having sunk a setter-only fix
+	@# for the directory half.
+	@#
+	@# ⚠ THE WRITE-ONLY GUARD IS PINNED TOO, because getting it wrong is a
+	@# worse regression than the hazard: the same OPEN_FILE guard serves SD:GET,
+	@# SD:CRC and SD:DELete through opFile, so an unguarded refusal would make a
+	@# manifest unreadable and an in-the-way file undeletable.
+	@#
+	@# ⛔⛔ AND EACH ARM BY ITS EXACT FORM, NOT BY A COUNT OF CALL SITES. Found
+	@# by mutant R81: prefixing the directory arm with `false &&` disables the
+	@# refusal while LEAVING THE CALL TEXT PRESENT, so a count stays at 2 and a
+	@# count-keyed pin passes with half the refusal gone. Matched on the
+	@# whitespace-FLATTENED text, because the source wraps these lines at 80
+	@# columns and `-E` preserves that geometry.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null \
+	     | grep -v '^#' | tr '\n' ' ' | tr -s ' '`; \
+	 lp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null`; \
+	 lmode=`printf '%s\n' "$$lp" | grep -n 'if (!usesOperandName)' | head -1 | cut -d: -f1`; \
+	 lrisk=`printf '%s\n' "$$lp" | grep -n 'SdManifest_PathHasAliasRisk(' | head -1 | cut -d: -f1`; \
+	 case "$$pp" in \
+	   *"const bool nonAsciiName = SdManifest_PathHasNonAscii(nameOperand);"*) ;; \
+	   *) echo "ERROR: #1124 AT PIN 23h: the at-use non-ASCII NAME arm is gone or"; \
+	      echo "       altered. A setter-only refusal is not a refusal: an NVM"; \
+	      echo "       restore populates the settings struct directly and reaches"; \
+	      echo "       no setter."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"const bool nonAsciiDir = SdManifest_PathHasNonAscii(gpSDCardSettings->directory);"*) ;; \
+	   *) echo "ERROR: #1124 AT PIN 23h: the at-use non-ASCII DIRECTORY arm is gone"; \
+	      echo "       or altered. Pinned by FORM, not by a call-site count:"; \
+	      echo "       prefixing it with 'false &&' disables the refusal while"; \
+	      echo "       leaving the call text present, which a count cannot see."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"if (nonAsciiName || nonAsciiDir) {"*) ;; \
+	   *) echo "ERROR: #1124 AT PIN 23h: the two at-use non-ASCII arms are"; \
+	      echo "       computed but no longer USED together. Two correct reads"; \
+	      echo "       feeding nothing is the inert-guard shape."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"const bool aliasInName = SdManifest_PathHasAliasRisk(nameOperand);"*) ;; \
+	   *) echo "ERROR: #1124 r28 PIN 23f: the at-use NAME arm is gone or altered."; \
+	      echo "       Expected exactly:"; \
+	      echo "         const bool aliasInName ="; \
+	      echo "                 SdManifest_PathHasAliasRisk(nameOperand);"; \
+	      echo "       A setter-only refusal is not a refusal: an NVM restore"; \
+	      echo "       never passes through SCPI."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"const bool aliasInDir = SdManifest_PathHasAliasRisk(gpSDCardSettings->directory);"*) ;; \
+	   *) echo "ERROR: #1124 r28 PIN 23f: the at-use DIRECTORY arm is gone or"; \
+	      echo "       altered. Expected exactly:"; \
+	      echo "         const bool aliasInDir ="; \
+	      echo "                 SdManifest_PathHasAliasRisk(gpSDCardSettings->directory);"; \
+	      echo "       Pinned by FORM, not by a call-site count: mutant R81"; \
+	      echo "       prefixes this with 'false &&', which disables the refusal"; \
+	      echo "       while leaving the call text present -- a count stays at 2"; \
+	      echo "       and passes with half the refusal gone. main :1119's repro"; \
+	      echo "       is the DIRECTORY arm specifically."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"if (aliasInName || aliasInDir) {"*) ;; \
+	   *) echo "ERROR: #1124 r28 PIN 23f: the two at-use alias arms are computed"; \
+	      echo "       but no longer USED together. Expected:"; \
+	      echo "         if (aliasInName || aliasInDir) {"; \
+	      echo "       Two correct reads feeding nothing is the inert-guard"; \
+	      echo "       shape this row has hit before."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"if (SdManifest_NameReservedForManifests(nameOperand)) {"*) ;; \
+	   *) echo "ERROR: #1124 r28 PIN 23f: the at-use manifest-extension refusal"; \
+	      echo "       is gone. A session whose configured name ends in"; \
+	      echo "       SD_MANIFEST_EXT writes its data file over another"; \
+	      echo "       session's manifest name (r28 :3894)."; \
+	      exit 1;; \
+	 esac; \
+	 if [ -z "$$lmode" ]; then \
+	   echo "ERROR: #1124 r28 PIN 23f: the WRITE-ONLY guard '!usesOperandName'"; \
+	   echo "       is gone, so these refusals now also reject SD:GET, SD:CRC"; \
+	   echo "       and SD:DELete operands. Refusing to READ a manifest, or to"; \
+	   echo "       DELETE the file that is in the way, is a worse outcome than"; \
+	   echo "       the hazard the refusals close."; \
+	   exit 1; \
+	 fi; \
+	 if [ -n "$$lrisk" ] && [ "$$lrisk" -lt "$$lmode" ]; then \
+	   echo "ERROR: #1124 r28 PIN 23f: an at-use alias check sits BEFORE the"; \
+	   echo "       write-only guard (check at $$lrisk, guard at $$lmode), so it"; \
+	   echo "       applies to the read/CRC/delete operands too."; \
+	   exit 1; \
+	 fi
+	@# ⛔⛔⛔ PIN 23g -- r29 AUDIT HIGH (:232): THE TWO MANIFEST-NAME QUESTIONS
+	@# MUST STAY TWO PREDICATES, AND EACH CONSUMER MUST USE ITS OWN.
+	@#
+	@# One string, two questions, OPPOSITE correct answers for the bare
+	@# extension ".mfst":
+	@#   the foreign SCAN  "is this FILE a manifest to READ?"      -> NO
+	@#   the WRITE path    "is this name RESERVED for manifests?"  -> YES
+	@#
+	@# r28 refused a logging name by reusing the SCAN's predicate, whose length
+	@# carve-out answers NO for the bare extension -- so `SD:FILE ".mfst"` was
+	@# accepted, extractBaseFilename gave an empty stem, rotation targeted
+	@# "-1.mfst", and the grant truncated another capture's manifest.
+	@#
+	@# ⭐ AND THE SHARED PREDICATE COULD NOT BE TIGHTENED: dropping the carve-out
+	@# fixes the setter and breaks the scan, which must keep answering NO. So the
+	@# failure mode this pin exists for is a future "unification" that looks like
+	@# a cleanup. Counted PER FILE AND PER PREDICATE, because a single total
+	@# cannot see one consumer switching to the other's question.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null`; \
+	 bp=`$(CC) -fpreprocessed -E $(SD_BENCH_SRC) 2>/dev/null`; \
+	 mgr_scan=`printf '%s\n' "$$pp" | grep -c 'SdManifest_NameHasManifestExt('`; \
+	 mgr_write=`printf '%s\n' "$$pp" | grep -c 'SdManifest_NameReservedForManifests('`; \
+	 scpi_scan=`printf '%s\n' "$$bp" | grep -c 'SdManifest_NameHasManifestExt'`; \
+	 scpi_write=`printf '%s\n' "$$bp" | grep -c 'SdManifest_NameReservedForManifestsLen('`; \
+	 hdr=`$(CC) -fpreprocessed -E -I$(FW_UTIL) $(FW_UTIL)/SdManifest.h 2>/dev/null \
+	      | grep -c 'SdManifest_NameReservedForManifestsLen('`; \
+	 ok=1; \
+	 test "$$mgr_scan" -eq 1 || ok=0; \
+	 test "$$mgr_write" -eq 1 || ok=0; \
+	 test "$$scpi_scan" -eq 0 || ok=0; \
+	 test "$$scpi_write" -eq 1 || ok=0; \
+	 test "$$hdr" -ge 2 || ok=0; \
+	 test "$$ok" -eq 1 \
+	  || { echo "ERROR: #1124 r29 PIN 23g: a manifest-name consumer is asking the"; \
+	       echo "       WRONG question, or the two predicates were unified."; \
+	       echo "         manager, SCAN predicate  (NameHasManifestExt):      $$mgr_scan (expect 1)"; \
+	       echo "         manager, WRITE predicate (NameReservedForManifests): $$mgr_write (expect 1)"; \
+	       echo "         SCPI,    SCAN predicate  (must not appear):          $$scpi_scan (expect 0)"; \
+	       echo "         SCPI,    WRITE predicate (…Len, the setter):         $$scpi_write (expect 1)"; \
+	       echo "         header, definition + use of the WRITE predicate:     $$hdr (expect >= 2)"; \
+	       echo "       They differ on exactly one input -- the bare \".mfst\" --"; \
+	       echo "       and that input is the r29 HIGH: reserved as a logging"; \
+	       echo "       target, NOT a manifest to read. Tightening the scan's"; \
+	       echo "       predicate to fix the setter BREAKS the scan, which must"; \
+	       echo "       keep answering NO (its contents would otherwise decide a"; \
+	       echo "       refusal). Two questions, two predicates, named after the"; \
+	       echo "       questions so the next reader cannot pick the wrong one."; \
+	       exit 1; }
+	@# ⛔⛔ PIN 24 -- r21 AUDIT HIGH (:972): THE DIRECTORY GENERATION IS
+	@# SNAPSHOTTED BEFORE THE RESOLUTION AND RE-CHECKED AT THE COMMIT.
+	@#
+	@# SD:FILE resolves its operand against the configured directory early
+	@# (SD_StripConfiguredDir accepts the "<dir>/<name>" form) and commits the
+	@# name plus its grant late. It leaves the critical section several times in
+	@# between, and USB SCPI at priority 7 preempts WiFi SCPI at 2 with no
+	@# cross-transport dispatch mutex -- so an SD:DIR landing in the gap means
+	@# the operand was stripped against one directory and committed under
+	@# another, granting overwrite on a file the client never named.
+	@#
+	@# All three parts are pinned, because any one of them alone is inert: the
+	@# snapshot, the bump INSIDE the directory write's own critical section, and
+	@# the compare inside the COMMIT's critical section. A compare outside it
+	@# would be another stale fast path, which is the defect itself.
+	@pp=`$(CC) -fpreprocessed -E $(SD_BENCH_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 for probe in \
+	   "const uint32_t dirGenAtStrip = gSdDirGeneration;" \
+	   "pSDCardRuntimeConfig->directory[pathLen] = '\\0'; gSdDirGeneration++;" \
+	   "dirMoved = (gSdDirGeneration != dirGenAtStrip); if (!benchOwnsTarget && !dirMoved) {" \
+	 ; do \
+	   case "$$pp" in \
+	     *"$$probe"*) ;; \
+	     *) echo "ERROR: #1124 r21 PIN 24 lost: $$probe"; \
+	        echo "       The SD:FILE directory-generation check (audit :972) is"; \
+	        echo "       incomplete."; \
+	        echo "       Without all three, an SD:DIR landing between the"; \
+	        echo "       operand resolution and the commit grants overwrite on a"; \
+	        echo "       file the client never named."; \
+	        exit 1;; \
+	   esac; \
+	 done
+	@# ⛔⛔ PIN 25 -- r22 AUDIT MEDIUM (:2871): AN INDEX PAST OUR PART LIMIT IS
+	@# SKIPPED, NOT FAULTED.
+	@#
+	@# r21 asserted-and-FAULTed, reasoning that this session cannot produce such
+	@# an index so a recorded one "cannot occur". The premise was right and the
+	@# conclusion backwards: the record is not OURS, and a foreign session is
+	@# entitled to a file called exp-5000.csv. FAULT is a refusal, so one such
+	@# record disarmed every capture in the directory.
+	@#
+	@# ⛔⛔ r25 REWROTE THIS PIN, BECAUSE ITS FIRST FORM PINNED A DEFECT. It
+	@# asserted "an over-limit index is SKIPPED" as exact text -- and r25 found
+	@# that to be a FALSE NEGATIVE: fileCounter is NOT bounded by bucket
+	@# capacity (the existing-target reopen path suppresses the roll and the
+	@# count that drives it), so an index above the bitset CAN be ours, and
+	@# skipping it misses the collision silently.
+	@#
+	@# ⭐ So this pin was DEFENDING the bug, exactly as test_924's "index 0
+	@# cannot be in a bucket" row did one round earlier. A guard written at the
+	@# same time as the code it guards inherits that code's wrong premise and
+	@# then makes it look deliberate. The surviving half of the invariant is the
+	@# half that was always right: an over-limit index must not FAULT.
+	@#
+	@# ⭐ THE GENERAL RULE, and the reason this is pinned rather than just
+	@# fixed: "this cannot happen, so assert" is only safe when the impossible
+	@# thing is OURS TO PRODUCE. For anything a FOREIGN file may legitimately be,
+	@# the fail-closed branch is a denial of service. Second instance in two
+	@# rounds (the manifest-count cap was the first).
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"gSDCardData.foreignAboveLimitRecord = true;"*) ;; \
+	   *) echo "ERROR: #1124 r25 PIN 25: an index past SD_FOREIGN_PART_LIMIT no"; \
+	      echo "       longer routes to the exact check. Skipping it is a FALSE"; \
+	      echo "       NEGATIVE (audit :2890) -- fileCounter is not bounded by"; \
+	      echo "       bucket capacity, because the reopen path suppresses the"; \
+	      echo "       roll and the count that drives it, so such an index CAN be"; \
+	      echo "       ours. Faulting on it is also wrong (audit :2871). It must"; \
+	      echo "       set foreignAboveLimitRecord and let the open decide."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"if (idx < SD_FOREIGN_PART_LIMIT) { sd_ForeignBitSet(idx); } else {"*) ;; \
+	   *) echo "ERROR: #1124 r25 PIN 25: the index pass no longer splits in-range"; \
+	      echo "       from above-range indices. In-range sets a bit; above-range"; \
+	      echo "       must be remembered, not dropped and not faulted."; \
+	      exit 1;; \
+	 esac
+	@# ⛔⛔ PIN 26 -- r22 AUDIT MEDIUM (:2930): A BUCKET-SHAPED CONFIGURED
+	@# DIRECTORY ALSO SCANS ITS PARENT, FOR EVERY SESSION.
+	@#
+	@# r21 narrowed the OPT-IN away from this layout, which closed truncation and
+	@# left CREATION open -- and creation needs no opt-in. With SD:DIR = D/P001, a
+	@# part that a session configured at D wrote into the bucket has its owner
+	@# manifest in D; delete the part, log ordinarily into the bucket, and the
+	@# parent's record starts describing our bytes with nothing having refused.
+	@#
+	@# Both halves are pinned with SEPARATE diagnostics (26a / 26b): the parent
+	@# walk EXISTS, and it passes isOwnDir FALSE. One message for both would
+	@# make a mutant that drops the walk and a mutant that mis-sets the flag
+	@# indistinguishable, and the second would then prove nothing the first did
+	@# not -- the PIN 23a/23b lesson.
+	@# ⛔⛔⛔ r30 REWROTE ALL THREE ARMS, because all three keyed on the
+	@# `isOwnDir` FLAG and the flag is DELETED.
+	@#
+	@# The flag selected whether the own-manifest exclusion ran, and the
+	@# exclusion compared the manifest LEAF. r30 audit HIGH (:3141) showed both
+	@# keys wrong: SD:FILE "P001/exp.csv" puts our manifest in `D/P001`, which
+	@# is scanned as a BUCKET CHILD with the flag false, so our own write-open
+	@# manifest was opened, FatFs returned FR_LOCKED (FF_FS_LOCK is 10) and the
+	@# capture was killed. The exclusion is now by FULL PATH, which is correct
+	@# in every directory and needs no flag -- so the flag is gone rather than
+	@# fixed.
+	@#
+	@# ⭐ These are arms 3, 4 and 5 of this row's pins to fire on a CORRECT
+	@# change, every one of them keyed on a symbol rather than on the question.
+	@# The questions, which is what they now assert:
+	@#   26a  is the PARENT scanned at all?            (audit :2930)
+	@#   26b  is our own manifest excluded by FULL PATH, with no flag able to
+	@#        select a weaker comparison?               (audit :3141)
+	@#   26c  is the CONFIGURED directory scanned?
+	@#   26d  does EVERY base also get the configured name's subdirectory
+	@#        chain?                                    (audit :3311, x3 rounds)
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"sd_ScanBaseAndNameSubdir(parent,"*) ;; \
+	   *) echo "ERROR: #1124 r22 PIN 26a: the PARENT walk is gone."; \
+	      echo "       A bucket-shaped configured directory must also scan its"; \
+	      echo "       parent (audit :2930), or the DEFAULT path can recreate a"; \
+	      echo "       part the parent's manifest still records -- no opt-in"; \
+	      echo "       involved, so no opt-in test can see it."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"if (SdManifest_PathsEqualCaseInsensitive(path, ownPath)) { continue; }"*) ;; \
+	   *) echo "ERROR: #1124 r30 PIN 26b: our own manifest is no longer excluded"; \
+	      echo "       by FULL PATH. Expected, on the flattened text:"; \
+	      echo "         if (SdManifest_PathsEqualCaseInsensitive(path, ownPath))"; \
+	      echo "       A LEAF comparison is not equivalent: with SD:FILE"; \
+	      echo "       \"P001/exp.csv\" our manifest sits in a scanned BUCKET, and"; \
+	      echo "       opening it returns FR_LOCKED (FF_FS_LOCK is 10), which"; \
+	      echo "       FAULTS the scan and kills our own capture (audit :3141)."; \
+	      echo "       A full path also still reads a same-leaf manifest in the"; \
+	      echo "       PARENT, which is the record :2930 scans the parent FOR --"; \
+	      echo "       so the two invariants are satisfied by ONE comparison and"; \
+	      echo "       need no flag to choose between them."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"static sd_InspectResult sd_ScanOneDirectory(const char *dir, const char *needle)"*) ;; \
+	   *) echo "ERROR: #1124 r30 PIN 26b: sd_ScanOneDirectory's SIGNATURE grew a"; \
+	      echo "       parameter again. Pinned by signature, the way PIN 27 pins"; \
+	      echo "       PartIndexOf's missing fault channel: a flag that selects"; \
+	      echo "       between a correct and an incorrect comparison is an"; \
+	      echo "       invitation to pass the wrong one, so the correct version"; \
+	      echo "       must be the ONLY one reachable."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"sd_ScanBaseAndNameSubdir(dir, needle)"*) ;; \
+	   *) echo "ERROR: #1124 r22 PIN 26c: the configured directory is no longer"; \
+	      echo "       scanned."; \
+	      exit 1;; \
+	 esac; \
+	 n1=`printf '%s\n' "$$pp" | grep -o 'sd_ScanOneDirectory(' | wc -l`; \
+	 n2=`printf '%s\n' "$$pp" | grep -o 'sd_ScanBaseAndNameSubdir(' | wc -l`; \
+	 test "$$n1" -eq 3 && test "$$n2" -eq 4 \
+	  || { echo "ERROR: #1124 r30 PIN 26d: a scan base BYPASSES the configured"; \
+	       echo "       name's subdirectory chain."; \
+	       echo "         sd_ScanOneDirectory( occurrences:      $$n1 (expect 3:"; \
+	       echo "           the definition plus the TWO calls inside the wrapper)"; \
+	       echo "         sd_ScanBaseAndNameSubdir( occurrences:  $$n2 (expect 4:"; \
+	       echo "           the definition plus the THREE bases)"; \
+	       echo "       Every base must go through sd_ScanBaseAndNameSubdir, or"; \
+	       echo "       that base misses <base>/<name's subdirectory chain> --"; \
+	       echo "       where a session configured with SD:FILE \"sub/exp.csv\""; \
+	       echo "       actually keeps its manifest. That gap was reported HIGH"; \
+	       echo "       in THREE consecutive rounds (r28 :3113, r29 and r30"; \
+	       echo "       :3311, both legs each time) while it sat in the PR as a"; \
+	       echo "       documented residual, which is why it is now closed and"; \
+	       echo "       pinned per-base rather than per-call-site."; \
+	       exit 1; }
+	@# ⛔⛔ PIN 27 -- r23 AUDIT MEDIUM (:424): A FOREIGN NAME CANNOT FAULT THE
+	@# SCAN. SdManifest_PartIndexOf has NO fault return, by signature.
+	@#
+	@# It had a `bool *fault` out-param, set when an index would not fit a
+	@# uint32_t, and the caller turned that into a refusal -- so a foreign file
+	@# called exp-4294967296.csv disarmed every capture in the directory. The
+	@# parameter is REMOVED rather than left always-false, because an out-param
+	@# that can never be true still invites the next reader to add a case to it.
+	@#
+	@# ⭐ THE PROPERTY, pinned by SIGNATURE so it cannot be re-added quietly: a
+	@# NAME is an INPUT. Its length, its digits and its spelling are the outside
+	@# world's choice, and none of them is an error condition for us. Only
+	@# unreadable or unparseable manifest CONTENT may fault. Three consecutive
+	@# rounds produced three violations (a manifest COUNT cap, an over-limit
+	@# index, an overflowing index), every one a fail-closed branch reasoning
+	@# about someone else's name using our own limits.
+	@# ⚠ Both arms read COMMENT-STRIPPED text. The signature arm always did;
+	@# the header arm did not, and fired immediately on this pin's own
+	@# explanation of the parameter it forbids -- a pin tripped BY prose, the
+	@# mirror of a pin satisfied by it. Same remedy either way: measure the
+	@# translation unit, not the file.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"SdManifest_PartIndexOf( line, gpSDCardSettings->directory, gpSDCardSettings->file);"*) ;; \
+	   *) echo "ERROR: #1124 r23 PIN 27: the index pass no longer calls"; \
+	      echo "       SdManifest_PartIndexOf with exactly three arguments, so a"; \
+	      echo "       fault channel may have come back (audit :424). A foreign"; \
+	      echo "       NAME must never fault the scan -- only unreadable or"; \
+	      echo "       unparseable CONTENT may."; \
+	      exit 1;; \
+	 esac; \
+	 n=`$(CC) -fpreprocessed -E $(FW_UTIL)/SdManifest.h 2>/dev/null \
+	    | grep -c 'bool \*fault'`; \
+	 if [ "$$n" != "0" ]; then \
+	   echo "ERROR: #1124 r23 PIN 27: SdManifest.h declares a fault out-param"; \
+	   echo "       again ($$n occurrence(s)). An index that does not fit, or"; \
+	   echo "       exceeds our part range, means NOT OURS -- skip it. One"; \
+	   echo "       session produces at most"; \
+	   echo "       (MAX_BUCKET + 1) * MAX_DIR_FILES = 4160 parts."; \
+	   exit 1; \
+	 fi
+	@# ⛔⛔ PIN 28 -- r23 AUDIT HIGH (:2980) + r22 (:2930): THE SCAN COVERS EVERY
+	@# PLACE #689 PUTS A MANIFEST, AND BOTH DIRECTIONS ARE PINNED.
+	@#
+	@# A manifest is only created in the directory its session had CONFIGURED,
+	@# and #689 puts data in that directory and in its immediate P### children,
+	@# never deeper and never nested. So a manifest that could name one of OUR
+	@# files lives in exactly three places: our directory, its PARENT when ours
+	@# is a bucket, or our immediate bucket CHILDREN. 2 and 3 are mirrors and
+	@# only one can apply -- if we are in a bucket we look up, else we look down.
+	@# That exhausts the layout instead of adding a case to a list, which is what
+	@# separates this from the four naming rules rounds 16-19 produced.
+	@#
+	@# Separate diagnostics per direction, so a mutant that drops one is not
+	@# indistinguishable from one that drops the other.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"out = sd_ScanBaseAndNameSubdir(parent, needle);"*) ;; \
+	   *) echo "ERROR: #1124 PIN 28a: the UPWARD scan is gone. A session whose"; \
+	      echo "       configured directory IS a bucket must read the parent,"; \
+	      echo "       which owns the records written into that bucket"; \
+	      echo "       (audit :2930)."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"out = sd_ScanBaseAndNameSubdir(child, needle);"*) ;; \
+	   *) echo "ERROR: #1124 PIN 28b: the DOWNWARD scan is gone. A session at the"; \
+	      echo "       top of a bucket set must read its immediate P### children,"; \
+	      echo "       where a session configured THERE recorded files our own"; \
+	      echo "       rotation will write to (audit :2980)."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"for (b = 1u; (b <= SD_CARD_MANAGER_MAX_BUCKET) && (out == SD_INSPECT_CLEAR); b++)"*) ;; \
+	   *) echo "ERROR: #1124 PIN 28c: the downward scan no longer probes EVERY"; \
+	      echo "       bucket index up to SD_CARD_MANAGER_MAX_BUCKET. An early"; \
+	      echo "       stop at the first absent bucket would skip every later one"; \
+	      echo "       if a user deleted an intermediate directory, and a skipped"; \
+	      echo "       bucket is a MISSED COLLISION."; \
+	      exit 1;; \
+	 esac
+	@# ⛔⛔ PIN 29 -- r24 AUDIT HIGH (:479): INDEX 0 IS NOT GATED ON THE BUCKET.
+	@#
+	@# I had `if (!inBucket && ...) return 0u;` on the reasoning that the counter
+	@# is 0 exactly once and bucket 0 IS the directory. True clause, invalid
+	@# conclusion: the bucket-advance loop runs BEFORE generateFilename and
+	@# advances on a full bucket even for the session's FIRST file, so a
+	@# directory already holding MAX_DIR_FILES files makes the session write
+	@# `D/P001/exp.csv` -- unsuffixed, inside a bucket. My restriction rejected a
+	@# name this firmware really writes, so no bit was set and the exact check
+	@# never ran. Fail-OPEN.
+	@#
+	@# Pinned as the ABSENCE of the conjunction, because that is the defect's
+	@# exact shape and it reads as a deliberate scoping choice.
+	@#
+	@# r28: the variable is `bucketPresent` since the configured name became
+	@# segment-walked, and the index-0 test compares the name's last segment
+	@# against the FILE'S LAST SEGMENT (fileLeaf) rather than the whole
+	@# configured name. Both spellings of the forbidden conjunction are listed,
+	@# old and new -- a negative arm keyed on a variable that no longer exists
+	@# is inert, which is how a guard quietly stops guarding.
+	@pp=`$(CC) -fpreprocessed -E $(FW_UTIL)/SdManifest.h 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"if (!bucketPresent && SdManifest_SegmentsEqual"*|*"if (bucketPresent == false"*|*"if (!inBucket && SdManifest_SegmentsEqual"*) \
+	      echo "ERROR: #1124 r24 PIN 29: index 0 is gated on the bucket again"; \
+	      echo "       (audit :479). An unsuffixed FIRST file lands inside a"; \
+	      echo "       bucket whenever the configured directory is already full"; \
+	      echo "       -- the bucket-advance loop runs before generateFilename."; \
+	      echo "       Gating it there sets no bit for a name we really write,"; \
+	      echo "       so the exact check never runs: fail-OPEN."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"if (SdManifest_SegmentsEqual(leaf, leafLen, fileLeaf, fileLeafLen)) { return 0u; }"*) ;; \
+	   *) echo "ERROR: #1124 r24 PIN 29: the index-0 test is gone or reshaped."; \
+	      echo "       The configured name itself must map to index 0, in the"; \
+	      echo "       directory OR in a bucket."; \
+	      exit 1;; \
+	 esac
+	@# ⛔⛔ PIN 30 -- r24 AUDIT HIGH (:1111): '~' IS REFUSED IN THE DIRECTORY TOO.
+	@#
+	@# r22 refused the opt-in for a '~' in the FILENAME, because a FatFs 8.3
+	@# alias names the same file as a long name while comparing unequal to it. I
+	@# applied it to the name and stopped -- but the guard compares whole PATHS,
+	@# so an alias in a DIRECTORY component diverges identically. A restriction
+	@# derived from a property of path TEXT has no business being scoped to one
+	@# component of the path, and that is the general form worth keeping.
+	@pp=`$(CC) -fpreprocessed -E $(SD_BENCH_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"if (strchr(dir, '~') != NULL) { return true; }"*) ;; \
+	   *) echo "ERROR: #1124 r24 PIN 30: a '~' in the configured DIRECTORY no"; \
+	      echo "       longer refuses the overwrite opt-in (audit :1111). An 8.3"; \
+	      echo "       alias in a directory component diverges from its long name"; \
+	      echo "       exactly as one in the filename does; the guard compares"; \
+	      echo "       whole paths."; \
+	      exit 1;; \
+	 esac
+	@# ⛔⛔ PIN 31 -- r24 AUDIT MEDIUM (:2996): AN UNCONSTRUCTABLE FOREIGN NAME IS
+	@# SKIPPED, NOT FAULTED.
+	@#
+	@# A 100-character foreign *.mfst name does not fit the path buffer, and r23
+	@# made that a FAULT -- so one such file disarmed every capture in the
+	@# directory. By this module's OWN rule, written one round earlier and pinned
+	@# as PIN 27: a foreign NAME can never fault the scan. Its length is the
+	@# outside world's choice.
+	@#
+	@# Nothing is lost by skipping, which is why it is not a trade: the buffer is
+	@# sized for the LONGEST path this firmware can construct, so a name that
+	@# does not fit is one no session of ours could have written, and its records
+	@# cannot be about our files.
+	@#
+	@# ⭐ SIXTH INSTANCE of one mistake, and the rule was already written down
+	@# when I wrote the faulting line. A rule being recorded is not the same as it
+	@# being applied at the next site.
+	@# Line markers stripped: -fpreprocessed emits `# N "file"` where it removed
+	@# a comment, and the explanation for this `continue` sits between the test
+	@# and the statement -- so the key would otherwise span a marker carrying a
+	@# line number.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | grep -v '^#' \
+	    | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"if (w < 0 || (size_t)w >= sizeof(path)) { continue; }"*) ;; \
+	   *) echo "ERROR: #1124 r24 PIN 31: a foreign manifest name that will not"; \
+	      echo "       fit the path buffer no longer SKIPS (audit :2996). If it"; \
+	      echo "       faults, one over-long filename in the directory refuses"; \
+	      echo "       every capture there. A foreign NAME must never fault the"; \
+	      echo "       scan -- see PIN 27."; \
+	      exit 1;; \
+	 esac
+	@# ⛔⛔ PIN 32 -- r25 AUDIT HIGH (SdManifest.h:258): THE GRANT REQUIRES
+	@# ASCII-ONLY, IN BOTH THE FILENAME AND THE DIRECTORY.
+	@#
+	@# SdManifest_FoldChar folds ASCII only, and says so. FatFs on a FAT volume
+	@# folds the OEM code page (CP437 here), where e.g. 0x82 and 0x90 are the
+	@# same character and our folder leaves them distinct. Two names FatFs calls
+	@# equal therefore compare unequal to us -- the same divergence as an 8.3
+	@# alias, with the same consequence: a foreign record naming our file is not
+	@# matched.
+	@#
+	@# ⚠ REFUSE THE FORM; DO NOT MODEL CP437. A code-page table would be a
+	@# fifth naming rule AND would have to agree with whatever FF_CODE_PAGE is
+	@# set to, going silently wrong if that changes. Refusing the destructive
+	@# opt-in for a non-ASCII name costs nothing anyone needs; ordinary
+	@# refuse-by-default logging still accepts such names.
+	@#
+	@# ⚠ UNSIGNED BYTES ARE LOAD-BEARING: `char` is signed on this target, so a
+	@# plain `c > 0x7E` is FALSE for every high byte and the check would pass
+	@# exactly what it exists to catch. Pinned on the cast.
+	@# ⛔⛔ r30 RE-KEYED THIS: THE ASCII TEST MOVED, SO COUNTING CASTS IN THE
+	@# SCPI FILE NO LONGER FINDS IT.
+	@#
+	@# r25 pinned "at least 2 unsigned-char casts in $(SD_BENCH_SRC)", one for
+	@# the filename and one for the directory, both inline there. r30 made the
+	@# refusal unconditional and moved the byte test into
+	@# SdManifest_PathHasNonAsciiLen, so the SCPI file has ONE cast (the
+	@# directory arm in SD_DirHasNonCanonicalForm) and the header has the other.
+	@# A count in one file would now fail on the correct change -- the fourth
+	@# such pin this row has had, which is why the guidance at the head of this
+	@# block exists.
+	@#
+	@# ⭐ AND THE CAST IS NO LONGER THE PRIMARY GUARD. test_924's
+	@# non_ascii_is_detected_in_a_name_or_a_directory asserts the BEHAVIOUR over
+	@# all 18 CP437 bytes that alias to pure ASCII, every one of them >= 0x80 --
+	@# so a signed-char regression fails by VALUE, which no cast count can do.
+	@# This pin is kept as the cheap structural half: the test exists wherever
+	@# the comparison is written.
+	@pp=`$(CC) -fpreprocessed -E $(SD_BENCH_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 hp=`$(CC) -fpreprocessed -E -I$(FW_UTIL) $(FW_UTIL)/SdManifest.h 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 n=`printf '%s' "$$pp" | grep -o '(const unsigned char \*)' | grep -c .`; \
+	 nh=`printf '%s' "$$hp" | grep -o '(const unsigned char \*)' | grep -c .`; \
+	 if [ "$$n" -lt 1 ] || [ "$$nh" -lt 1 ]; then \
+	   echo "ERROR: #1124 r30 PIN 32: an ASCII range check is not on UNSIGNED"; \
+	   echo "       bytes. Casts found: $$n in $(SD_BENCH_SRC) (the DIRECTORY"; \
+	   echo "       arm in SD_DirHasNonCanonicalForm), $$nh in SdManifest.h"; \
+	   echo "       (SdManifest_PathHasNonAsciiLen, used for both the name and"; \
+	   echo "       the directory at use)."; \
+	   echo "       char is SIGNED here, so a high byte compares as negative and"; \
+	   echo "       a signed test passes everything it exists to catch -- and all"; \
+	   echo "       18 CP437 bytes that alias to pure ASCII are >= 0x80, i.e."; \
+	   echo "       exactly the ones a signed test would wave through."; \
+	   echo "       The behavioural guard is test_924's"; \
+	   echo "       non_ascii_is_detected_in_a_name_or_a_directory."; \
+	   exit 1; \
+	 fi; \
+	 case "$$pp" in \
+	   *"if ((u[i] < 0x20u) || (u[i] > 0x7Eu)) { return true; }"*) ;; \
+	   *) echo "ERROR: #1124 r25 PIN 32a: the DIRECTORY no longer refuses the"; \
+	      echo "       grant on a non-ASCII byte (SdManifest.h:258). FatFs folds"; \
+	      echo "       case by code page; this firmware folds ASCII only."; \
+	      echo "       (r30: the NAME arm is PIN 32b below and is now"; \
+	      echo "       unconditional; this is the DIRECTORY arm.)"; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"[SD1124] nonascii in the name"*) ;; \
+	   *) echo "ERROR: #1124 r30 PIN 32b: the FILENAME no longer refuses a"; \
+	      echo "       non-ASCII byte."; \
+	      echo "       ⛔ RE-KEYED AT r30, and the old key is the story: it was"; \
+	      echo "       \"[SD1124] scope name is not ASCII\" -- the message from"; \
+	      echo "       the OPT-IN-only check. r30's blind leg showed that scope"; \
+	      echo "       closes nothing: an ungranted session CREATES the"; \
+	      echo "       non-ASCII file, and FatFs stores a PURE-ASCII 8.3 alias"; \
+	      echo "       for it (ExCvt[0x02] is 'E' in the TBL_CT437 we ship, with"; \
+	      echo "       no ~N tail), which a later ASCII-named session resolves"; \
+	      echo "       to. So the refusal is unconditional and the message no"; \
+	      echo "       longer says \"scope\"."; \
+	      echo "       The behavioural guard is test_924's"; \
+	      echo "       non_ascii_is_detected_in_a_name_or_a_directory; this arm"; \
+	      echo "       only checks the refusal is still WIRED UP."; \
+	      exit 1;; \
+	 esac
+	@# ⛔⛔ PIN 33 -- r26 AUDIT MEDIUM (:2862): NO LINE CAP ON A MANIFEST.
+	@#
+	@# SD_FOREIGN_SCAN_MAX_LINES was ((MAX_BUCKET + 1) * MAX_DIR_FILES) + 1 =
+	@# 4161, and FAULT is a refusal -- so a manifest THIS FIRMWARE CAN PRODUCE
+	@# disarmed the next fresh capture in that directory.
+	@#
+	@# ⛔⛔ THE SAME PREMISE r25 HAD ALREADY DISPROVED. r25 established that
+	@# fileCounter is not bounded by bucket capacity (the reopen path suppresses
+	@# the roll and the count that drives it); I fixed the bitset logic the
+	@# finding named and left THIS constant, derived from the identical
+	@# arithmetic, standing. And the reopen path appends a RECORD per re-open of
+	@# an already-recorded name, so a manifest's line count follows the ROTATION
+	@# count, not the file count, and is effectively unbounded.
+	@#
+	@# ⭐ WHEN A PREMISE IS DISPROVED, ENUMERATE EVERYTHING DERIVED FROM IT. A
+	@# finding names one consumer; the premise may have several. This is the
+	@# fourth member of the wrong-dimension-bound family, and the second time
+	@# this exact arithmetic has been wrong.
+	@#
+	@# Pinned BY NAME so the constant cannot return, and by the presence of the
+	@# byte bound that replaced it -- a bound on how much we READ, not on how
+	@# much the user may have LOGGED.
+	@n=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null \
+	    | grep -c 'SD_FOREIGN_SCAN_MAX_LINES'`; \
+	 if [ "$$n" != "0" ]; then \
+	   echo "ERROR: #1124 r26 PIN 33: the manifest LINE cap is back ($$n"; \
+	   echo "       mention(s) of SD_FOREIGN_SCAN_MAX_LINES). A line count is a"; \
+	   echo "       SESSION bound, and FAULT is a refusal, so it disarms the next"; \
+	   echo "       capture over a manifest this firmware itself produced"; \
+	   echo "       (audit :2862). Bound the BYTES READ instead."; \
+	   exit 1; \
+	 fi; \
+	 pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"if (got > (size_t)(SD_FOREIGN_SCAN_MAX_BYTES - bytesRead)) {"*) ;; \
+	   *) echo "ERROR: #1124 r26 PIN 33: the byte bound on the manifest read is"; \
+	      echo "       gone, so a non-terminating file is unbounded work. It must"; \
+	      echo "       bound the READ (a corruption bound), not the number of"; \
+	      echo "       records the user may have logged."; \
+	      echo "       NOTE the subtraction form: computing bytesRead + got first"; \
+	      echo "       can WRAP and pass the check it exists to make."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"lines++;"*) ;; \
+	   *) echo "ERROR: #1124 r26 PIN 33: the line counter is no longer a plain"; \
+	      echo "       increment, so it is being USED for something. It exists"; \
+	      echo "       for the diagnostics only -- never as a cap."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"lines >"*|*"lines <"*) \
+	      echo "ERROR: #1124 r26 PIN 33: the manifest LINE count is compared, so"; \
+	      echo "       it can refuse a session over its length (audit :2862)."; \
+	      exit 1;; \
+	 esac
+	@# ⛔⛔⛔ PIN 34 -- r27: THE BITSET'S RANGE IS DERIVED FROM EVERY WRITER OF
+	@# fileCounter, NOT FROM BUCKET CAPACITY.
+	@#
+	@# It was ((MAX_BUCKET + 1) * MAX_DIR_FILES) + 1 = 4161. r25 showed bucket
+	@# capacity does not bound the counter (the reopen path suppresses the roll),
+	@# and I then reported "no ceiling below 2^32" -- WRONG. The r25/r26 findings'
+	@# 9999 was right: rotation is gated on
+	@#     willRotate = (fileCounter < SD_CARD_MANAGER_MAX_SPLIT_FILES)
+	@# so the counter stops there. I missed it because I enumerated the counter's
+	@# WRITES and the bucket arithmetic, while the ceiling lives in a READ against
+	@# a differently-named macro -- the very enumeration failure I had just named
+	@# as r26's lesson.
+	@#
+	@# ⭐ NOT COSMETIC: at 4161 a LEGITIMATE long session reaches indices the
+	@# bitset cannot hold, so r25's above-limit route fires and every open past
+	@# part 4161 does an exact content scan -- the per-open re-read that option B
+	@# existed to remove. Correctness was never at risk; the COST guarantee was.
+	@#
+	@# Pinned on BOTH terms, so a future edit cannot quietly re-derive the range
+	@# from one writer again, and pinned AGAINST the bucket arithmetic by name.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 for probe in \
+	   "SD_CARD_MANAGER_MAX_SPLIT_FILES" \
+	   "SD_CARD_MANAGER_UNIQUE_TARGET_MAX" \
+	 ; do \
+	   case "$$pp" in \
+	     *"$$probe"*) ;; \
+	     *) echo "ERROR: #1124 r27 PIN 34: the bitset range no longer mentions"; \
+	        echo "       $$probe. It must be derived from EVERY writer of"; \
+	        echo "       fileCounter -- the rotation ceiling AND the discriminator"; \
+	        echo "       probe loop -- not from bucket capacity, which r25 showed"; \
+	        echo "       does not bound it."; \
+	        exit 1;; \
+	   esac; \
+	 done; \
+	 case "$$pp" in \
+	   *"SD_FOREIGN_PART_LIMIT (((SD_CARD_MANAGER_MAX_BUCKET"*) \
+	      echo "ERROR: #1124 r27 PIN 34: the bitset range is derived from BUCKET"; \
+	      echo "       CAPACITY again. r25 disproved that premise: the reopen path"; \
+	      echo "       suppresses the roll and the count that drives it, so the"; \
+	      echo "       counter passes 4161 in ordinary long sessions and every"; \
+	      echo "       open beyond it falls back to a per-open content scan."; \
+	      exit 1;; \
+	 esac
+	@# ⛔⛔ PIN 35 -- r28 AUDIT HIGH (:469): THE CONFIGURED NAME IS WALKED AS
+	@# SEGMENTS, AND THE MATCH IS ANCHORED AT BOTH ENDS.
+	@#
+	@# SD:FILE permits '/', and generateFilename strips only the last extension
+	@# for baseFilename, so a session writes <dir>/[bucket]/<file's own dirs>/
+	@# <leaf> -- the BUCKET FIRST, before the name's own subdirectory. r27 treated
+	@# `file` as one segment, so names the session WRITES went unmatched: no bit,
+	@# no exact check, fail-OPEN, and independent of where the manifest lived.
+	@#
+	@# Anchoring at both ends is what makes it decidable: left-to-right cannot
+	@# tell the bucket `P001` from the name's own `P001`. Pinned on the segment
+	@# COUNT arithmetic, which is where the shape is decided.
+	@pp=`$(CC) -fpreprocessed -E $(FW_UTIL)/SdManifest.h 2>/dev/null | grep -v '^#' | tr '\n' ' ' | tr -s ' '`; \
+	 for probe in \
+	   "fileSegs = SdManifest_CountSegments(file);" \
+	   "if (nameSegs == (dirSegs + fileSegs)) { bucketPresent = false; }" \
+	   "else if (nameSegs == (dirSegs + fileSegs + 1u)) { bucketPresent = true;" \
+	 ; do \
+	   case "$$pp" in \
+	     *"$$probe"*) ;; \
+	     *) echo "ERROR: #1124 r28 PIN 35: the configured name is no longer"; \
+	        echo "       walked as SEGMENTS with the shape anchored at both ends"; \
+	        echo "       (audit :469). Missing: $$probe"; \
+	        echo "       A name containing '/' then goes unmatched, which is"; \
+	        echo "       fail-OPEN even for a directory the scan does read."; \
+	        exit 1;; \
+	   esac; \
+	 done
+	@# ⛔⛔ PIN 36 -- r28 AUDIT HIGH (:3234): BOTH SCAN DIRECTIONS, NOT ONE.
+	@#
+	@# sd_BuildBucketPath formats `<CONFIGURED dir>/P%03u`, so a session
+	@# configured at D/P001 has #689 create D/P001/P001 for its OWN rotation. It
+	@# therefore needs the PARENT (whose session wrote into D/P001) AND its own
+	@# CHILDREN. r27 returned after the parent, and my "mutually exclusive" claim
+	@# was false -- it also made me document nested buckets as "a layout #689
+	@# never creates", which is why that residual is WITHDRAWN rather than
+	@# reworded.
+	@#
+	@# Pinned as the ABSENCE of the early return: the upward branch must fall
+	@# through to the downward loop, not return.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | grep -v '^#' | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"out = sd_ScanBaseAndNameSubdir(parent, needle); if (out != SD_INSPECT_CLEAR) { return out; } } }"*) ;; \
+	   *) echo "ERROR: #1124 r28 PIN 36: the upward scan no longer falls through"; \
+	      echo "       to the downward one (audit :3234). A session configured in"; \
+	      echo "       a bucket must ALSO read its own bucket children, where"; \
+	      echo "       #689 is about to put its parts. Returning after the"; \
+	      echo "       parent skips them silently."; \
+	      exit 1;; \
+	 esac
+	@# ⛔ PIN 37 -- r28 AUDIT MEDIUM (:2728): ONLY A CANONICAL UNPADDED SUFFIX.
+	@#
+	@# generateFilename emits "%u", never padded, so `exp-01.csv` is a name this
+	@# firmware cannot produce -- and the recorded-part check stripped "-01",
+	@# found an unrelated exp.csv.mfst, and refused a fresh file even with the
+	@# opt-in. 4th instance of a FOREIGN name tripping a refusal.
+	@#
+	@# ⚠ The rule already existed in SdManifest_PartIndexOf since r21 and was
+	@# never propagated here. Enumerated this round by BEHAVIOUR: the part-suffix
+	@# rule has exactly two consumers, and the two other digit loops over names
+	@# (sd_DirLeafIsBucket, SD_DirHasBucketComponent) must do the OPPOSITE --
+	@# buckets are "P%03u" and `P001` is padded by design. Adding the rule to all
+	@# four would have broken bucket matching.
+	@# ⛔⛔⛔ REWRITTEN AT r28's SECOND PASS: THE RULE IS NO LONGER WRITTEN HERE
+	@# AT ALL, SO PINNING ITS TEXT HERE WOULD PIN A COPY.
+	@#
+	@# The first version of this pin asserted the literal
+	@# `if ((dash[1] == '0') && ((end - dash) > 2))` in the manager. The audit
+	@# then found that condition INCOMPLETE IN BOTH CONSUMERS -- it lets a lone
+	@# "-0" through, and bounds nothing -- so pinning the text would have held
+	@# the two copies in agreement about a rule that was wrong in both. The
+	@# rule now has ONE body, SdManifest_ParsePartIndexDigits, and what is
+	@# worth pinning is that both consumers CALL it and neither re-implements
+	@# it.
+	@#
+	@# ⭐ THIS IS THE THIRD ROUND ON THIS ONE PREDICATE, and each round the
+	@# defect was the copy rather than the condition: r21 fixed PartIndexOf,
+	@# r28 found the manager's copy never updated, and r28's second pass found
+	@# the freshly-copied rule still wrong in both. So the pin counts
+	@# IMPLEMENTATIONS, not spellings.
+	@#
+	@# ⚠ ARM 2 IS THE OPPOSITE DIRECTION, and it is why "fix every consumer"
+	@# needed care: sd_DirLeafIsBucket and SD_DirHasBucketComponent are digit
+	@# loops over names that must NOT get this rule, because buckets are
+	@# "P%03u" and `P001` is padded BY DESIGN. If either ever calls the shared
+	@# parser, bucket matching breaks silently -- so that is pinned to zero.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null`; \
+	 ncall=`printf '%s\n' "$$pp" | grep -c 'SdManifest_ParsePartIndexDigits('`; \
+	 nold=`printf '%s\n' "$$pp" | grep -c "dash\[1\] == '0'"`; \
+	 hp=`$(CC) -fpreprocessed -E -I$(FW_UTIL) $(FW_UTIL)/SdManifest.h 2>/dev/null \
+	     | grep -c 'SdManifest_ParsePartIndexDigits('`; \
+	 lbucket=`printf '%s\n' "$$pp" | grep -n 'sd_DirLeafIsBucket' | head -1 | cut -d: -f1`; \
+	 nassert=`printf '%s\n' "$$pp" | grep -c '_Static_assert(SDMANIFEST_PART_INDEX_MAX'`; \
+	 ok=1; \
+	 test "$$ncall" -eq 1 || ok=0; \
+	 test "$$nold" -eq 0 || ok=0; \
+	 test "$$hp" -ge 2 || ok=0; \
+	 test "$$nassert" -eq 1 || ok=0; \
+	 test "$$ok" -eq 1 \
+	  || { echo "ERROR: #1124 r28 PIN 37: the part-suffix rule is not SHARED."; \
+	       echo "         SdManifest_ParsePartIndexDigits( calls in the manager:"; \
+	       echo "           $$ncall (expected exactly 1 -- the recorded-part check)"; \
+	       echo "         re-implemented \`dash[1] == '0'\` tests: $$nold (expected 0)"; \
+	       echo "         definition + use in the header: $$hp (expected >= 2)"; \
+	       echo "         _Static_assert tying the ceiling to"; \
+	       echo "           SD_FOREIGN_PART_LIMIT: $$nassert (expected 1)"; \
+	       echo "       This predicate has cost THREE rounds, and every time the"; \
+	       echo "       defect was a COPY of the rule rather than the rule:"; \
+	       echo "         r21  PartIndexOf learns to reject a padded suffix;"; \
+	       echo "         r28  the manager's copy is found never updated;"; \
+	       echo "         r28  the fresh copy is found wrong in BOTH places --"; \
+	       echo "              '-0' (counter 0 emits the UNSUFFIXED name) and an"; \
+	       echo "              out-of-range index were still accepted."; \
+	       echo "       So there is ONE body and both consumers call it. Do not"; \
+	       echo "       re-inline the condition here, even 'temporarily'."; \
+	       exit 1; }
+	@# ARM 2 -- the OPPOSITE rule, pinned to zero. Buckets are "P%03u" and
+	@# `P001` is padded BY DESIGN, so the two bucket-name digit loops must never
+	@# adopt the part-suffix rule. Giving all four sites one rule was the
+	@# enumeration trap this row recorded; this is what stops it.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null`; \
+	 sl=`printf '%s\n' "$$pp" | grep -n 'sd_DirLeafIsBucket' | head -1 | cut -d: -f1`; \
+	 if [ -n "$$sl" ]; then \
+	   bad=`printf '%s\n' "$$pp" | sed -n "$$sl,$$((sl+40))p" \
+	        | grep -c 'SdManifest_ParsePartIndexDigits('`; \
+	 else bad=0; fi; \
+	 bp=`$(CC) -fpreprocessed -E $(SD_BENCH_SRC) 2>/dev/null \
+	     | grep -c 'SdManifest_ParsePartIndexDigits('`; \
+	 test "$$bad" -eq 0 && test "$$bp" -eq 0 \
+	  || { echo "ERROR: #1124 r28 PIN 37 ARM 2: a BUCKET-name check adopted the"; \
+	       echo "       part-suffix rule."; \
+	       echo "         in sd_DirLeafIsBucket: $$bad (must be 0)"; \
+	       echo "         in $(SD_BENCH_SRC):    $$bp (must be 0)"; \
+	       echo "       Buckets are \"P%03u\" -- 'P001' is PADDED BY DESIGN, and"; \
+	       echo "       the part-suffix parser rejects padding. Adopting it here"; \
+	       echo "       makes every bucket stop matching, silently."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -o $(GATE1124_BIN) test_1124_overwrite_gate.c
+
+$(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h \
+                 $(FW_UTIL)/CRC32.h $(FW_UTIL)/CRC32.c $(SD_MANAGER_SRC) \
+                 $(SD_BENCH_SRC) $(SD_MGR_HDR) $(RECIPES)
+	@grep -q 'CRC32_Update(gSDCardData.fileCrcRunning' $(SD_MANAGER_SRC) \
+	  || { echo "ERROR: $(SD_MANAGER_SRC) no longer folds the write-path running"; \
+	       echo "       CRC (expected 'CRC32_Update(gSDCardData.fileCrcRunning')."; \
+	       echo "       #924's manifest records a CRC accumulated as the bytes are"; \
+	       echo "       WRITTEN; without that fold the recorded value covers only"; \
+	       echo "       part of each file and test_924_sd_manifest.c can no longer"; \
+	       echo "       say anything about it. Re-derive both before proceeding."; \
+	       exit 1; }
+	@grep -q 'SdManifest_FormatLine' $(SD_MANAGER_SRC) \
+	  || { echo "ERROR: $(SD_MANAGER_SRC) no longer renders manifest lines through"; \
+	       echo "       SdManifest_FormatLine, so the line format pinned by"; \
+	       echo "       test_924_sd_manifest.c is not the one written to the card."; \
+	       exit 1; }
+	@# ⛔ #1124 r16: THE `SdManifest_RelativeName` POSITIVE GUARD IS DELETED,
+	@# because it had become a pin satisfied ENTIRELY BY PROSE. r13 retired the
+	@# helper (operator item 8 = B: record the FULL path, so retrieval strips
+	@# once instead of twice). The only remaining occurrence of the name in
+	@# this file is the sentence in the block comment that says it is gone --
+	@# MEASURED: 1 raw grep hit, 0 occurrences in `cc -fpreprocessed -E`
+	@# output. So the guard passed over a call that no longer exists, which is
+	@# the exact failure mode a positive pin has.
+	@#
+	@# It also CONTRADICTED the negative pin further down, which asserts on the
+	@# preprocessed text that SdManifest_RelativeName( is never called again.
+	@# Two pins demanding opposite things both passed, one of them on a
+	@# comment. The negative one encodes the ruling and stays; this one goes.
+	@grep -q 'SdManifest_PathsEqualCaseInsensitive' $(SD_MANAGER_SRC) \
+	  || { echo "ERROR: $(SD_MANAGER_SRC) no longer compares the manifest path against"; \
+	       echo "       the session's own stream file through"; \
+	       echo "       SdManifest_PathsEqualCaseInsensitive (#924 post-merge audit,"; \
+	       echo "       defect 2). FatFs's own duplicate-open lock (FF_FS_LOCK) is"; \
+	       echo "       case-insensitive; a plain strcmp here misses a collision FatFs"; \
+	       echo "       itself will refuse, silently losing the whole session's"; \
+	       echo "       integrity records with no diagnostic."; \
+	       exit 1; }
+	@#1124: every path construction must go through the ONE canonicalising
+	@# accessor, so no site can emit "dir//file" when the configured directory
+	@# ends in '/'. KEYED ON THE FORMAT PREFIX, and read from the PREPROCESSED
+	@# translation unit, for two measured reasons:
+	@#   - an OPERAND key cannot work. `gpSDCardSettings->directory` sits on the
+	@#     CONTINUATION line at 4 of the 8 sites, and 2 more never name it at all
+	@#     (they receive a `directory` parameter), so an identifier grep found
+	@#     2 of 8. `cc -E` does NOT fix that: it resolves the semantics and
+	@#     PRESERVES THE GEOMETRY -- a newline inside parens is not a line
+	@#     continuation and is never joined by any text pass.
+	@#   - the FORMAT literal, unlike the operand, is on the snprintf( line at
+	@#     every site. That is the one textual property that survives
+	@#     continuation lines, so it is what this keys on.
+	@# `-fpreprocessed` is here only to strip COMMENTS (verified: an operand
+	@# inside a comment contributes 0), so prose quoting a format cannot count.
+	@# ⛔ #1124: 9 -> 8 -> 9 -> 8 -> 9 across r17, r18, r20 and r21. Every
+	@# movement is kept because the totals coincide and the sites do not:
+	@#   +1 r21  sd_ScanForeignManifests() joins each foreign manifest's
+	@#           directory entry onto the configured directory, to address a
+	@#           file the directory walk found by leaf name only. Both counters
+	@#           move together (+1 join, +1 accessor call), which is the
+	@#           property this pin is for.
+	@#   =0 r21  sd_SessionManifestPath()'s construction MOVED into
+	@#           sd_ManifestPathFor(), the parameterised derivation the arm-time
+	@#           authorisation snapshot needs (it resolves from `pSettings`,
+	@#           which has not reached the globals yet). Still one construction
+	@#           of that shape, now with two callers instead of one.
+	@#   -1 r20  the gate's TWO constructions and sd_OpenSessionManifest's ONE
+	@#           collapsed into sd_SessionManifestPath(), the single derivation
+	@#           both now call -- which is the structural form of r18/r19
+	@#           finding 1, where the gate stripped a subdirectory and the
+	@#           creation path did not.
+	@#   +1 r20  sd_NameIsRotationPartOfExistingManifest() builds the OWNING
+	@#           base's manifest name, to refuse an opt-in on a part of a
+	@#           recorded set (r19 finding 2).
+	@# Net -1, and the two counters still move together, which is the property
+	@# this pin exists for.
+	@#   -1 r17  the FALLBACK name construction went with the two-candidate
+	@#           scheme.
+	@#   +1 r18  sd_TargetSafeToOpenForWrite() builds TWO names, not one: the
+	@#           TARGET's manifest and this session's LIVE manifest, so it can
+	@#           tell them apart and never delete its own.
+	@# Both join through the same accessor and the same "%.*s/" format, which is
+	@# why the two counts move together; a new site moving only ONE of them is
+	@# the defect this pin exists to catch.
+	@$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null > /tmp/.sd1124_pp.$$$$; \
+	 raw=`grep -c '"%s/' /tmp/.sd1124_pp.$$$$`; \
+	 canon=`grep -cF '"%.*s/' /tmp/.sd1124_pp.$$$$`; \
+	 acc=`grep -c 'SdManifest_CanonicalDirLen(' /tmp/.sd1124_pp.$$$$`; \
+	 rm -f /tmp/.sd1124_pp.$$$$; \
+test "$$raw" -eq 0 && test "$$canon" -eq $(SD1124_CANON) && test "$$acc" -eq $(SD1124_ACC) \
+	  || { echo "ERROR: $(SD_MANAGER_SRC)'s path construction is no longer"; \
+	       echo "       uniformly canonical (#1124)."; \
+	       echo "         raw \"%s/ joins:        $$raw (must be 0)"; \
+	       echo "         canonical \"%.*s/ joins: $$canon (expected $(SD1124_CANON))"; \
+	       echo "         accessor calls:        $$acc (expected $(SD1124_ACC))"; \
+	       echo "       A raw \"%s/ join emits 'dir//file' whenever the configured"; \
+	       echo "       directory ends in '/', which is reachable from config alone."; \
+	       echo "       Route the new site through SdManifest_CanonicalDirLen() and"; \
+	       echo "       build it with \"%.*s/\", or re-derive these counts if a site"; \
+	       echo "       was deliberately added or removed."; \
+	       exit 1; }
+	@# The two sites a FORMAT key is structurally blind to, pinned BY NAME:
+	@# both write a bare "%.*s" with no separator, so no join-shaped pattern can
+	@# see them -- and both are PROPAGATION points. sd_BuildBucketPath's
+	@# bucket==0 arm copies the directory into bucketPath, which generateFilename
+	@# then joins onto without ever naming the settings field; the walk root
+	@# seeds every deeper path the directory listing builds.
+	@# ⛔ #1124 r8 finding 1: SdManifest.h did not COMPILE under -Wall -Werror.
+	@# A nested `/`+`*` inside a comment is -Wcomment, which is -Werror in the
+	@# firmware build -- so the header broke that build while this host suite
+	@# stayed green, because the suite never compiled it under those flags.
+	@#
+	@# ⭐ MEASURED, not inferred, and the differential is why it is load-bearing:
+	@# a clean build of the FIXED commit cannot distinguish "the fix closed a
+	@# break" from "there was never a break", so both legs were run with the
+	@# real compiler -- XC32 v4.60 (pic32m-gcc 8.3.1), -Wall -Werror
+	@# -fsyntax-only -mprocessor=32MZ2048EFM144, same flags, same minute:
+	@#     eef645af9 (pre-fix)  rc=1  SdManifest.h:329:9: error: "/*" within
+	@#                                comment [-Werror=comment]
+	@#     c4b01b04a (post-fix) rc=0  clean
+	@# -Wcomment was separately confirmed to be inside XC32's OWN -Wall, rather
+	@# than assuming gcc 8.3 matches the host's gcc 13. That agreement across
+	@# both compilers, on this warning class, is the ONLY thing that licenses
+	@# the cheap host check below as a proxy for the expensive one -- the proxy
+	@# can claim no more than the classes it has been measured to agree on.
+	@# A bench-free lane can run that check itself: xc32-gcc is at
+	@# /opt/microchip/xc32/v4.60/bin/ on this station, no board required.
+	@#
+	@# The warning was seen and
+	@# dismissed as pre-existing; the baseline checked was MY BRANCH's HEAD,
+	@# which already contained the PR's own earlier commits. Against origin/main
+	@# the header does not exist at all. One command, no board, ~1 s:
+	@# ⛔ THIS CHECK REPORTS THREE STATES, NEVER TWO. `-fsyntax-only` on a
+	@# firmware source that includes xc.h (the XC32 device header, absent from a
+	@# host gcc) ABORTS at line 1. Collapsing that into "not an error" makes the
+	@# check vacuous while it prints success -- measured on another row, where it
+	@# reported ok for five files that had every one aborted on a missing
+	@# include. An ABORTED compile is not evidence of a clean one.
+	@#
+	@# It is a REAL check here only because SdManifest.h is self-contained. If
+	@# that stops being true the check silently stops checking, so the abort is
+	@# detected and FAILS rather than passing. sd_card_manager.c is deliberately
+	@# NOT compiled this way; the honest gate for the .c is an XC32 build.
+	@printf '#include "SdManifest.h"\nint main(void){return 0;}\n' > /tmp/.sd1124_hdr.$$$$.c; \
+	 $(CC) -Wall -Werror -fsyntax-only -I$(FW_UTIL) /tmp/.sd1124_hdr.$$$$.c \
+	   >/tmp/.sd1124_hdr.$$$$.err 2>&1; \
+	 rc=$$?; \
+	 aborted=`grep -c 'No such file or directory' /tmp/.sd1124_hdr.$$$$.err`; \
+	 if [ "$$aborted" -ne 0 ]; then \
+	   echo "ERROR: the -Wall -Werror check on $(FW_UTIL)/SdManifest.h ABORTED on a"; \
+	   echo "       missing include -- it compiled nothing and proves nothing."; \
+	   echo "       This check is only valid while that header is SELF-CONTAINED."; \
+	   echo "       Something now pulls in a device header (xc.h or similar):"; \
+	   grep 'No such file or directory' /tmp/.sd1124_hdr.$$$$.err | sed 's/^/         /' | head -4; \
+	   echo "       Either keep the header self-contained, or replace this gate"; \
+	   echo "       with an XC32 build -- do NOT let it report success."; \
+	   rm -f /tmp/.sd1124_hdr.$$$$.c /tmp/.sd1124_hdr.$$$$.err; exit 1; \
+	 elif [ "$$rc" -ne 0 ]; then \
+	   echo "ERROR: $(FW_UTIL)/SdManifest.h does not compile under -Wall -Werror,"; \
+	   echo "       which is what the firmware build uses -- so this header breaks"; \
+	   echo "       the firmware build even while this suite is green:"; \
+	   sed 's/^/         /' /tmp/.sd1124_hdr.$$$$.err | head -6; \
+	   rm -f /tmp/.sd1124_hdr.$$$$.c /tmp/.sd1124_hdr.$$$$.err; exit 1; \
+	 fi; \
+	 rm -f /tmp/.sd1124_hdr.$$$$.c /tmp/.sd1124_hdr.$$$$.err
+	@# ⛔ #1124 r8 finding 2: C's invariant is about every USE of the configured
+	@# directory, and the count arm above enumerates only JOINS. SdManifest_
+	@# RelativeName SLICES it -- strlen + strncmp, no format -- so no join-keyed
+	@# check can see it, and with a raw strlen it broke the MOMENT construction
+	@# became canonical, because the doubled separator had been paying for the
+	@# un-stripped length. Two defects cancelling; fixing one exposed the other.
+	@#
+	@# So: an ALLOWLIST BY COUNT over every raw read of the field. A new read
+	@# changes the number and forces the author to classify it here. The 24 in
+	@# the current head, all read and classified once:
+	@#   4  the accessor's own argument                              canonical
+	@#   8  "%.*s/" join operands                                    canonical
+	@#   5  sd_EnterBucket / sd_BuildBucketPath arguments,   canonicalised at
+	@#      and sd_OpenSessionManifest's bucket-name check             callee
+	@#   5  LOG_* / "dir='%s'" message text                           cosmetic
+	@#   2  strncpy -> SYS_FS_DirectoryMake, and #1124 r12's         benign: FatFs
+	@#      CountDirEntries -> SYS_FS_DirOpen occupancy check
+	@#      create_name() ignores a terminating separator (E3, ff.c:2880), so
+	@#      f_mkdir("d/") and f_mkdir("d") name the same directory. Benign because
+	@#      of a VENDOR behaviour, not because of anything we do -- which is
+	@#      exactly why it is written down rather than left to be re-derived.
+	@#   (sd_ListDirTarget's two returns are inside that 22; its only consumer is
+	@#    the walk root, canonicalised there. A SECOND consumer would get a raw
+	@#    value, so it is pinned by name below.)
+	@#
+	@# 20 -> 22 at #1124 r11 finding 4, both reads in sd_OpenSessionManifest:
+	@# the SdManifest_DirShadowsBucketName argument (that predicate calls
+	@# SdManifest_CanonicalDirLen itself, so it is the callee-canonicalised
+	@# class, same as sd_EnterBucket's) and the directory named in the LOG_E
+	@# that reports why the session gets no manifest (cosmetic). NEITHER
+	@# constructs a path, which is the property this count protects.
+	@#
+	@# 22 -> 21 at #1124 r13, OPERATOR ITEM 8 = B (issuecomment-6450419546):
+	@# THREE reads removed, not one. The ruling records every file by its FULL
+	@# path and drops the P###-folder-name refusal, which retired (a) the
+	@# SdManifest_RelativeName argument in sd_AppendManifestLine -- the record
+	@# side no longer slices the directory at all -- and (b,c) the
+	@# SdManifest_DirShadowsBucketName argument plus its diagnostic's read, both
+	@# in sd_OpenSessionManifest, which the r11-finding-4 entry above added.
+	@# The canonicalisation worry those two lines carried is GONE rather than
+	@# relocated: with full paths there is no slice to get wrong.
+	@# 22 -> 24 at #1124 r12 finding 1, both in the same function's new
+	@# occupancy guard: the CountDirEntries argument and its LOG_E.
+	@# ⚠ The CountDirEntries one is NOT callee-canonicalised -- that function
+	@# hands the path straight to SYS_FS_DirOpen. It is in the FatFs-benign
+	@# class for the SAME vendor reason as the DirectoryMake read above:
+	@# create_name() ignores a terminating separator (E3, ff.c:2880), so
+	@# f_opendir("d/") and f_opendir("d") name one directory. Classified by what
+	@# the callee actually DOES, not by which class looks adjacent -- this file
+	@# already records a round lost to classifying a read by its variable name.
+	@# 21 -> 22 at #1124 r14: the manifest-open DELIMITER guard now scans the
+	@# directory as well as the file, because r13 put the directory into every
+	@# recorded name. CLASSIFICATION: canonicalisation-INDEPENDENT, and that is
+	@# a property of the predicate rather than of the variable -- strpbrk() asks
+	@# whether a ',' CR or LF appears ANYWHERE in the string, and a trailing
+	@# separator cannot change that answer. So SdManifest_CanonicalDirLen() would
+	@# add nothing here. (Contrast the join sites, where a doubled '/' changes
+	@# the constructed path and the accessor is load-bearing.)
+	@# 22 -> 24 at #1124 r16: both in sd_DiscardStaleManifests(), which builds
+	@# the manifest name to REMOVE a previous session's record when this session
+	@# refuses to create its own. The two reads are the accessor argument and
+	@# the "%.*s" operand of one join.
+	@# CLASSIFICATION: canonicalisation-DEPENDENT, and already routed through
+	@# SdManifest_CanonicalDirLen() -- which is why the join and accessor counts
+	@# above moved 8 -> 9 in the same edit. This is the ordinary join shape, not
+	@# a new class: a doubled '/' here would name a file the create path never
+	@# created, so the removal would silently miss the stale manifest it exists
+	@# to delete, and the defect would present as the fix simply not working.
+	@# 24 -> 22 -> 20 -> 22 -> 20 across #1124 r16/r17/r18/r20. Every movement
+	@# stays listed; the totals repeat and the sites never do:
+	@#   +2 r16  the stale-manifest sweep's join.
+	@#   -2 r16  two LOG_E messages stopped printing the directory, after the
+	@#           #1110 gate measured them at 128 and 144 bytes against 125.
+	@#   -2 r17  the FALLBACK name construction was deleted.
+	@#   +2 r18  the LIVE-manifest name is built alongside the TARGET's, so the
+	@#           invalidation can refuse to delete this session's own record.
+	@#   -6 r20  THREE joins collapsed into one. The gate built the TARGET and
+	@#           LIVE names and sd_OpenSessionManifest built the session's,
+	@#           each with its own pair of reads -- and the gate's differed
+	@#           from creation's, which IS r18/r19 finding 1 (the gate stripped
+	@#           a subdirectory, creation did not). They now call one
+	@#           derivation, sd_SessionManifestPath(), so the agreement is
+	@#           structural instead of a property three sites must remember.
+	@#   +4 r20  TWO new joins: sd_SessionManifestPath() itself, and
+	@#           sd_NameIsRotationPartOfExistingManifest(), which builds the
+	@#           OWNING base's manifest name so an opt-in on a part of a
+	@#           recorded set can be refused (r19 finding 2).
+	@#           CLASSIFICATION for both: ordinary canonicalisation-DEPENDENT
+	@#           join shape, and both ARE routed through
+	@#           SdManifest_CanonicalDirLen() -- checked, not assumed, and the
+	@#           join/accessor counters above moved 9 -> 8 in the same edit,
+	@#           which is the coincidence this ledger is for.
+	@#   +1 r21  sd_ScanForeignManifests()'s index pass hands the directory to
+	@#           SdManifest_PartIndexOf(), to decide which of THIS session's
+	@#           part indices a foreign record claims.
+	@#           ⚠ I first wrote +2 here, counting the ->file argument that
+	@#           goes to the same call. This grep counts ->directory and
+	@#           ->opDirectory ONLY, so ->file is not in it -- and the ledger
+	@#           caught the arithmetic, which is the entire reason it states a
+	@#           number instead of a direction.
+	@#           ⛔ CLASSIFICATION DIFFERS FROM EVERY ENTRY ABOVE, which is why
+	@#           it is called out rather than folded in: this read is NOT a
+	@#           join. It is a read that reaches a CALLEE, which is exactly the
+	@#           case this ledger exists for and the join/accessor counters
+	@#           above are structurally blind to. SdManifest_PartIndexOf()
+	@#           canonicalises the directory ITSELF, with the same accessor
+	@#           (SdManifest_CanonicalDirLen) -- verified by reading it, not
+	@#           assumed from the argument's name -- so the invariant holds at
+	@#           the point of use. The join counters did NOT move for this
+	@#           edit, and that is correct, not a discrepancy.
+	@# 21 -> 22 at #1124 r28 (AUDIT HIGH, SCPIStorageSD.c:1119 and
+	@# SdManifest.h:501): the AT-USE alias refusal in the OPEN_FILE guard reads
+	@# the configured directory to ask SdManifest_PathHasAliasRisk() whether it
+	@# contains '~'.
+	@# CLASSIFICATION: canonicalisation-INDEPENDENT, by the same argument the
+	@# r14 delimiter-guard entry above makes and for the same kind of predicate
+	@# -- memchr() asks whether '~' appears ANYWHERE in the string, and
+	@# stripping a trailing or doubled separator can neither add nor remove one.
+	@# SdManifest_CanonicalDirLen() would add nothing. Classified by what the
+	@# predicate ASKS, not by the argument's name, which is the rule this ledger
+	@# already records a lost round over.
+	@# ⚠ The '~' refusal also exists in SCPI_StorageSDDirectorySet, and that one
+	@# is NOT in this count (different file). Both are needed: the setter gives
+	@# the operator an immediate error, and this one closes the NVM-restore
+	@# route that never reaches a setter -- the route SD_ValidatePathParam's own
+	@# header names as what sank a setter-only fix for the directory half.
+	@# 22 -> 23 at #1124 r30 (AUDIT HIGH, blind SCPIStorageSD.c:1165): the
+	@# AT-USE non-ASCII refusal reads the configured directory to ask
+	@# SdManifest_PathHasNonAscii whether any of its bytes is outside
+	@# 0x20..0x7E.
+	@# CLASSIFICATION: canonicalisation-INDEPENDENT, by the same argument as the
+	@# r28 alias read directly above and the r14 delimiter guard -- the question
+	@# is whether a byte with a given value appears ANYWHERE, and stripping a
+	@# trailing or doubled separator can neither add nor remove one.
+	@# CLASSIFICATION: the rest are the ordinary canonicalisation-DEPENDENT
+	@# join shape, already routed through SdManifest_CanonicalDirLen(). A NET
+	@# would let a future edit add one read and drop an unrelated one unseen,
+	@# which is the one thing a count ledger exists to notice.
+	@n=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null \
+	    | grep -oE '(gpSDCardSettings|cfg)->(directory|opDirectory)' | wc -l`; \
+	 test "$$n" -eq 23 \
+	  || { echo "ERROR: $(SD_MANAGER_SRC) now has $$n raw reads of ->directory /"; \
+	       echo "       ->opDirectory, not the 23 classified in this recipe (#1124)."; \
+	       echo "       The canonicalisation invariant is about every USE, not just"; \
+	       echo "       every join: a read can reach a callee that neither joins nor"; \
+	       echo "       canonicalises, and no join-keyed check sees it. (Until r13 the"; \
+	       echo "       example here was SdManifest_RelativeName slicing the directory;"; \
+	       echo "       item 8 = B deleted that function, so the example is gone but the"; \
+	       echo "       invariant is not.) Read the new read, decide whether it needs"; \
+	       echo "       SdManifest_CanonicalDirLen(), and update the classification"; \
+	       echo "       above with the reason."; \
+	       exit 1; }
+	@# ⛔ #1124 r13: THE r8-FINDING-2 PIN IS RETIRED, not relaxed.
+	@# It required SdManifest_RelativeName() to canonicalise the directory it
+	@# sliced, because a strlen()-based slice returned the whole path. Operator
+	@# item 8 = B deleted that function: nothing slices the directory any more,
+	@# so there is no slice to get wrong and no accessor for the two sides to
+	@# disagree about. The property it protected is now provided by construction
+	@# rather than by a check -- the recorded name IS the constructed path.
+	@# Its replacement is the full-path pin further up, which asserts the one
+	@# line this now rests on. The absence of the function is pinned there too,
+	@# so this cannot quietly come back half-done.
+	@# ⛔⛔ #1124 r9: THE OPERAND MATRIX. A path join has TWO user-controlled
+	@# operands and the count arm above covers only the DIRECTORY one. r9's
+	@# finding was the NAME operand on the adjacent line of the same snprintf --
+	@# the sixth instance of one generator, each round fixing the operand the
+	@# previous finding happened to NAME. So this pins the matrix, not a site
+	@# list: every operand of every join, against the rejection that applies to
+	@# ITS half.
+	@#
+	@# ⚠ THE TWO HALVES NEED OPPOSITE TREATMENTS, which is why a uniform
+	@# "canonicalise every path operand" would have been actively wrong:
+	@#     DIRECTORY + trailing '/'  = a redundant spelling   -> STRIP
+	@#     FILE NAME + trailing '/'  = names no file at all   -> REFUSE
+	@#
+	@# ARM 1 -- the NVM arm, and the one the operator called for. The refusal
+	@# must exist at USE, in sd_card_manager.c, NOT only in the SCPI setter: an
+	@# NVM restore writes the settings struct directly and never reaches
+	@# SD_ValidatePathParam. That route-around is exactly what made a
+	@# setter-only fix unacceptable for the directory half. Counting the USE
+	@# site here is what makes "we validated it in the setter" insufficient.
+	@n=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null \
+	    | grep -c 'SdManifest_NameIsUsable('`; \
+	 test "$$n" -eq 1 \
+	  || { echo "ERROR: $(SD_MANAGER_SRC) calls SdManifest_NameIsUsable() $$n"; \
+	       echo "       time(s), expected 1 (#1124 r10)."; \
+	       echo "       ONE call, at the PROCESS_STATE_OPEN_FILE guard, where a"; \
+	       echo "       user-supplied name becomes a STREAM-FILE path."; \
+	       echo "       r9 had three. The two in sd_OpenSessionManifest were"; \
+	       echo "       removed at r10: the manifest appends SD_MANIFEST_EXT, so"; \
+	       echo "       its completed name cannot end in a separator, and"; \
+	       echo "       checking the stripped intermediate refused three legal"; \
+	       echo "       names (.csv, sub/.csv, noext/) while MISSING log.csv/,"; \
+	       echo "       the case it was written for. Do not re-add them."; \
+	       echo "       ⛔ This must hold IN THIS FILE, not only in the SCPI"; \
+	       echo "       setter: an NVM restore populates the settings struct"; \
+	       echo "       directly and never reaches SD_ValidatePathParam, which"; \
+	       echo "       is the route-around that sank a setter-only fix for the"; \
+	       echo "       directory half. A refusal that only exists in the setter"; \
+	       echo "       is not a refusal."; \
+	       exit 1; }
+	@# ⛔⛔ #1124 r10 finding 3 (HIGH): THE UNMOUNT RECORD MUST BE MARKED WHEN
+	@# ITS BYTES ARE IN DOUBT. FF_FS_TINY is 0 (ffconf.h:226), so FatFs keeps a
+	@# per-file sector cache. If the unmount FileSync returned -1, or the close
+	@# returned FAILURE, counted bytes may still be in that cache when the
+	@# unmount discards them -- so the record would OVERSTATE the bytes and
+	@# carry a CRC over data the card never received, which is the one failure
+	@# mode a manifest exists to rule out. The code used to justify appending
+	@# unmarked with "the bytes counted are the bytes sent either way"; that is
+	@# false exactly when the sync failed.
+	@#
+	@# EVERY ARM BY POSITION, not by count: a count of assignments cannot see
+	@# WHICH branch each one is in -- the r9 arm-1b lesson. Each failure LOG_E
+	@# must be followed by the marker within a few lines.
+	@#
+	@# 3 -> 4 at #1124 r12's review leg, which added the HEADER-write arm: on an
+	@# error there Harmony has already destroyed FatFs's partial count, so bytes
+	@# may be on the card that neither currentFileBytes nor the CRC fold can
+	@# account for -- the same mechanism as the data-write arm. The header is a
+	@# separate site only because it is the one stream-file byte range that does
+	@# not pass through SDCardWrite(). It gets its OWN position arm below, so the
+	@# raised count still cannot be satisfied by assignments in wrong branches.
+	@# Distances are measured on the PREPROCESSED text, where comments are gone:
+	@# the header marker sits 6 lines past its LOG_E in that form and the nearest
+	@# other assignment is ~500 lines away, so these windows cannot cross-match.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null`; \
+	 n=`printf '%s\n' "$$pp" | grep -c 'fileRecordIsPrefix = true'`; \
+	 sl=`printf '%s\n' "$$pp" | grep -n 'Error flushing before unmount' | head -1 | cut -d: -f1`; \
+	 cl=`printf '%s\n' "$$pp" | grep -n 'Failed to close file during unmount' | head -1 | cut -d: -f1`; \
+	 hl=`printf '%s\n' "$$pp" | grep -n 'header write short' | head -1 | cut -d: -f1`; \
+	 sm=0; cm=0; hm=0; \
+	 if [ -n "$$sl" ]; then sm=`printf '%s\n' "$$pp" | sed -n "$$sl,$$((sl+6))p" | grep -c 'fileRecordIsPrefix = true'`; fi; \
+	 if [ -n "$$cl" ]; then cm=`printf '%s\n' "$$pp" | sed -n "$$cl,$$((cl+6))p" | grep -c 'fileRecordIsPrefix = true'`; fi; \
+	 if [ -n "$$hl" ]; then hm=`printf '%s\n' "$$pp" | sed -n "$$hl,$$((hl+8))p" | grep -c 'fileRecordIsPrefix = true'`; fi; \
+	 test "$$n" -eq 4 && test "$$sm" -ge 1 && test "$$cm" -ge 1 && test "$$hm" -ge 1 \
+	  || { echo "ERROR: #1124 r10 finding 3 -- the unmount manifest record is no"; \
+	       echo "       longer marked when its byte count is in doubt."; \
+	       echo "         fileRecordIsPrefix = true assignments: $$n (expected 4)"; \
+	       echo "         within 6 lines of the SYNC failure LOG_E:  $$sm (need >= 1)"; \
+	       echo "         within 6 lines of the CLOSE failure LOG_E: $$cm (need >= 1)"; \
+	       echo "         within 8 lines of the HEADER-write LOG_E:   $$hm (need >= 1)"; \
+	       echo "       FF_FS_TINY is 0, so a failed sync or close can leave"; \
+	       echo "       counted bytes in FatFs's sector cache for the unmount to"; \
+	       echo "       discard. An unmarked record then OVERSTATES the bytes and"; \
+	       echo "       its CRC covers data the card never received."; \
+	       echo "       Position is asserted, not just the count: four"; \
+	       echo "       assignments in the wrong branches satisfy a count."; \
+	       exit 1; }
+	@# ARM 2 -- the asymmetry is not interchangeable. If someone ever "unifies"
+	@# the two predicates, these go non-zero and this fails. That is the whole
+	@# defence against the next round of this generator.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null`; \
+	 bad1=`printf '%s\n' "$$pp" | grep -cE 'SdManifest_NameIsUsable\((gpSDCardSettings->|cfg->)?(directory|opDirectory)'`; \
+	 bad2=`printf '%s\n' "$$pp" | grep -cE 'SdManifest_CanonicalDirLen\((gpSDCardSettings->|gSDCardData\.)?(file|opFile|baseFilename)'`; \
+	 test "$$bad1" -eq 0 && test "$$bad2" -eq 0 \
+	  || { echo "ERROR: #1124 r9 -- a path operand is being given the WRONG"; \
+	       echo "       half's treatment in $(SD_MANAGER_SRC)."; \
+	       echo "         NameIsUsable on a DIRECTORY field:  $$bad1 (must be 0)"; \
+	       echo "         CanonicalDirLen on a FILE field:     $$bad2 (must be 0)"; \
+	       echo "       A trailing '/' is a redundant spelling on a directory and"; \
+	       echo "       is not a file name at all, so STRIP and REFUSE are not"; \
+	       echo "       interchangeable. Refusing a directory breaks SD:DIR"; \
+	       echo "       \"DAQiFi/\"; stripping a file name invents a target the"; \
+	       echo "       caller never asked for."; \
+	       exit 1; }
+	@# BOTH arms of sd_BuildBucketPath, by exact form. A presence check that the
+	@# function merely CALLS the accessor is not enough, and this was measured:
+	@# reverting ONLY the bucket==0 arm to `"%s", dir` leaves raw=0 (no slash to
+	@# key on), canon=8, accessor=8 and the call still present -- every count arm
+	@# above passes while the propagation point is live again. That mutation is
+	@# also caught by gen_1029_log_budget.py, which pins the same line for its own
+	@# reasons, but relying on THAT would make this hole depend on a pin belonging
+	@# to another ticket. Checked here so the two are independent.
+	@awk '/^static bool sd_BuildBucketPath\(/{f=1} f{print} f&&/^\}/{exit}' \
+	   $(SD_MANAGER_SRC) > /tmp/.sd1124_bb.$$$$; \
+	 acc=`grep -c 'SdManifest_CanonicalDirLen(' /tmp/.sd1124_bb.$$$$`; \
+	 cp0=`grep -cF '"%.*s", dirLen, dir' /tmp/.sd1124_bb.$$$$`; \
+	 jn=`grep -cF '"%.*s/"' /tmp/.sd1124_bb.$$$$`; \
+	 rm -f /tmp/.sd1124_bb.$$$$; \
+	 test "$$acc" -eq 1 && test "$$cp0" -eq 1 && test "$$jn" -eq 1 \
+	  || { echo "ERROR: sd_BuildBucketPath() in $(SD_MANAGER_SRC) no longer"; \
+	       echo "       canonicalises BOTH arms (#1124)."; \
+	       echo "         accessor calls:              $$acc (expected 1)"; \
+	       echo "         bucket==0 canonical copy:    $$cp0 (expected 1)"; \
+	       echo "         bucket!=0 canonical join:    $$jn (expected 1)"; \
+	       echo "       The bucket==0 arm copies the directory into bucketPath, and"; \
+	       echo "       generateFilename() joins onto that buffer WITHOUT naming the"; \
+	       echo "       settings field -- so a trailing slash surviving here resurfaces"; \
+	       echo "       as 'dir//file' two hops away, where no format-shaped or"; \
+	       echo "       identifier-shaped check can see it."; \
+	       exit 1; }
+	@awk '/^static ListDirResult ListFilesInDirectoryChunked\(/{f=1} f{print} f&&/^\}/{exit}' \
+	   $(SD_MANAGER_SRC) | grep -q 'SdManifest_CanonicalDirLen(' \
+	  || { echo "ERROR: ListFilesInDirectoryChunked() in $(SD_MANAGER_SRC) no longer"; \
+	       echo "       canonicalises its walk ROOT (#1124). The root is seeded from"; \
+	       echo "       sd_ListDirTarget(), i.e. opDirectory or directory, and every"; \
+	       echo "       deeper path is built by joining onto that frame -- which is why"; \
+	       echo "       the join in this function is NOT the false positive it was"; \
+	       echo "       first ruled to be."; \
+	       exit 1; }
+	@awk '/^static void sd_CloseSessionManifest\(void\) \{/{f=1} f{print} f&&/^\}/{exit}' \
+	   $(SD_MANAGER_SRC) > /tmp/.sd924_close.$$$$; \
+	 n=`grep -c 'manifestHandle = SYS_FS_HANDLE_INVALID;' /tmp/.sd924_close.$$$$`; \
+	 clr=`grep -n 'manifestHandle = SYS_FS_HANDLE_INVALID;' /tmp/.sd924_close.$$$$ | head -1 | cut -d: -f1`; \
+	 ret=`grep -n '^        return;' /tmp/.sd924_close.$$$$ | sed -n 2p | cut -d: -f1`; \
+	 rm -f /tmp/.sd924_close.$$$$; \
+	 test -n "$$clr" && test -n "$$ret" && test "$$n" -eq 1 && test "$$ret" -lt "$$clr" \
+	  || { echo "ERROR: sd_CloseSessionManifest() in $(SD_MANAGER_SRC) no longer keeps"; \
+	       echo "       the handle when SYS_FS_FileClose() FAILS (#924 round-2"; \
+	       echo "       finding 4). This pin checks POSITION, not presence: the"; \
+	       echo "       failure branch must 'return;' BEFORE the single"; \
+	       echo "       'manifestHandle = ...' clear. The anchor is the SECOND"; \
+	       echo "       'return;' -- the FIRST is the invalid-handle guard at the"; \
+	       echo "       top, which precedes the clear in the BROKEN version too, so"; \
+	       echo "       anchoring on it made this pin pass its own mutant."; \
+	       echo "       'manifestHandle = SYS_FS_HANDLE_INVALID;' on the success path."; \
+	       echo "       got: $$n clear(s), first clear at line $$clr, first return at $$ret."; \
+	       echo "       WHY IT MATTERS, from the vendor source: SYS_FS_FileClose clears"; \
+	       echo "       fileObj->inUse ONLY on success (sys_fs.c:951-960), and FatFs"; \
+	       echo "       f_close skips 'fp->obj.fs = 0' when its leading f_sync fails"; \
+	       echo "       (ff.c:4226-4242). So a failed close leaves the file OPEN in"; \
+	       echo "       both layers; clearing the handle discards the only reference"; \
+	       echo "       and burns one of SYS_FS_MAX_FILES (10) slots permanently."; \
+	       exit 1; }
+	@# ⛔ #1124 r16: SCOPED TO THE CREATE FUNCTION, and TIGHTENED rather than
+	@# relaxed. The invariant is 'every manifest name this session will OPEN is
+	@# length-checked', because the operand cap is about RETRIEVAL -- SD:GET,
+	@# SD:CRC? and SD:DELete naming the file later. sd_DiscardStaleManifests()
+	@# builds a name to REMOVE one, and must NOT be length-checked: refusing to
+	@# delete a stale manifest because its name is too long to retrieve would
+	@# leave the mismatched record on the card in exactly the case hardest to
+	@# notice, which is the defect r16 exists to close.
+	@# So the count equality now spans sd_OpenSessionManifest's body
+	@# only (retargeted at r17, when the attempt/wrapper split was reverted\n	@# and the function took its original name back). It still catches the\n	@# original defect -- a THIRD creating path
+	@# appearing unguarded -- because any such path is inside that function.
+	@# THREE non-vacuity assertions, because a scoped count is exactly the
+	@# shape that silently measures an EMPTY region (this file has lost a round
+	@# to a pin whose awk range extracted nothing):
+	@#   - the extracted body must be non-empty;
+	@# ⛔ r20: WHAT COUNTS AS "PRODUCING A NAME" CHANGED, and this pin caught it
+	@# by REFUSING TO RUN -- its body count went to 0 and the non-vacuity arm
+	@# fired rather than letting the equality pass over nothing. That arm earned
+	@# its keep, so this is re-expressed and not relaxed.
+	@# The construction moved into sd_SessionManifestPath(), the ONE derivation
+	@# the gate and this function now share (r18/r19 finding 1), so the name is
+	@# no longer BUILT in this body -- it is REQUESTED here. The coupling the
+	@# pin protects is unchanged: every manifest name this function produces,
+	@# and therefore RECORDS, must be length-checked by
+	@# SdManifest_NameFitsOperand, because buffer capacity and RETRIEVAL
+	@# capacity are still different limits. So the construction count becomes a
+	@# count of CALLS to the shared derivation and the equality still reads
+	@# "every name produced here is checked here".
+	@# The gate deliberately does NOT check NameFitsOperand: it only stats the
+	@# name and never records it, so retrieval capacity does not apply there.
+	@#   - it must build at least 1 name, so a range that clipped early cannot
+	@#     read as a pass. This was 2 (primary and fallback) until r17 deleted
+	@#     the second candidate; lowered with the reason rather than quietly,
+	@#     because a bound that drops without one is how a count pin dies;
+	@#   - the WHOLE-FILE count must EXCEED the body count, which is what
+	@#     proves the removal site is genuinely outside the scope and the
+	@#     scoping is doing something.
+	@pp=`$(CC) -fpreprocessed -dD -E $(SD_MANAGER_SRC) 2>/dev/null`; \
+	 body=`printf '%s\n' "$$pp" | awk '/^static void sd_OpenSessionManifest\(void\) \{/{f=1} f{print} f&&/^\}/{exit}'`; \
+	 all=`printf '%s\n' "$$pp" | grep -c 'SD_MANIFEST_EXT,'`; \
+	 g=`printf '%s\n' "$$body" | grep -c 'SdManifest_NameFitsOperand'`; \
+	 n=`printf '%s\n' "$$body" | grep -c 'sd_SessionManifestPath('`; \
+	 test -n "$$body" && test "$$n" -ge 1 && test "$$all" -gt "$$n" \
+	  || { echo "ERROR: the scoped manifest-name count is not measuring what it"; \
+	       echo "       claims (#1124 r16 non-vacuity)."; \
+	       echo "         extracted body lines: `printf '%s\n' "$$body" | wc -l`"; \
+	       echo "         names produced in body: $$n (must be >= 1)"; \
+	       echo "         names built in file:  $$all (must exceed the body's)"; \
+	       echo "       Either sd_OpenSessionManifest was renamed, or the"; \
+	       echo "       awk range no longer spans it, or the removal site that"; \
+	       echo "       justifies the scoping is gone. Re-derive before trusting"; \
+	       echo "       the equality below -- an empty range makes it vacuous."; \
+	       exit 1; }; \
+	 test "$$g" = "$$n" \
+	  || { echo "ERROR: $(SD_MANAGER_SRC) builds $$n manifest name(s) but length-"; \
+	       echo "       checks $$g of them (#924 round-6 finding 2)."; \
+	       echo "       EVERY path that produces a manifest name must pass through"; \
+	       echo "       SdManifest_NameFitsOperand. Round 5 added that guard at the"; \
+	       echo "       PRIMARY site and nowhere else, and the FALLBACK -- which keeps"; \
+	       echo "       the whole filename, so it is LONGER by the extension -- went"; \
+	       echo "       unguarded. Buffer capacity and RETRIEVAL capacity are"; \
+	       echo "       different limits; the 'written >= sizeof(path)' check is the"; \
+	       echo "       first and does not imply the second."; \
+	       echo "       This pin is a COUNT EQUALITY, deliberately: a position pin"; \
+	       echo "       cannot see a site that does not exist yet, and the whole"; \
+	       echo "       defect was a THIRD path appearing without the guard."; \
+	       echo "       Both counts are taken comment-STRIPPED (\$$(CC)"; \
+	       echo "       -fpreprocessed), because the explanatory comments name both"; \
+	       echo "       symbols -- a raw grep would be satisfied by prose."; \
+	       exit 1; }
+	@awk '/case SD_CARD_MANAGER_PROCESS_STATE_IDLE:/{f=1;a=""} \
+	      f{a=a $$0 "\n"} \
+	      f&&/^[[:space:]]*break;/{if(a ~ /manifestHandle = SYS_FS_HANDLE_INVALID;/) ok=1; f=0} \
+	      END{exit ok?0:1}' $(SD_MANAGER_SRC) \
+	  || { echo "ERROR: no PROCESS_STATE_IDLE arm in $(SD_MANAGER_SRC) releases"; \
+	       echo "       manifestHandle (#924 round-2 audit HIGH)."; \
+	       echo "       THIS IS A CHOKE-POINT PIN, and it is scoped for two reasons."; \
+	       echo "       (1) This file has SIX 'manifestHandle = SYS_FS_HANDLE_INVALID;'"; \
+	       echo "           sites, so an unscoped grep is satisfied by any of them and"; \
+	       echo "           asserts nothing -- the way an earlier pin here was satisfied"; \
+	       echo "           by sd_CloseSessionManifest()'s invalid-handle GUARD return."; \
+	       echo "       (2) There are THREE 'case ...PROCESS_STATE_IDLE:' lines; two are"; \
+	       echo "           in other switches (one just returns the string \"IDLE\"), so"; \
+	       echo "           this accepts ANY such arm containing the release rather than"; \
+	       echo "           assuming which one comes first."; \
+	       echo "       WHY A CHOKE POINT: this file has TWELVE assignments of"; \
+	       echo "       PROCESS_STATE_IDLE and ONE sd_CloseSessionManifest() call."; \
+	       echo "       Three successive fixes each enumerated the exits their author"; \
+	       echo "       could see and each list agreed with the previous one and with"; \
+	       echo "       nothing else. The IDLE arm is where every exit is dispatched on"; \
+	       echo "       the next tick, so a new exit inherits the close without anyone"; \
+	       echo "       remembering. Do not replace this with another exit list."; \
+	       exit 1; }
+	@awk '/if \(SYS_FS_Unmount\(SD_CARD_MANAGER_DISK_MOUNT_NAME\) == 0\)/{f=1;d=0} \
+	      f{print; d+=gsub(/\{/,"{"); d-=gsub(/\}/,"}"); if(d==0 && NR>1 && f) exit}' \
+	   $(SD_MANAGER_SRC) > /tmp/.sd924_umnt.$$$$; \
+	 n=`grep -c 'manifestHandle = SYS_FS_HANDLE_INVALID;' /tmp/.sd924_umnt.$$$$`; \
+	 rm -f /tmp/.sd924_umnt.$$$$; \
+	 test "$$n" -ge 1 \
+	  || { echo "ERROR: the SUCCESSFUL-unmount branch in $(SD_MANAGER_SRC) no longer"; \
+	       echo "       releases manifestHandle (#924 round-2 audit HIGH). got $$n."; \
+	       echo "       SCOPE MATTERS HERE: this file has several"; \
+	       echo "       'manifestHandle = SYS_FS_HANDLE_INVALID;' sites, so the pin"; \
+	       echo "       extracts ONLY the 'if (SYS_FS_Unmount(...) == 0) { ... }'"; \
+	       echo "       block by brace depth. An unscoped grep would be satisfied by"; \
+	       echo "       sd_CloseSessionManifest()'s own clear and assert nothing --"; \
+	       echo "       the way an earlier pin here was satisfied by the function's"; \
+	       echo "       invalid-handle GUARD return."; \
+	       echo "       WHY: SYS_FS_Unmount clears inUse for every file object on the"; \
+	       echo "       disk, but ONLY on success (sys_fs.c:725-731). A handle retained"; \
+	       echo "       past that point is stale, its slot is already back, and"; \
+	       echo "       SYS_FS_FileClose refuses it on the inUse==false guard"; \
+	       echo "       (sys_fs.c:923-927) -- so sd_OpenSessionManifest would decline a"; \
+	       echo "       manifest for every later session. Bounded leak -> permanent"; \
+	       echo "       feature loss, which is worse than the defect the retention fixed."; \
+	       exit 1; }
+	@# ⛔ #1124 r16: RETARGETED. The body moved to
+	@# sd_OpenSessionManifest(); at r16 that body lived in a separate
+	@# ...Attempt() function behind a wrapper, and r17 reverted that split, so
+	@# the anchor has moved twice. Each time the emptiness check below caught
+	@# it rather than letting the pin pass while measuring nothing -- which is
+	@# the whole reason it was added. Retargeting is the fix; weakening the
+	@# check is not.
+	@awk '/^static void sd_OpenSessionManifest\(void\) \{/{f=1} f{print} f&&/^\}/{exit}' \
+	   $(SD_MANAGER_SRC) > /tmp/.sd924_open.$$$$; \
+	 test -s /tmp/.sd924_open.$$$$ \
+	  || { echo "ERROR: the close-before-open pin extracted an EMPTY body from"; \
+	       echo "       $(SD_MANAGER_SRC) (#1124 r16). Its awk anchor names"; \
+	       echo "       sd_OpenSessionManifest(void); if that is renamed or"; \
+	       echo "       reshaped the pin measures NOTHING, which is the one way a"; \
+	       echo "       position pin passes while blind."; \
+	       rm -f /tmp/.sd924_open.$$$$; exit 1; }; \
+	 cls=`grep -n 'SYS_FS_FileClose(' /tmp/.sd924_open.$$$$ | head -1 | cut -d: -f1`; \
+	 opn=`grep -n 'SYS_FS_FileOpen(' /tmp/.sd924_open.$$$$ | head -1 | cut -d: -f1`; \
+	 rm -f /tmp/.sd924_open.$$$$; \
+	 test -n "$$cls" && test -n "$$opn" && test "$$cls" -lt "$$opn" \
+	  || { echo "ERROR: sd_OpenSessionManifest() in $(SD_MANAGER_SRC) no longer retries"; \
+	       echo "       a surviving close BEFORE opening (#924 round-2 finding 4)."; \
+	       echo "       Position pin: a SYS_FS_FileClose( must precede the"; \
+	       echo "       SYS_FS_FileOpen( that assigns manifestHandle."; \
+	       echo "       got: first close at line $$cls, first open at line $$opn."; \
+	       echo "       Without it the open OVERWRITES a handle kept for retry, which"; \
+	       echo "       is where a pending leak becomes a permanent one -- and the"; \
+	       echo "       leak stops being bounded at one slot for the whole boot."; \
+	       exit 1; }
+	@# r21: renamed to sd_InspectManifestPathOverwritable when it stopped
+	@# answering a yes/no question -- it now returns sd_InspectResult, so its
+	@# three answers (ours / not ours / could not tell) are in the value.
+	@test $$(grep -c 'sd_InspectManifestPathOverwritable(' $(SD_MANAGER_SRC)) -ge 3 \
+	  || { echo "ERROR: $(SD_MANAGER_SRC) calls sd_InspectManifestPathOverwritable fewer"; \
+	       echo "       than 3 times (its own definition plus 2 call sites: the primary"; \
+	       echo "       manifest path and the collision fallback path). #924's"; \
+	       echo "       post-merge audit defect 1 (round 2) requires BOTH candidate"; \
+	       echo "       paths checked before a truncating SYS_FS_FILE_OPEN_WRITE --"; \
+	       echo "       checking only the primary leaves the fallback name as a second"; \
+	       echo "       undefended way to destroy an unrelated file."; \
+	       exit 1; }
+	@grep -q 'SdManifest_FirstLineLooksLikeManifest' $(SD_MANAGER_SRC) \
+	  || { echo "ERROR: $(SD_MANAGER_SRC) no longer inspects an existing file's first"; \
+	       echo "       line through SdManifest_FirstLineLooksLikeManifest (#924"; \
+	       echo "       post-merge audit, defect 1). Without it, a manifest open would"; \
+	       echo "       truncate whatever already sits at the manifest path, no matter"; \
+	       echo "       what it is."; \
+	       exit 1; }
+	@test $$(grep -c 'SdManifest_FreshFileAccounting(' $(SD_MANAGER_SRC)) -ge 2 \
+	  || { echo "ERROR: $(SD_MANAGER_SRC) calls SdManifest_FreshFileAccounting fewer"; \
+	       echo "       than 2 times. OPEN_FILE must reset currentFileBytes/"; \
+	       echo "       fileCrcRunning through it at BOTH places a new file becomes"; \
+	       echo "       current -- the normal open, and an ABORTED rotation-open (the"; \
+	       echo "       one #924's post-merge audit defect 3 found missing: without"; \
+	       echo "       it, UNMOUNT_DISK's unconditional manifest line for the new,"; \
+	       echo "       empty file it just closed carries the OLD file's byte count"; \
+	       echo "       and CRC instead). If a real refactor legitimately drops one"; \
+	       echo "       call site, re-derive whether the abort arm still resets before"; \
+	       echo "       lowering this count."; \
+	       exit 1; }
+	@# ⛔ #1124 r11 finding 3: the #924 manifest gate must read a SNAPSHOT of
+	@# gWriteSessionIsStreamingLog taken in the #782 critical section, never the
+	@# live global.
+	@#
+	@# SCPI is priority 7 and the SD task 5, so a SYST:STR:STOP landing after
+	@# that critical section clears the global -- and the gate sits ~200 lines
+	@# below it, past the header SYS_FS_FileWrite. Reading the global there
+	@# means a session that DID open its first stream file and write its header
+	@# silently gets no manifest. openAborted already covers a STOP arriving
+	@# BEFORE the section; this covers the window after it. The adjacent header
+	@# write (openNeedsStreamHeader) has always snapshotted for exactly this
+	@# reason -- the manifest gate just had not followed suit.
+	@#
+	@# COUNT BEFORE POSITION. The count is what makes the position meaningful:
+	@# with exactly one assignment and exactly one use, "the assignment is
+	@# inside the critical section and the use is after it" describes THE pair,
+	@# not merely some pair. Pinning order alone would pass a second, live read
+	@# added anywhere.
+	@#
+	@# AND THE ASSIGNMENT IS PINNED BY ITS EXACT FORM, both sides. A mutant
+	@# measured during this pin's own development proves why: with
+	@# `bool openIsStreamingLog = openNeedsStreamHeader;` the count is still 1,
+	@# the order still holds and no live global is read in the success arm --
+	@# every weaker arm of this guard passes -- yet openNeedsStreamHeader is
+	@# ALSO gated on gSdRotating, false for the session's FIRST file, so the
+	@# manifest would never open at all. A position-and-count pin cannot see
+	@# which value it counted; only the exact form can.
+	@#
+	@# ⚠ ORDER, NOT LINE NUMBERS. `-fpreprocessed -E` deletes comment LINES
+	@# (6406 -> 3589 here), so absolute numbering does NOT survive it; the
+	@# existing "preserves the geometry" note above is about continuation lines
+	@# WITHIN a statement, which is a different claim. Relative order does
+	@# survive -- the preprocessor never reorders code -- and relative order is
+	@# all this needs.
+	@#
+	@# A missing anchor FAILS. If the #782 critical section is refactored away
+	@# this cannot evaluate its invariant, and "could not evaluate" must not
+	@# read as "holds" (the third-state lesson this file's -Wall gate records).
+	@#
+	@# EACH FAILURE MODE EMITS ITS OWN FIRST `ERROR:` LINE, deliberately.
+	@# pin1124_mutate.sh matches on the FIRST ^ERROR line, so one shared
+	@# message would let every r11 mutant satisfy the same substring -- proving
+	@# only that SOMETHING fired, never that the right arm did. A control that
+	@# matches on both sides is not a control.
+	@#
+	@# ⚠ And the checks below are shell `if`s inside ONE backslash-continued
+	@# command, so they carry NO inline comments: the continuation joins every
+	@# line, and a `#` anywhere in it would comment out all the checks that
+	@# follow. Explanation belongs here, above the command, not inside it.
+	@$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null > /tmp/.sd1124r11.$$$$; \
+	 n_snap=`grep -cF 'bool openIsStreamingLog = gWriteSessionIsStreamingLog;' /tmp/.sd1124r11.$$$$`; \
+	 n_use=`grep -c 'if (openIsStreamingLog' /tmp/.sd1124r11.$$$$`; \
+	 ord=`awk '/taskENTER_CRITICAL/{e=NR} \
+	           /openAborted = \(gpSDCardSettings->mode/{a=NR; enter=e} \
+	           /bool openIsStreamingLog *=/{s=NR} \
+	           /taskEXIT_CRITICAL/{if(a&&!x)x=NR} \
+	           /if \(openIsStreamingLog/{g=NR} \
+	           END{if(!a||!enter||!x){print "ANCHOR"; exit} \
+	               if(!s||!g){print "PARTIAL"; exit} \
+	               print (enter<s && s<x && x<g) ? "OK" : "ORDER"}' \
+	          /tmp/.sd1124r11.$$$$`; \
+	 stale=`awk '/openAborted = \(gpSDCardSettings->mode/{a=1} \
+	             a&&/taskEXIT_CRITICAL/{x=1} \
+	             x&&/if \(openIsStreamingLog/{exit} \
+	             x&&/gWriteSessionIsStreamingLog/{c++} \
+	             END{print c+0}' /tmp/.sd1124r11.$$$$`; \
+	 rm -f /tmp/.sd1124r11.$$$$; \
+	 if [ "$$ord" = ANCHOR ]; then \
+	   echo "ERROR: #1124 r11's snapshot invariant was NOT EVALUATED -- the #782"; \
+	   echo "       critical section or the #924 gate is no longer where this guard"; \
+	   echo "       can find it in $(SD_MANAGER_SRC)."; \
+	   echo "       'Could not evaluate' must never read as 'holds'. Re-derive the"; \
+	   echo "       anchors and this guard together."; \
+	   exit 1; fi; \
+	 if [ "$$n_snap" -ne 1 ]; then \
+	   echo "ERROR: #1124 r11's latch snapshot is missing or not in its exact form"; \
+	   echo "       in $(SD_MANAGER_SRC) (found $$n_snap, expected exactly 1 of"; \
+	   echo "       'bool openIsStreamingLog = gWriteSessionIsStreamingLog;')."; \
+	   echo "       BOTH SIDES are pinned: a snapshot of openNeedsStreamHeader sits"; \
+	   echo "       in the right place with the right count and still breaks the"; \
+	   echo "       feature outright -- that one is ALSO gated on gSdRotating, which"; \
+	   echo "       is false for the session's FIRST file, so no manifest would ever"; \
+	   echo "       open. Measured as a surviving mutant; hence the exact-form key."; \
+	   exit 1; fi; \
+	 if [ "$$n_use" -ne 1 ]; then \
+	   echo "ERROR: the #924 manifest gate in $(SD_MANAGER_SRC) no longer reads the"; \
+	   echo "       openIsStreamingLog snapshot (found $$n_use 'if (openIsStreamingLog',"; \
+	   echo "       expected exactly 1) -- #1124 r11."; \
+	   echo "       Reading the live global here is the defect itself: SCPI clears it"; \
+	   echo "       at priority 7 while this task runs at 5, so a session that opened"; \
+	   echo "       its first stream file would silently get no manifest."; \
+	   exit 1; fi; \
+	 if [ "$$ord" != OK ]; then \
+	   echo "ERROR: #1124 r11's latch snapshot is taken OUTSIDE the #782 critical"; \
+	   echo "       section in $(SD_MANAGER_SRC) (order check: $$ord)."; \
+	   echo "       Required: taskENTER_CRITICAL < snapshot < taskEXIT_CRITICAL <"; \
+	   echo "       the #924 gate. Outside it, the snapshot can be taken after a"; \
+	   echo "       priority-7 SYST:STR:STOP has already cleared the latch, which is"; \
+	   echo "       the exact race the snapshot exists to close."; \
+	   exit 1; fi; \
+	 if [ "$$stale" -ne 0 ]; then \
+	   echo "ERROR: a LIVE gWriteSessionIsStreamingLog read is back in the OPEN_FILE"; \
+	   echo "       success arm of $(SD_MANAGER_SRC) ($$stale found between the #782"; \
+	   echo "       critical section and the #924 gate) -- #1124 r11."; \
+	   echo "       Everything in that arm must use the snapshot; the global is"; \
+	   echo "       clearable by SCPI at priority 7 while this task runs at 5."; \
+	   exit 1; fi
+	@# ⛔ #1124 r14: THE DELIMITER GUARD COVERS THE WHOLE RECORDED PATH.
+	@# r13 put the configured DIRECTORY into every recorded name, which moved
+	@# this guard's scope without moving the guard. SD_ValidatePathParam rejects
+	@# control characters, backslash and colon -- but NOT a comma -- so
+	@# SD:DIR "trial,1" was accepted and the line became
+	@#     trial,1/exp.csv,20480,0x1A2B3C4D
+	@# four fields where the format has three: a parser reads the name as
+	@# "trial", the bytes as "1/exp.csv" and the CRC as "20480". A well-formed
+	@# LOOKING lie, not a truncation.
+	@#
+	@# BOTH arms are pinned. The directory arm is the finding; the file arm is
+	@# the pre-existing half, and dropping it while keeping the other would be
+	@# the same defect mirrored. The bucket segment needs no arm -- it is
+	@# generated as "P%03u" and cannot carry a delimiter -- so these two are
+	@# between them the whole user-controlled surface of the recorded path.
+	@#
+	@# Comments stripped and the text flattened before matching, for the two
+	@# reasons this file has now recorded twice: the removed names are still
+	@# NAMED in nearby comments, and `-E` preserves the geometry so a wrapped
+	@# call is invisible to a line-based grep.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' '`; \
+	 for f in directory file; do \
+	   printf '%s' "$$pp" \
+	     | grep -qE "strpbrk\(gpSDCardSettings->$$f, *\",?.?.?\"\)|strpbrk\(gpSDCardSettings->$$f," \
+	    || { echo "ERROR: $(SD_MANAGER_SRC)'s manifest-open guard no longer scans"; \
+	         echo "       gpSDCardSettings->$$f for a manifest delimiter (#1124 r14)."; \
+	         echo "       Since r13 the recorded name is the FULL path, so a ',' in"; \
+	         echo "       EITHER the directory or the file produces a line with four"; \
+	         echo "       fields instead of three -- which parses, wrongly, rather"; \
+	         echo "       than failing. Both arms are required."; \
+	         exit 1; }; \
+	 done
+	@# ⛔ #1124 r13 / OPERATOR ITEM 8 = B: THE RULING'S TWO HALVES, PINNED
+	@# TOGETHER, because either one alone is the r11 defect again.
+	@#
+	@# Ruled 2026-10-27 (issuecomment-6450419546): record every file by its FULL
+	@# path, and drop the P###-folder-name refusal. r11 recorded names RELATIVE
+	@# to SD:DIR while retrieval ALSO strips SD:DIR, so the two strips composed
+	@# into a different file -- which is what the refusal was guarding. Full
+	@# paths mean exactly ONE strip, so the round trip is the identity for every
+	@# directory and there is nothing left to refuse.
+	@#
+	@# Keeping the refusal AND full paths would merely be redundant; keeping the
+	@# refusal and RELATIVE paths is r11; dropping the refusal while leaving
+	@# relative paths is the defect with its guard removed. Only the pair is
+	@# correct, so all three pins live in one block.
+	@#
+	@# Comments are stripped with `-fpreprocessed -E` before matching, because
+	@# both removed names are still NAMED in the explanatory comments at each
+	@# former site -- a bare literal grep would read those as live calls.
+	@#
+	@# ⚠ AND THE PREPROCESSED TEXT IS FLATTENED (`tr`), because `-E` strips
+	@# comments but PRESERVES THE GEOMETRY: the record call wraps after
+	@# `sizeof(line),` so the argument sits on the NEXT line, and grep is
+	@# line-based. The unflattened form of this pin failed on correct source --
+	@# measured, not hypothetical.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' '`; \
+	 printf '%s' "$$pp" | grep -q 'SdManifest_FormatLine(line, sizeof(line),' \
+	  || { echo "ERROR: $(SD_MANAGER_SRC) no longer formats the manifest line the"; \
+	       echo "       way this pin reads it (#1124 r13) -- re-read the record site"; \
+	       echo "       before trusting the two checks below."; \
+	       exit 1; }; \
+	 printf '%s' "$$pp" | grep -qE 'SdManifest_FormatLine\(line, sizeof\(line\),[[:space:]]*gSDCardData\.filePath' \
+	  || { echo "ERROR: $(SD_MANAGER_SRC) does not record the FULL path (#1124"; \
+	       echo "       r13, operator item 8 = B). sd_AppendManifestLine must pass"; \
+	       echo "       gSDCardData.filePath to SdManifest_FormatLine. Recording a"; \
+	       echo "       name relative to SD:DIR makes retrieval strip the directory"; \
+	       echo "       TWICE, which opens a different file -- and the refusal that"; \
+	       echo "       used to cover that is gone, by ruling."; \
+	       exit 1; }; \
+	 printf '%s' "$$pp" | grep -q 'SdManifest_RelativeName(' \
+	  && { echo "ERROR: $(SD_MANAGER_SRC) calls SdManifest_RelativeName again"; \
+	       echo "       (#1124 r13). The record side must not slice the configured"; \
+	       echo "       directory at all; see the full-path pin above."; \
+	       exit 1; } || true
+	@for f in $(SD_MANAGER_SRC) $(SD_BENCH_SRC); do \
+	   $(CC) -fpreprocessed -E $$f 2>/dev/null \
+	     | grep -q 'SdManifest_DirShadowsBucketName(' \
+	    && { echo "ERROR: $$f calls SdManifest_DirShadowsBucketName again (#1124"; \
+	         echo "       r13). The bucket-name refusal was DROPPED by ruling -- the"; \
+	         echo "       ambiguity it guarded is removed at source by recording"; \
+	         echo "       full paths, so re-adding it would refuse a configuration"; \
+	         echo "       that now works."; \
+	         exit 1; } || true; \
+	 done
+	@# ⛔ Part 2 of 2: the test MODELS SD_StripConfiguredDir, because
+	@# SCPIStorageSD.c is not host-compilable. Pin the two lines the model's
+	@# fidelity rests on -- the prefix compare and the separator-run skip -- so
+	@# the real function cannot drift into something the model no longer mirrors
+	@# while every assertion in the suite stays green.
+	@grep -q 'strncmp(p, directory, dirLen) != 0 || p\[dirLen\] != ' $(SD_BENCH_SRC) \
+	  || { echo "ERROR: SD_StripConfiguredDir's prefix compare in $(SD_BENCH_SRC)"; \
+	       echo "       changed shape. test_924_sd_manifest.c models that function to"; \
+	       echo "       test the record->retrieve round trip; re-derive the model"; \
+	       echo "       (strip_configured_dir_model) before trusting those results."; \
+	       exit 1; }
+	@# ⛔ #1124 r12 finding 1: the manifest's OCCUPANCY CEILING.
+	@# The manifest is always created in the PARENT, never in the session's #689
+	@# bucket, so once a session rolls into P001 nothing consults the parent's
+	@# file count again and one manifest per session accumulates with no ceiling
+	@# -- walking the parent's FatFs entry count back toward the O(directory
+	@# size) create wedge #689 exists to escape.
+	@#
+	@# Pinned on the JOINED preprocessed text, deliberately. The `true` that
+	@# selects files-only counting sits on a CONTINUATION line, and `cc -E`
+	@# preserves that geometry (this file records the measurement), so no
+	@# line-oriented grep can see the argument and the call together. Joining is
+	@# the right instrument for an argument spanning lines -- what is wrong is
+	@# ASSUMING the preprocessor already joined it.
+	@#
+	@# filesOnly is pinned as part of the call, not just the call: keying on the
+	@# call alone would pass `false`, and `false` counts the bucket
+	@# SUBDIRECTORIES too. Bucket 0 IS the parent, so the combined count is
+	@# already ~MAX_DIR_FILES before the first bucket exists -- the guard would
+	@# refuse every manifest from the moment bucketing began. That is not a
+	@# ceiling, it is switching the feature off, and it would look like a
+	@# working guard.
+	@$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr -s '[:space:]' ' ' \
+	  | grep -qE 'CountDirEntries\( *gpSDCardSettings->directory, *SD_CARD_MANAGER_MAX_DIR_FILES, *true' \
+	  || { echo "ERROR: $(SD_MANAGER_SRC) no longer bounds manifest creation by the"; \
+	       echo "       configured directory's FILE occupancy (#1124 r12 finding 1)."; \
+	       echo "       Expected CountDirEntries(<directory>, MAX_DIR_FILES, true, ...)"; \
+	       echo "       in sd_OpenSessionManifest. Note the THIRD argument: with"; \
+	       echo "       false it counts bucket subdirectories too, and since bucket 0"; \
+	       echo "       IS the parent that count is already ~MAX_DIR_FILES before any"; \
+	       echo "       bucket exists -- the guard would then refuse EVERY manifest"; \
+	       echo "       while still looking like it worked."; \
+	       exit 1; }
+	@# And the mode itself must still exist in the signature: without the
+	@# parameter there is no files-only count to ask for, and the guard above
+	@# would not compile -- but a default-valued or reordered parameter could
+	@# compile and silently mean something else.
+	@$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr -s '[:space:]' ' ' \
+	  | grep -qE 'static uint32_t CountDirEntries\(const char\* dirPath, uint32_t cap, bool filesOnly, bool\* pFsError\)' \
+	  || { echo "ERROR: CountDirEntries' signature in $(SD_MANAGER_SRC) changed."; \
+	       echo "       #1124 r12 finding 1's occupancy guard needs the filesOnly"; \
+	       echo "       mode, and the parent's entry budget has separate file and"; \
+	       echo "       subdirectory terms that a combined count cannot separate."; \
+	       echo "       Re-derive the guard with the signature."; \
+	       exit 1; }
+	@# The prefix the guard must match is the one buckets are NAMED with, so the
+	@# test is handed the macro's real value rather than a hand-copied copy. Read
+	@# from sd_card_manager.h -- where #1124 r11 moved it so the setter can see
+	@# it. Extraction failing is FATAL, never a default: a guard checked against
+	@# the wrong prefix would pass while covering nothing.
+	@test -n '$(SD_BUCKET_PREFIX)' \
+	  || { echo "ERROR: could not read SD_CARD_MANAGER_BUCKET_PREFIX out of"; \
+	       echo "       $(SD_MGR_HDR). test_924_sd_manifest.c needs the REAL"; \
+	       echo "       prefix (#1124 r11 finding 4) -- a hand-copied or defaulted"; \
+	       echo "       value would let the bucket-name guard be checked against a"; \
+	       echo "       string the firmware does not use. The test also carries an"; \
+	       echo "       #error for the same reason, so neither half can default."; \
+	       exit 1; }
+	@# ⚠ HONEST SCOPE OF THAT GUARD: gen_1029_log_budget.py reads the SAME macro
+	@# out of the SAME header and runs as an earlier build prerequisite, so for
+	@# a rename or a removal IT aborts first and this never gets to speak. This
+	@# is a fail-closed BACKSTOP, not an independently reachable arm, and
+	@# pin1124_mutate.sh cannot demonstrate it firing -- stated here rather than
+	@# left to look like a proven check. What R16 DOES prove is the other
+	@# direction: an indented #define still extracts, because this sed now
+	@# tolerates leading whitespace exactly as that generator's parser does. The
+	@# two disagreeing is what would turn a harmless reformat into a build
+	@# failure blaming the prefix.
+	@# ⛔⛔ #1124 r17: INVALIDATE BEFORE TRUNCATE. r16 cleaned up AFTER a refusal
+	@# and the audit found two windows that cannot reach: a STOP between the
+	@# truncating open and the manifest call (the function never runs), and a
+	@# SUCCESS that left the OTHER candidate name standing. Both are gone by
+	@# construction now -- ONE name, removed BEFORE the data file is truncated --
+	@# so these pins assert the new structure, and r16's PIN B (no bare `return;`
+	@# in an attempt function) and PIN D (both candidate names swept) are DELETED
+	@# rather than weakened: the attempt/wrapper split and the second candidate no
+	@# longer exist, and a pin asserting a property the design dropped is the
+	@# prose-satisfied guard this very recipe removed three of.
+	@# PIN A -- the invalidation is called, and BEFORE the truncating open. A
+	@# position pin, because calling it afterwards would delete the record of data
+	@# this session just wrote. Scoped to the OPEN_FILE write arm.
+	@awk '/\(SYS_FS_FILE_OPEN_WRITE_PLUS\)\)/{print NR": MARK_OPEN"} /sd_TargetSafeToOpenForWrite\(gSDCardData.filePath\)/{print NR": MARK_INV"}' \
+	     $(SD_MANAGER_SRC) > /tmp/.sd1124_ord.$$$$; \
+	 inv=`grep -m1 MARK_INV /tmp/.sd1124_ord.$$$$ | cut -d: -f1`; \
+	 opn=`grep -m1 MARK_OPEN /tmp/.sd1124_ord.$$$$ | cut -d: -f1`; \
+	 rm -f /tmp/.sd1124_ord.$$$$; \
+	 test -n "$$inv" && test -n "$$opn" && test "$$inv" -lt "$$opn" \
+	  || { echo "ERROR: the session manifest is not invalidated BEFORE the data file"; \
+	       echo "       is truncated (#1124 r17 PIN A)."; \
+	       echo "         sd_TargetSafeToOpenForWrite() at line $$inv"; \
+	       echo "         the WRITE_PLUS open at line        $$opn"; \
+	       echo "       The open is FA_CREATE_ALWAYS, so from that instant any"; \
+	       echo "       manifest describing this name is wrong. Invalidating after it"; \
+	       echo "       -- or not at all -- leaves a record that VALIDATES and"; \
+	       echo "       describes bytes that are gone, which is worse than none."; \
+	       echo "       An empty line number means the call or the open was renamed."; \
+	       exit 1; }
+	@# ⛔ PIN A2 -- INVERTED AT r18, and the inversion is the finding. r17 pinned
+	@# that the invalidation was gated on isSessionFirstOpen. That gate was a PROXY
+	@# for "do not delete our own live manifest", and the proxy failed where the
+	@# two come apart: rotation reaches the SAME truncating open, and its
+	@# existing-target search can land on a previous session's first file, which
+	@# has a manifest of its own. So the gate is GONE and this pin now asserts its
+	@# ABSENCE plus the real discriminator -- IDENTITY, keyed on the target path.
+	@n=`grep -c 'sd_TargetSafeToOpenForWrite(gSDCardData.filePath)' $(SD_MANAGER_SRC)`; \
+	 g=`grep -B6 'sd_TargetSafeToOpenForWrite(gSDCardData.filePath)' $(SD_MANAGER_SRC) \
+	    | grep -c 'if (isSessionFirstOpen)'`; \
+	 test "$$n" -eq 1 && test "$$g" -eq 0 \
+	  || { echo "ERROR: the manifest invalidation is not keyed on the TARGET path, or"; \
+	       echo "       a first-open gate came back (#1124 r18 PIN A2)."; \
+	       echo "         calls keyed on gSDCardData.filePath: $$n (must be 1)"; \
+	       echo "         isSessionFirstOpen gates above it:   $$g (must be 0)"; \
+	       echo "       EVERY truncating open must invalidate ITS OWN target's"; \
+	       echo "       manifest. A first-open gate skips rotation, whose target can"; \
+	       echo "       be a previous session's first file -- the r17 defect."; \
+	       exit 1; }
+	@# PIN F -- A FAILED INVALIDATION REFUSES THE TRUNCATION. r17 logged the failure
+	@# and truncated anyway, which is fail-OPEN on the one step that exists to stop
+	@# a stale record. The refusal works by leaving the handle INVALID so the
+	@# existing failed-open arm runs, so what is pinned is that the INVALID
+	@# assignment sits between the check and the open.
+	@awk '/if \(!sd_TargetSafeToOpenForWrite/{a=NR} \
+	      /gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;/{if(a&&!b)b=NR} \
+	      /\(SYS_FS_FILE_OPEN_WRITE_PLUS\)\)/{if(a&&!c)c=NR} \
+	      END{print a" "b" "c}' $(SD_MANAGER_SRC) > /tmp/.sd1124_ref.$$$$; \
+	 read a b c < /tmp/.sd1124_ref.$$$$; rm -f /tmp/.sd1124_ref.$$$$; \
+	 test -n "$$a" && test -n "$$b" && test -n "$$c" \
+	   && test "$$a" -lt "$$b" && test "$$b" -lt "$$c" \
+	  || { echo "ERROR: a failed manifest invalidation no longer refuses the"; \
+	       echo "       truncation (#1124 r18 PIN F)."; \
+	       echo "         check at $$a, handle-INVALID at $$b, WRITE_PLUS open at $$c"; \
+	       echo "       All three must be present in that order. If the refusal is"; \
+	       echo "       gone, a .mfst that cannot be removed (read-only, FR_DENIED)"; \
+	       echo "       is logged and the data is truncated beside it anyway."; \
+	       exit 1; }
+	@# PIN G -- the SETTER rejects a name FatFs would normalise. "exp.csv." opens and
+	@# truncates exp.csv while every derived name keeps the dot, so the manifest
+	@# goes to exp.csv..mfst and exp.csv's own record is neither invalidated nor
+	@# written. Pinned in the VALIDATOR, which is the narrowest place that closes it.
+	@awk '/^static bool SD_ValidatePathParam/{f=1} f{print} f&&/^\}/{exit}' \
+	     $(SD_BENCH_SRC) > /tmp/.sd1124_val.$$$$; \
+	 test -s /tmp/.sd1124_val.$$$$ \
+	   && grep -q "p\[i - 1u\] == '\.' || p\[i - 1u\] == ' '" /tmp/.sd1124_val.$$$$ \
+	  || { echo "ERROR: SD_ValidatePathParam no longer rejects a path segment that"; \
+	       echo "       FatFs would normalise (#1124 r18 PIN G) -- a trailing '.' or"; \
+	       echo "       ' '. Without it, 'exp.csv.' truncates exp.csv while the"; \
+	       echo "       manifest name keeps the dot, so the data file's real record"; \
+	       echo "       is left stale and the new one lands at a name nothing reads."; \
+	       echo "       An empty extraction means the function was renamed."; \
+	       rm -f /tmp/.sd1124_val.$$$$; exit 1; }; \
+	 rm -f /tmp/.sd1124_val.$$$$
+	@# PIN C -- the unlink stays gated on the create path's own predicate, and the
+	@# predicate stays able to say no. Unchanged from r16; still the check that
+	@# keeps this from deleting a user file that occupies the manifest name.
+	@#
+	@# ⛔ r20, TWO updates, and the first one broke this recipe before it was
+	@# noticed: the signature gained a FAULT out-param, so BOTH the awk range
+	@# and the call pattern had to move with it. An awk range that no longer
+	@# matches extracts NOTHING, and the `test -s` non-vacuity arm is the only
+	@# reason that surfaced as a failure instead of a pass.
+	@# Why the out-param: the predicate's `false` used to mean both "not a
+	@# manifest" (safe -- leave it) and "could not tell" (a fault -- refuse),
+	@# and this function picked the first meaning and returned TRUE, i.e.
+	@# permission to truncate. r19's findings at :2246/:2249. The coupling this
+	@# pin asserts is unchanged -- the unlink is still gated on the create
+	@# path's own predicate -- it now also honours WHICH answer it got.
+	@# ⛔ r21, THE THIRD update to this recipe, for the same reason as the
+	@# first: the signature moved again. The out-param is gone -- the predicate
+	@# now RETURNS sd_InspectResult, so the fault is in the value and a caller
+	@# cannot reach the permissive answer by ignoring an argument. The range
+	@# pattern, the callee name and the refusal spelling all move with it.
+	@#
+	@# The coupling this pin asserts is still the same one: the unlink is gated
+	@# on the create path's OWN predicate, so the two cannot disagree about what
+	@# is ours to destroy. What it additionally pins now is that the FAULT arm
+	@# is distinguished -- `switch` with an explicit SD_INSPECT_FAULT case --
+	@# because collapsing it back onto the permissive arm is precisely r19's
+	@# :2249 defect.
+	@# ⛔⛔ r21: THE FAULT ARM IS SLICED, not grepped for in the whole function
+	@# -- mutant R23 proved the difference. Asking whether
+	@# `return SD_INSPECT_FAULT;` appears ANYWHERE in this function is satisfied
+	@# by the STAT-fault arm near the top, so deleting the switch's FAULT
+	@# refusal (letting a fault fall through to the unlink, which is r19's
+	@# :2249 defect exactly) left the pin GREEN. Grep-presence inside a
+	@# function slice is satisfied by any arm, so it cannot see WHICH arm lost
+	@# its refusal. The awk below reads only the FAULT case's own body, from
+	@# `case SD_INSPECT_FAULT:` to the next `case`, and requires the refusal
+	@# THERE. Same lesson as PIN 11: check that the thing which DECIDES
+	@# decides, not that something similar exists nearby.
+	@awk '/^static sd_InspectResult sd_RemoveStaleManifestAt\(const char \*path\) \{/{f=1} f{print} f&&/^\}/{exit}' \
+	     $(SD_MANAGER_SRC) > /tmp/.sd1124_rm.$$$$; \
+	 test -s /tmp/.sd1124_rm.$$$$ \
+	   && grep -q 'sd_InspectManifestPathOverwritable(path)' /tmp/.sd1124_rm.$$$$ \
+	   && grep -q 'SYS_FS_FileDirectoryRemove(path)' /tmp/.sd1124_rm.$$$$ \
+	   && awk '/case SD_INSPECT_FAULT:/{f=1;next} f&&/case /{exit} \
+	           f&&/return SD_INSPECT_FAULT;/{ok=1;exit} END{exit ok?0:1}' \
+	          /tmp/.sd1124_rm.$$$$ \
+	  || { echo "ERROR: sd_RemoveStaleManifestAt() no longer gates its unlink on the"; \
+	       echo "       create path's predicate, or stopped distinguishing the"; \
+	       echo "       FAULT answer (#1124 r17 PIN C, r21 update)."; \
+	       rm -f /tmp/.sd1124_rm.$$$$; exit 1; }; \
+	 rm -f /tmp/.sd1124_rm.$$$$
+	@# PIN E -- a DIRECTORY is refused, and refused BEFORE the fsize==0 shortcut.
+	@# ORDER IS THE WHOLE PIN: a directory stats with fsize == 0, so a check placed
+	@# after that early `return true` never runs. The predicate was written to
+	@# guard an open-for-write, where saying yes about a directory is harmless;
+	@# r16 reused it to guard an UNLINK, where SYS_FS_FileDirectoryRemove removes
+	@# directories too. Reusing a predicate is only sound where the guarded ACTION
+	@# is the same.
+	@# ⛔ r20: signature updated with the FAULT out-param. Third awk range on
+	@# this row to need that, which is the cost of keying an extraction on a
+	@# full signature -- precise, and it moves with every parameter change. Each
+	@# one failed LOUDLY via its non-vacuity arm rather than measuring nothing,
+	@# which is the only reason a signature change is a nuisance here instead of
+	@# a silent hole.
+	@awk '/^static sd_InspectResult sd_InspectManifestPathOverwritable\(const char \*path\) \{/{f=1} f{print} f&&/^\}/{exit}' \
+	     $(SD_MANAGER_SRC) > /tmp/.sd1124_safe.$$$$; \
+	 d=`grep -n 'SYS_FS_ATTR_DIR' /tmp/.sd1124_safe.$$$$ | head -1 | cut -d: -f1`; \
+	 z=`grep -n 'st.fsize == 0u' /tmp/.sd1124_safe.$$$$ | head -1 | cut -d: -f1`; \
+	 rm -f /tmp/.sd1124_safe.$$$$; \
+	 test -n "$$d" && test -n "$$z" && test "$$d" -lt "$$z" \
+	  || { echo "ERROR: sd_InspectManifestPathOverwritable() does not refuse a DIRECTORY"; \
+	       echo "       before its zero-size shortcut (#1124 r17 PIN E)."; \
+	       echo "         SYS_FS_ATTR_DIR check at line $$d"; \
+	       echo "         'st.fsize == 0u' shortcut at  $$z"; \
+	       echo "       A directory stats with fsize == 0 and would take the"; \
+	       echo "       shortcut, so a later check is dead and the unlink it guards"; \
+	       echo "       can remove a DIRECTORY. An empty line number means one of"; \
+	       echo "       the two was renamed and this pin measures nothing."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -I$(FW_UTIL) -DFW_SD_BUCKET_PREFIX='$(SD_BUCKET_PREFIX)' -o $(MANIFEST_BIN) test_924_sd_manifest.c $(FW_UTIL)/CRC32.c
+
 $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC) $(RECIPES)
 	@grep -qE '^#define[[:space:]]+SCPI_SD_BENCH_STALL_TIMEOUT_MS[[:space:]]+10000U[[:space:]]*$$' $(SD_BENCH_SRC) \
 	  || { echo "ERROR: SCPI_SD_BENCH_STALL_TIMEOUT_MS is no longer '10000U' in $(SD_BENCH_SRC)."; \
@@ -996,6 +3938,69 @@ $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC) $(RE
 	@grep -qE '^#define[[:space:]]+SCPI_SD_BENCH_STALL_POLL_MS[[:space:]]+5U[[:space:]]*$$' $(SD_BENCH_SRC) \
 	  || { echo "ERROR: SCPI_SD_BENCH_STALL_POLL_MS is no longer '5U' in $(SD_BENCH_SRC)."; \
 	       echo "       Update FW_STALL_POLL_MS in test_943_bench_stall_bound.c and re-derive its numbers."; \
+	       exit 1; }
+	@# (#1124 r9 arm 3 lives HERE, not in $(MANIFEST_BIN)'s recipe, because
+	@# SCPIStorageSD.c is a prerequisite of THIS target and not of that one.
+	@# A pin that reads a file its target does not depend on passes STALE:
+	@# the file changes, the target is still up to date, the check never
+	@# re-runs. Same reason $(RECIPES) is a prerequisite elsewhere here.
+	@# ⛔⛔ ARM 3 (REPLACED at r10) -- THE ROLE TABLE, PER CALLBACK, NOT A COUNT.
+	@# r9's version asserted the call sites split "5 file / 1 directory" and it
+	@# locked in a WRONG classification: SCPI_StorageSDListDir fills
+	@# opDirectory, but its length variable is named `fileLen`, so it was
+	@# counted as a file operand and given isFileName=true. LISt? "DAQiFi/" was
+	@# then refused -- the exact directory-half regression the parameterisation
+	@# existed to prevent, arriving through the one site whose variable name
+	@# lies about its destination.
+	@#
+	@# ⭐ A COUNT CANNOT CARRY A CLASSIFICATION. "Five of these are file
+	@# operands" is true of any five, so the count passed while the wrong five
+	@# were chosen. Same family as r9's arm 1b ("a count cannot see which
+	@# argument it counted"), one level up: here it could not see which SITE.
+	@# So each callback is named, with the role its subject requires:
+	@#
+	@#   SCPI_StorageSDLoggingSet    -> file        the logging target
+	@#   SCPI_StorageSDCrcStart      -> file        CRC of one stored file
+	@#   SCPI_StorageSDGetData       -> file        retrieve one file
+	@#   SCPI_StorageSDDelete        -> file        delete one file
+	@#   SCPI_StorageSDListDir       -> DIRECTORY   lists a directory (opDirectory)
+	@#   SCPI_StorageSDDirectorySet  -> DIRECTORY   sets the working directory
+	@#
+	@# A new caller fails this until it is added here WITH its role decided,
+	@# which is the point: the decision is strip-vs-reject and it cannot be
+	@# inferred from the surrounding variable names.
+	@#
+	@# ⚠ The extraction uses awk's index() against the FULL signature, not a
+	@# dynamic regex. The first version passed `^scpi_result_t NAME\\(` through
+	@# make -> shell -> awk and every escaping layer had its own opinion; all
+	@# six extractions silently returned nothing. It FAILED CLOSED only because
+	@# the test is `calls -ne 1`, which catches 0 -- had it been `-gt 0` or a
+	@# flag-only comparison, a broken extraction would have passed six empty
+	@# bodies as compliant. index($$0,nm)==1 has no metacharacters to lose.
+	@pp=`$(CC) -fpreprocessed -E $(SD_BENCH_SRC) 2>/dev/null`; \
+	 bad=""; \
+	 for spec in LoggingSet:true CrcStart:true GetData:true Delete:true \
+	             ListDir:false DirectorySet:false; do \
+	   cb=SCPI_StorageSD`echo "$$spec" | cut -d: -f1`; \
+	   want=`echo "$$spec" | cut -d: -f2`; \
+	   body=`printf '%s\n' "$$pp" | awk -v nm="scpi_result_t $$cb(scpi_t * context)" 'index($$0,nm)==1{g=1} g{print} g&&/^\}/{exit}'`; \
+	   n=`printf '%s\n' "$$body" | grep -c 'SD_ValidatePathParam('`; \
+	   got=`printf '%s\n' "$$body" | grep -oE 'SD_ValidatePathParam\([^)]*, (true|false)\)' | grep -oE '(true|false)' | head -1`; \
+	   if [ "$$n" -ne 1 ] || [ "$$got" != "$$want" ]; then \
+	     bad="$$bad $$cb(calls=$$n,flag=$$got,want=$$want)"; \
+	   fi; \
+	 done; \
+	 test -z "$$bad" \
+	  || { echo "ERROR: #1124 r10 -- SD_ValidatePathParam's role table is violated"; \
+	       echo "       in $(SD_BENCH_SRC):"; \
+	       for b in $$bad; do echo "         $$b"; done; \
+	       echo "       Each callback must validate its operand as the half its"; \
+	       echo "       SUBJECT requires -- file operands reject a trailing '/',"; \
+	       echo "       directory operands accept and strip it. ⛔ Do NOT infer the"; \
+	       echo "       role from the length variable's name: SCPI_StorageSDListDir"; \
+	       echo "       writes opDirectory while its variable is called fileLen,"; \
+	       echo "       and reading that name instead of the destination is what"; \
+	       echo "       broke LISt? \"DAQiFi/\" at r9."; \
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(BENCH_BIN) test_943_bench_stall_bound.c
 
@@ -2007,7 +5012,8 @@ $(FAILNEXT_BIN): test_981_sd_failnext_hook.c test_framework.h $(SD_MANAGER_SRC) 
 # `$(SD_MANAGER_SRC)` is a prerequisite so an edit to the real snippet
 # re-triggers this; the head/tail files are prerequisites so an edit to the
 # assertions does too.
-$(FAILNEXT_REAL_BIN): test_981_sd_failnext_real_consume.head.c test_981_sd_failnext_real_consume.tail.c $(SD_MANAGER_SRC) $(RECIPES)
+$(FAILNEXT_REAL_BIN): test_981_sd_failnext_real_consume.head.c test_981_sd_failnext_real_consume.tail.c \
+                     $(FW_UTIL)/CRC32.h $(FW_UTIL)/CRC32.c $(SD_MANAGER_SRC) $(RECIPES)
 	@sed -n '/static int SDCardWrite() {/,/^}/p' $(SD_MANAGER_SRC) > /tmp/.fw981_real_body.$$$$; \
 	 lines=`wc -l < /tmp/.fw981_real_body.$$$$ | tr -d ' '`; \
 	 last=`tail -1 /tmp/.fw981_real_body.$$$$ | tr -d '[:space:]'`; \
@@ -2028,7 +5034,7 @@ $(FAILNEXT_REAL_BIN): test_981_sd_failnext_real_consume.head.c test_981_sd_failn
 	       exit 1; }; \
 	 cat test_981_sd_failnext_real_consume.head.c /tmp/.fw981_real_body.$$$$ test_981_sd_failnext_real_consume.tail.c > /tmp/.fw981_real_gen.$$$$.c; \
 	 rm -f /tmp/.fw981_real_body.$$$$; \
-	 $(CC) $(CFLAGS) -o $(FAILNEXT_REAL_BIN) /tmp/.fw981_real_gen.$$$$.c; \
+	 $(CC) $(CFLAGS) -I$(FW_UTIL) -o $(FAILNEXT_REAL_BIN) /tmp/.fw981_real_gen.$$$$.c $(FW_UTIL)/CRC32.c; \
 	 status=$$?; \
 	 rm -f /tmp/.fw981_real_gen.$$$$.c; \
 	 exit $$status
@@ -3893,7 +6899,7 @@ $(USECALTYPE_BIN): test_1152_usecal_type_trust.c test_framework.h \
 # TWENTY-SEVEN run prerequisites and this branch's had TWENTY-FOUR, each right
 # about itself. The union is TWENTY-EIGHT -- main's twenty-seven plus this
 # branch's one. Verified by cross-check rather than by eye: every one of the 28
-# prerequisites has a `./$(X)` recipe line and an entry in `clean` (29/29/34),
+# prerequisites has a `./$(X)` recipe line and an entry in `clean` (30/30/35),
 # with no duplicates -- the check that catches a dropped or doubled entry, which
 # is the failure this block's own history keeps recording.
 # #1029's names carry the 1029 suffix so they cannot shadow #1000's
@@ -4594,7 +7600,7 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
      $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) \
      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) \
      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(USECALTYPE_BIN) $(ARM_BIN) $(NAME_BIN) \
-     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN)
+     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(MANIFEST_BIN) $(GATE1124_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN)
 	./$(SEQ908_BIN)
 	./$(BUTTONLATCH_BIN)
 	./$(TEAR904_BIN)
@@ -4619,6 +7625,8 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
 	./$(SCAN1112_BIN)
 	./$(STARTARM_BIN)
 	./$(START_BIN)
+	./$(MANIFEST_BIN)
+	./$(GATE1124_BIN)
 	./$(REPLYBUF_BIN)
 	./$(HEXWIN_BIN)
 	./$(LOGONCE_BIN)
@@ -4899,6 +7907,6 @@ clean:
 	      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(GEN_1125) \
 	      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(SDLOG1029_GEN).tmp \
 	      $(USECALTYPE_BIN) $(NAME_BIN) $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(ARM_BIN) $(SCPIDAC_RAILGATE_BIN) \
-	      $(FORCEGATE_BIN) $(LOG1039_BIN) $(LOG1039_GEN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN)
+	      $(FORCEGATE_BIN) $(LOG1039_BIN) $(LOG1039_GEN) $(MANIFEST_BIN) $(GATE1124_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN)
 
 .PHONY: run clean

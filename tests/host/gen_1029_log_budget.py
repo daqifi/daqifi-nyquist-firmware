@@ -15,7 +15,8 @@ that can be edited without anyone thinking about this test:
     LOG_MESSAGE_SIZE                          Util/Logger.h
     vsnprintf's and the clamp's reservations   Util/Logger.c
     SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX      sd_card_services/sd_card_manager.h
-    SD_CARD_MANAGER_BUCKET_PREFIX / MAX_BUCKET sd_card_services/sd_card_manager.c
+    SD_CARD_MANAGER_BUCKET_PREFIX              sd_card_services/sd_card_manager.h
+    SD_CARD_MANAGER_MAX_BUCKET                 sd_card_services/sd_card_manager.c
     sd_BuildBucketPath's format string          sd_card_services/sd_card_manager.c
     the three LOG_E format strings              sd_card_services/sd_card_manager.c
 
@@ -313,12 +314,28 @@ SITES = [
          what="site 3 -- writes hang while reads work"),
 ]
 
-CONV_RE = re.compile(r"%(?:%|[-+ #0]*[0-9]*(?:\.[0-9]+)?"
+#1124: the width and precision fields accept `*` as well as digits. Before this
+# the precision group was `(?:\.[0-9]+)?`, so `%.*s` matched NOTHING: the `s`
+# was not seen as a conversion (conversion_spec('%.*s/P%03u') == 'u'), and
+# CONV_RE.sub('') left the four bytes `%.*s` behind as if they were literal
+# text. Both failures are quiet and only one of them fails safe -- an inflated
+# literal length over-sizes a buffer, but a missed conversion lets a format
+# through whose argument list nobody checked.
+CONV_RE = re.compile(r"%(?:%|[-+ #0]*(?:[0-9]+|\*)?(?:\.(?:[0-9]+|\*))?"
                      r"(?:hh|h|ll|l|j|z|t|L)?([diouxXeEfgGaAcspn]))")
+
+# A `*` width or precision consumes an extra int argument BEFORE the value, so
+# it changes the caller's argument list without changing conversion_spec().
+STAR_RE = re.compile(r"%[-+ #0]*(?:\*|[0-9]*\.\*)[^%]*?[diouxXeEfgGaAcspn]")
 
 
 def conversion_spec(fmt):
     return "".join(m.group(1) for m in CONV_RE.finditer(fmt) if m.group(1))
+
+
+def star_arg_count(fmt):
+    """Number of extra int arguments the format's `*` width/precision fields take."""
+    return sum(m.group(0).count("*") for m in STAR_RE.finditer(fmt))
 
 
 def extract_site(raw, masked, macros, site):
@@ -432,26 +449,53 @@ def main():
 
     # ---- sd_card_manager.{h,c} -------------------------------------------
     sd_defs_h, sd_defs_c = defines(sd_h), defines(sd_c)
+    # #1124 r11 finding 4 moved SD_CARD_MANAGER_BUCKET_PREFIX into
+    # sd_card_manager.h (the SD:DIR setter has to read the same string the
+    # bucket machinery names buckets with). Macro EXPANSION inside .c literals
+    # therefore has to see both files -- sd_BuildBucketPath's format is
+    # `"%.*s/" SD_CARD_MANAGER_BUCKET_PREFIX "%03u"`, which no longer resolves
+    # from the .c alone.
+    #
+    # A name defined in BOTH with DIFFERENT text is the drift this move exists
+    # to prevent, so it is fatal rather than resolved by precedence: silently
+    # preferring one copy is how the two could disagree while every check here
+    # still passed.
+    sd_defs_all = dict(sd_defs_h)
+    for k, v in sd_defs_c.items():
+        if k in sd_defs_all and sd_defs_all[k] != v:
+            die("%s is #defined in BOTH sd_card_manager.h (%r) and "
+                "sd_card_manager.c (%r)." % (k, sd_defs_all[k], v),
+                "One of them is a stale copy. Delete it -- do not let this",
+                "script pick a winner, which is how the two drift apart while",
+                "the generated header keeps looking right.")
+        sd_defs_all[k] = v
     dir_len_max = int_define(sd_defs_h, "SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX",
                              "sd_card_manager.h")
     max_bucket = int_define(sd_defs_c, "SD_CARD_MANAGER_MAX_BUCKET",
                             "sd_card_manager.c")
     max_dir_files = int_define(sd_defs_c, "SD_CARD_MANAGER_MAX_DIR_FILES",
                                "sd_card_manager.c")
-    bucket_prefix = str_define(sd_defs_c, "SD_CARD_MANAGER_BUCKET_PREFIX",
-                               "sd_card_manager.c")
+    bucket_prefix = str_define(sd_defs_h, "SD_CARD_MANAGER_BUCKET_PREFIX",
+                               "sd_card_manager.h")
 
     # sd_BuildBucketPath's two branches. The bucket != 0 branch is the one the
     # test formats; the bucket == 0 branch is pinned only to establish that it
-    # still yields the directory verbatim -- i.e. is strictly shorter -- so the
+    # yields the directory and nothing more -- i.e. is strictly shorter -- so the
     # branch the test DOES measure really is the worst case.
+    #
+    # #1124 re-derived this: the branch now emits the CANONICAL directory
+    # ("%.*s" with the trailing slashes stripped) rather than the verbatim one,
+    # which is <= what it was, so "strictly shorter than bucket != 0" still
+    # holds -- that branch adds "/" + prefix + digits on top of the same
+    # canonical directory. The worst case did not move.
     if not re.search(r"written\s*=\s*snprintf\s*\(\s*out\s*,\s*outLen\s*,\s*"
-                     r'"%s"\s*,\s*dir\s*\)\s*;', sd_c_masked):
+                     r'"%\.\*s"\s*,\s*dirLen\s*,\s*dir\s*\)\s*;', sd_c_masked):
         die('sd_BuildBucketPath\'s bucket==0 branch is no longer '
-            'snprintf(out, outLen, "%s", dir).',
-            "The test assumes that branch yields the directory verbatim and so is",
-            "strictly shorter than the bucket!=0 branch it measures. Re-derive",
-            "which branch is the worst case before changing this.")
+            'snprintf(out, outLen, "%.*s", dirLen, dir).',
+            "The test assumes that branch yields the directory (canonicalised,",
+            "so no longer than verbatim) and so is strictly shorter than the",
+            "bucket!=0 branch it measures. Re-derive which branch is the worst",
+            "case before changing this.")
     calls = list(re.finditer(r"written\s*=\s*snprintf\s*\(\s*out\s*,\s*outLen\s*,\s*",
                              sd_c_masked))
     if len(calls) != 2:
@@ -460,12 +504,22 @@ def main():
             "The test measures the SECOND one as the worst case; with a different",
             "number of branches that choice has to be re-derived.")
     start = sd_c_masked.find('"', calls[1].end())
-    bucket_fmt, _ = parse_literal_group(sd_c, start, sd_defs_c,
+    bucket_fmt, _ = parse_literal_group(sd_c, start, sd_defs_all,
                                         "sd_BuildBucketPath's bucket path format")
     if conversion_spec(bucket_fmt) != "su":
         die("sd_BuildBucketPath's bucket path format now takes %r, not 's' then 'u'."
             % conversion_spec(bucket_fmt),
-            "The test formats it with (const char *dir, unsigned bucket).")
+            "The test formats it with (int dirLen, const char *dir, unsigned bucket).")
+    # #1124: the `*` precision takes an int BEFORE the string, and
+    # conversion_spec() cannot see that -- it reports 'su' either way. Pin the
+    # star count explicitly, or the test's argument list could silently stop
+    # matching the format it is handed.
+    if star_arg_count(bucket_fmt) != 1:
+        die("sd_BuildBucketPath's bucket path format has %d `*` width/precision "
+            "fields, expected exactly 1." % star_arg_count(bucket_fmt),
+            "build_bucket_path() in the test passes exactly one leading int",
+            "(the canonical directory length). A different count means its",
+            "argument list no longer matches this format.")
     m = re.search(r"%0(\d+)u", bucket_fmt)
     if not m:
         die("sd_BuildBucketPath's format %r no longer zero-pads the bucket number."
@@ -478,7 +532,7 @@ def main():
     bucket_path_maxlen = (len(CONV_RE.sub("", bucket_fmt))
                           + dir_len_max + bucket_digits + 1)
 
-    sites = [(s,) + extract_site(sd_c, sd_c_masked, sd_defs_c, s) for s in SITES]
+    sites = [(s,) + extract_site(sd_c, sd_c_masked, sd_defs_all, s) for s in SITES]
 
     # ---- emit -------------------------------------------------------------
     L = ["/* GENERATED by tests/host/%s -- DO NOT EDIT, DO NOT COMMIT." % SELF,

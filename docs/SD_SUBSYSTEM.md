@@ -130,6 +130,181 @@ absent.
 
 **Implementation:** `firmware/src/services/sd_card_services/sd_card_manager.c`
 
+### Per-session integrity manifest (#924)
+
+Every SD **streaming** session writes one extra file, `<datafile>.mfst` -- the
+FULL stream filename plus the extension, so `exp.csv` gets `exp.csv.mfst` (#1124
+r17; it was `<base>.mfst` until that round made the name unambiguous) -- in the
+configured directory beside its stream files. It holds one line per stream
+file, appended as that file is closed:
+
+```
+DAQiFi/experiment.csv,20480,0x1A2B3C4D
+DAQiFi/experiment-1.csv,20480,0x7788AA99
+DAQiFi/P001/experiment-65.csv,9012,0x00C0FFEE
+DAQiFi/P001/experiment-66.csv,4096,0xDEADBEEF,PARTIAL
+```
+
+`<name>,<bytes>,0x<CRC32>[,PARTIAL]`, LF-terminated, no header row — so **the
+line count is the session's stream-file count**.
+
+**The optional fourth field.** `,PARTIAL` means *the record and the file on the
+card may disagree about the length, in **either** direction* — `<CRC32>` covers
+the first `<bytes>` bytes **as the firmware counted them**, and nothing
+guarantees the file is that long. It is appended as a fourth field rather than
+by altering the first three, so a reader indexing `[0..2]` is unaffected and the
+CRC stays verifiable. Four conditions set it:
+
+| condition | the file may be |
+|---|---|
+| a data write returned an error (`SDCardWrite`) | **longer** than `<bytes>` |
+| the #824 header write returned an error | **longer** than `<bytes>` |
+| a `FileSync` before unmount failed | **shorter** than `<bytes>` |
+| a `FileClose` during unmount failed | **shorter** than `<bytes>` |
+
+The first two are Harmony destroying FatFs's partial byte count (it overwrites
+`*bw` with `0xFFFFFFFF` on any error, so bytes may be on the card that nothing
+can count); the last two are `FF_FS_TINY == 0`, so counted bytes may still be in
+FatFs's per-file sector cache when the unmount discards them.
+
+**A verifier should therefore** read `min(bytes, filesize)` bytes of a marked
+file, CRC them, and expect a match only when `filesize >= bytes`. An *unmarked*
+line is the strong claim: `filesize == bytes` and the CRC covers all of it.
+
+The name is the file's **full path**, configured directory included (#1124 r13,
+operator item 8 = B). A manifest line can still be fed straight back to
+`SYSTem:STORage:SD:CRC?` or `SYSTem:STORage:SD:GET`, because retrieval strips
+the configured-directory prefix — so the full path is stripped exactly *once*
+and names the file it describes. A bucketed file keeps its `P00n/` segment
+inside that path, e.g. `DAQiFi/P001/experiment-65.csv`.
+
+⚠️ Through r12 this read *relative to the configured directory*, and that is
+precisely what made the record ambiguous: retrieval strips the directory too, so
+a relative name was stripped **twice** and could open a different file. Recording
+the full path is what retired the `P###`-folder-name refusal — see the removal
+note further down.
+
+**The CRC is accumulated over the WRITE path, not recomputed afterwards.**
+`sd_card_manager.c` folds each successful `SYS_FS_FileWrite`'s landed bytes
+into a running CRC-32 inside `SDCardWrite()` — the single funnel every
+stream-file byte passes through — plus one fold at the #824 header write, the
+only byte range that bypasses it. The accumulator is armed beside
+`currentFileBytes = 0` in `OPEN_FILE` and finalized at the close that emits the
+line, so `fileCrcRunning` covers precisely the bytes `currentFileBytes` counts.
+That is what makes the recorded value equal both `zlib.crc32` of the downloaded
+file and `SYST:STOR:SD:CRC?` for it; the firmware's CRC-32 (`Util/CRC32.c`) is
+bit-identical to zlib's.
+
+**Shape constraints, all of them load-bearing — do not "simplify" any of these
+without reading #924:**
+
+- **ONE file per SESSION, not per stream file.** A per-file `.crc32` sidecar
+  adds one `f_open(CREATE)` per rotation and doubles the steady-state file
+  count, and FatFs file-create is O(directory size) — that is the reproduced
+  #689 wedge. The manifest costs exactly **one** extra create per session,
+  attempted once (`manifestOpenAttempted`), so a create that *fails* is not
+  retried at the next rotation.
+- **Not a trailer inside each stream file.** The rotation path drains a
+  *snapshot* of the circular buffer and cannot reopen a closed file
+  (#757/#823/#824).
+- **Never through the SD circular buffer.** Lines are written with direct
+  `SYS_FS_FileWrite` calls, as the #824 header now is: the ring is drained into
+  the file being *retired*, so a line pushed through it would land inside a
+  stream file's payload.
+- **All of it runs on `app_SDCardTask`.** The session-boundary hooks are *not*
+  in `streaming.c` even though it owns the #824 header machinery, because that
+  code runs on the streaming task and every `SYS_FS_*` call in this firmware is
+  made by the SD task — the only task that pumps `DRV_SDSPI_Tasks()`. #824 set
+  the precedent: streaming.c *builds* the header, the SD task *writes* it. The
+  manifest has nothing for streaming.c to build, so the arm-time latch
+  `gWriteSessionIsStreamingLog` (#824's) is the whole streaming-side input.
+- **`gWriteSessionIsStreamingLog` gates it**, so `SYST:STOR:SD:BENCHmark` —
+  which shares this same WRITE state and rotation path — produces no manifest.
+
+**Three configurations get NO manifest, by refusal rather than by accident.**
+Each is checked once, at manifest open, and each logs a `LOG_E` naming the
+reason *and the remedy first* (Logger truncates the tail at 125 bytes); the
+logging session itself continues normally. Withholding an integrity record must
+never be what stops a capture.
+
+⚠️ **Removed in #1124 r13 — a bucket-named `SD:DIR` is no longer refused.**
+Through r12 this list began with *"a configured directory that carries a rotation
+bucket's name"* (`P000`–`P999`), refused both at the `SYST:STOR:SD:DIRectory`
+setter and again at manifest open for a value already in NVM. The reason was
+that names were recorded **relative** to `SD:DIR` while `:GET`/`:CRC` *also*
+strip `SD:DIR`: with `SD:DIR "P001"` a rotated file at `P001/P001/exp-64.csv`
+was recorded as `P001/exp-64.csv`, and retrieval stripped the leading `P001/` a
+second time, opening a different file or none.
+
+Operator ruling 2026-10-27 (item 8 = B,
+[issuecomment-6450419546](https://github.com/daqifi/daqifi-nyquist-firmware/pull/1124#issuecomment-6450419546)):
+record every file by its **full path** instead. One strip then happens instead of
+two, so record-then-retrieve is the identity for *every* directory name,
+including a bucket-named one — and the refusal has nothing left to guard. Both
+enforcement sites and both helpers (`SdManifest_RelativeName`,
+`SdManifest_DirShadowsBucketName`) are gone. The two halves are pinned together
+in `tests/host/Makefile`: dropping the refusal while leaving relative recording
+would be the r11 defect with its guard removed.
+
+- **A configured directory already holding `MAX_DIR_FILES` files** (#1124 r12).
+  The manifest is always created in the *parent*, never in the session's #689
+  bucket, so once a session rolls into `P001` nothing consults the parent's file
+  count again and one manifest per session would accumulate there with no
+  ceiling — walking the parent's FatFs entry count back toward the O(directory
+  size) create wedge #689 exists to escape. Counted files-only, because the
+  parent's budget has separate file and subdirectory terms and bucket 0 *is* the
+  parent. An unreadable directory takes this same path: unreadable reads as
+  full, the safe direction for a guard whose failure mode is re-entering a
+  wedge. **This bounds the damage; it does not make manifests rotate.**
+- **A name containing `,`, CR or LF.** The line format echoes the name raw, and
+  `SD_ValidatePathParam` (`SCPIStorageSD.c`) accepts a comma — so
+  `SYST:STOR:SD:FILE "trial,1.csv"` would emit a record reading as *four*
+  fields, whose extracted name identifies no file. Refusing keeps the
+  invariant **a manifest that exists is well-formed**, which is what lets the
+  companion test treat an unparsable line as a defect rather than a
+  possibility.
+There is one more collision case, and it is handled by **renaming, not
+refusing** -- and #1124 r17 turned it into a REFUSAL, there being one name now:
+a stream already named `<x>.mfst` can make the manifest name the
+same path as the stream file itself, so FatFs would refuse the duplicate
+write-open (`FF_FS_LOCK` is 10) and the session would run with no integrity
+records at all. Detected by comparing the two paths (so it holds for a rolled
+#689 bucket too), and the manifest then goes to **`<file>.mfst`** — e.g.
+`foo.mfst` logs to `foo.mfst.mfst`, with a `LOG_I` saying so.
+
+That fallback is collision-free *by construction* rather than by luck: against
+the first stream file it is that exact string plus a suffix, so it is strictly
+longer; against a rotated part `<base>-N<ext>` equality would require
+`<ext>.mfst` to equal `-N<ext>`, and those differ at the first character. One
+retry therefore suffices — there is no loop and no counter.
+
+**A short manifest write is completed, not abandoned.** The bytes of a partial
+write are already on the card, so giving up leaves a headless fragment that the
+*next* append concatenates onto — one lost record becoming two malformed ones
+and every later line desynchronised. `sd_AppendManifestLine` finishes the line
+with a bounded loop (`SD_MANIFEST_WRITE_TRIES`, no waiting and no yielding, so
+the rotation window stays short); if it still cannot complete, it terminates the
+fragment with a newline so the damage is **contained to one line**, which the
+companion test's "every line parses" check then reports.
+
+**No per-line `FileSync`.** Lines are appended inside the rotation window that
+#757/#822/#824 spent three issues keeping short; a metadata flush per rotation
+would add SD writes to exactly the window whose cost #924's acceptance criteria
+measure. The close at session end flushes everything. **Consequence, stated:**
+a session ended by power loss or a card yank can leave the manifest short of
+its last line(s). The files it *does* name are still fully described, and
+`SYST:STOR:SD:CRC?` still answers for the ones it does not.
+
+The session's **last** file is recorded by `UNMOUNT_DISK`, not by the rotation
+path (it is never rotated), which is also why a session that never rotates
+still produces a one-line manifest.
+
+**Companion test:** `test_306b_sd_manifest.py` (daqifi-python-test-suite).
+**Host test:** `tests/host/test_924_sd_manifest.c` compiles the real
+`Util/SdManifest.h` and `Util/CRC32.c`, and its Makefile target fails the
+*build* if `sd_card_manager.c` stops folding the CRC or stops rendering lines
+through `SdManifest_FormatLine`.
+
 ### SD Card Sector-Aligned Writes
 
 The WRITE_TO_FILE state extracts data from the circular buffer in 512-byte sector-aligned chunks. This allows FatFS to use its fast path (`disk_write()` directly from the user buffer) instead of the per-sector `memcpy` + dirty-flag path. Measured improvement: ~55% throughput gain on SPI-mode SD cards (~500 KB/s vs ~320 KB/s with same benchmark method).

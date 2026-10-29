@@ -275,7 +275,10 @@ static void build_bucket_path(char *out, size_t outSize, size_t dirLen, unsigned
     }
     memset(dir, 'x', dirLen);
     dir[dirLen] = '\0';
-    (void)snprintf(out, outSize, FW_SD_BUCKET_PATH_FMT, dir, bucket);
+    /* #1124: the format's `*` precision takes the canonical directory length
+     * first. The generator pins that there is exactly one such field, so this
+     * argument list cannot drift from the format it is handed. */
+    (void)snprintf(out, outSize, FW_SD_BUCKET_PATH_FMT, (int)dirLen, dir, bucket);
 }
 
 /* ==========================================================================

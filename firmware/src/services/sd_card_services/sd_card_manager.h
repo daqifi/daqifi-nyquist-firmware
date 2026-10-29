@@ -18,6 +18,19 @@
 #define SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX 40
 #define SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX 40
 
+/* #689 rotation-bucket directory name prefix: buckets are
+ * "<prefix><%03u>" ("P001", "P002", ...). Deliberately 8.3-clean so FatFs
+ * stores each as ONE directory entry; the full rationale sits with the
+ * bucket machinery in sd_card_manager.c.
+ *
+ * IN THE HEADER, not that .c file, since #1124 r11 finding 4: the SD:DIR
+ * setter must refuse a configured directory that carries a bucket's own name,
+ * or the #924 manifest's recorded names stop round-tripping through
+ * SD:GET/SD:CRC. That check and this prefix have to be the SAME string --
+ * a second copy in the SCPI file is exactly the drift that would reopen the
+ * defect while every test still passed. */
+#define SD_CARD_MANAGER_BUCKET_PREFIX      "P"
+
 // File size limits for automatic splitting (FAT32 protection)
 // FAT32 max: 2^32 - 1 bytes (4GB - 1 byte)
 // Safety margin: 100MB to account for filesystem metadata and overhead
@@ -99,6 +112,43 @@ extern "C" {
          * target DELIBERATELY (the #689 pre-walk reopens a split part in
          * place). Default false. */
         bool uniqueTarget;
+        /* ⛔ #1124 / OPERATOR RULING L=C: an existing data file is REFUSED, not
+         * truncated, unless the client has explicitly asked to overwrite THIS
+         * target. Staged by the optional second parameter of
+         * SYSTem:STORage:SD:FILE and reported by SYSTem:STORage:SD:FILE?.
+         *
+         * It is bound to the NAME it authorises, which is why it rides SD:FILE
+         * rather than being a global mode: a standing "overwrite anything"
+         * switch would still be in force when a later SD:FILE named a
+         * different file, and the user who authorised destroying `scratch.csv`
+         * never authorised destroying `experiment.csv`.
+         *
+         * Each SD:FILE invocation fully determines it -- omitting the
+         * parameter clears it -- so an existing one-argument client gets
+         * refuse-by-default, which is the ruling's intent. An SD:DIR change
+         * withdraws it too: the authorisation is bound to the RESOLVED target
+         * (dir + file), because one granted under `scratch` must not follow a
+         * later SD:DIR onto `archive/log.csv` (r19 finding 4).
+         *
+         * ⛔ CONSUMED AT SESSION START -- OPERATOR RULING V=A, 2026-10-28.
+         * One opt-in authorises ONE session: the arm latches this into
+         * gSDCardData.overwriteAuthorizedForSession and clears THIS field in
+         * the same critical section, so a later session needs a fresh ",1" and
+         * SD:FILE? reports 0 once consumed. It stays in force for that
+         * session's own rotation parts, because the gate reads the session's
+         * copy rather than this one.
+         *
+         * It is cleared even when the session is then refused for an unrelated
+         * reason, so a retry needs a fresh ",1". The ruling accepts that trade
+         * explicitly; the alternative is an authorisation that outlives the
+         * failure it was granted for.
+         *
+         * An earlier revision of this comment said the opt-in was consumed
+         * while the implementation left it persistent until renamed. The r19
+         * audit found the contradiction -- the text and the code disagreed and
+         * each could be cited as the specification. The ruling settled it in
+         * favour of this text, and the code now matches. */
+        bool overwriteExisting;
     } sd_card_manager_settings_t;
 
 
@@ -319,6 +369,72 @@ extern "C" {
         SD_REFUSE_BUCKET_MKDIR,      /* the bucket directory could not be created */
         SD_REFUSE_BUCKET_UNREADABLE, /* a bucket could not be counted OR stat'd (FS fault) */
         SD_REFUSE_BUCKET_NOT_DIR,    /* a non-directory occupies the bucket name */
+        SD_REFUSE_NAME_NOT_A_FILE,   /* #1124: the configured name ends in '/' */
+        /* #1124 L=C: the target already exists and no overwrite was asked for.
+         * Appended at the END -- these values cross the SCPI boundary through
+         * sd_card_manager_WriteRefuseReasonText(), so renumbering would change
+         * what an existing client is told. */
+        SD_REFUSE_TARGET_EXISTS,
+        /* #1124 L=C, FAIL CLOSED: the target could not be INSPECTED. A stat
+         * fault is not an absence; treating it as one is r18 finding 3, and it
+         * would let a truncation proceed beside a manifest that still
+         * describes the old bytes. */
+        SD_REFUSE_TARGET_UNREADABLE,
+        /* #1124 L=C: a manifest exists at this target's manifest name and this
+         * session cannot prove it is its own. Refused rather than deleted --
+         * r18 findings 1 and 4 are both wrong-DELETION bugs reached through a
+         * name, and C's answer to a destructive default is to refuse. */
+        SD_REFUSE_MANIFEST_NOT_OURS,
+        /* ⛔ #1124 r21 item 1: the overwrite opt-in was granted for a
+         * DIFFERENT resolved path than the one about to be truncated. The
+         * grant arrives in one command naming one target and is consumed
+         * later, on another task; if the configured directory or name moved in
+         * between, the permission is for a file nobody asked about. Refused
+         * rather than re-interpreted. Appended at the END, as above: these
+         * values cross the SCPI boundary. */
+        SD_REFUSE_AUTH_PATH_CHANGED,
+        /* ⛔ #1124 r21 item 3: another capture's manifest RECORDS this exact
+         * path, so writing it would leave that manifest asserting a size and a
+         * CRC32 for bytes that are gone. The opt-in cannot authorise it -- the
+         * client named their own target, not someone else's record. */
+        SD_REFUSE_FOREIGN_RECORD,
+        /* ⛔ #1124 r21, FAIL CLOSED: a manifest in the logging directory could
+         * not be read, or did not parse within its documented bounds. An
+         * unparseable record is not an empty one; reading it as covering
+         * nothing is what turns a scan into a clean-bill generator. */
+        SD_REFUSE_MANIFEST_UNPARSABLE,
+        /* ⛔ #1124 r28 AUDIT HIGH, BOTH LEGS (SCPIStorageSD.c:1119 /
+         * SdManifest.h:501): the configured directory or name contains '~', so
+         * it may be a FatFs 8.3 ALIAS. An alias names the same file as a long
+         * name while comparing textually UNEQUAL to it, and every record
+         * comparison in this row is textual -- so a session configured by
+         * alias can truncate a file another manifest records under its long
+         * name, and a session configured by alias WRITES records that a later
+         * long-named session cannot match either. Refused on the ordinary
+         * creation path too, not only for the opt-in: that was the defect.
+         * Appended at the END -- these values cross the SCPI boundary through
+         * sd_card_manager_WriteRefuseReasonText(). */
+        SD_REFUSE_NAME_ALIAS_RISK,
+        /* ⛔ #1124 r28 AUDIT HIGH (sd_card_manager.c:3894): the configured
+         * logging name ends in the manifest extension, so this session's own
+         * manifest name would be "<name>.mfst.mfst" while the DATA file it
+         * writes occupies "<name>" -- which is exactly the manifest name of a
+         * differently-configured session. One session's data file is then
+         * another's sidecar: recording `exp.csv.mfst` leaves
+         * `exp.csv.mfst.mfst` describing it, and a later `exp.csv` session
+         * recreates `exp.csv.mfst` as its own manifest while that record
+         * survives, asserting the old size and CRC over unrelated bytes. */
+        SD_REFUSE_NAME_IS_MANIFEST,
+        /* ⛔ #1124 r30 AUDIT HIGH, blind leg (SCPIStorageSD.c:1165): the
+         * configured directory or name contains non-ASCII bytes. FatFs folds
+         * case by the OEM code page and can store a PURE-ASCII 8.3 alias for
+         * such a name -- ExCvt[0x02] is 'E' in the CP437 table we ship, with
+         * no "~N" tail -- so a later session asking for that ASCII name
+         * resolves to this file through the alias while every textual record
+         * comparison says they are different. Refused on the ordinary creation
+         * path too, not only for the opt-in: creation is what manufactures the
+         * alias. Appended at the END; these values cross the SCPI boundary. */
+        SD_REFUSE_NAME_NOT_ASCII,
     } SdWriteRefuseReason;
 
     SdWriteRefuseReason sd_card_manager_WriteRefuseReason(void);

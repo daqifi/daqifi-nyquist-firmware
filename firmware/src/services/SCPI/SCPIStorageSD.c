@@ -25,6 +25,11 @@
 /* ************************************************************************** */
 #include "SCPIStorageSD.h"
 #include "Util/SpiBusHealth.h"
+/* #1124 r11 finding 4: SdManifest_DirShadowsBucketName, used by the SD:DIR
+ * setter. Header-only, same text layer sd_card_manager.c builds its paths
+ * with -- so the rule the manifest relies on is enforced from the one
+ * definition, not restated here. */
+#include "Util/SdManifest.h"
 #include "services/streaming.h"
 #include "SCPIInterface.h"
 #include "../sd_card_services/sd_card_manager.h"
@@ -460,13 +465,42 @@ static bool SCPI_CheckSDCardPresent(scpi_t *context) {
  * escape the configured directory (GET/DELete/CRC) and stray separators
  * or control characters produce undefined FatFS behavior. Interior '/'
  * stays legal (subdirectory paths like "DAQiFi/sub/file.csv"). */
-static bool SD_ValidatePathParam(const char *p, size_t len)
+/*
+ * @param isFileName  true when `p` must name a FILE, false when it names a
+ *                    DIRECTORY. The two differ in exactly one way and it is
+ *                    not optional -- see the trailing-separator test below.
+ */
+static bool SD_ValidatePathParam(const char *p, size_t len, bool isFileName)
 {
     if (len == 0u) {
         return false;
     }
     if (p[0] == '/' || p[0] == '\\') {
         return false;               /* absolute paths */
+    }
+    /* ⛔ #1124 r9: A TRAILING SEPARATOR IS LEGAL ON A DIRECTORY AND ILLEGAL ON
+     * A FILE NAME, so this cannot be a property of "a path param" -- it is a
+     * property of which HALF of a join the value is going to be.
+     *
+     *   SD:DIR  "DAQiFi/"   accepted; a redundant spelling of the same
+     *                       directory, stripped at use by
+     *                       SdManifest_CanonicalDirLen().
+     *   SD:FILE "log.csv/"  REFUSED; "log.csv/" does not name a file, and
+     *                       stripping would invent a name nobody asked for.
+     *
+     * Before this was parameterised, adding the test here unconditionally
+     * would have rejected SD:DIR "DAQiFi/" and regressed the behaviour #1124
+     * had just established. The flag exists so that a NEW call site has to
+     * state which half it is validating instead of inheriting whichever
+     * answer happened to be hard-coded.
+     *
+     * ⚠ This is the SETTER-side half only. It is not sufficient on its own:
+     * an NVM restore populates the settings struct directly and never reaches
+     * this function, which is the route-around that sank the setter-only
+     * option for the directory. The refusal is therefore ALSO applied at use,
+     * in sd_card_manager.c, via SdManifest_NameIsUsable(). */
+    if (isFileName && p[len - 1u] == '/') {
+        return false;
     }
     /* Reject '.' and '..' only as whole path SEGMENTS (between '/'), not as
      * substrings - Qodo #615: the old substring check false-rejected
@@ -484,6 +518,26 @@ static bool SD_ValidatePathParam(const char *p, size_t len)
             }
             if (segLen == 2u && p[segStart] == '.' && p[segStart + 1u] == '.') {
                 return false;       /* ".." traversal segment */
+            }
+            /* ⛔ #1124 r18 finding 3: REJECT A SEGMENT THAT FatFs WOULD NORMALISE.
+             * FatFs strips a trailing '.' or ' ' from each path component, so
+             * "exp.csv." names the SAME FILE as "exp.csv" -- it is opened and
+             * TRUNCATED as exp.csv, while every name this firmware derives from the
+             * configured string keeps the dot. The manifest then goes to
+             * "exp.csv..mfst" and exp.csv's real manifest is neither invalidated nor
+             * written: a truncated data file beside a stale record, reachable from a
+             * configured name alone with no race.
+             *
+             * Refused at the SETTER, which is the narrowest place that closes it: one
+             * check instead of teaching every derived name about normalisation. The
+             * check sits inside the SEGMENT loop and the loop synthesises a virtual
+             * '/' at i == len, so this covers the final component AND every interior
+             * one -- a directory "d./" has the same hazard for the dir half.
+             *
+             * A name ending in '.' or ' ' has no legitimate use here and the remedy is
+             * to drop the character, so refusing costs nothing a caller wants. */
+            if (segLen > 0u && (p[i - 1u] == '.' || p[i - 1u] == ' ')) {
+                return false;       /* FatFs would normalise this away */
             }
             segStart = i + 1u;
         }
@@ -518,6 +572,186 @@ static bool SD_ValidatePathParam(const char *p, size_t len)
  * Case-sensitive on purpose — this normalizes the exact form the device emits,
  * not arbitrary user spellings. Returns the (possibly advanced) pointer and
  * updates *pLen. */
+/* ⛔⛔ #1124 r21 AUDIT HIGH (:972, blind leg): THE CONFIGURED-DIRECTORY
+ * GENERATION.
+ *
+ * SD:FILE resolves its operand against the configured directory EARLY --
+ * SD_StripConfiguredDir() accepts the "<dir>/<name>" form SD:LISt? prints --
+ * and commits the name plus its overwrite authorisation LATE, in a critical
+ * section near the end. Between those two points the function leaves the
+ * critical section several times (SCPI_ParamCharacters, SD_ValidatePathParam,
+ * the opt-in parse), and USB SCPI at priority 7 preempts WiFi SCPI at 2 with
+ * no cross-transport dispatch mutex. So:
+ *
+ *   SD:FILE "D1/log.csv",1   strips against D1 -> "log.csv"
+ *   (preempted)  SD:DIR D2   commits a new directory
+ *   SD:FILE resumes          commits "log.csv" + the grant, now under D2
+ *
+ * The client authorised D1/log.csv and D2/log.csv became overwritable. Same
+ * class as r20 item 1, which bound the grant to its resolved path on the SD
+ * side; this is the SCPI side of the same hole, and the r19 "SD:DIR withdraws
+ * the authorisation" rule does not close it because the withdrawal happens
+ * BEFORE the late commit re-grants it.
+ *
+ * A counter rather than re-reading the directory and comparing strings: the
+ * question is "did it CHANGE", and two edits that return to the same value
+ * must still invalidate a resolution made between them. Incremented inside
+ * the same critical section as every directory write, so a reader cannot see
+ * a new directory with an old generation. Wrapping is harmless -- the compare
+ * is for equality, and 2^32 directory writes between two statements of one
+ * function is not a reachable state. */
+static volatile uint32_t gSdDirGeneration = 0u;
+
+/* ⛔⛔ #1124 r22 AUDIT HIGH (:2862): does `dir` carry a form where the TEXT
+ * and the PATH can diverge?
+ *
+ * The foreign-record guard compares recorded names textually, and every record
+ * this firmware writes is canonical, so that is sound -- while the configured
+ * directory is itself canonical. These forms break it, because FatFs resolves
+ * them and the text does not:
+ *   - "D//sub"   a duplicated separator: an empty path component
+ *   - "D/./sub"  or "D/../sub": '.' and '..' components
+ *   - "D/"       a trailing separator
+ * SdManifest_CanonicalDirLen strips a trailing slash at every construction, so
+ * that one is already handled downstream -- it is refused here anyway, because
+ * the point of this predicate is that the GRANT is only given where the
+ * comparison it relies on is exact, and listing all four keeps that argument
+ * readable rather than depending on which ones happen to be absorbed.
+ *
+ * ⚠ REFUSE THE FORM, DO NOT MODEL THE EQUIVALENCE. Normalising here, or
+ * teaching the comparator FatFs's full equivalence set, is the treadmill that
+ * cost rounds 16-19. Refusing the handful of spellings where text and path
+ * part company is bounded, checkable, and only ever costs an opt-in. */
+static bool SD_DirHasNonCanonicalForm(const char *dir)
+{
+    size_t len;
+
+    if (dir == NULL) {
+        return false;
+    }
+    len = strlen(dir);
+    if (len == 0u) {
+        return false;
+    }
+    /* ⛔⛔ #1124 r24 AUDIT HIGH (:1111): '~' ANYWHERE IN THE DIRECTORY, TOO.
+     *
+     * r22 refused the opt-in for a '~' in the FILENAME, because a FatFs 8.3
+     * alias names the same file as a long name while comparing unequal to it.
+     * I applied that to the name and stopped there -- but the guard compares
+     * whole PATHS, so an alias in a DIRECTORY component diverges in exactly
+     * the same way and by exactly the same mechanism. A restriction derived
+     * from a property of path text has no business being scoped to one
+     * component of the path.
+     *
+     * Checked over the whole string rather than per component: '~' is not
+     * legal in any position for this purpose, so there is nothing a split
+     * would add. */
+    if (strchr(dir, '~') != NULL) {
+        return true;
+    }
+    /* ⛔⛔ #1124 r25 AUDIT HIGH (SdManifest.h:258): NON-ASCII IS A FORM WE
+     * REFUSE, because our case-folding and FatFs's do not agree on it.
+     *
+     * SdManifest_FoldChar folds ASCII only -- 'A'-'Z' -> 'a'-'z' -- and says so
+     * in its own header. FatFs on a FAT volume folds the OEM code page (CP437
+     * here), where e.g. 0x82 and 0x90 are the same character and our folder
+     * leaves them distinct. So two names FatFs considers equal compare unequal
+     * to us, which is the same divergence as an 8.3 alias and the same
+     * consequence: a foreign record naming our file is not matched.
+     *
+     * ⚠ REFUSE THE FORM; DO NOT MODEL CP437. Teaching the comparator a code
+     * page would mean carrying a 128-entry table that has to agree with
+     * whatever FF_CODE_PAGE is set to -- a fifth naming rule, and one that
+     * silently goes wrong if that setting changes. Refusing the grant for a
+     * non-ASCII name costs nothing anyone needs: this is the destructive
+     * opt-in, not ordinary logging, which still accepts these names.
+     *
+     * Bytes are tested unsigned: `char` is signed on this target, so a plain
+     * `c > 0x7E` comparison would be FALSE for every high byte -- the check
+     * would pass everything it exists to catch. */
+    {
+        const unsigned char *u = (const unsigned char *)dir;
+        size_t i;
+        for (i = 0u; u[i] != '\0'; i++) {
+            if ((u[i] < 0x20u) || (u[i] > 0x7Eu)) {
+                return true;
+            }
+        }
+    }
+    if (dir[len - 1u] == '/') {
+        return true;                    /* trailing separator */
+    }
+    if (strstr(dir, "//") != NULL) {
+        return true;                    /* empty component */
+    }
+    /* '.' or '..' as a whole component, at any position. */
+    {
+        const char *p = dir;
+        while (p != NULL) {
+            const char *end = strchr(p, '/');
+            const size_t seg = (end != NULL) ? (size_t)(end - p) : strlen(p);
+            if ((seg == 1u && p[0] == '.')
+                    || (seg == 2u && p[0] == '.' && p[1] == '.')) {
+                return true;
+            }
+            p = (end != NULL) ? (end + 1) : NULL;
+        }
+    }
+    return false;
+}
+
+/* ⛔⛔ #1124 r21 AUDIT HIGH (:2874): does any component of `dir` wear a
+ * ROTATION BUCKET's name?
+ *
+ * This exists to NARROW the overwrite opt-in rather than widen the
+ * foreign-record scan, which is the agreed shape. The scan looks for foreign
+ * manifests in the CONFIGURED directory, and that is only the complete set of
+ * relevant places while two things hold: the configured directory is not
+ * itself a bucket (if SD:DIR were `D/P001`, the manifest owning the records in
+ * it lives in the PARENT, `D`, which is not scanned), and the configured name
+ * carries no subdirectory (`sub/exp.csv` puts our manifest in `D/sub`, also
+ * not scanned). Refusing the OPT-IN in both cases restores the invariant
+ * without a recursive walk -- and only the opt-in is refused, so ordinary
+ * refuse-by-default logging in such a layout keeps working exactly as before.
+ *
+ * Derived from SD_CARD_MANAGER_BUCKET_PREFIX and case-folded, and it accepts
+ * the prefix plus ONE OR MORE digits rather than exactly the three that
+ * "%03u" emits today: over-matching only refuses a few more opt-ins, which is
+ * the safe direction for a destructive grant, and it keeps holding if the
+ * bucket ceiling ever passes 999. */
+static bool SD_DirHasBucketComponent(const char *dir)
+{
+    const char bucketChar = SD_CARD_MANAGER_BUCKET_PREFIX[0];
+    const char *p = dir;
+
+    if (dir == NULL) {
+        return false;
+    }
+    while (*p != '\0') {
+        const char *end = strchr(p, '/');
+        const size_t len = (end != NULL) ? (size_t)(end - p) : strlen(p);
+        if (len >= 2u
+                && SdManifest_FoldChar(p[0]) == SdManifest_FoldChar(bucketChar)) {
+            bool allDigits = true;
+            size_t i;
+            for (i = 1u; i < len; i++) {
+                if ((p[i] < '0') || (p[i] > '9')) {
+                    allDigits = false;
+                    break;
+                }
+            }
+            if (allDigits) {
+                return true;
+            }
+        }
+        if (end == NULL) {
+            break;
+        }
+        p = end + 1;
+    }
+    return false;
+}
+
 static const char* SD_StripConfiguredDir(const char *p, size_t *pLen,
                                          const char *directory)
 {
@@ -835,9 +1069,144 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
     }
 
     SCPI_ParamCharacters(context, &pBuff, &fileLen, false);
+    /* #1124 r21 (:972): snapshot the directory generation IMMEDIATELY before
+     * the resolution that depends on it, and re-check it at the commit. */
+    const uint32_t dirGenAtStrip = gSdDirGeneration;
     /* #747: accept the "<directory>/<name>" form SD:LISt? prints. Before the
      * length check, so a max-length name is not rejected for the prefix. */
     pBuff = SD_StripConfiguredDir(pBuff, &fileLen, pSDCardRuntimeConfig->directory);
+
+    /* ⛔ #1124 L=C: the OPTIONAL OVERWRITE OPT-IN, read from every invocation
+     * and DEFAULTING TO 0 WHEN OMITTED.
+     *
+     * Defaulting to 0 is what makes this fail safe. An existing one-argument
+     * client keeps working and gets refuse-by-default, which is the ruling's
+     * intent; and a bare `SD:FILE` (no arguments at all) WITHDRAWS a previous
+     * authorisation rather than silently carrying it forward onto whatever the
+     * target happens to be by then.
+     *
+     * It rides this setter rather than being a standing mode because the
+     * authorisation is bound to the NAME it authorises: a global "overwrite
+     * anything" switch would still be in force when a later SD:FILE named a
+     * different file, and a user who authorised destroying scratch.csv never
+     * authorised destroying experiment.csv.
+     *
+     * Parsed here but APPLIED only after every validation below has passed, so
+     * a rejected command changes nothing. */
+    int overwriteParam = 0;
+    if (!SCPI_ParamInt32(context, &overwriteParam, FALSE)) {
+        overwriteParam = 0;
+    }
+    if (overwriteParam != 0 && overwriteParam != 1) {
+        LOG_E("SD:FILE - overwrite flag must be 0 or 1, got %d", overwriteParam);
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+    const bool overwriteAsked = (overwriteParam == 1);
+
+    /* ⛔⛔ #1124 r21 AUDIT HIGH (:2874 / :2905): THE OPT-IN'S SCOPE.
+     *
+     * The foreign-record scan reads the CONFIGURED directory, and that is the
+     * complete set of places a relevant manifest can live only while the two
+     * conditions below hold. Rather than make the scan recursive -- more I/O,
+     * and a second naming rule to get wrong -- the destructive opt-in is
+     * refused in exactly the layouts that break the argument. Ordinary
+     * refuse-by-default logging in those layouts is untouched.
+     *
+     * Checked BEFORE anything is committed, so a refused command changes
+     * nothing, and checked for the opt-in ONLY. */
+    if (overwriteAsked) {
+        /* ⛔⛔ #1124 r22 AUDIT HIGH (:1129): THE GRANT BINDS TO THE RESOLVED
+         * TARGET, SO THE WHITELIST MUST VALIDATE THAT -- NOT THE OPERAND.
+         *
+         * r21 ran these checks only when an operand was present, and the
+         * no-operand branch below still applied the grant. So `SD:FILE "",1`
+         * handed the opt-in to whatever name was ALREADY staged -- including a
+         * `sub/exp.csv` that the '/' rule had just refused on its own command.
+         * The restriction was enforced on the act of NAMING and the grant
+         * escaped through the act of NOT naming.
+         *
+         * The rule is now the simple one: ",1" REQUIRES A NON-EMPTY OPERAND
+         * THAT PASSES THE WHITELIST ITSELF. A grant that names nothing cannot
+         * be checked against anything, and an unexaminable grant is not
+         * permission -- the same principle as an empty authorised subject
+         * being a refusal on the SD side. */
+        if (fileLen == 0) {
+            /* log_budget: max=40 */
+            LOG_E("[SD1124] scope grant needs a name");
+            SCPI_ExecutionError(context,
+                                "SYST:STOR:SD:FILE: overwrite requires the "
+                                "filename in the same command - send "
+                                "SYST:STOR:SD:FILE \"<name>\",1");
+            result = SCPI_RES_ERR;
+            goto __exit_point;
+        }
+        /* ⛔ #1124 r22 AUDIT HIGH (:2862): '~' is refused because a FatFs 8.3
+         * ALIAS ("LONGFI~1.CSV") names the same file as a long name while
+         * comparing unequal to it, which is exactly the divergence the textual
+         * record comparison cannot see.
+         *
+         * ⚠ HONESTLY: this check did not exist. It was described as part of the
+         * agreed whitelist and was never written -- the second time in this row
+         * that a rule lived only in prose (the '/' rule was the first, found by
+         * r21's audit). The audit asking "find out why it isn't firing" has the
+         * answer "because it was never there", and that is worth saying plainly
+         * rather than presenting this as a repair. */
+        /* ⛔ r30: THE ASCII REFUSAL USED TO BE HERE TOO, and being here was the
+         * same defect as the '~' one. r25 added it to the opt-in only, on the
+         * reasoning that our folder is ASCII and FatFs folds CP437, so the
+         * GRANT must not be given for a name we cannot compare. True, and
+         * insufficient: the hazard is CREATED on the ungranted route, because
+         * the alias FatFs stores for an accented name can be pure ASCII
+         * (ExCvt[0x02] is 'E' in the TBL_CT437 we ship), and a later session
+         * may legitimately ask for that ASCII name. It is now unconditional,
+         * below, beside the '~' and '.mfst' arms. Do not re-add it here. */
+        /* ⛔ r28: THE '~' REFUSAL USED TO BE HERE, AND BEING HERE WAS THE
+         * DEFECT. It is now unconditional, below, with the length and
+         * SD_ValidatePathParam checks -- see the block headed "ALIAS RISK AND
+         * MANIFEST-NAME COLLISION ARE NOT OPT-IN QUESTIONS". Scoping it to the
+         * grant protected only the destructive route, while ordinary
+         * refuse-by-default logging both accepted an alias-spelled target and
+         * WROTE records spelled that way. Do not re-add it here: a second copy
+         * would make the general rule look conditional again. */
+        if (SD_DirHasNonCanonicalForm(pSDCardRuntimeConfig->directory)) {
+            /* log_budget: max=40 */
+            LOG_E("[SD1124] scope dir form not canonical");
+            SCPI_ExecutionError(context,
+                                "SYST:STOR:SD:FILE: overwrite not allowed while "
+                                "SYST:STOR:SD:DIR contains '~', '//', a '.' or "
+                                "'..' component, a trailing '/', or any "
+                                "non-ASCII byte");
+            result = SCPI_RES_ERR;
+            goto __exit_point;
+        }
+        if (memchr(pBuff, '/', fileLen) != NULL) {
+            /* The manifest for `sub/exp.csv` lives in <dir>/sub, which the
+             * scan does not read, so a foreign record there would be
+             * invisible to the one check that protects it. */
+            /* log_budget: max=40 */
+            LOG_E("[SD1124] scope name has a separator");
+            SCPI_ExecutionError(context,
+                                "SYST:STOR:SD:FILE: overwrite not allowed for a "
+                                "name containing '/' - set SYST:STOR:SD:DIR to "
+                                "that directory and name the file alone");
+            result = SCPI_RES_ERR;
+            goto __exit_point;
+        }
+        if (SD_DirHasBucketComponent(pSDCardRuntimeConfig->directory)) {
+            /* Logging INTO a rotation bucket: the manifest owning records in
+             * it sits in the parent, which the scan does not read. */
+            /* log_budget: max=40 */
+            LOG_E("[SD1124] scope dir is a bucket");
+            SCPI_ExecutionError(context,
+                                "SYST:STOR:SD:FILE: overwrite not allowed while "
+                                "the configured directory is a rotation bucket "
+                                "(P###) - log to its parent instead");
+            result = SCPI_RES_ERR;
+            goto __exit_point;
+        }
+    }
 
     if (fileLen > 0) {
         if (fileLen > SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX) {
@@ -846,8 +1215,82 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
-        if (!SD_ValidatePathParam(pBuff, fileLen)) {   /* #612 */
+        if (!SD_ValidatePathParam(pBuff, fileLen, true)) {   /* #612 */
             SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+            result = SCPI_RES_ERR;
+            goto __exit_point;
+        }
+        /* ⛔⛔⛔ #1124 r28 AUDIT HIGH x2: ALIAS RISK AND MANIFEST-NAME COLLISION
+         * ARE NOT OPT-IN QUESTIONS.
+         *
+         * Both refusals were previously scoped to the overwrite grant (the '~'
+         * one literally, since r22) or absent (the extension one). The grant
+         * is the wrong scope for either, because neither hazard needs a grant
+         * to be reached:
+         *
+         *   '~'  (:1119 / SdManifest.h:501) -- an 8.3 alias names the same file
+         *        as a long name while comparing textually unequal to it, and
+         *        all record matching here is textual. Without the opt-in a
+         *        session still ROTATES, and a rotated part recreates a name
+         *        whose foreign record went unmatched. Worse, a session
+         *        configured by alias WRITES records spelled by alias, which no
+         *        later long-named session can match -- so the hazard outlives
+         *        the session that created it. See SdManifest_PathHasAliasRisk,
+         *        which also records the false claim this corrects.
+         *
+         *   .mfst (:3894) -- the manifest name is "<file>" + SD_MANIFEST_EXT,
+         *        so a DATA file named "exp.csv.mfst" is the manifest name of a
+         *        session configured as "exp.csv". Recording the former leaves
+         *        "exp.csv.mfst.mfst" describing it; a later "exp.csv" session
+         *        then recreates "exp.csv.mfst" as its own manifest while that
+         *        record survives, asserting the dead capture's size and CRC
+         *        over a file it never saw. Refusing the name is the only fix
+         *        that does not require the scan to decide which of two
+         *        plausible owners a ".mfst.mfst" belongs to.
+         *
+         * ⭐ The extension refusal also makes an existing invariant true rather
+         * than assumed: the foreign scan identifies manifests by name AND by
+         * first-line content, and those two can only agree if no data file
+         * bears the manifest extension. Now none can.
+         *
+         * Refused for the NAME here and for the DIRECTORY in
+         * SCPI_StorageSDDirectorySet; both are re-checked AT USE in
+         * sd_card_manager.c, because an NVM restore reaches neither setter. */
+        /* ⚠ THE LENGTH-TAKING ENTRY POINTS, NOT THE strlen ONES.
+         * SCPI_ParamCharacters returns a pointer INTO the command buffer with
+         * a length and NO terminator -- which is why SD_ValidatePathParam
+         * above takes a length, and why the '~' check this replaces was
+         * written with memchr. strlen here would read past the operand. */
+        if (SdManifest_PathHasNonAsciiLen(pBuff, fileLen)) {
+            /* log_budget: max=40 */
+            LOG_E("[SD1124] nonascii in the name");
+            SCPI_ExecutionError(context,
+                                "SYST:STOR:SD:FILE: a name containing "
+                                "non-ASCII bytes is refused - FatFs folds case "
+                                "by code page and can store a pure-ASCII 8.3 "
+                                "alias for it, which a later session may ask "
+                                "for by that name");
+            result = SCPI_RES_ERR;
+            goto __exit_point;
+        }
+        if (SdManifest_PathHasAliasRiskLen(pBuff, fileLen)) {
+            /* log_budget: max=40 */
+            LOG_E("[SD1124] alias risk: the name has a tilde");
+            SCPI_ExecutionError(context,
+                                "SYST:STOR:SD:FILE: a name containing '~' is "
+                                "refused - it may be an 8.3 alias of a "
+                                "different file; use the long name");
+            result = SCPI_RES_ERR;
+            goto __exit_point;
+        }
+        if (SdManifest_NameReservedForManifestsLen(pBuff, fileLen)) {
+            /* log_budget: max=40 */
+            LOG_E("[SD1124] mfstname refused in SD:FILE");
+            SCPI_ExecutionError(context,
+                                "SYST:STOR:SD:FILE: a name ending in '"
+                                SD_MANIFEST_EXT "' is refused - that is the "
+                                "manifest extension, and such a file is "
+                                "another session's integrity record");
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
@@ -878,13 +1321,33 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
          * Checking and writing under one critical section makes it atomic,
          * mirroring the benchmark's own claim (#736 audit round 7). */
         bool benchOwnsTarget;
+        bool dirMoved;
         taskENTER_CRITICAL();
         benchOwnsTarget = gSDBenchmarkResults.testInProgress;
-        if (!benchOwnsTarget) {
+        /* #1124 r21 (:972): the operand was resolved against a directory that
+         * must still be the current one, re-checked HERE, under the same
+         * critical section that commits the name and the grant. Outside it the
+         * check would be another stale fast path, which is the defect. */
+        dirMoved = (gSdDirGeneration != dirGenAtStrip);
+        if (!benchOwnsTarget && !dirMoved) {
             memcpy(pSDCardRuntimeConfig->file, pBuff, fileLen);
             pSDCardRuntimeConfig->file[fileLen] = '\0';
+            /* #1124: written under the SAME critical section as the name, so
+             * no reader can ever observe this name with the other name's
+             * authorisation. They are one decision and must be one write. */
+            pSDCardRuntimeConfig->overwriteExisting = overwriteAsked;
         }
         taskEXIT_CRITICAL();
+        if (dirMoved) {
+            /* log_budget: max=40 */
+            LOG_E("[SD1124] scope dir moved during validation");
+            SCPI_ExecutionError(context,
+                                "SYST:STOR:SD:FILE: rejected, SYST:STOR:SD:DIR "
+                                "changed while this name was being validated - "
+                                "re-send it");
+            result = SCPI_RES_ERR;
+            goto __exit_point;
+        }
         if (benchOwnsTarget) {
             SCPI_ExecutionError(context,
                                 "SYST:STOR:SD:FILE: rejected, benchmark claimed "
@@ -895,6 +1358,12 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
         LOG_D("SD:FILE - Set filename to '%s' (%zu bytes) dir='%s'\r\n",
               pSDCardRuntimeConfig->file, fileLen, pSDCardRuntimeConfig->directory);
     } else {
+        /* #1124: no name given, so the authorisation still updates -- a bare
+         * SD:FILE withdraws it (overwriteAsked is false unless this call
+         * passed 1). Same critical section discipline as above. */
+        taskENTER_CRITICAL();
+        pSDCardRuntimeConfig->overwriteExisting = overwriteAsked;
+        taskEXIT_CRITICAL();
         LOG_D("SD:FILE - No filename provided, using existing: '%s'\r\n", pSDCardRuntimeConfig->file);
     }
 
@@ -940,7 +1409,7 @@ scpi_result_t SCPI_StorageSDCrcStart(scpi_t * context) {
         SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
         return SCPI_RES_ERR;
     }
-    if (!SD_ValidatePathParam(pBuff, fileLen)) {   /* #612: CRC was the deferred site (post-#610-merge) */
+    if (!SD_ValidatePathParam(pBuff, fileLen, true)) {   /* #612: CRC was the deferred site (post-#610-merge) */
         SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
         return SCPI_RES_ERR;
     }
@@ -1098,7 +1567,7 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
-        if (!SD_ValidatePathParam(pBuff, fileLen)) {   /* #612 */
+        if (!SD_ValidatePathParam(pBuff, fileLen, true)) {   /* #612 */
             sd_card_manager_ReleaseClaim();  /* #829 release */
             SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
             result = SCPI_RES_ERR;
@@ -1199,7 +1668,18 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
-        if (!SD_ValidatePathParam(pBuff, fileLen)) {   /* #612 */
+        /* ⛔ #1124 r10 finding 1: THIS IS A DIRECTORY OPERAND, despite the
+         * length variable being called `fileLen`. It fills opDirectory (see
+         * the sizeof() above), so LISt? "DAQiFi/" must be ACCEPTED and
+         * stripped at use, not refused.
+         *
+         * r9 passed `true` here because the six call sites were classified by
+         * the NAME of their length variable instead of by the FIELD they write.
+         * Five said `fileLen`, so five were called file operands; this one is
+         * misnamed. Classifying by a name rather than by a destination is what
+         * produced the very regression r9 had parameterised the validator to
+         * avoid. The pin now keys on the role TABLE below, not on the count. */
+        if (!SD_ValidatePathParam(pBuff, fileLen, false)) {   /* #612 */
             sd_card_manager_ReleaseClaim();  /* #829 release */
             SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
             result = SCPI_RES_ERR;
@@ -2689,7 +3169,7 @@ scpi_result_t SCPI_StorageSDDelete(scpi_t * context) {
     }
 
     // Set the filename
-    if (!SD_ValidatePathParam(pBuff, fileLen)) {   /* #612 */
+    if (!SD_ValidatePathParam(pBuff, fileLen, true)) {   /* #612 */
         SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
         goto __exit_point;
     }
@@ -2911,6 +3391,49 @@ __exit_point:
  * testable at all. Stopping SD:LISt? from writing the field (#799 part 3) is
  * a behaviour change that needs a client survey first and is NOT done here.
  */
+/**
+ * @brief Report the staged logging target and its overwrite authorisation
+ *
+ * Command: SYSTem:STORage:SD:FILE?
+ * Reply:   "<name>",<overwrite>      e.g.  "log.csv",0
+ *
+ * ⛔ #1124 L=C: THE SETTER GAINED STATE, SO IT GAINS A QUERY IN THE SAME PR.
+ * SD:FILE had no query form at all, which is #1176: the staged target could be
+ * set and never read back, so a client that wanted to restore it had to
+ * remember what it had sent and a test had to carry sentinel machinery to
+ * infer it. Adding an overwrite authorisation to a write-only setter would
+ * have doubled that: a client could not tell whether a destructive overwrite
+ * was armed. A query form of an existing command is not new command surface,
+ * and this one closes #1176 as a by-product.
+ *
+ * The reply shape is deliberately distinctive -- a quoted name followed by a
+ * comma and an integer -- so it cannot be confused with any other SD query's
+ * response. On firmware predating this command the header itself is
+ * unrecognised and the device answers -113, so a client can detect absence
+ * directly instead of having to parse a reply that might mean something else.
+ *
+ * Snapshotted under one critical section, so the pair is observed as it was
+ * WRITTEN. Reading them separately could report this name with the previous
+ * name's authorisation -- the setter writes both together for the same
+ * reason, and a reader that splits the pair would undo that.
+ */
+scpi_result_t SCPI_StorageSDLoggingGet(scpi_t * context) {
+    sd_card_manager_settings_t* pSDCardRuntimeConfig =
+            BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    char snapshot[sizeof(pSDCardRuntimeConfig->file)];
+    bool overwrite;
+
+    taskENTER_CRITICAL();
+    memcpy(snapshot, pSDCardRuntimeConfig->file, sizeof(snapshot));
+    overwrite = pSDCardRuntimeConfig->overwriteExisting;
+    taskEXIT_CRITICAL();
+    snapshot[sizeof(snapshot) - 1u] = '\0';
+
+    SCPI_ResultText(context, snapshot);
+    SCPI_ResultInt32(context, overwrite ? 1 : 0);
+    return SCPI_RES_OK;
+}
+
 scpi_result_t SCPI_StorageSDDirectoryGet(scpi_t * context) {
     sd_card_manager_settings_t* pSDCardRuntimeConfig =
             BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
@@ -2962,10 +3485,69 @@ scpi_result_t SCPI_StorageSDDirectorySet(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
-    if (!SD_ValidatePathParam(pBuff, pathLen)) {   /* #612 */
+    if (!SD_ValidatePathParam(pBuff, pathLen, false)) {   /* #612 */
         SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
         return SCPI_RES_ERR;
     }
+
+    /* ⛔⛔⛔ #1124 r28 AUDIT HIGH, BOTH LEGS (:1119 / SdManifest.h:501): '~' IN
+     * THE DIRECTORY IS REFUSED HERE, UNCONDITIONALLY.
+     *
+     * It was refused only as part of the overwrite opt-in's whitelist, via
+     * SD_DirHasNonCanonicalForm, and that scope was the defect. This setter is
+     * where a session's directory is NAMED, and the hazard needs no grant:
+     *
+     *   - naming the ALIAS ("LONGDI~1") makes every record comparison compare
+     *     it against a long-named record and return "not ours", so rotation
+     *     recreates a recorded part with no exact check -- main :1119;
+     *   - naming the alias also makes this session WRITE records spelled by
+     *     alias, which a later session naming the long directory cannot match
+     *     -- blind :501, and the reason the PR's residual claim that
+     *     "a device-written manifest cannot contain the form" was FALSE.
+     *
+     * Refusing at the setter makes that claim true by construction. The same
+     * refusal runs AT USE in sd_card_manager.c, because an NVM restore
+     * populates this struct without passing through here -- the route-around
+     * SD_ValidatePathParam's own header documents.
+     *
+     * Length-taking form: pBuff is the raw SCPI operand with no terminator. */
+    if (SdManifest_PathHasNonAsciiLen(pBuff, pathLen)) {
+        /* log_budget: max=40 */
+        LOG_E("[SD1124] nonascii in the directory");
+        SCPI_ExecutionError(context,
+                            "SYST:STOR:SD:DIRectory: a path containing "
+                            "non-ASCII bytes is refused - FatFs folds case by "
+                            "code page and can store a pure-ASCII 8.3 alias "
+                            "for it");
+        return SCPI_RES_ERR;
+    }
+    if (SdManifest_PathHasAliasRiskLen(pBuff, pathLen)) {
+        /* log_budget: max=40 */
+        LOG_E("[SD1124] alias risk: the directory has a tilde");
+        SCPI_ExecutionError(context,
+                            "SYST:STOR:SD:DIRectory: a path containing '~' is "
+                            "refused - it may be an 8.3 alias of a different "
+                            "directory; use the long name");
+        return SCPI_RES_ERR;
+    }
+
+    /* ⛔ #1124 r13 / OPERATOR ITEM 8 = B: THE BUCKET-NAME REFUSAL IS GONE.
+     *
+     * r11 finding 4 refused an SD:DIR carrying a rotation bucket's own name,
+     * because the manifest recorded names RELATIVE to SD:DIR: with SD:DIR
+     * "P001" a rotated file at "P001/P001/<name>" was recorded as
+     * "P001/<name>", and handing that back to SD:GET made
+     * SD_StripConfiguredDir remove the leading "P001/" as though it were the
+     * configured-directory prefix, retrieving a different file or none.
+     *
+     * Ruled B on 2026-10-27 (issuecomment-6450419546): record every file by
+     * its FULL path instead, and drop this refusal. That removes the ambiguity
+     * at its source rather than forbidding a directory name over it -- a full
+     * path is stripped exactly once, so the round trip is the identity. The
+     * two halves are ONE ruling: dropping this is safe only because
+     * sd_AppendManifestLine now records gSDCardData.filePath verbatim, and a
+     * pin in tests/host/Makefile holds both so neither reverts alone.
+     */
 
     /* Refuse while an SD operation owns the card -- which includes an active
      * logging session, since IsBusy() is true for any mode != NONE.
@@ -3012,6 +3594,27 @@ scpi_result_t SCPI_StorageSDDirectorySet(scpi_t * context) {
     if (!busy) {
         memcpy(pSDCardRuntimeConfig->directory, pBuff, pathLen);
         pSDCardRuntimeConfig->directory[pathLen] = '\0';
+        /* #1124 r21 (:972): inside the SAME critical section as the write, so
+         * no reader can observe the new directory carrying the old
+         * generation. See gSdDirGeneration. */
+        gSdDirGeneration++;
+        /* ⛔ #1124 r19 finding 4 / RULING V=A: A DIRECTORY CHANGE WITHDRAWS THE
+         * OVERWRITE AUTHORISATION.
+         *
+         * The authorisation is bound to the RESOLVED target, dir + file, not to
+         * the filename alone. Without this, `SD:FILE "log.csv",1` granted under
+         * one directory silently made `<newdir>/log.csv` overwritable after an
+         * `SD:DIR` -- a file the client never named and may not know exists.
+         * The r19 audit found exactly that transfer.
+         *
+         * Withdrawing rather than re-resolving is deliberate: it needs no
+         * stored path to compare against, it cannot be defeated by changing
+         * the directory and changing it back, and the recovery is one explicit
+         * command (re-issue SD:FILE with ",1"), which is the same cost as the
+         * per-session consume already imposes. Cleared in the SAME critical
+         * section as the directory write, so no reader can observe the new
+         * directory still carrying the old authorisation. */
+        pSDCardRuntimeConfig->overwriteExisting = false;
     }
     taskEXIT_CRITICAL();
 
