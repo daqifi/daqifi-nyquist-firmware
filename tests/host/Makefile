@@ -1933,6 +1933,31 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	   echo "       copy makes the unconditional rule look conditional again."; \
 	   exit 1; \
 	 fi; \
+	 ndir=`printf '%s\n' "$$pp" | grep -c 'SdManifest_PathHasNonAsciiLen(pBuff, pathLen)'`; \
+	 nfile=`printf '%s\n' "$$pp" | grep -c 'SdManifest_PathHasNonAsciiLen(pBuff, fileLen)'`; \
+	 if [ "$$nfile" -ne 1 ]; then \
+	   echo "ERROR: #1124 AT PIN 23e: the FILE setter no longer refuses a"; \
+	   echo "       non-ASCII NAME unconditionally (found $$nfile, expected 1)."; \
+	   echo "       r25 scoped the ASCII rule to the overwrite opt-in; r30's"; \
+	   echo "       blind leg showed that closes nothing -- an UNGRANTED session"; \
+	   echo "       CREATES the non-ASCII file and FatFs stores a PURE-ASCII 8.3"; \
+	   echo "       alias for it (ExCvt[0x02] is 'E' in the TBL_CT437 we ship,"; \
+	   echo "       with no ~N tail), which a later ASCII-named session resolves"; \
+	   echo "       to. Creation is what manufactures the alias."; \
+	   exit 1; \
+	 fi; \
+	 if [ "$$ndir" -ne 1 ]; then \
+	   echo "ERROR: #1124 AT PIN 23e: the DIRECTORY setter no longer refuses a"; \
+	   echo "       non-ASCII path unconditionally (found $$ndir, expected 1)."; \
+	   echo "       Both must be UNCONDITIONAL. r25 scoped the ASCII rule to the"; \
+	   echo "       overwrite opt-in; r30's blind leg showed that closes nothing,"; \
+	   echo "       because an UNGRANTED session CREATES the non-ASCII file and"; \
+	   echo "       FatFs stores a PURE-ASCII 8.3 alias for it -- ExCvt[0x02] is"; \
+	   echo "       'E' in the TBL_CT437 we ship, with no ~N tail -- which a"; \
+	   echo "       later ASCII-named session resolves to. Creation is what"; \
+	   echo "       manufactures the alias, so the grant is the wrong scope."; \
+	   exit 1; \
+	 fi; \
 	 if [ -z "$$lgrant" ]; then \
 	   echo "ERROR: #1124 r28 PIN 23d: cannot locate the end of the opt-in block"; \
 	   echo "       (SD_DirHasBucketComponent), so the POSITION arm below cannot"; \
@@ -1971,6 +1996,29 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	 lp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null`; \
 	 lmode=`printf '%s\n' "$$lp" | grep -n 'if (!usesOperandName)' | head -1 | cut -d: -f1`; \
 	 lrisk=`printf '%s\n' "$$lp" | grep -n 'SdManifest_PathHasAliasRisk(' | head -1 | cut -d: -f1`; \
+	 case "$$pp" in \
+	   *"const bool nonAsciiName = SdManifest_PathHasNonAscii(nameOperand);"*) ;; \
+	   *) echo "ERROR: #1124 AT PIN 23h: the at-use non-ASCII NAME arm is gone or"; \
+	      echo "       altered. A setter-only refusal is not a refusal: an NVM"; \
+	      echo "       restore populates the settings struct directly and reaches"; \
+	      echo "       no setter."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"const bool nonAsciiDir = SdManifest_PathHasNonAscii(gpSDCardSettings->directory);"*) ;; \
+	   *) echo "ERROR: #1124 AT PIN 23h: the at-use non-ASCII DIRECTORY arm is gone"; \
+	      echo "       or altered. Pinned by FORM, not by a call-site count:"; \
+	      echo "       prefixing it with 'false &&' disables the refusal while"; \
+	      echo "       leaving the call text present, which a count cannot see."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"if (nonAsciiName || nonAsciiDir) {"*) ;; \
+	   *) echo "ERROR: #1124 AT PIN 23h: the two at-use non-ASCII arms are"; \
+	      echo "       computed but no longer USED together. Two correct reads"; \
+	      echo "       feeding nothing is the inert-guard shape."; \
+	      exit 1;; \
+	 esac; \
 	 case "$$pp" in \
 	   *"const bool aliasInName = SdManifest_PathHasAliasRisk(nameOperand);"*) ;; \
 	   *) echo "ERROR: #1124 r28 PIN 23f: the at-use NAME arm is gone or altered."; \

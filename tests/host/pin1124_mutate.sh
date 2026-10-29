@@ -1174,6 +1174,67 @@ else
 fi
 restore
 
+echo "== R86 (PIN 23e): accept a non-ASCII NAME, the ruling-AT defect. An     =="
+echo "==      ungranted session then CREATES the file and FatFs stores a       =="
+echo "==      PURE-ASCII 8.3 alias for it, which a later ASCII-named session   =="
+echo "==      resolves to -- so the grant was never the right scope.           =="
+if sub "$S" "        if (SdManifest_PathHasNonAsciiLen(pBuff, fileLen)) {" \
+            "        if (false) {"; then
+    expect "R86 the name arm refuses non-ASCII" "the FILE setter no longer refuses a"
+else
+    echo "  FAIL R86 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R87 (PIN 23e): accept a non-ASCII DIRECTORY. Its OWN arm, because a   =="
+echo "==      directory component aliases exactly as a filename does and a     =="
+echo "==      by-name count cannot tell which arm complies.                    =="
+if sub "$S" "    if (SdManifest_PathHasNonAsciiLen(pBuff, pathLen)) {" \
+            "    if (false) {"; then
+    expect "R87 the directory arm refuses non-ASCII" "the DIRECTORY setter no longer refuses a"
+else
+    echo "  FAIL R87 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R88 (PIN 23h): drop the AT-USE non-ASCII NAME arm, leaving the        =="
+echo "==      setters. An NVM restore populates the settings struct directly   =="
+echo "==      and reaches no setter, so setter-only is not a refusal.          =="
+if sub "$F" "                    const bool nonAsciiName =
+                            SdManifest_PathHasNonAscii(nameOperand);" \
+            "                    const bool nonAsciiName = false;"; then
+    expect "R88 the at-use name arm exists" "at-use non-ASCII NAME arm"
+else
+    echo "  FAIL R88 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R89 (PIN 23h): keep the at-use DIRECTORY call but disable it with     =="
+echo "==      'false &&'. The call text survives, so a COUNT-keyed pin passes  =="
+echo "==      with half the refusal gone -- the R81 lesson, re-applied.        =="
+if sub "$F" "                            SdManifest_PathHasNonAscii(gpSDCardSettings->directory);" \
+            "                            false && SdManifest_PathHasNonAscii(gpSDCardSettings->directory);"; then
+    expect "R89 the at-use directory arm exists" "at-use non-ASCII DIRECTORY arm"
+else
+    echo "  FAIL R89 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== R90 (PIN 32b): widen the byte-range test so high bytes pass. Every    =="
+echo "==      one of the 18 CP437 bytes that alias to pure ASCII is >= 0x80,   =="
+echo "==      i.e. exactly what a loosened test waves through.                 =="
+if sub "$U" "        if ((u[i] < 0x20u) || (u[i] > 0x7Eu)) {
+            return true;
+        }" \
+            "        if (u[i] < 0x20u) {
+            return true;
+        }"; then
+    expect "R90 the byte-range test is intact" "the byte-range test itself is gone or"
+else
+    echo "  FAIL R90 anchor absent."; fail=$((fail+1))
+fi
+restore
+
 echo "== R84 (PIN 37): remove the _Static_assert tying the parser's ceiling to =="
 echo "==      SD_FOREIGN_PART_LIMIT. Without it the header's literal is a      =="
 echo "==      SECOND source of truth and a drift is silent in every other      =="
