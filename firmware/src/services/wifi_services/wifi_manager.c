@@ -2413,10 +2413,56 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
                     ArmApplyTeardownDeadline();  // #423
+                    /* ⛔⛔ #1060 r7: RECORD AN OUTSTANDING TEARDOWN HERE TOO.
+                     *
+                     * This site used to be log-only, and that was survivable
+                     * for one reason that THIS PR removed: a failed disconnect
+                     * left the chip associated, the association event queued
+                     * behind our REINIT re-set STA_CONNECTED, and the next
+                     * APPLY therefore came back through STA reconfiguration
+                     * and tried again. r6's blind audit found that the new
+                     * stale-event drop (see the producerFlag check in the
+                     * association handler) removes that accidental route
+                     * WITHOUT transferring it here -- so a bus fault on this
+                     * BSSDisconnect left isConnected true, every later
+                     * IPUseDHCPSet refused, and a bare APPLY unable to
+                     * recover, where main could.
+                     *
+                     * ⭐ The replacement mechanism already exists in this PR
+                     * and this site simply did not call it: TEARDOWN_PENDING
+                     * means "a disconnect we issued never reached the chip",
+                     * and the MainState re-init path retries it until it lands
+                     * (see its consumer, which explains why the fresh-init arm
+                     * cannot clear isConnected by itself). Mirrors the AP->STA
+                     * exhaustion arm exactly rather than inventing a second
+                     * shape for the same fact.
+                     *
+                     * RMW under a critical section for the same reason the two
+                     * flag clears above take it: a higher-priority USB-task
+                     * write to the same flags word would otherwise erase this
+                     * store.
+                     *
+                     * ⚠ Still log-only in the DIAGNOSTIC sense -- the LOG_E
+                     * stays, outside the lock, because logging from a critical
+                     * section is its own hazard. */
                     {
                         const WDRV_WINC_STATUS discStatus = WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
-                        if ((WDRV_WINC_STATUS_OK != discStatus) &&
-                            (WDRV_WINC_STATUS_REQUEST_ERROR != discStatus)) {
+                        const bool reachedChip =
+                            ((WDRV_WINC_STATUS_OK == discStatus) ||
+                             (WDRV_WINC_STATUS_REQUEST_ERROR == discStatus));
+                        taskENTER_CRITICAL();
+                        if (reachedChip) {
+                            /* Reached the chip: nothing is outstanding. */
+                            ResetEventFlag(&pInstance->eventFlags,
+                                           WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING);
+                        } else {
+                            /* Never reached it: mark the teardown outstanding
+                             * so every later REINIT pass re-attempts it. */
+                            SetEventFlag(&pInstance->eventFlags,
+                                         WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING);
+                        }
+                        taskEXIT_CRITICAL();
+                        if (!reachedChip) {
                             LOG_E("WiFi: BSS disconnect failed on STA reconfigure (status=%d)", (int)discStatus);
                         }
                     }

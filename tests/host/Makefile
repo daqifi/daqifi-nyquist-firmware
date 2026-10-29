@@ -982,16 +982,77 @@ $(APSTA1060_BIN): test_1060_apsta_disconnect_retry.c test_framework.h \
 	@# whose job is to stop work rather than require it. If a recovery path for
 	@# the class lands, this number changes deliberately and this pin is the
 	@# place that records why.
+	@# ⛔⛔ r7: THE COUNT CHANGED FROM 3 TO 2, DELIBERATELY, AND THIS IS THE
+	@# PLACE THAT RECORDS WHY -- which is what the paragraph above asked for.
+	@#
+	@# r6's BLIND audit found that this PR's new stale-association-event drop
+	@# removed the accidental recovery route the STA-RECONFIGURE site had been
+	@# relying on: a failed BSSDisconnect left isConnected true, the queued
+	@# STA_CONNECTED used to re-set the flag so the next APPLY came back and
+	@# retried, and the drop ends that. So that site is no longer in the
+	@# pre-existing class -- this PR broke it and this PR fixes it, by setting
+	@# TEARDOWN_PENDING exactly as the AP->STA exhaustion arm does.
+	@#
+	@# ⭐ AND THE OLD ASSERTION WOULD HAVE PASSED ANYWAY, which is the point.
+	@# It counted a DECLARATION FORM (`const WDRV_WINC_STATUS discStatus =`),
+	@# and the fixed site still uses it -- so n stayed 3 while the sentence
+	@# "those three are the PRE-EXISTING instances" had become false for one of
+	@# them. A pin whose name is an OUTCOME must assert the outcome, so this
+	@# now keys on the two sites' own LOG_E strings and on whether a recovery
+	@# arm is present, not on how the call happens to be spelled.
+	@#
+	@# The STOP-WORK purpose is unchanged: patch the disable or STA->AP site
+	@# and this fires.
 	@n=`$(CC) -fpreprocessed -E $(WIFI_MGR_SRC) 2>/dev/null \
-	     | grep -c 'const WDRV_WINC_STATUS discStatus = WDRV_WINC_BSSDisconnect('`; \
-	 test "$$n" -eq 3 \
-	  || { echo "ERROR: $$n single-attempt BSSDisconnect site(s), expected 3"; \
-	       echo "       (#1060, operator ruling A). Those three are the"; \
-	       echo "       PRE-EXISTING instances of this class and are out of"; \
-	       echo "       scope for this PR: the class needs a recovery path (a"; \
-	       echo "       DEINIT, whose WDRV_WINC_Close clears isConnected), not"; \
-	       echo "       three more per-site patches. If that recovery path has"; \
-	       echo "       landed, update this count and say so."; exit 1; }
+	     | grep -cE 'BSS disconnect failed on (disable|STA->AP)'`; \
+	 test "$$n" -eq 2 \
+	  || { echo "ERROR: $$n pre-existing log-only BSSDisconnect site(s),"; \
+	       echo "       expected 2 (#1060, operator ruling A): the DISABLE and"; \
+	       echo "       STA->AP sites. They are PRE-EXISTING -- log-only on"; \
+	       echo "       origin/main too -- and out of scope for this PR: the"; \
+	       echo "       class needs a recovery path (a DEINIT, whose"; \
+	       echo "       WDRV_WINC_Close clears isConnected), not per-site"; \
+	       echo "       patches. If that recovery path has landed, update this"; \
+	       echo "       count and say so."; exit 1; }
+	@# ⛔ AND NEITHER OF THOSE TWO MAY HAVE GAINED A TEARDOWN_PENDING ARM.
+	@# Counting them is not enough: a "while I'm here" widening would add the
+	@# marker to one and leave its LOG_E string untouched, so the count above
+	@# would not move. Proximity over the PREPROCESSED source, whose geometry
+	@# `cc -fpreprocessed -E` preserves.
+	@bad=`$(CC) -fpreprocessed -E $(WIFI_MGR_SRC) 2>/dev/null \
+	     | awk '/forcing BSS disconnect on (disable|STA->AP mode switch)/ {w=1;n=0;next} \
+	            w && /WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING/ {bad++} \
+	            w {n++; if (n>40) w=0} \
+	            END {print bad+0}'`; \
+	 test "$$bad" -eq 0 \
+	  || { echo "ERROR: $$bad TEARDOWN_PENDING arm(s) added to the PRE-EXISTING"; \
+	       echo "       disable / STA->AP disconnect sites (#1060, ruling A)."; \
+	       echo "       Those are out of scope: the wider class needs one"; \
+	       echo "       recovery path, not a per-site marker. Revert the"; \
+	       echo "       widening, or re-scope it with the operator."; exit 1; }
+	@# ⛔⛔ PIN 4b -- THE STA-RECONFIGURE SITE **DOES** RECORD AN OUTSTANDING
+	@# TEARDOWN. This is r6's blind HIGH, and it FAILS ON ea692f978 (measured:
+	@# 0 marker arms there, 1 here).
+	@#
+	@# Asserted by PROXIMITY, between this branch's own LOG_I_ONCE marker and
+	@# the end of its window, because the fact is "this site has a recovery
+	@# arm" and a file-wide count of SetEventFlag cannot tell WHICH site got
+	@# one -- the by-name blindness this file has already paid for twice.
+	@m=`$(CC) -fpreprocessed -E $(WIFI_MGR_SRC) 2>/dev/null \
+	     | awk '/forcing BSS disconnect on STA reconfigure/ {w=1;n=0} \
+	            w && /WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING/ && prev ~ /SetEventFlag/ {f++} \
+	            {prev=$$0} \
+	            w {n++; if (n>60) w=0} \
+	            END {print f+0}'`; \
+	 test "$$m" -eq 1 \
+	  || { echo "ERROR: the STA-reconfigure BSSDisconnect has $$m TEARDOWN_PENDING"; \
+	       echo "       set-arm(s), expected exactly 1 (#1060 r7)."; \
+	       echo "       Without it a bus fault there leaves the chip associated"; \
+	       echo "       with isConnected stuck true, every later IPUseDHCPSet"; \
+	       echo "       refused, and a bare APPLY unable to recover -- because"; \
+	       echo "       this PR's stale-event drop removed the queued"; \
+	       echo "       STA_CONNECTED that used to retry it by accident."; \
+	       exit 1; }
 	@# ⛔ PIN 5 -- the exhausted-retry log names the TICKET. When the retry does
 	@# not save it the operator is in the pre-existing class, and the one thing
 	@# that makes that diagnosable from SYSTem:LOG? is the reference.
@@ -1141,12 +1202,17 @@ $(APSTA1060_BIN): test_1060_apsta_disconnect_retry.c test_framework.h \
 	         {prev=$$0} \
 	         END{printf "%d %d\n", n+0, bad+0}' > /tmp/.p1060cs.$$$$; \
 	 read n bad < /tmp/.p1060cs.$$$$; rm -f /tmp/.p1060cs.$$$$; \
-	 test "$$n" -eq 4 \
+	 test "$$n" -eq 6 \
 	  || { echo "ERROR: found $$n write(s) of the #1060 teardown marker,"; \
-	       echo "       expected 4 (set+clear at the AP->STA site, the clear in"; \
-	       echo "       the REINIT retry, and the ENTRY restore). A different"; \
-	       echo "       count means this pin is no longer looking at the writes"; \
-	       echo "       it was written for -- which is a failure, not a pass."; \
+	       echo "       expected 6: set+clear at the AP->STA site, set+clear at"; \
+	       echo "       the STA-RECONFIGURE site (r7), the clear in the REINIT"; \
+	       echo "       retry, and the ENTRY restore. A different count means"; \
+	       echo "       this pin is no longer looking at the writes it was"; \
+	       echo "       written for -- which is a failure, not a pass."; \
+	       echo "       (Was 4 before r7; the STA-reconfigure pair was added"; \
+	       echo "       because r6's blind audit showed this PR had removed that"; \
+	       echo "       site's accidental recovery route. This pin caught the"; \
+	       echo "       addition, which is exactly its job.)"; \
 	       exit 1; }; \
 	 test "$$bad" -eq 0 \
 	  || { echo "ERROR: $$bad write(s) of the #1060 teardown marker are OUTSIDE"; \
