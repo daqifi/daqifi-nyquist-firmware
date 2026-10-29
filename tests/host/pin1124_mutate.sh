@@ -926,13 +926,16 @@ fi
 restore
 
 echo "== R49 (PIN 21): bring the manifest-COUNT cap back -- the audit HIGH.    =="
+echo "==      Re-anchored at r30: the counter it used to mutate was deleted    =="
+echo "==      as dead code, so the cap is INSERTED instead.                     =="
 echo "==      A FAULT is a refusal, so 17 short sessions in one directory      =="
 echo "==      (34 files, under MAX_DIR_FILES) disarm every later capture,      =="
 echo "==      opt-in or not. Nothing else notices: the scan still works, the   =="
 echo "==      bits are still exact, every refusal test still passes.           =="
-if sub "$F" '        manifests++;        /* counted for the log only -- never a refusal */' \
-            '        if (++manifests > 16u) { out = SD_INSPECT_FAULT; break; }'; then
-    expect "R49 no manifest-count cap" "the manifest counter is no longer a"
+if sub "$F" '        out = sd_ManifestRecordsName(path, needle);' \
+            '        { static uint32_t mfc; if (++mfc > 16u) { out = SD_INSPECT_FAULT; break; } }
+        out = sd_ManifestRecordsName(path, needle);'; then
+    expect "R49 no manifest-count cap" "FAULT sources"
 else
     echo "  FAIL R49 anchor absent."; fail=$((fail+1))
 fi
@@ -1002,16 +1005,16 @@ else
 fi
 restore
 
-echo "== R55 (PIN 21, the COMPARISON arm): keep the plain increment AND add a  =="
-echo "==      separate cap beside it. PIN 21's first arm is satisfied -- the    =="
-echo "==      increment still stands alone -- so only the arm that forbids a   =="
-echo "==      relational test on the counter can see it. Two arms, two         =="
-echo "==      mutants: R49 trips the first, this trips the second.             =="
-if sub "$F" '        manifests++;        /* counted for the log only -- never a refusal */' \
-            '        manifests++;        /* counted for the log only -- never a refusal */
-        if (manifests > 16u) { out = SD_INSPECT_FAULT; break; }'; then
-    expect "R55 the manifest count is never compared" \
-           "the manifest COUNT is compared"
+echo "== R55 (PIN 21): THE SAME CAP UNDER A DIFFERENT VARIABLE NAME. This is  =="
+echo "==      the arm that forced PIN 21 to be re-keyed twice in one round: my  =="
+echo "==      first rewrite asserted the IDENTIFIER 'manifests' was absent, and =="
+echo "==      a cap called 'nFound' walked straight past it with the whole      =="
+echo "==      defect intact. The pin now counts the scan's FAULT SOURCES, which =="
+echo "==      no rename can hide. R49 and this differ ONLY in the name.         =="
+if sub "$F" '        if (SdManifest_PathsEqualCaseInsensitive(path, ownPath)) {' \
+            '        { static uint32_t nFound; if (++nFound > 16u) { out = SD_INSPECT_FAULT; break; } }
+        if (SdManifest_PathsEqualCaseInsensitive(path, ownPath)) {'; then
+    expect "R55 a cap under any name is still caught" "FAULT sources"
 else
     echo "  FAIL R55 anchor absent."; fail=$((fail+1))
 fi
@@ -1219,8 +1222,12 @@ restore
 echo "== R63 (PIN 28b): drop the DOWNWARD scan, so a manifest written INSIDE a =="
 echo "==      bucket child is never read. No opt-in involved, so every opt-in  =="
 echo "==      arm passes, and the UPWARD scan still works so PIN 28a passes.   =="
+echo "==      ⚠ Rescans `dir` rather than deleting the call, so the per-base    =="
+echo "==      COUNT stays intact and PIN 26d does not fire first -- this arm    =="
+echo "==      must fail for 28b's reason, not for a count it also happens to    =="
+echo "==      break. One invariant per mutant.                                  =="
 if sub "$F" '            out = sd_ScanBaseAndNameSubdir(child, needle);' \
-            '            (void)child;'; then
+            '            out = sd_ScanBaseAndNameSubdir(dir, needle); (void)child;'; then
     expect "R63 the downward scan exists" "PIN 28b: the DOWNWARD scan is gone"
 else
     echo "  FAIL R63 anchor absent."; fail=$((fail+1))

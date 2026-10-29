@@ -1617,43 +1617,63 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	@# passed clean. The name is incidental; what matters is that the counter
 	@# is never COMPARED. So: the increment must stand alone as a statement,
 	@# and the counter must appear in no relational test at all.
-	@# ⛔⛔ r30: THE COUNTER IS GONE, SO THE PIN NOW ASSERTS ITS ABSENCE --
-	@# WHICH IS STRICTLY STRONGER THAN ASSERTING ITS SHAPE.
+	@# ⛔⛔⛔ r30 RE-KEYED THIS PIN TWICE IN ONE ROUND, AND THE SECOND TIME IS
+	@# THE INTERESTING ONE.
 	@#
-	@# The old arm required `manifests++;` to exist as a standalone statement.
-	@# That key made the pin fail when the counter was DELETED, while the
-	@# property it defends -- a count of pre-existing work must never refuse a
-	@# new session -- became trivially true: a variable that does not exist
-	@# cannot gate anything. The counter was removed because it was declared,
-	@# incremented and NEVER READ, in any build; its own comment claimed it was
-	@# "counted for the log only" and there was no such log.
+	@# The counter was deleted (declared, incremented, never read, with a
+	@# comment claiming a log that did not exist), so the old arm -- which
+	@# required `manifests++;` to exist -- failed on a correct change. My first
+	@# rewrite asserted the IDENTIFIER's ABSENCE instead. Mutants R49/R55 then
+	@# showed that is still a SYMBOL key: a cap written with any other variable
+	@# name (`if (++nFound > 16u)`) passes an absence check on `manifests`
+	@# cleanly, and the whole defect is back.
 	@#
-	@# ⭐ This is the third pin on this row to fire on a CORRECT change, and the
-	@# cause each time was keying on the symbol rather than the question -- see
-	@# the guidance at the head of this pin block. The question here is "can a
-	@# manifest count refuse a session?", and the strongest available answer is
-	@# that no such count exists. If one is ever re-added this pin fires and the
-	@# author must re-derive it: re-read PIN 14's history first (r21 shipped
-	@# SD_FOREIGN_SCAN_MAX_MANIFESTS = 16 with a FAULT past it, so 17 short
-	@# sessions in one directory disarmed every later capture), then decide
-	@# whether the new counter is ever COMPARED.
-	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
-	 case "$$pp" in \
-	   *manifests*) \
-	      echo "ERROR: #1124 r30 PIN 21: a manifest COUNTER is back in"; \
-	      echo "       $(SD_MANAGER_SRC)."; \
-	      echo "       It was deleted at r30 as dead code -- declared,"; \
-	      echo "       incremented, never read, with a comment claiming a log"; \
-	      echo "       that did not exist. The rule it existed under still"; \
-	      echo "       stands and is what to check before re-adding one:"; \
-	      echo "       A COUNT OF PRE-EXISTING WORK MUST NEVER REFUSE A NEW"; \
-	      echo "       SESSION. r21 shipped a cap of 16 with a FAULT past it,"; \
-	      echo "       so 17 short sessions in one directory disarmed every"; \
-	      echo "       later capture (audit :2915). If you need a counter, it"; \
-	      echo "       must never be COMPARED -- and it must have a consumer,"; \
-	      echo "       or it is the dead code this replaced."; \
-	      exit 1;; \
-	 esac; \
+	@# ⭐ THE QUESTION IS "CAN A COUNT OF PRE-EXISTING WORK REFUSE A SESSION?",
+	@# and in this scan a refusal is a FAULT. So the key is the scan's FAULT
+	@# SOURCES, enumerated and counted -- any new one, under any variable name,
+	@# moves the number. That is the property; the identifier never was.
+	@#
+	@# FOUR, in sd_ScanOneDirectory, and each is a filesystem fault rather than
+	@# a quantity:
+	@#   1. our own manifest path cannot be built  (return)
+	@#   2. SYS_FS_DirOpen failed, not absent      (return)
+	@#   3. the directory did not terminate within SD_FOREIGN_SCAN_MAX_DIR_ENTRIES
+	@#   4. SYS_FS_DirRead failed
+	@# ⚠ 3 IS A COUNT, and it is the exception that proves the rule: it bounds
+	@# ENTRIES READ, not work pre-existing on the card, and at 65536 a directory
+	@# that has not ended is a filesystem fault. If a fifth appears, decide
+	@# which kind it is before raising this number -- r21 shipped a cap of 16
+	@# manifests with a FAULT past it, so 17 short sessions in one directory
+	@# disarmed every later capture (audit :2915).
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null`; \
+	 body=`printf '%s\n' "$$pp" | awk '/static sd_InspectResult sd_ScanOneDirectory/,/^static sd_InspectResult sd_ScanBaseAndNameSubdir/'`; \
+	 nb=`printf '%s\n' "$$body" | grep -c .`; \
+	 nf=`printf '%s\n' "$$body" | grep -cE 'SD_INSPECT_FAULT'`; \
+	 if [ "$$nb" -lt 20 ]; then \
+	   echo "ERROR: #1124 r30 PIN 21: could not slice sd_ScanOneDirectory's body"; \
+	   echo "       ($$nb lines) -- the pin cannot evaluate its invariant, which"; \
+	   echo "       is a FAILURE, not a pass. Did the function or the one after"; \
+	   echo "       it get renamed?"; \
+	   exit 1; \
+	 fi; \
+	 test "$$nf" -eq 4 \
+	  || { echo "ERROR: #1124 r30 PIN 21: the foreign scan has $$nf FAULT sources,"; \
+	       echo "       not the 4 enumerated in this recipe."; \
+	       echo "       A FAULT here IS a refusal, and the rule is that A COUNT"; \
+	       echo "       OF PRE-EXISTING WORK MUST NEVER REFUSE A NEW SESSION."; \
+	       echo "       r21 shipped a cap of 16 manifests with a FAULT past it,"; \
+	       echo "       so 17 short sessions in one directory disarmed every"; \
+	       echo "       later capture (audit :2915)."; \
+	       echo "       ⛔ Keyed on the FAULT COUNT, not on a variable name: an"; \
+	       echo "       earlier version of this pin asserted that the identifier"; \
+	       echo "       'manifests' was absent, and a cap under any other name"; \
+	       echo "       walked straight past it (mutants R49/R55)."; \
+	       echo "       If you added a legitimate filesystem fault, enumerate it"; \
+	       echo "       above and raise the number. If you added a cap on work"; \
+	       echo "       already on the card, do not."; \
+	       exit 1; }
+	@# The old identifier arm is kept as a cheap second signal: the deleted
+	@# counter must not come back by name either.
 	 case "$$pp" in \
 	   *"manifests >"*|*"manifests <"*|*"manifests =="*|*"manifests !="*) \
 	      echo "ERROR: #1124 r21 PIN 21: the manifest COUNT is compared, so it"; \
