@@ -1223,13 +1223,17 @@ restore
 echo "== R90 (PIN 32b): widen the byte-range test so high bytes pass. Every    =="
 echo "==      one of the 18 CP437 bytes that alias to pure ASCII is >= 0x80,   =="
 echo "==      i.e. exactly what a loosened test waves through.                 =="
+echo "==      ⭐ Caught BY VALUE, by test_924's behavioural arm over all 18     =="
+echo "==      bytes -- not by the structural pin I first aimed it at. A test    =="
+echo "==      that fails on the VALUE is the stronger detector, so the          =="
+echo "==      expectation names it.                                             =="
 if sub "$U" "        if ((u[i] < 0x20u) || (u[i] > 0x7Eu)) {
             return true;
         }" \
             "        if (u[i] < 0x20u) {
             return true;
         }"; then
-    expect "R90 the byte-range test is intact" "the byte-range test itself is gone or"
+    expect "R90 the byte-range test is intact" "[FAIL] non_ascii_is_detected_in_a_name_or_a_directory"
 else
     echo "  FAIL R90 anchor absent."; fail=$((fail+1))
 fi
@@ -1412,9 +1416,13 @@ echo "== R71 (PIN 32): use SIGNED chars for the ASCII range test. Every high   =
 echo "==      byte then compares as negative, so `> 0x7E` is false and the     =="
 echo "==      check passes exactly the input it exists to catch -- present,    =="
 echo "==      plausible, and inert.                                            =="
+echo "==      ⚠ Needle updated at the AT round: PIN 32 was re-keyed across     =="
+echo "==      BOTH files when the byte test moved into the shared predicate,    =="
+echo "==      so its wording changed. The anchor still holds -- this mutates    =="
+echo "==      the DIRECTORY arm's cast, which stayed in SD_DirHasNonCanonicalForm. =="
 if sub "$S" '        const unsigned char *u = (const unsigned char *)dir;' \
             '        const char *u = dir;'; then
-    expect "R71 the ASCII test uses unsigned bytes" "unsigned-char casts"
+    expect "R71 the ASCII test uses unsigned bytes" "an ASCII range check is not on UNSIGNED"
 else
     echo "  FAIL R71 anchor absent."; fail=$((fail+1))
 fi
