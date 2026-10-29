@@ -669,7 +669,7 @@ if sub "$F" '            LOG_E("[SD1124] unreadable mfst %s e=%d", target, (int)
             return false;' \
             '            LOG_E("[SD1124] unreadable mfst %s e=%d", target, (int)e);
             return true;   /* mutant: the manifest-side fault reads as absence */'; then
-    expect "R30 both inspections fail closed" "fail-closed inspection guard"
+    expect "R30 the manifest inspection fails CLOSED" "PIN 2 ARM 2"
 else
     echo "  FAIL R30 anchor absent."; fail=$((fail+1))
 fi
