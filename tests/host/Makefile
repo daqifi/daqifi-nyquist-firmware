@@ -1111,6 +1111,24 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	@# on the PERMISSIVE value when the third state appears. Counted, not merely
 	@# present, because one of the two inspections having the guard tells you
 	@# nothing about the other.
+	@#
+	@# ⛔⛔ ARM 2 ADDED AT r33, AND ARM 1 ALONE WAS A PRESENCE CHECK. Arm 1
+	@# counts the guard's CONDITION. Mutant R30 -- re-anchored this round onto
+	@# the LOG_E + return pair -- flipped one `return false` to `return true`:
+	@# the condition stayed, the count stayed 2, and the ENTIRE SUITE passed
+	@# while a stat fault was again read as an absence. The pin's own heading
+	@# says FAIL CLOSED, which is a claim about the OUTCOME, so arm 2 asserts
+	@# each guard actually returns false. Found because a mutant got CLEANER,
+	@# not because anything was looking.
+	@#
+	@# ⚠ MEASURED OVER STATEMENTS, NOT OVER LINES OF THE PREPROCESSED TEXT.
+	@# `cc -fpreprocessed -E` strips comments but PRESERVES THEIR LINE
+	@# GEOMETRY, leaving blank lines behind, and it injects `# N "file"`
+	@# markers. My first version of this arm used a 4-LINE window and fired on
+	@# the UNMUTATED source, because the data-file guard carries a comment
+	@# block between the condition and its return. Blank lines and line markers
+	@# are dropped first, so the window counts statements and the distance
+	@# means what it says.
 	@$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null \
 	   | awk '/^static bool sd_TargetSafeToOpenForWrite\(const char \*dataPath\) \{/{f=1} f{print} f&&/^\}/{exit}' \
 	   > /tmp/.g1124b.$$$$; \
@@ -1122,6 +1140,25 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	       echo "       a FAULT, not an absence (r18 finding 3). Reading it as"; \
 	       echo "       absence truncates a file that could not even be looked"; \
 	       echo "       at, beside a manifest that still describes it."; \
+	       rm -f /tmp/.g1124b.$$$$; exit 1; }; \
+	 grep -vE '^[[:space:]]*$$|^# [0-9]+ ' /tmp/.g1124b.$$$$ > /tmp/.g1124c.$$$$; \
+	 bad=0; \
+	 for ln in `grep -n 'SYS_FS_ERROR_NO_PATH && e != SYS_FS_ERROR_NO_FILE' /tmp/.g1124c.$$$$ | cut -d: -f1`; do \
+	   sed -n "$$ln,$$((ln+3))p" /tmp/.g1124c.$$$$ | grep -q 'return false;' || bad=$$((bad+1)); \
+	 done; \
+	 rm -f /tmp/.g1124c.$$$$; \
+	 test "$$bad" -eq 0 \
+	  || { echo "ERROR: #1124 r33 PIN 2 ARM 2: $$bad fail-closed inspection"; \
+	       echo "       guard(s) do not RETURN FALSE within 4 lines."; \
+	       echo "       ⛔ ARM 1 counts the guard's CONDITION and is blind to"; \
+	       echo "       what the guard DOES. Mutant R30 flipped one of these"; \
+	       echo "       'return false' to 'return true' -- the condition stayed,"; \
+	       echo "       the count stayed 2, and the WHOLE SUITE passed while a"; \
+	       echo "       stat fault was read as an absence again (r18 finding 3)."; \
+	       echo "       This pin's heading says FAIL CLOSED, which is a claim"; \
+	       echo "       about the OUTCOME; counting the condition only asserts"; \
+	       echo "       that someone wrote an if. A presence-only guard guards"; \
+	       echo "       nothing."; \
 	       rm -f /tmp/.g1124b.$$$$; exit 1; }; \
 	 rm -f /tmp/.g1124b.$$$$
 	@# ⛔ PIN 3 -- EVERY refuse reason has a case in the text function.
