@@ -1037,7 +1037,7 @@ restore
 echo "== R57 (PIN 26): drop the PARENT walk, so a DEFAULT session logging into =="
 echo "==      a bucket can recreate a part the parent's manifest still         =="
 echo "==      records. No opt-in involved, so every opt-in test passes.        =="
-if sub "$F" '            out = sd_ScanOneDirectory(parent, false, needle);' \
+if sub "$F" '            out = sd_ScanBaseAndNameSubdir(parent, needle);' \
             '            (void)parent;'; then
     expect "R57 a bucket dir scans its parent" "PIN 26a: the PARENT walk is gone"
 else
@@ -1045,14 +1045,18 @@ else
 fi
 restore
 
-echo "== R58 (PIN 26, the isOwnDir arm): scan the parent but EXCLUDE our own   =="
-echo "==      manifest leaf there. The walk is present and looks right; it     =="
-echo "==      simply skips the one manifest it went to find -- a session       =="
-echo "==      configured at the PARENT with the same name.                     =="
-if sub "$F" '            out = sd_ScanOneDirectory(parent, false, needle);' \
-            '            out = sd_ScanOneDirectory(parent, true, needle);'; then
-    expect "R58 the parent walk does not exclude our leaf" \
-           "PIN 26b: the parent walk no longer passes"
+echo "== R58 (PIN 26b): REGRESS THE EXCLUSION FROM FULL PATH BACK TO LEAF.    =="
+echo "==      Retargeted at r30: the old arm flipped the isOwnDir flag, which  =="
+echo "==      no longer exists -- the exclusion is unconditional and keyed on  =="
+echo "==      the full path. Comparing the LEAF again reintroduces BOTH        =="
+echo "==      defects at once: it skips a same-leaf manifest in the PARENT     =="
+echo "==      (the record :2930 went there to find) AND it stops matching our  =="
+echo "==      own manifest in a scanned bucket, which is the FR_LOCKED fault   =="
+echo "==      that killed the capture at :3141.                                =="
+if sub "$F" '        if (SdManifest_PathsEqualCaseInsensitive(path, ownPath)) {' \
+            '        if (SdManifest_PathsEqualCaseInsensitive(st.fname, ownPath)) {'; then
+    expect "R58 the exclusion is by full path, not leaf" \
+           "PIN 26b: our own manifest is no longer excluded"
 else
     echo "  FAIL R58 anchor absent."; fail=$((fail+1))
 fi
@@ -1215,7 +1219,7 @@ restore
 echo "== R63 (PIN 28b): drop the DOWNWARD scan, so a manifest written INSIDE a =="
 echo "==      bucket child is never read. No opt-in involved, so every opt-in  =="
 echo "==      arm passes, and the UPWARD scan still works so PIN 28a passes.   =="
-if sub "$F" '            out = sd_ScanOneDirectory(child, false, needle);' \
+if sub "$F" '            out = sd_ScanBaseAndNameSubdir(child, needle);' \
             '            (void)child;'; then
     expect "R63 the downward scan exists" "PIN 28b: the DOWNWARD scan is gone"
 else

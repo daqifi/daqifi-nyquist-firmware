@@ -118,6 +118,14 @@ typedef struct {
     /* r28 (:2728): the target's name carries a PADDED suffix (exp-01.csv),
      * which "%u" never emits, so it can never be one of our parts. */
     bool     targetHasPaddedSuffix;
+    /* r30 (:3311): the configured filename carries a subdirectory, and a
+     * FOREIGN manifest in `<dir>/sub` records this target. */
+    bool     nameSubdirRecordsTarget;
+    /* r30 (:3141): the configured filename's subdirectory is named like a
+     * bucket (SD:FILE "P001/exp.csv"), so THIS SESSION'S OWN manifest sits in
+     * a directory the scan reads as a bucket child. Opening it would hit
+     * FF_FS_LOCK and FAULT. */
+    bool     ownManifestInScannedChild;
     /* observations */
     bool    opened;          /* the WRITE_PLUS open happened (truncating) */
     bool    manifestRemoved; /* something was unlinked */
@@ -187,6 +195,19 @@ typedef struct {
     /* r28 audit HIGH (:3234): up and down are NOT exclusive -- a bucket-named
      * configured directory must scan BOTH its parent and its own children. */
     bool scansBothDirections;
+    /* ⛔ r30 audit HIGH (:3311, reported THREE rounds running): the configured
+     * FILENAME's own subdirectory chain is scanned too. SD:FILE "sub/exp.csv"
+     * keeps this session's manifest in `<dir>/sub`, which none of the three
+     * bucket-shaped locations covers. False reproduces r29, where such a
+     * record was invisible and rotation recreated a recorded part. */
+    bool scansNameSubdir;
+    /* ⛔ r30 audit HIGH (:3141): our own manifest is excluded from the scan by
+     * FULL PATH, not by leaf-and-only-in-the-own-directory. False reproduces
+     * r29, where SD:FILE "P001/exp.csv" put our manifest in a scanned BUCKET
+     * CHILD, the scan opened it, FF_FS_LOCK (10) returned FR_LOCKED, and the
+     * scan FAULTED -- killing our own capture. A false refusal, not a bypass,
+     * which is why it needs its own flag rather than riding on a scan flag. */
+    bool excludesOwnManifestByFullPath;
 } Shape;
 
 static const Shape SHAPE_R18 = { true,  false, false, false, false, false,
@@ -242,11 +263,20 @@ static const Shape SHAPE_R22_AUDITED = { false, true, true, true, true, true,
                                          false, false, 
                                          false, false, false,
                                          false, false };
+/* What the r30 audit BLOCKED: every fix through r29, and NEITHER r30 fix. The
+ * two new flags default to false, which is the whole point of appending them
+ * -- every historical shape keeps its meaning without being edited. */
+static const Shape SHAPE_R30_AUDITED = { false, true,  true,  true,  true,  true,
+                                 true,  true,  true,  true,  true,
+                                 true,  true,
+                                 true,  true, true,
+                                         true,  true };
 static const Shape SHAPE_C   = { false, true,  true,  true,  true,  true,
                                  true,  true,  true,  true,  true,
                                  true,  true,  
                                  true,  true, true,
-                                         true,  true };
+                                         true,  true,
+                                         /* r30: */ true, true };
 /* r21 with the scan's fail-closed arm removed: the one-line mistake that makes
  * an unparseable manifest read as empty. Everything else intact. */
 static const Shape SHAPE_C_SCAN_SKIPS = { false, true, true, true, true, true,
@@ -411,6 +441,32 @@ static void model_open_target(World *w, Shape s) {
      * EXCLUSIVE -- a bucket-named configured directory looked UP and returned
      * -- so its own bucket CHILD went unread. The model has to carry that
      * gating or the r27 baseline cannot reproduce the defect. */
+    /* ⛔⛔ r30 audit HIGH (:3141): OUR OWN WRITE-OPEN MANIFEST, IN A SCANNED
+     * CHILD. Checked FIRST because it is the scan DYING, not a verdict it
+     * reaches: with SD:FILE "P001/exp.csv" our manifest sits in `D/P001`, the
+     * scan reads that as a bucket child, opens the manifest, and FatFs refuses
+     * the duplicate open with FR_LOCKED (FF_FS_LOCK is 10). sd_ScanOneDirectory
+     * turns a failed open into FAULT, which the caller reports as the
+     * unparsable-manifest refusal -- so the modelled refusal is the same one a
+     * genuinely corrupt manifest produces, which is itself worth knowing: the
+     * operator could not tell the two apart. */
+    if (s.refuseForeignRecord && w->ownManifestInScannedChild
+            && s.scansBucketChildren && !s.excludesOwnManifestByFullPath) {
+        w->refusal = REFUSE_MANIFEST_UNPARSABLE;
+        return;
+    }
+    /* ⛔⛔ r30 audit HIGH (:3311): a FOREIGN manifest in the configured
+     * FILENAME's own subdirectory. Reported three rounds running while it sat
+     * in the PR as a documented residual. */
+    if (s.refuseForeignRecord && w->nameSubdirRecordsTarget) {
+        if (s.scansNameSubdir) {
+            w->refusal = REFUSE_FOREIGN_RECORD;
+            return;
+        }
+        /* r29's behaviour: `<dir>/sub` was never read, so the collision was
+         * missed SILENTLY -- no refusal, and rotation recreates the recorded
+         * part under the old manifest's size and CRC. */
+    }
     if (s.refuseForeignRecord && w->bucketChildRecordsTarget
             && (!w->dirIsBucket || s.scansBothDirections)) {
         if (s.scansBucketChildren) {
@@ -1205,6 +1261,96 @@ TEST(a_manifest_inside_a_bucket_child_is_found_without_the_opt_in) {
     ASSERT_FALSE(model_is_busy(&w));
 }
 
+/* ---- r30 audit HIGH (:3141): our own manifest must not fault the scan ---- */
+
+/* ⛔⛔ THE FALSE REFUSAL, and it is our OWN session we were refusing.
+ * SD:FILE "P001/exp.csv" is legal, and it puts this session's manifest in
+ * `D/P001` -- which the scan reads as a rotation bucket. The old exclusion was
+ * keyed on (leaf, isOwnDir) and the bucket pass sets isOwnDir false, so the
+ * scan opened our own write-open manifest. FF_FS_LOCK is 10, so FatFs returns
+ * FR_LOCKED, the scan FAULTS, and the capture dies.
+ *
+ * ⭐ NOTE WHAT THE OPERATOR SAW: the same refusal a genuinely corrupt manifest
+ * produces. A false refusal wearing a true refusal's name is worse than a bare
+ * failure, because the obvious next step -- go and inspect the "corrupt"
+ * manifest -- leads away from the cause. */
+TEST(the_audited_r29_faulted_on_our_own_manifest_in_a_scanned_bucket) {
+    World w = world(FS_ABSENT, FS_ABSENT, false, false);
+    w.ownManifestInScannedChild = true;
+    model_arm_session(&w, SHAPE_R30_AUDITED);
+    model_open_target(&w, SHAPE_R30_AUDITED);
+    ASSERT_FALSE(w.opened);
+    ASSERT_EQ(w.refusal, REFUSE_MANIFEST_UNPARSABLE);
+}
+
+TEST(our_own_manifest_in_a_scanned_bucket_no_longer_faults_the_scan) {
+    World w = world(FS_ABSENT, FS_ABSENT, false, false);
+    w.ownManifestInScannedChild = true;
+    model_arm_session(&w, SHAPE_C);
+    model_open_target(&w, SHAPE_C);
+    model_finish_refusal(&w, SHAPE_C);
+    ASSERT_TRUE(w.opened);
+    ASSERT_EQ(w.refusal, REFUSE_NONE);
+    ASSERT_TRUE(model_is_busy(&w));
+}
+
+/* ⭐⭐ THE CONTROL THE FIX ACTUALLY NEEDS, and the one a careless version would
+ * fail: excluding our own manifest must NOT stop the bucket scan reading a
+ * GENUINELY foreign manifest in the same directory. The cheap wrong fix --
+ * skip the bucket pass when the name has a subdirectory, or exclude by leaf
+ * everywhere -- passes the two tests above and silently disables the scan.
+ * Asserted in the SAME shape, so "it no longer faults" cannot be bought by
+ * scanning nothing. */
+TEST(excluding_our_own_manifest_does_not_stop_the_bucket_scan) {
+    World own = world(FS_ABSENT, FS_ABSENT, false, false);
+    own.ownManifestInScannedChild = true;
+    model_arm_session(&own, SHAPE_C);
+    model_open_target(&own, SHAPE_C);
+    ASSERT_EQ(own.refusal, REFUSE_NONE);          /* ours: skipped */
+
+    World foreign = world(FS_ABSENT, FS_ABSENT, false, false);
+    foreign.bucketChildRecordsTarget = true;
+    model_arm_session(&foreign, SHAPE_C);
+    model_open_target(&foreign, SHAPE_C);
+    ASSERT_EQ(foreign.refusal, REFUSE_FOREIGN_RECORD);  /* theirs: still read */
+
+    /* and both at once: our own manifest present AND a foreign record in the
+     * same bucket -- the foreign one must still decide the outcome. */
+    World both = world(FS_ABSENT, FS_ABSENT, false, false);
+    both.ownManifestInScannedChild = true;
+    both.bucketChildRecordsTarget = true;
+    model_arm_session(&both, SHAPE_C);
+    model_open_target(&both, SHAPE_C);
+    ASSERT_FALSE(both.opened);
+    ASSERT_EQ(both.refusal, REFUSE_FOREIGN_RECORD);
+}
+
+/* ---- r30 audit HIGH (:3311): the configured name's subdirectory ---------- */
+
+/* ⛔ REPORTED THREE ROUNDS RUNNING (r28 :3113, r29 and r30 :3311, both legs
+ * each time) while it sat in the PR as documented Residual 2. These two arms
+ * are why it is now closed: the gap was a silent MISS, which is the failure
+ * direction this whole row exists to prevent. */
+TEST(the_audited_r29_missed_a_manifest_in_the_names_subdirectory) {
+    World w = world(FS_ABSENT, FS_ABSENT, false, false);
+    w.nameSubdirRecordsTarget = true;
+    model_arm_session(&w, SHAPE_R30_AUDITED);
+    model_open_target(&w, SHAPE_R30_AUDITED);
+    ASSERT_TRUE(w.opened);            /* `<dir>/sub` was never read */
+    ASSERT_EQ(w.refusal, REFUSE_NONE);
+}
+
+TEST(a_manifest_in_the_names_subdirectory_is_found_without_the_opt_in) {
+    World w = world(FS_ABSENT, FS_ABSENT, false, false);
+    w.nameSubdirRecordsTarget = true;
+    model_arm_session(&w, SHAPE_C);
+    model_open_target(&w, SHAPE_C);
+    model_finish_refusal(&w, SHAPE_C);
+    ASSERT_FALSE(w.opened);
+    ASSERT_EQ(w.refusal, REFUSE_FOREIGN_RECORD);
+    ASSERT_FALSE(model_is_busy(&w));
+}
+
 /* ⭐ BOTH DIRECTIONS, AND THEY ARE EXCLUSIVE. A session inside a bucket looks
  * UP; one at the top of a bucket set looks DOWN. The pair matters because an
  * implementation doing only one passes half the arms above, and because doing
@@ -1409,6 +1555,11 @@ int main(void) {
     RUN(a_foreign_record_whose_index_overflows_still_arms);
     RUN(the_audited_r23_missed_a_manifest_inside_a_bucket_child);
     RUN(a_manifest_inside_a_bucket_child_is_found_without_the_opt_in);
+    RUN(the_audited_r29_faulted_on_our_own_manifest_in_a_scanned_bucket);
+    RUN(our_own_manifest_in_a_scanned_bucket_no_longer_faults_the_scan);
+    RUN(excluding_our_own_manifest_does_not_stop_the_bucket_scan);
+    RUN(the_audited_r29_missed_a_manifest_in_the_names_subdirectory);
+    RUN(a_manifest_in_the_names_subdirectory_is_found_without_the_opt_in);
     RUN(the_scan_looks_up_from_a_bucket_and_down_from_its_parent);
     RUN(the_audited_r27_refused_a_fresh_file_with_a_padded_suffix);
     RUN(a_padded_suffix_does_not_trip_the_recorded_part_refusal);

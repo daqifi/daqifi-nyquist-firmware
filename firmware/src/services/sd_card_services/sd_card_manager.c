@@ -2857,18 +2857,27 @@ static sd_InspectResult sd_NameIsRotationPartOfExistingManifest(const char *name
  * foreign manifest records nothing this session would ever write. That costs
  * reads, never a refusal: the refusal is decided by the exact comparison.
  */
-/* Build this session's own manifest FILE NAME (no directory), for telling our
- * manifest apart from a foreign one while reading directory entries.
+/* ⛔⛔ #1124 r30: sd_SessionManifestLeaf IS DELETED, and its comment is worth
+ * keeping as evidence. It read:
  *
- * A configured `file` containing a separator ("sub/exp.csv") puts our manifest
- * at <dir>/sub/exp.csv.mfst, which is NOT in <dir> -- and then no entry in
- * <dir> is ours, which is exactly what this comparison yields on its own,
- * because a directory entry name can never contain '/'. No special case. */
-static bool sd_SessionManifestLeaf(char *out, size_t outLen) {
-    const int w = snprintf(out, outLen, "%s" SD_MANIFEST_EXT,
-                           gpSDCardSettings->file);
-    return (w >= 0) && ((size_t)w < outLen);
-}
+ *   "A configured `file` containing a separator ("sub/exp.csv") puts our
+ *    manifest at <dir>/sub/exp.csv.mfst, which is NOT in <dir> -- and then no
+ *    entry in <dir> is ours, which is exactly what this comparison yields on
+ *    its own, because a directory entry name can never contain '/'.
+ *    No special case."
+ *
+ * Every sentence of that is true, and the conclusion is still wrong. "No entry
+ * in <dir> is ours" is fine for <dir> -- and says nothing about the OTHER
+ * directories the scan reads. With SD:FILE "P001/exp.csv" our manifest lands
+ * in `D/P001`, which is scanned as a rotation bucket, where this leaf
+ * comparison was not even consulted (the old `isOwnDir` flag was false there).
+ * Opening our own write-open manifest then returned FR_LOCKED and killed the
+ * capture: r30 audit HIGH (:3141).
+ *
+ * ⭐ The comment analysed the case it was looking at and generalised from it.
+ * The full-path comparison that replaced this needs no such reasoning, which
+ * is the point -- it is correct in every directory without a claim about
+ * which directories exist. */
 
 /* Read one manifest and report whether it records `needle`.
  *
@@ -3075,28 +3084,53 @@ static sd_InspectResult sd_ManifestRecordsName(const char *manifestPath,
  */
 /* One directory's worth of the scan.
  *
- * `isOwnDir` selects whether this session's OWN manifest leaf is excluded.
- * ⛔ It must be excluded ONLY in the configured directory. In the PARENT a
- * manifest of the same leaf name belongs to a DIFFERENT session -- one
- * configured at the parent -- and is exactly the record r22 finding :2930 is
- * about, so excluding by leaf name there would skip the very manifest the
- * parent is being scanned for. */
-static sd_InspectResult sd_ScanOneDirectory(const char *dir, bool isOwnDir,
+ * ⛔⛔⛔ #1124 r30 AUDIT HIGH (:3141): THIS SESSION'S OWN MANIFEST IS EXCLUDED
+ * BY **FULL PATH**, AND THE `isOwnDir` FLAG IS GONE.
+ *
+ * It used to be excluded by LEAF, and only in the directory the caller
+ * labelled "own". Both keys were wrong, and r30 showed how:
+ *
+ *   SD:FILE "P001/exp.csv" with SD:DIR "D" puts this session's manifest at
+ *   `D/P001/exp.csv.mfst`. `D/P001` is also scanned as a rotation-bucket
+ *   CHILD, with isOwnDir FALSE -- so our own manifest was treated as foreign
+ *   and OPENED. FF_FS_LOCK is 10 (ffconf.h), so FatFs refuses the duplicate
+ *   open of our write-open manifest with FR_LOCKED, the scan returned FAULT,
+ *   and the capture was TERMINATED. A false refusal of our own session.
+ *
+ * ⛔ The premise that made the flag look sufficient was written in a comment,
+ * not checked: "our own manifest is in D, never in a bucket". False whenever
+ * the configured FILENAME carries a subdirectory that wears a bucket's name,
+ * which SD:FILE permits. Fourth instance on this row of a comment asserting
+ * the premise the code should check.
+ *
+ * ⭐ A FULL-PATH COMPARISON IS STRICTLY MORE CORRECT IN BOTH DIRECTIONS, which
+ * is why the flag could be deleted rather than fixed:
+ *   - it excludes our manifest WHEREVER it is, so no caller has to know;
+ *   - it still does NOT exclude a same-leaf manifest in a DIFFERENT directory
+ *     -- `D/exp.csv.mfst` != `D/P001/exp.csv.mfst` -- which is the record r22
+ *     finding :2930 scans the parent FOR, and the reason the old comment
+ *     insisted the exclusion be conditional. The condition was a workaround
+ *     for comparing the wrong thing.
+ * Deleting the parameter rather than leaving it always-true is deliberate: a
+ * flag that selects between a correct and an incorrect comparison is an
+ * invitation to pass the wrong one. */
+static sd_InspectResult sd_ScanOneDirectory(const char *dir,
                                             const char *needle) {
-    char ownLeaf[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX
-                 + sizeof(SD_MANIFEST_EXT) + 1u];
+    char ownPath[SD_SESSION_MANIFEST_PATH_MAX];
     char path[SD_SESSION_MANIFEST_PATH_MAX];
     const size_t dirLen = SdManifest_CanonicalDirLen(dir);
-    uint32_t manifests = 0u;
     uint32_t scanned = 0u;
     sd_InspectResult out = SD_INSPECT_CLEAR;
     SYS_FS_FSTAT st;
 
-    ownLeaf[0] = '\0';
-    if (isOwnDir && !sd_SessionManifestLeaf(ownLeaf, sizeof(ownLeaf))) {
+    if (!sd_SessionManifestPath(ownPath, sizeof(ownPath))) {
         /* Cannot name our own manifest, so nothing read below could be
          * distinguished from it. Refuse rather than risk treating our own
-         * live records as a foreign session's, or vice versa. */
+         * live records as a foreign session's, or vice versa.
+         * ⚠ UNCONDITIONAL now: under the old flag this check ran only for the
+         * "own" directory, so a session whose manifest path could not be built
+         * still scanned the parent and the buckets -- reading every manifest
+         * there while unable to recognise its own. */
         return SD_INSPECT_FAULT;
     }
 
@@ -3138,11 +3172,6 @@ static sd_InspectResult sd_ScanOneDirectory(const char *dir, bool isOwnDir,
         if (!SdManifest_NameHasManifestExt(st.fname)) {
             continue;
         }
-        if (isOwnDir
-                && SdManifest_PathsEqualCaseInsensitive(st.fname, ownLeaf)) {
-            continue;                   /* our own: its records are ours */
-        }
-        manifests++;        /* counted for the log only -- never a refusal */
         /* ⛔ NO EARLY EXIT IN THE INDEX PASS. Finding one foreign manifest is
          * not the answer any more -- every one of them has to be read, or the
          * bits are a partial record of what is claimed, which is a missed
@@ -3167,6 +3196,26 @@ static sd_InspectResult sd_ScanOneDirectory(const char *dir, bool isOwnDir,
              * line. */
             continue;
         }
+        /* ⛔ r30 (:3141): OUR OWN MANIFEST, BY FULL PATH, AFTER THE PATH EXISTS.
+         * It has to be here rather than beside the name test above, because the
+         * comparison needs the constructed path -- which is exactly why the old
+         * version compared the LEAF and inherited a flag to make that almost
+         * work. Skipping it costs nothing: its records ARE ours. */
+        if (SdManifest_PathsEqualCaseInsensitive(path, ownPath)) {
+            continue;
+        }
+        /* ⛔ r30: THE `manifests` COUNTER IS GONE, and its comment is why it
+         * survived this long. It read "counted for the log only -- never a
+         * refusal", which describes a log that does not exist: the variable
+         * was declared, incremented, and NEVER READ, in any build.
+         *
+         * Found while moving the own-manifest exclusion past the path build.
+         * I first reordered the increment carefully to preserve its meaning,
+         * then looked for the consumer and there was none -- so the careful
+         * reordering was protecting a value nobody observes. Same shape as the
+         * dead range guard a mutant found at r30: the comment asserted a
+         * purpose that nothing realised. Deleted rather than wired to a new
+         * log, because no diagnostic asked for it. */
         out = sd_ManifestRecordsName(path, needle);
     }
 
@@ -3255,11 +3304,87 @@ static bool sd_DirLeafIsBucket(const char *dir, size_t dirLen, size_t *cutOut) {
  * skipped bucket is a MISSED COLLISION. Paying MAX_BUCKET directory lookups
  * once per session is the cheaper side of that trade.
  */
+/* ⛔⛔⛔ #1124 r30: RESIDUAL 2 IS CLOSED HERE -- THE CONFIGURED FILENAME'S OWN
+ * SUBDIRECTORY CHAIN IS SCANNED TOO.
+ *
+ * `SYSTem:STORage:SD:FILE` accepts a name containing '/', and every path this
+ * session writes is `<dir>/[bucket]/<the name's own directories>/<leaf>`. So a
+ * session configured SD:DIR "D" + SD:FILE "sub/exp.csv" keeps its manifest at
+ * `D/sub/exp.csv.mfst` -- a directory the scan did not read. A foreign record
+ * there was therefore invisible, and rotation recreated a recorded part while
+ * its manifest survived with the old size and CRC.
+ *
+ * ⛔ REPORTED AS A HIGH IN THREE CONSECUTIVE ROUNDS (r28 :3113, r29 :3311,
+ * r30 :3311, both legs each time) while it sat in the PR as a documented
+ * residual. That is the argument for closing it rather than dispositioning it
+ * a fourth time: a residual the auditor rediscovers every round is a residual
+ * nobody reads. Residual 2 is withdrawn in the PR body, the same way the
+ * nested-bucket one was.
+ *
+ * ⭐ APPLIED TO EVERY BASE THE SCAN ALREADY VISITS, not just the configured
+ * directory, because the same cross product generates the paths: a session
+ * configured INTO a bucket with its own filename subdirectory keeps its
+ * manifest at `D/P001/sub/exp.csv.mfst`. Doing it per-base is what makes this
+ * one rule instead of a fourth place that knows how paths are built.
+ *
+ * ⚠ BOUNDED, and the bound matters because r30's own Residual 5 is about the
+ * scan's duration against START's 5 s deadline: this at most DOUBLES the
+ * directory count (one extra open per base), and only when the configured name
+ * actually contains '/'. An ordinary name reads exactly what it read before --
+ * `chainLen == 0` short-circuits before any path is built.
+ *
+ * ⚠ AND IT OBEYS THE MODULE'S RULE: the new directories get exactly the same
+ * treatment as the others, so an unnameable or absent one is SKIPPED, never a
+ * FAULT. A FOREIGN NAME CAN NEVER FAULT THE SCAN, and neither can a
+ * subdirectory that does not exist -- which is the ordinary case, since most
+ * configured names have no '/' at all. */
+static size_t sd_NameSubdirChainLen(const char *file) {
+    size_t cut = 0u;
+    size_t i;
+
+    if (file == NULL) {
+        return 0u;
+    }
+    for (i = 0u; file[i] != '\0'; i++) {
+        if (file[i] == '/') {
+            cut = i;                    /* last separator wins */
+        }
+    }
+    return cut;                         /* 0 when the name has no directory */
+}
+
+/* Scan `base`, and -- when the configured filename carries one -- the same
+ * base with the name's own subdirectory chain appended. */
+static sd_InspectResult sd_ScanBaseAndNameSubdir(const char *base,
+                                                 const char *needle) {
+    const char *file = gpSDCardSettings->file;
+    const size_t chainLen = sd_NameSubdirChainLen(file);
+    sd_InspectResult out = sd_ScanOneDirectory(base, needle);
+
+    if (out != SD_INSPECT_CLEAR || chainLen == 0u) {
+        return out;
+    }
+    {
+        char sub[SD_CARD_MANAGER_FILE_PATH_LEN_MAX + 1u];
+        const size_t baseLen = SdManifest_CanonicalDirLen(base);
+        const int w = snprintf(sub, sizeof(sub), "%.*s/%.*s",
+                               (int)baseLen, base, (int)chainLen, file);
+        if (w < 0 || (size_t)w >= sizeof(sub)) {
+            /* Cannot name it, so no session of ours could have written a path
+             * through it either -- SKIPPED, never a fault. Same reasoning as
+             * the over-long foreign manifest name in sd_ScanOneDirectory. */
+            return SD_INSPECT_CLEAR;
+        }
+        out = sd_ScanOneDirectory(sub, needle);
+    }
+    return out;
+}
+
 static sd_InspectResult sd_ScanForeignManifests(const char *needle) {
     const char *dir = gpSDCardSettings->directory;
     const size_t dirLen = SdManifest_CanonicalDirLen(dir);
     size_t cut = 0u;
-    sd_InspectResult out = sd_ScanOneDirectory(dir, true, needle);
+    sd_InspectResult out = sd_ScanBaseAndNameSubdir(dir, needle);
 
     if (out != SD_INSPECT_CLEAR) {
         return out;
@@ -3295,9 +3420,10 @@ static sd_InspectResult sd_ScanForeignManifests(const char *needle) {
         if (parentLen < sizeof(parent)) {
             memcpy(parent, dir, parentLen);
             parent[parentLen] = '\0';
-            /* isOwnDir false: a same-leaf manifest up there belongs to a
-             * session configured at the parent, which is what we came for. */
-            out = sd_ScanOneDirectory(parent, false, needle);
+            /* r30: no flag any more -- the own-manifest exclusion is by FULL
+             * PATH, so a same-leaf manifest up here is correctly still read.
+             * That record is exactly what r22 :2930 scans the parent FOR. */
+            out = sd_ScanBaseAndNameSubdir(parent, needle);
             if (out != SD_INSPECT_CLEAR) {
                 return out;
             }
@@ -3314,10 +3440,14 @@ static sd_InspectResult sd_ScanForeignManifests(const char *needle) {
             if (!sd_BuildBucketPath(child, sizeof(child), dir, b)) {
                 continue;               /* cannot name it: nothing to read */
             }
-            /* isOwnDir false: our own manifest is in D, never in a bucket, so
-             * anything found down here belongs to someone else. An absent
-             * bucket is CLEAR, not a fault -- see sd_ScanOneDirectory. */
-            out = sd_ScanOneDirectory(child, false, needle);
+            /* ⛔ r30 (:3141): THE CLAIM THAT USED TO BE HERE -- "our own
+             * manifest is in D, never in a bucket" -- WAS FALSE. SD:FILE
+             * "P001/exp.csv" puts it at D/P001/exp.csv.mfst, which this loop
+             * scans, and opening our own write-open manifest returns FR_LOCKED
+             * (FF_FS_LOCK is 10), faulting the scan and killing the capture.
+             * The exclusion is by full path now and needs no such claim. An
+             * absent bucket is CLEAR, not a fault -- see sd_ScanOneDirectory. */
+            out = sd_ScanBaseAndNameSubdir(child, needle);
         }
     }
     return out;

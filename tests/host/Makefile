@@ -167,7 +167,14 @@ SD1124_TOK_NOTE   := note
 SD1124_TOK_FAULT  := unparsable unreadable
 SD1124_TOK_POLICY := alias authpath exists foreign mfstname notafile notours ourpart scope
 
-SD1124_CANON := 9
+# ⛔ 9 -> 10 at #1124 r30 (RESIDUAL 2 CLOSED, audit HIGH :3311 x3 rounds):
+# sd_ScanBaseAndNameSubdir builds `<base>/<the configured name's subdirectory
+# chain>` so the foreign scan reads the directory a filename-with-separators
+# actually places manifests in. CLASSIFICATION: canonicalisation-DEPENDENT and
+# already correct -- it takes SdManifest_CanonicalDirLen(base) and formats
+# "%.*s/%.*s", so it is the ordinary canonical-join class and moves BOTH
+# counters, which is what this ledger expects of a well-formed new site.
+SD1124_CANON := 10
 # ⛔⛔ r22: THE TWO COUNTERS NOW LEGITIMATELY DIVERGE, and that needs saying
 # out loud because this ledger's whole premise was that they move TOGETHER --
 # "a new site moving only ONE of them is the defect this pin exists to catch".
@@ -184,7 +191,8 @@ SD1124_CANON := 9
 # canonical length, not a producer of a path. Equality was a useful proxy while
 # every caller was a join, and this is where the proxy stops holding. If a
 # future edit makes joins EXCEED the accessor count, that is still the defect.
-SD1124_ACC   := 10
+# 10 -> 11 at r30, the accessor call in that same join -- see SD1124_CANON.
+SD1124_ACC   := 11
 
 # #981 (post-audit): compiles and RUNS the ENTIRE real SDCardWrite() --
 # signature through closing brace, extracted verbatim from $(SD_MANAGER_SRC)
@@ -1609,13 +1617,41 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	@# passed clean. The name is incidental; what matters is that the counter
 	@# is never COMPARED. So: the increment must stand alone as a statement,
 	@# and the counter must appear in no relational test at all.
+	@# ⛔⛔ r30: THE COUNTER IS GONE, SO THE PIN NOW ASSERTS ITS ABSENCE --
+	@# WHICH IS STRICTLY STRONGER THAN ASSERTING ITS SHAPE.
+	@#
+	@# The old arm required `manifests++;` to exist as a standalone statement.
+	@# That key made the pin fail when the counter was DELETED, while the
+	@# property it defends -- a count of pre-existing work must never refuse a
+	@# new session -- became trivially true: a variable that does not exist
+	@# cannot gate anything. The counter was removed because it was declared,
+	@# incremented and NEVER READ, in any build; its own comment claimed it was
+	@# "counted for the log only" and there was no such log.
+	@#
+	@# ⭐ This is the third pin on this row to fire on a CORRECT change, and the
+	@# cause each time was keying on the symbol rather than the question -- see
+	@# the guidance at the head of this pin block. The question here is "can a
+	@# manifest count refuse a session?", and the strongest available answer is
+	@# that no such count exists. If one is ever re-added this pin fires and the
+	@# author must re-derive it: re-read PIN 14's history first (r21 shipped
+	@# SD_FOREIGN_SCAN_MAX_MANIFESTS = 16 with a FAULT past it, so 17 short
+	@# sessions in one directory disarmed every later capture), then decide
+	@# whether the new counter is ever COMPARED.
 	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
 	 case "$$pp" in \
-	   *"manifests++;"*) ;; \
-	   *) echo "ERROR: #1124 r21 PIN 21: the manifest counter is no longer a"; \
-	      echo "       plain increment, so it is being USED for something."; \
-	      echo "       It exists for the log only -- a count of pre-existing"; \
-	      echo "       manifests must never refuse a session (audit :2915)."; \
+	   *manifests*) \
+	      echo "ERROR: #1124 r30 PIN 21: a manifest COUNTER is back in"; \
+	      echo "       $(SD_MANAGER_SRC)."; \
+	      echo "       It was deleted at r30 as dead code -- declared,"; \
+	      echo "       incremented, never read, with a comment claiming a log"; \
+	      echo "       that did not exist. The rule it existed under still"; \
+	      echo "       stands and is what to check before re-adding one:"; \
+	      echo "       A COUNT OF PRE-EXISTING WORK MUST NEVER REFUSE A NEW"; \
+	      echo "       SESSION. r21 shipped a cap of 16 with a FAULT past it,"; \
+	      echo "       so 17 short sessions in one directory disarmed every"; \
+	      echo "       later capture (audit :2915). If you need a counter, it"; \
+	      echo "       must never be COMPARED -- and it must have a consumer,"; \
+	      echo "       or it is the dead code this replaced."; \
 	      exit 1;; \
 	 esac; \
 	 case "$$pp" in \
@@ -2023,12 +2059,30 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	@# make a mutant that drops the walk and a mutant that mis-sets the flag
 	@# indistinguishable, and the second would then prove nothing the first did
 	@# not -- the PIN 23a/23b lesson.
-	@# isOwnDir is load-bearing and easy to get wrong: That flag is load-bearing and easy to get wrong -- excluding our own
-	@# manifest leaf in the parent would skip a same-named manifest belonging to a
-	@# session configured THERE, which is the exact record being looked for.
+	@# ⛔⛔⛔ r30 REWROTE ALL THREE ARMS, because all three keyed on the
+	@# `isOwnDir` FLAG and the flag is DELETED.
+	@#
+	@# The flag selected whether the own-manifest exclusion ran, and the
+	@# exclusion compared the manifest LEAF. r30 audit HIGH (:3141) showed both
+	@# keys wrong: SD:FILE "P001/exp.csv" puts our manifest in `D/P001`, which
+	@# is scanned as a BUCKET CHILD with the flag false, so our own write-open
+	@# manifest was opened, FatFs returned FR_LOCKED (FF_FS_LOCK is 10) and the
+	@# capture was killed. The exclusion is now by FULL PATH, which is correct
+	@# in every directory and needs no flag -- so the flag is gone rather than
+	@# fixed.
+	@#
+	@# ⭐ These are arms 3, 4 and 5 of this row's pins to fire on a CORRECT
+	@# change, every one of them keyed on a symbol rather than on the question.
+	@# The questions, which is what they now assert:
+	@#   26a  is the PARENT scanned at all?            (audit :2930)
+	@#   26b  is our own manifest excluded by FULL PATH, with no flag able to
+	@#        select a weaker comparison?               (audit :3141)
+	@#   26c  is the CONFIGURED directory scanned?
+	@#   26d  does EVERY base also get the configured name's subdirectory
+	@#        chain?                                    (audit :3311, x3 rounds)
 	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
 	 case "$$pp" in \
-	   *"sd_ScanOneDirectory(parent,"*) ;; \
+	   *"sd_ScanBaseAndNameSubdir(parent,"*) ;; \
 	   *) echo "ERROR: #1124 r22 PIN 26a: the PARENT walk is gone."; \
 	      echo "       A bucket-shaped configured directory must also scan its"; \
 	      echo "       parent (audit :2930), or the DEFAULT path can recreate a"; \
@@ -2037,21 +2091,54 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	      exit 1;; \
 	 esac; \
 	 case "$$pp" in \
-	   *"sd_ScanOneDirectory(parent, false, needle);"*) ;; \
-	   *) echo "ERROR: #1124 r22 PIN 26b: the parent walk no longer passes"; \
-	      echo "       isOwnDir=false. Excluding our own manifest LEAF in the"; \
-	      echo "       parent skips a same-named manifest belonging to a"; \
-	      echo "       session configured THERE -- which is the exact record"; \
-	      echo "       the parent is being scanned for."; \
+	   *"if (SdManifest_PathsEqualCaseInsensitive(path, ownPath)) { continue; }"*) ;; \
+	   *) echo "ERROR: #1124 r30 PIN 26b: our own manifest is no longer excluded"; \
+	      echo "       by FULL PATH. Expected, on the flattened text:"; \
+	      echo "         if (SdManifest_PathsEqualCaseInsensitive(path, ownPath))"; \
+	      echo "       A LEAF comparison is not equivalent: with SD:FILE"; \
+	      echo "       \"P001/exp.csv\" our manifest sits in a scanned BUCKET, and"; \
+	      echo "       opening it returns FR_LOCKED (FF_FS_LOCK is 10), which"; \
+	      echo "       FAULTS the scan and kills our own capture (audit :3141)."; \
+	      echo "       A full path also still reads a same-leaf manifest in the"; \
+	      echo "       PARENT, which is the record :2930 scans the parent FOR --"; \
+	      echo "       so the two invariants are satisfied by ONE comparison and"; \
+	      echo "       need no flag to choose between them."; \
 	      exit 1;; \
 	 esac; \
 	 case "$$pp" in \
-	   *"sd_ScanOneDirectory(dir, true, needle)"*) ;; \
-	   *) echo "ERROR: #1124 r22 PIN 26: the configured directory is no longer"; \
-	      echo "       scanned with isOwnDir=true, so this session's own manifest"; \
-	      echo "       is treated as foreign and its own records refuse it."; \
+	   *"static sd_InspectResult sd_ScanOneDirectory(const char *dir, const char *needle)"*) ;; \
+	   *) echo "ERROR: #1124 r30 PIN 26b: sd_ScanOneDirectory's SIGNATURE grew a"; \
+	      echo "       parameter again. Pinned by signature, the way PIN 27 pins"; \
+	      echo "       PartIndexOf's missing fault channel: a flag that selects"; \
+	      echo "       between a correct and an incorrect comparison is an"; \
+	      echo "       invitation to pass the wrong one, so the correct version"; \
+	      echo "       must be the ONLY one reachable."; \
 	      exit 1;; \
-	 esac
+	 esac; \
+	 case "$$pp" in \
+	   *"sd_ScanBaseAndNameSubdir(dir, needle)"*) ;; \
+	   *) echo "ERROR: #1124 r22 PIN 26c: the configured directory is no longer"; \
+	      echo "       scanned."; \
+	      exit 1;; \
+	 esac; \
+	 n1=`printf '%s\n' "$$pp" | grep -o 'sd_ScanOneDirectory(' | wc -l`; \
+	 n2=`printf '%s\n' "$$pp" | grep -o 'sd_ScanBaseAndNameSubdir(' | wc -l`; \
+	 test "$$n1" -eq 3 && test "$$n2" -eq 4 \
+	  || { echo "ERROR: #1124 r30 PIN 26d: a scan base BYPASSES the configured"; \
+	       echo "       name's subdirectory chain."; \
+	       echo "         sd_ScanOneDirectory( occurrences:      $$n1 (expect 3:"; \
+	       echo "           the definition plus the TWO calls inside the wrapper)"; \
+	       echo "         sd_ScanBaseAndNameSubdir( occurrences:  $$n2 (expect 4:"; \
+	       echo "           the definition plus the THREE bases)"; \
+	       echo "       Every base must go through sd_ScanBaseAndNameSubdir, or"; \
+	       echo "       that base misses <base>/<name's subdirectory chain> --"; \
+	       echo "       where a session configured with SD:FILE \"sub/exp.csv\""; \
+	       echo "       actually keeps its manifest. That gap was reported HIGH"; \
+	       echo "       in THREE consecutive rounds (r28 :3113, r29 and r30"; \
+	       echo "       :3311, both legs each time) while it sat in the PR as a"; \
+	       echo "       documented residual, which is why it is now closed and"; \
+	       echo "       pinned per-base rather than per-call-site."; \
+	       exit 1; }
 	@# ⛔⛔ PIN 27 -- r23 AUDIT MEDIUM (:424): A FOREIGN NAME CANNOT FAULT THE
 	@# SCAN. SdManifest_PartIndexOf has NO fault return, by signature.
 	@#
@@ -2109,7 +2196,7 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	@# indistinguishable from one that drops the other.
 	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
 	 case "$$pp" in \
-	   *"out = sd_ScanOneDirectory(parent, false, needle);"*) ;; \
+	   *"out = sd_ScanBaseAndNameSubdir(parent, needle);"*) ;; \
 	   *) echo "ERROR: #1124 PIN 28a: the UPWARD scan is gone. A session whose"; \
 	      echo "       configured directory IS a bucket must read the parent,"; \
 	      echo "       which owns the records written into that bucket"; \
@@ -2117,7 +2204,7 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	      exit 1;; \
 	 esac; \
 	 case "$$pp" in \
-	   *"out = sd_ScanOneDirectory(child, false, needle);"*) ;; \
+	   *"out = sd_ScanBaseAndNameSubdir(child, needle);"*) ;; \
 	   *) echo "ERROR: #1124 PIN 28b: the DOWNWARD scan is gone. A session at the"; \
 	      echo "       top of a bucket set must read its immediate P### children,"; \
 	      echo "       where a session configured THERE recorded files our own"; \
@@ -2405,7 +2492,7 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	@# through to the downward loop, not return.
 	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | grep -v '^#' | tr '\n' ' ' | tr -s ' '`; \
 	 case "$$pp" in \
-	   *"out = sd_ScanOneDirectory(parent, false, needle); if (out != SD_INSPECT_CLEAR) { return out; } } }"*) ;; \
+	   *"out = sd_ScanBaseAndNameSubdir(parent, needle); if (out != SD_INSPECT_CLEAR) { return out; } } }"*) ;; \
 	   *) echo "ERROR: #1124 r28 PIN 36: the upward scan no longer falls through"; \
 	      echo "       to the downward one (audit :3234). A session configured in"; \
 	      echo "       a bucket must ALSO read its own bucket children, where"; \
