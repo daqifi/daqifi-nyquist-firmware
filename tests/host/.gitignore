@@ -58,3 +58,4 @@ run_*
 !run_*.h
 !run_*.py
 run_904_tests
+run_995_tests

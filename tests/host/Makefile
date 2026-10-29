@@ -4095,6 +4095,9 @@ PIN1092_I2C  := pin_1092_no_blocking_before_powerdown.py
 
 SEQ908_BIN := run_908_tests
 
+# fw#1008 (issue #995): the SYST:LOG:CMDHistory? write-abort bound.
+CMDHIST_BIN := run_995_tests
+
 # ⚠ BOTH sources are prerequisites because BOTH are read by the guards below:
 # SETTINGS_SRC for the load-order and reader-yield checks, SCPIADC_SRC for the
 # setter-bracket check. A guard that reads a file it does not depend on does
@@ -4590,12 +4593,42 @@ $(BUTTONLATCH_BIN): test_1092_button_poweroff_latch.c test_framework.h \
 	$(CC) $(CFLAGS) -o $(BUTTONLATCH_BIN) test_1092_button_poweroff_latch.c
 
 
+
+# ---------------------------------------------------------------------------
+# PR firmware#1008 (issue #995): SCPI_GetCommandHistory must not hold the
+# shared response buffer. Re-applied on top of main during the 2026-10-28
+# refresh: this branch adds exactly ONE binary, so the merge took main's
+# file whole and re-applied this rule, rather than text-unioning a 700-line
+# conflict region. The run/clean note below records the measured counts.
+$(CMDHIST_BIN): test_995_cmdhistory_write_abort.c test_framework.h $(SCPI_IFACE_SRC) $(FW_RTOS_CFG) $(RECIPES)
+	@grep -qE '^#define[[:space:]]+SCPI_WRITE_MAX_RETRIES[[:space:]]+200[[:space:]]*$$' $(SCPI_IFACE_SRC) \
+	  || { echo "ERROR: SCPI_WRITE_MAX_RETRIES is no longer '200' in $(SCPI_IFACE_SRC)."; \
+	       echo "       Update FW_WRITE_MAX_RETRIES in test_995_cmdhistory_write_abort.c and re-derive its numbers."; \
+	       exit 1; }
+	@grep -qE '^#define[[:space:]]+SCPI_WRITE_RETRY_DELAY_MS[[:space:]]+5[[:space:]]*$$' $(SCPI_IFACE_SRC) \
+	  || { echo "ERROR: SCPI_WRITE_RETRY_DELAY_MS is no longer '5' in $(SCPI_IFACE_SRC)."; \
+	       echo "       Update FW_WRITE_RETRY_DELAY_MS in test_995_cmdhistory_write_abort.c and re-derive its numbers."; \
+	       exit 1; }
+	@grep -qE '^#define[[:space:]]+SCPI_CMDHISTORY_WRITE_BUDGET_MS[[:space:]]+2000U[[:space:]]*$$' $(SCPI_IFACE_SRC) \
+	  || { echo "ERROR: SCPI_CMDHISTORY_WRITE_BUDGET_MS is no longer '2000U' in $(SCPI_IFACE_SRC)."; \
+	       echo "       Update FW_CMDHISTORY_BUDGET_MS in test_995_cmdhistory_write_abort.c and re-derive its numbers."; \
+	       exit 1; }
+	@grep -qE '^#define[[:space:]]+configTICK_RATE_HZ[[:space:]]+\( \( TickType_t \) 1000 \)[[:space:]]*$$' $(FW_RTOS_CFG) \
+	  || { echo "ERROR: configTICK_RATE_HZ is no longer 1000 Hz in $(FW_RTOS_CFG) -- re-derive test_995's ms<->tick assumption."; \
+	       exit 1; }
+	@grep -qE '^#define[[:space:]]+configTICK_TYPE_WIDTH_IN_BITS[[:space:]]+TICK_TYPE_WIDTH_32_BITS[[:space:]]*$$' $(FW_RTOS_CFG) \
+	  || { echo "ERROR: configTICK_TYPE_WIDTH_IN_BITS is no longer 32-bit in $(FW_RTOS_CFG) -- re-derive test_995's wrap tests."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -o $(CMDHIST_BIN) test_995_cmdhistory_write_abort.c
+
 run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) \
      $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) \
      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) \
      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(USECALTYPE_BIN) $(ARM_BIN) $(NAME_BIN) \
-     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN)
+     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) \
+     $(CMDHIST_BIN)
 	./$(SEQ908_BIN)
+	./$(CMDHIST_BIN)
 	./$(BUTTONLATCH_BIN)
 	./$(TEAR904_BIN)
 	./$(SUMBUDGET_BIN)
@@ -4892,7 +4925,8 @@ $(SUMBUDGET_BIN): test_1055_stream_end_summary_budget.c test_framework.h \
 	$(CC) $(CFLAGS) -DFW_LOG_MESSAGE_SIZE=$(LOG_MSG_SIZE) -o $(SUMBUDGET_BIN) test_1055_stream_end_summary_budget.c
 
 clean:
-	rm -f $(SEQ908_BIN)
+	rm -f $(SEQ908_BIN) \
+	      $(CMDHIST_BIN)
 	rm -f $(TEAR904_BIN)
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
 	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) \
