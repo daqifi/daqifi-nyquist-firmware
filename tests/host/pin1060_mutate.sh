@@ -180,7 +180,20 @@ echo "==            answer instead -- which is exactly how this mutant went    =
 echo "==            STALE in r7 and then FAILED against a correct baseline.    =="
 echo "==            r8 keys on the PATTERN, so it is total over the sites.     =="
 if sub_all_setters "$F"; then
-    expect "M2 marker is set somewhere" "nothing SETS the #1060 teardown"
+    # ⛔ r8: RETARGETED, because the mutation is now caught EARLIER and by a
+    # STRONGER pin. With every setter gone, PIN 4's per-site check fires first
+    # ("the 'disable' BSSDisconnect failure has 0 set-arm(s)") instead of PIN
+    # 7's file-wide presence check. The mutant is still detected -- only the
+    # attribution moved -- and keying this on PIN 4 is the honest label.
+    #
+    # ⚠ CONSEQUENCE WORTH KNOWING: PIN 4 now SHADOWS PIN 7's set half for this
+    # mutant, so PIN 7's set direction is no longer what catches it. PIN 7 is
+    # NOT redundant -- its CLEAR half is unique coverage and nothing else in
+    # this file asserts that anything ever clears the marker. ⛔ And that clear
+    # half has NO mutant of its own: a `sub_all_clears` twin of
+    # sub_all_setters would close it, which is a real hole in this harness and
+    # is left stated rather than fixed in a capped round.
+    expect "M2 marker is set somewhere" "BSSDisconnect failure has 0"
 else
     echo "  FAIL M2 anchor absent."; fail=$((fail+1))
 fi

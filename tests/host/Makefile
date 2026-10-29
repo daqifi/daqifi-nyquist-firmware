@@ -1077,11 +1077,20 @@ $(APSTA1060_BIN): test_1060_apsta_disconnect_retry.c test_framework.h \
 	@# about the other.
 	@#
 	@# ⚠ THIS IS A PRESENCE CHECK AND IT IS NOT POSITIONAL -- measured by its own
-	@# mutant. There are TWO set sites (the exhaustion marker and the ENTRY
-	@# restore), so deleting just one leaves this pin satisfied; what catches
-	@# that is PIN 10's exactly-four COUNT. The two pins are complementary and
-	@# neither is sufficient: this one says "both directions exist", PIN 10 says
-	@# "and all four writes are still there, each under a lock".
+	@# mutant. There are now FIVE set sites (one per BSSDisconnect site, plus
+	@# the ENTRY restore), so deleting any subset leaves this pin satisfied;
+	@# what catches that is PIN 10's exactly-ten COUNT and PIN 4's per-site
+	@# check. The pins are complementary and none is sufficient: this one says
+	@# "both directions exist", PIN 4 says "each site has its arm", PIN 10 says
+	@# "and all ten writes are still there, each under a lock".
+	@#
+	@# ⛔ r8: PIN 4 now SHADOWS this pin's SET half -- remove every setter and
+	@# PIN 4 fires first. This pin is NOT redundant, because its CLEAR half is
+	@# unique: nothing else in this file asserts that anything ever clears the
+	@# marker, and a set-only implementation would re-issue a disconnect on
+	@# every REINIT for the rest of the session. That clear half has no mutant
+	@# of its own, which is a stated hole in pin1060_mutate.sh rather than a
+	@# fixed one.
 	@pp=`$(CC) -fpreprocessed -E $(WIFI_MGR_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
 	 case "$$pp" in \
 	   *"SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING)"*) ;; \
