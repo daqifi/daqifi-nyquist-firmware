@@ -2796,8 +2796,10 @@ static sd_InspectResult sd_NameIsRotationPartOfExistingManifest(const char *name
     /* ⛔ r21: THE FIX. Separate "no such manifest" from "could not look". */
     const SYS_FS_ERROR e = SYS_FS_Error();
     if (e != SYS_FS_ERROR_NO_PATH && e != SYS_FS_ERROR_NO_FILE) {
-        /* log_budget: max=90 */
-        LOG_E("[SD1124] unreadable owner e=%d: '%s'", (int)e, owner);
+        /* log_budget: max=86 -- a manifest path, as for `mfst` above. The old
+         * bound said 90, and `owner` is now `ownr` so the line fits the
+         * 125-byte ceiling with a full-length path. */
+        LOG_E("[SD1124] unreadable ownr %s e=%d", owner, (int)e);
         return SD_INSPECT_FAULT;
     }
     return SD_INSPECT_CLEAR;
@@ -3610,8 +3612,9 @@ static bool sd_TargetSafeToOpenForWrite(const char *dataPath) {
              * absent one, and proceeding would truncate a file we could not
              * even look at, beside a manifest that still describes it. */
             gSDCardData.writeRefuseReason = SD_REFUSE_TARGET_UNREADABLE;
-            /* log_budget: max=90 */
-            LOG_E("[SD1124] unreadable stat e=%d: '%s'", (int)e, dataPath);
+            /* log_budget: max=81 -- a DATA path: dir 40 + '/' + file 40, with
+             * no ".mfst". The old bound said 90. */
+            LOG_E("[SD1124] unreadable stat %s e=%d", dataPath, (int)e);
             return false;
         }
         /* Genuinely absent: creating it destroys nothing. Fall through -- a
@@ -3663,8 +3666,30 @@ static bool sd_TargetSafeToOpenForWrite(const char *dataPath) {
         SYS_FS_ERROR e = SYS_FS_Error();
         if (e != SYS_FS_ERROR_NO_PATH && e != SYS_FS_ERROR_NO_FILE) {
             gSDCardData.writeRefuseReason = SD_REFUSE_TARGET_UNREADABLE;
-            /* log_budget: max=88 */
-            LOG_E("[SD1124] unreadable mfst e=%d: '%s'", (int)e, target);
+            /* ⛔⛔ #1124 r33: THESE THREE FAULT DIAGNOSTICS BUSTED THE 125-BYTE
+             * LOG CEILING, and CI said so the moment it could run again --
+             * worst cases 130/132/133. Two separate blind spots had hidden it:
+             * `tools/lint/log_budget.py` is a firmware-wide lint that
+             * tests/host's `make run` never invokes, so my local "suite green"
+             * could not see it; and the branch had been CONFLICTING with main,
+             * which stops pull_request workflows firing at all, so CI could
+             * not say so either.
+             *
+             * ⭐ THE PATH IS NOW FIRST, AND THE ERROR CODE LAST. Logger.c
+             * truncates at the ceiling with no marker, and the gate's own
+             * argument is that whatever is written last is what gets lost. The
+             * path is the actionable half -- an operator can act on
+             * "D/P001/exp-7.csv" without the errno, not the reverse -- so if a
+             * future edit ever pushes these over again, the cost is the code
+             * rather than the name. (Nothing truncates today: all three fit.)
+             *
+             * ⚠ `unreadable` stays the SECOND token: PIN 17 requires it from
+             * the closed FAULT class (SD1124_TOK_FAULT).
+             *
+             * log_budget: max=86 -- SD_SESSION_MANIFEST_PATH_MAX's content
+             * length: dir 40 + '/' + file 40 + ".mfst". The old bound said 88,
+             * which OVERSTATED the buffer as well as busting the ceiling. */
+            LOG_E("[SD1124] unreadable mfst %s e=%d", target, (int)e);
             return false;
         }
         return true;                    /* no manifest at that name */

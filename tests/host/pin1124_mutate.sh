@@ -664,7 +664,7 @@ echo "==      is what catches it: the data-file guard is still there.           
 if sub "$F" '        if (e != SYS_FS_ERROR_NO_PATH && e != SYS_FS_ERROR_NO_FILE) {
             gSDCardData.writeRefuseReason = SD_REFUSE_TARGET_UNREADABLE;
             /* log_budget: max=88 */
-            LOG_E("[SD1124] unreadable mfst e=%d: '"'"'%s'"'"'", (int)e, target);
+            LOG_E("[SD1124] unreadable mfst %s e=%d", target, (int)e);
             return false;
         }
         return true;                    /* no manifest at that name */' \
