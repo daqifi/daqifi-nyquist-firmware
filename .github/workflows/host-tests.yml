@@ -394,6 +394,21 @@ on:
       # merged first, #1077 is the second, and this is that resolution
       # carried out rather than restated.
       - 'firmware/src/services/daqifi_settings.c'
+      # ⛔ #1084/#1092: test_1092_button_poweroff_latch.c greps BOTH of these for
+      # the power-down request handling and the AUTOOn suppression latch, and fails
+      # the BUILD if either regresses. Before this entry NEITHER file matched
+      # ANYTHING here -- measured: zero occurrences of PowerApi, UI.c, HAL/Power or
+      # HAL/UI in this workflow -- so a PR editing only the two files the guards are
+      # about queued no host-test job and the guards could not fire for their own
+      # subject. Same class as #941/AD7609Scale.h and #904/daqifi_settings.c above:
+      # a suite wired up without its trigger. Scoped to the two files rather than
+      # HAL/, which holds the ADC, DIO and DAC7718 trees this test ignores.
+      # BQ24297.c IS read, by the #1092 r4b call-graph pin: it locates the
+      # blocking I2C sinks THERE, so a rename in that file changes the pin's
+      # verdict and must trigger this job.
+      - 'firmware/src/HAL/Power/PowerApi.c'
+      - 'firmware/src/HAL/UI/UI.c'
+      - 'firmware/src/HAL/BQ24297/BQ24297.c'
       - 'firmware/src/services/sd_card_services/sd_card_manager.h'
       - 'firmware/src/config/default/FreeRTOSConfig.h'
       # #1056: the shared wait loop test_1056_wait_loop.c compiles, plus its
@@ -516,6 +531,21 @@ on:
       # merged first, #1077 is the second, and this is that resolution
       # carried out rather than restated.
       - 'firmware/src/services/daqifi_settings.c'
+      # ⛔ #1084/#1092: test_1092_button_poweroff_latch.c greps BOTH of these for
+      # the power-down request handling and the AUTOOn suppression latch, and fails
+      # the BUILD if either regresses. Before this entry NEITHER file matched
+      # ANYTHING here -- measured: zero occurrences of PowerApi, UI.c, HAL/Power or
+      # HAL/UI in this workflow -- so a PR editing only the two files the guards are
+      # about queued no host-test job and the guards could not fire for their own
+      # subject. Same class as #941/AD7609Scale.h and #904/daqifi_settings.c above:
+      # a suite wired up without its trigger. Scoped to the two files rather than
+      # HAL/, which holds the ADC, DIO and DAC7718 trees this test ignores.
+      # BQ24297.c IS read, by the #1092 r4b call-graph pin: it locates the
+      # blocking I2C sinks THERE, so a rename in that file changes the pin's
+      # verdict and must trigger this job.
+      - 'firmware/src/HAL/Power/PowerApi.c'
+      - 'firmware/src/HAL/UI/UI.c'
+      - 'firmware/src/HAL/BQ24297/BQ24297.c'
       - 'firmware/src/services/sd_card_services/sd_card_manager.h'
       - 'firmware/src/config/default/FreeRTOSConfig.h'
       # #1056: the shared wait loop test_1056_wait_loop.c compiles, plus its

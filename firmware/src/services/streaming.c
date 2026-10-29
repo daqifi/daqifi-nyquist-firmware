@@ -206,6 +206,108 @@ static volatile uint32_t gScanEosSeq      = 1u;  // bumped per completed scan (E
 static volatile uint32_t gScanEosSeqSeen  = 0u;  // last seq the timer ISR observed
 static volatile uint32_t gScanStaleDropped = 0;  // ticks scan armed but no new EOS
 
+/* #1018: post-grace subset of gScanStaleDropped, so the session-end summary's
+ * "(all post-grace)" total is actually all post-grace. Same storage pattern as
+ * its raw twin and gTimerISRCalls, and for the same reason: the timer ISR
+ * writes it, so it CANNOT live in gStreamStats (non-volatile, and its other
+ * writers rely on taskENTER_CRITICAL, which an ISR must not take). Single
+ * writer (this ISR only; PIC32MZ same-source ISRs cannot preempt themselves),
+ * so the 32-bit RMW below needs no critical section — identical contract to
+ * gScanStaleDropped itself. Folded into the snapshot in Streaming_GetStats
+ * under the same critical section as the raw counter, so a reader can never
+ * observe Steady > raw. */
+static volatile uint32_t gScanStaleDroppedSteady = 0;
+
+/* #982: latches "a session ended with something to report, and the SD
+ * subsystem may still add to it." Streaming_Stop() sets this instead of
+ * printing immediately, because the stop-time SD teardown
+ * (SD_CARD_MANAGER_PROCESS_STATE_UNMOUNT_DISK in sd_card_manager.c) runs on
+ * app_SDCardTask (priority 5) and cannot be scheduled until the task that
+ * called Streaming_Stop() (USB SCPI pri 7, WifiTask pri 2, or streaming_Task
+ * pri 6 on the #397 auto-stop) yields — so at the point Streaming_Stop() used
+ * to print, that teardown has typically not even started.
+ * Streaming_EmitSessionSummary() test-and-clears this exactly once; every
+ * call site is a place that KNOWS the SD teardown for this session (if any)
+ * has already had its chance to report. Task context only on both sides
+ * (Streaming_Stop / Streaming_Start / SCPI_PerformStreamingStop all run in
+ * task context) — the test-and-clear is an RMW and takes a critical section
+ * per docs/MCU_REFERENCE.md. */
+/* ⛔ #1055 r3: A PER-SESSION RECORD, not a flag over live counters.
+ *
+ * Rounds 1 and 2 produced six races between them, and they had ONE cause: the
+ * summary read the LIVE counters at EMIT time and inferred who owned the
+ * session from a token someone else might hold. Every site fix moved the
+ * window instead of closing it. So the counters are SNAPSHOT at stop into this
+ * record, the SD teardown ADDS into it, and whoever emits consumes the record
+ * exactly once.
+ *
+ * What that makes impossible, by construction rather than by guard:
+ *   - SYST:STR:STATS:CLEar zeroing the session's data (it touches only the
+ *     live counters now; the record is unreachable from it)
+ *   - a concurrent stop consuming a summary whose data it never owned --
+ *     ownership stops mattering, because there is one record and one consumer
+ *   - a terminating path that only flags, since the flag and the data are the
+ *     same object
+ *
+ * Written under taskENTER_CRITICAL at every site. */
+static StreamingStats gSessionRecord;
+static volatile bool gSessionRecordPending = false;
+/* ⛔ #1055 r4: THE SD-TEARDOWN HOLD. While set, the record is not consumed.
+ *
+ * r3 bounded the data but left the ORDERING open, and r3's audit named the
+ * consequence: a second STOP reaches the emit before the first stop's SD
+ * teardown has added its discards, consumes the record, and those discards
+ * land in a record nobody is waiting on any more.
+ *
+ * Released by OBSERVING completion -- sd_card_manager_IsIdle() -- rather than
+ * by being told, which needs no hook in sd_card_manager.c, whose teardown path
+ * fw#1124 is actively changing, so the two rows do not collide.
+ *
+ * Whoever emits LAST -- the one that finds SD idle -- is the one that
+ * consumes, with the teardown's discards already added.
+ *
+ * ⛔ #1055 r6, THE BLIND LEG OF r5's AUDIT, AND IT REFUTED THE PARAGRAPH THAT
+ * USED TO BE HERE. r4 set this hold UNCONDITIONALLY and justified it by
+ * claiming "a NON-SD session needs no special case: the manager is already
+ * idle, so the first emit attempt releases the hold immediately." That claim
+ * is false, and it was mine. sd_card_manager_IsIdle() is true for exactly two
+ * states, IDLE and INIT (sd_card_manager.c) -- so a manager parked in DEINIT
+ * or ERROR is NOT idle, and a USB-only session that stops after a power-down
+ * plus SD:ENA 0 leaves it parked there with nothing to advance it. The hold
+ * then never releases and the summary is withheld FOREVER: the exact failure
+ * the hold was added to prevent, reintroduced by the fix for it.
+ *
+ * Two independent corrections, because either alone still fails:
+ *   - SET IT ONLY FOR AN SD-LOGGING SESSION. A session that never wrote to SD
+ *     has no teardown report to wait for, so the hold is pure risk there.
+ *     #1055 r7: the predicate is gSdExpectedThisSession, the latch START
+ *     computes -- NOT an ActiveInterface test, which is what r6 used and which
+ *     missed USB streaming that ALSO logs to SD. See the read site in
+ *     Streaming_Stop() for why the latch is right in both directions.
+ *   - BOUND IT ANYWAY. The predicate decides whether to wait at all; it cannot
+ *     promise the wait ENDS. A genuinely SD-logging session can still park its
+ *     manager off-idle. After STREAMING_SD_HOLD_MAX_MS the record is emitted
+ *     with the teardown labelled incomplete -- a summary that states what it is
+ *     missing beats both a short one that lies by omission and no summary at
+ *     all.
+ * The condition removes the common case; the bound removes "forever". r7
+ * narrowed the condition and left the bound untouched, which is the point of
+ * having both: a wrong predicate is then a LATENCY bug rather than a lost
+ * summary, and r6's own defect would have been bounded by it. */
+static volatile bool gSessionRecordSdHold = false;
+/* When the hold was raised, for the bound above. Wrap-safe: compared only as
+ * an unsigned difference, like Streaming_GraceExpiredAt(). */
+static volatile TickType_t gSessionRecordHoldSince = 0;
+/* How long the hold may withhold the summary before it is emitted with the SD
+ * teardown labelled incomplete. 5 s matches SCPI_PerformStreamingStop()'s own
+ * bounded SD-idle wait, so the poll's patience is not shorter than the wait
+ * that precedes it -- a tighter bound here would make that wait unreachable. */
+#define STREAMING_SD_HOLD_MAX_MS 5000u
+
+/* Forward-declared here, above its first CALLER (Streaming_Start's backstop),
+ * not beside its definition further down. #1055 r4. */
+static void Streaming_EmitSessionSummaryImpl(bool recordDying);
+
 /* #814: rail detection. `gClipLiveMask` is LIVE -- rewritten every tick, so a
  * consumer reading device_status sees the current frame's state rather than a
  * latch it must learn to clear. The other two accumulate for SYST:STR:STATS?.
@@ -376,23 +478,54 @@ static volatile uint32_t gTransportGraceSec = TRANSPORT_GRACE_DEFAULT_SEC;
 //
 // 32-bit volatile reads/writes are atomic on PIC32MZ; gStreamStartTick
 // is written only by streaming_Task at Start and read by the same task
-// at every drop site.  gLossGraceSec can be written by SCPI callbacks
-// from USB (pri 7) or WiFi (pri 2) tasks but only when streaming is
-// not active (SCPI handler rejects mid-stream changes per
-// SCPI_SetTransportGraceSec convention).
+// (and, since #1018, the TIMER_5 ISR) at every drop site.  gLossGraceSec
+// CAN be written mid-session — SYSTem:STReam:LOSS:GRACe (SCPI_SetLossGrace,
+// SCPIInterface.c) takes effect immediately by design, matching the
+// LOSS:THREshold pattern, and is NOT rejected while streaming.  (An earlier
+// revision of this comment claimed the setter "rejects mid-stream changes
+// per SCPI_SetTransportGraceSec convention" — that described a DIFFERENT
+// grace variable, #397's gTransportGraceSec; SCPI_SetLossGrace has never
+// had that guard.)  A mid-session change is still race-free: both reads
+// below are plain 32-bit atomic loads, so a reader sees the old value or
+// the new one, never a torn one — worst case one tick is classified by
+// whichever threshold was in effect at the instant it was checked.
 static volatile TickType_t gStreamStartTick = 0;
 #define LOSS_GRACE_DEFAULT_SEC 3
 #define LOSS_GRACE_MIN_SEC     0
 #define LOSS_GRACE_MAX_SEC     60
 static volatile uint32_t gLossGraceSec = LOSS_GRACE_DEFAULT_SEC;
 
+// Shared grace-window arithmetic. Kept as ONE function taking the caller's
+// tick reading, rather than duplicated in task- and ISR-context wrappers,
+// so the threshold math can't drift between them (see
+// feedback_fix_one_site_leave_the_twin in project memory).
+static inline bool Streaming_GraceExpiredAt(TickType_t now) {
+    return (TickType_t)(now - gStreamStartTick)
+        >= (TickType_t)(gLossGraceSec * configTICK_RATE_HZ);
+}
+
 // Returns true once the per-session startup grace has expired.  Cheap
 // helper inlined at every drop site; pdMS_TO_TICKS is compile-time
 // constant only when arg is constant, hence the multiplication form
-// using configTICK_RATE_HZ to avoid runtime division.
+// using configTICK_RATE_HZ to avoid runtime division.  TASK CONTEXT ONLY —
+// see Streaming_PastStartupGraceFromISR for the ISR-safe form.
 static inline bool Streaming_PastStartupGrace(void) {
-    return (TickType_t)(xTaskGetTickCount() - gStreamStartTick)
-        >= (TickType_t)(gLossGraceSec * configTICK_RATE_HZ);
+    return Streaming_GraceExpiredAt(xTaskGetTickCount());
+}
+
+// #1018: ISR-context form, for the ONE drop site (gScanStaleDropped, below)
+// that increments from true ISR context rather than the deferred task.
+// xTaskGetTickCount() is task-context-only in FreeRTOS; calling it from an
+// ISR is undefined even though it happens to compile to the same code on
+// this port today (portTICK_TYPE_IS_ATOMIC=1 makes both accessors a bare
+// load of xTickCount — see FreeRTOS_tasks.c) because that is a port/config
+// accident, not a guarantee. xTaskGetTickCountFromISR() is the documented
+// ISR-safe accessor and is legal here: TIMER_5 runs at IPL 3
+// (plib_evic.c, IPC6SET), at or below configMAX_SYSCALL_INTERRUPT_PRIORITY
+// (4), and this same ISR already makes a FreeRTOS FromISR call
+// (vTaskNotifyGiveFromISR via Streaming_Defer_Interrupt, below).
+static inline bool Streaming_PastStartupGraceFromISR(void) {
+    return Streaming_GraceExpiredAt(xTaskGetTickCountFromISR());
 }
 
 // SD protobuf metadata field tags for standalone metadata message
@@ -1658,7 +1791,15 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
         // MC12b_IsHwTriggerShared() avoids overcounting there.
         if (gNeedSharedScan && MC12b_IsHwTriggerShared()) {
             uint32_t eosSeq = gScanEosSeq;                       // 32-bit atomic load
-            if (eosSeq == gScanEosSeqSeen) gScanStaleDropped++;  // no new EOS since last tick -> stale
+            if (eosSeq == gScanEosSeqSeen) {
+                gScanStaleDropped++;                             // no new EOS since last tick -> stale
+                /* #1018: gate lives INSIDE the stale branch, not beside it —
+                 * staleness is ~0 with the cap in place, so the extra tick
+                 * read costs nothing on the normal (non-frozen) path. */
+                if (Streaming_PastStartupGraceFromISR()) {
+                    gScanStaleDroppedSteady++;
+                }
+            }
             gScanEosSeqSeen = eosSeq;
         }
         // #717 (audit #722): seed the deterministic-timestamp base HERE, in ISR
@@ -2036,6 +2177,25 @@ static void Streaming_Start(void) {
         // Streaming_UpdateState() calls Stop→Start even on disable,
         // and we need stats to survive for post-session query.
         if (gpRuntimeConfigStream->IsEnabled) {
+            /* #982 backstop: flush the PREVIOUS session's deferred summary
+             * (if any) before its counters are wiped below. Covers every
+             * path that ends a session WITHOUT going through
+             * SCPI_PerformStreamingStop() -- chiefly the #397 auto-stop,
+             * which calls Streaming_Stop() directly from streaming_Task.
+             * Safe against the ordinary Stop-then-Start cycle inside
+             * Streaming_UpdateState(): that Start runs with IsEnabled ==
+             * false (the SCPI layer hasn't re-enabled yet), so it never
+             * enters this block -- SCPI_PerformStreamingStop's own call,
+             * after its bounded SD-idle wait, is what fires first for that
+             * path. Must run BEFORE Streaming_ClearStats(), which would
+             * otherwise wipe the very counters this reads. */
+            /* #1055 r6: `recordDying` -- the ONE remaining caller that does
+             * not wait. Streaming_ClearStats() below wipes the live counters
+             * and this session is about to own the record, so waiting for an
+             * SD teardown here would lose the previous summary rather than
+             * delay it. Unlike r4's `force`, this skips only the WAITING: if
+             * the teardown had not finished, the summary still says so. */
+            Streaming_EmitSessionSummaryImpl(true);
             Streaming_ClearStats();
             Streaming_InitFlowWindow(gpRuntimeConfigStream->Frequency);
             /* #870: the SESSION owns its header, so the session's start is
@@ -2380,6 +2540,19 @@ static void Streaming_CountSdDrop(size_t packetSize) {
     if (pastGrace) {
         gStreamStats.sdDroppedBytesSteady += packetSize;
     }
+    /* #1055 r3: and into the pending session record, so a stop-time SD
+     * teardown's discards reach the summary that is waiting for them. Done
+     * HERE rather than in Streaming_ReportSdDiscard() because this is the
+     * single funnel every SD-drop accounting path passes through -- patching
+     * the one caller the audit named would have left the others feeding only
+     * the live counters. The grace test is shared with the live counters
+     * above for the same reason: one rule, one place. */
+    if (gSessionRecordPending) {
+        gSessionRecord.sdDroppedBytes += packetSize;
+        if (pastGrace) {
+            gSessionRecord.sdDroppedBytesSteady += packetSize;
+        }
+    }
     gQuesBits |= QUES_BIT_SD_OVERFLOW;
     taskEXIT_CRITICAL();
 }
@@ -2514,72 +2687,6 @@ static void Streaming_Stop(void) {
                 (unsigned)gStreamStats.circularBufferEndBytes);
         }
 
-        // Log session summary if any data was lost.
-        // Gate on STEADY counters so startup-window transients (within
-        // gLossGraceSec, default 3 s) don't produce misleading end-of-
-        // session error logs.  Total counters are still available via
-        // SYST:STR:STATS? for forensic diagnostic.
-        /* #970: ONE coherent snapshot, not ~13 separate unsynchronised reads.
-         * Every field below is written from another context -- the pri-6
-         * encoder books encoderDroppedSamples via
-         * Streaming_ReportEncoderSampleLoss, the deferred task books the queue
-         * and scan counters -- and Streaming_Stop runs on the pri-7 SCPI task,
-         * ABOVE the encoder. So a writer could land between any two of these
-         * reads and the one line an operator actually reads could disagree with
-         * SYST:STReam:STATS? about the same session, or even with itself
-         * (hadDrops computed from one set of values, the totals from another).
-         *
-         * Streaming_GetStats() is the existing atomic-snapshot helper the SCPI
-         * path already uses -- one critical section, O(1) struct copy, and it
-         * folds in the volatile ISR counters (net of dry ticks, #707/#745) and
-         * gScanStaleDropped the same way. Reusing it DELETES the coordination
-         * problem rather than adding a second way to read these counters. */
-        StreamingStats snap;
-        Streaming_GetStats(&snap);
-
-        bool hadDrops = snap.queueDroppedSamplesSteady > 0 ||
-                        snap.usbDroppedBytesSteady > 0 ||
-                        snap.wifiDroppedBytesSteady > 0 ||
-                        snap.sdDroppedBytesSteady > 0 ||
-                        snap.encoderFailuresSteady > 0 ||
-                        snap.dioDroppedSamplesSteady > 0 ||
-                        /* #970: these two are summed by totalSampleLoss below, so
-                         * the GATE must cover them or the summary is skipped for a
-                         * session that DOES report loss through STATS?.
-                         *
-                         * encoderDroppedSamplesSteady used to be implied by
-                         * encoderFailuresSteady, because its only increment sat
-                         * beside encoderFailures++ in the encoded == 0 arm. THIS PR
-                         * deliberately unpaired them: NanoPB_Encoder.c books
-                         * destroyed samples and then returns a NON-ZERO
-                         * bufferOffset, so the encoded == 0 arm is never reached and
-                         * encoderFailures never moves. The omission became reachable
-                         * the moment that pairing went away.
-                         *
-                         * scanStaleDropped is DELIBERATELY NOT gated on, and the
-                         * asymmetry with totalSampleLoss is the point. It has no
-                         * Steady variant, and this gate exists precisely to keep
-                         * startup-window transients out of the summary (see the
-                         * comment above it). A scan that goes stale inside the grace
-                         * window is an expected startup transient -- the first scan
-                         * has not completed yet, which is the same condition #707 and
-                         * #745 introduced dry-tick netting for -- so gating on it
-                         * printed an "all post-grace" loss line for a session whose
-                         * every steady counter was zero. An earlier revision of THIS
-                         * comment added it to the gate and caused exactly that.
-                         *
-                         * eosOverruns is in the gate without a Steady variant because
-                         * it is hardware staleness rather than a grace-window false
-                         * flag; scanStaleDropped is the opposite case, which is why
-                         * the two are treated differently.
-                         *
-                         * Residual, tracked separately: a session whose ONLY loss is
-                         * post-grace frozen scans still prints nothing, because there
-                         * is no Steady variant to gate on. Fixing that needs a
-                         * grace-filtered scan-stale counter, which is a change to the
-                         * counter itself, not to this gate. */
-                        snap.encoderDroppedSamplesSteady > 0 ||
-                        snap.eosOverruns > 0;  // no Steady variant — hw staleness, not a grace-window false flag
         // Clear runtime overflow / data-loss condition bits — they refer to
         // the live session that just ended.  Preserve QUES_BIT_TRANSPORT_DOWN
         // (#397) because it captures the REASON streaming stopped; clearing
@@ -2594,35 +2701,329 @@ static void Streaming_Stop(void) {
         gQuesBits &= (QUES_BIT_TRANSPORT_DOWN | QUES_BIT_SPI_BUS_FAULT);
         taskEXIT_CRITICAL();
 
-        if (hadDrops) {
-            uint64_t totalAttempted = snap.totalSamplesStreamed +
-                                     snap.queueDroppedSamples;
-            // EOS coalescing is data staleness (ADC register overwrite),
-            // not a dropped sample — exclude from loss total/percentage.
-            // Steady counters for the loss math: startup-window transients
-            // shouldn't inflate the reported loss percent.
-            // #557: scan-stale ticks are genuine dropped samples (the prior
-            // scan never completed — its data is stale), so include them in the
-            // loss total, unlike eosOverruns (task-behind-but-fresh, excluded).
-            uint32_t totalSampleLoss = snap.queueDroppedSamplesSteady +
-                                      snap.encoderDroppedSamplesSteady +
-                                      snap.dioDroppedSamplesSteady +
-                                      snap.scanStaleDropped;
-            uint32_t lossPercent = totalAttempted > 0
-                ? (uint32_t)((totalSampleLoss * 100ULL) / totalAttempted)
-                : 0;
-            LOG_E("Stream end: lost %u/%llu samples (%u%%), USB=%u WiFi=%u SD=%u bytes, encFail=%u encDrop=%u dioDrop=%u eos=%u (all post-grace)",
-                  (unsigned)totalSampleLoss,
-                  (unsigned long long)totalAttempted,
-                  (unsigned)lossPercent,
-                  (unsigned)snap.usbDroppedBytesSteady,
-                  (unsigned)snap.wifiDroppedBytesSteady,
-                  (unsigned)snap.sdDroppedBytesSteady,
-                  (unsigned)snap.encoderFailuresSteady,
-                  (unsigned)snap.encoderDroppedSamplesSteady,
-                  (unsigned)snap.dioDroppedSamplesSteady,
-                  (unsigned)snap.eosOverruns);
+        /* #982: do NOT decide hadDrops or print here. The stop-time SD
+         * teardown (SD_CARD_MANAGER_PROCESS_STATE_UNMOUNT_DISK,
+         * sd_card_manager.c) runs on app_SDCardTask (priority 5) and has
+         * typically not even STARTED by this point, let alone reported its
+         * loss via Streaming_ReportSdDiscard() — see gSessionRecord's
+         * own comment above. Flag that a session ended and may have
+         * something to report; Streaming_EmitSessionSummary() (called once
+         * the SD subsystem has had its chance — see its callers) computes
+         * hadDrops fresh from the THEN-current counters and may still print
+         * nothing. */
+        /* #1055 r3: SNAPSHOT HERE, not at emit. One critical section so the
+         * data and the pending flag are published together -- a reader can
+         * never see "a summary is owed" alongside counters that have since
+         * been cleared or advanced. Streaming_GetStats() takes its own
+         * critical section and FreeRTOS nests them, so this is one short
+         * region: a struct copy plus three counters. */
+        /* ⛔ #1055 r7: THE PREDICATE IS THE SESSION LATCH, NOT ActiveInterface.
+         *
+         * r6 derived this from ActiveInterface == SD || UsbAndSd, which MISSES
+         * the case gSdExpectedThisSession exists for: `STR:INT 0` (USB) with
+         * the SD interface enabled and a filename set ALSO logs to SD --
+         * SCPI_StartStreaming's own arm computes sdLoggingRequested as
+         * `iface != WiFi && enable && file[0] != 0`. Such a session got NO
+         * hold, so the SD task emitted before the teardown reported, and a
+         * stop-time discard was lost. The flag's own declaration says exactly
+         * this: "Only the USB+SD override path needs it -- an ActiveInterface
+         * of SD or UsbAndSd is already an unconditional expectation." I read
+         * the half that was already covered and missed the half it was for.
+         *
+         * The latch is strictly more accurate in BOTH directions, which is why
+         * no ActiveInterface term survives here:
+         *   - broader where it matters: USB + SD logging now holds;
+         *   - NARROWER where r6 was wrong the other way: ActiveInterface == SD
+         *     with the interface disabled wrote nothing, so there is no
+         *     teardown report to wait for and the latch correctly says false.
+         *
+         * Valid at stop, which is the property this use needs: it is assigned
+         * on every real start (inside `if (IsEnabled)`) and deliberately never
+         * cleared -- "a session latch that stays true after the stream ends"
+         * (sd_card_manager.c). If SD is disabled mid-session the latch stays
+         * true, which is the conservative answer here: SD was written, so a
+         * teardown may still have discards to report.
+         *
+         * Read before the critical section: a volatile bool load, not shared
+         * mutable state this region protects. */
+        const bool sessionWasSdLogging = gSdExpectedThisSession;
+        /* Task context at every caller (USB SCPI pri 7, WifiTask pri 2,
+         * streaming_Task pri 6), so the plain tick read is the correct one --
+         * see the FromISR note on the grace-window helpers. */
+        const TickType_t stoppedAt = xTaskGetTickCount();
+        taskENTER_CRITICAL();
+        Streaming_GetStats(&gSessionRecord);
+        gSessionRecordPending = true;
+        gSessionRecordSdHold = sessionWasSdLogging;  /* r6: not uncondi-
+                                                      * tional; r7: from
+                                                      * the latch */
+        gSessionRecordHoldSince = stoppedAt;
+        taskEXIT_CRITICAL();
+    }
+}
+
+/**
+ * @brief Compute and, if warranted, print the session-end loss summary.
+ *
+ * #982: split out of Streaming_Stop() so it can be called AFTER the SD
+ * subsystem's stop-time teardown has reported its losses via
+ * Streaming_ReportSdDiscard(), rather than before. Test-and-clear on
+ * gSessionRecordPending makes this exactly-once per session: whichever
+ * call site reaches it first (see callers) consumes the flag, and a call
+ * site that runs with nothing pending is a harmless no-op. This is why a
+ * caller that forgets to invoke this degrades to NO summary for that
+ * session — never a wrong or duplicated one.
+ *
+ * Callers, in the order a session normally reaches them. ⛔ #1055 r8: THIS
+ * LIST IS THE CONTRACT, so an omission here is worse than a wrong entry --
+ * two of the five below were missing and one described a call r6 deleted.
+ *  - SCPI_PerformStreamingStop() (SCPIInterface.c), after its bounded
+ *    sd_card_manager_IsIdle() wait -- the primary SCPI path, covers
+ *    SYSTem:STReam:STOP and SYSTem:STReam:START 0.
+ *  - app_SDCardTask() (app_freertos.c), which polls this every iteration of
+ *    its while(1) -- 1 ms in APP_SD_STATE_PROCESS. THIS IS THE CALLER THAT
+ *    ACTUALLY EMITS MOST SESSIONS' SUMMARY (#1055 r5), because it is the
+ *    only one that keeps asking after the SD hold has declined: the loop
+ *    whose own progress IS the teardown. A session whose teardown outlives
+ *    every stop caller gets its summary from here, after the drain, or
+ *    after STREAMING_SD_HOLD_MAX_MS with the teardown labelled incomplete.
+ *  - SCPI_StartFailedAfterStop() (SCPIInterface.c), the single named exit
+ *    for the thirteen error returns SCPI_StartStreamingClaimed has after it
+ *    tears the previous session down. Un-forced since r6. Absent from this
+ *    list since r2/r3 introduced it, which is its own small lesson about
+ *    hand-maintained contracts.
+ *  - SCPI_RunThroughputBenchClaimed() (SCPIInterface.c), the
+ *    SYSTem:STReam:THRoughput teardown, and FindMeasureStep()
+ *    (SCPIInterface.c) for SYSTem:STReam:WIFI:FINd?, which calls it from TWO
+ *    places in the one function. Both were missing from this list until r10,
+ *    and the count in streaming.h was wrong in three consecutive rounds while
+ *    docs/STREAMING_AND_ADC.md already listed them -- so derive this list
+ *    MECHANICALLY (grep the tree, resolve each hit's enclosing function by its
+ *    braces), never from memory or from the other two places that state it.
+ *    Neither arms SD logging, so gSdExpectedThisSession is false and neither
+ *    raises a hold OF ITS OWN. Not "it never waits": `hold` is read from
+ *    whatever record is PENDING, so one of these teardowns arriving while an
+ *    earlier USB+SD session's record is still held defers to the drain like
+ *    any other caller.
+ *  - The #397 all-transports-dead auto-stop (streaming_Task) does NOT call
+ *    this, as of r6. It used to, forced, and the comment at that site went
+ *    on claiming immediate emission for a round after the call was deleted.
+ *    Streaming_Stop() leaves the record pending and app_SDCardTask's poll
+ *    consumes it, which also retired that path's old accepted cost of
+ *    undercounting a stop-time SD drain.
+ *  - Streaming_Start() (this file), as a backstop for every OTHER path that
+ *    ends a session without going through SCPI_PerformStreamingStop (e.g. a
+ *    direct Streaming_UpdateState() caller). Placed before
+ *    Streaming_ClearStats() so the previous session's counters are read
+ *    before they are wiped. The ONLY caller that does not wait for the SD
+ *    hold -- it is about to wipe the record -- and it still labels an
+ *    unfinished teardown rather than passing a short summary off as whole.
+ */
+
+void Streaming_EmitSessionSummary(void) {
+    Streaming_EmitSessionSummaryImpl(false);
+}
+
+/* #1055 r6: Streaming_FlushOwedSessionSummary() IS GONE.
+ *
+ * r4 added it as the escape hatch for paths with no bounded SD-idle wait, on
+ * the reasoning that holding there would turn "may undercount stop-time SD
+ * loss" into "may never print at all". r5's audit then found the cost: a
+ * forced flush consumes the record MID-DRAIN, so the teardown's discards land
+ * in a record nobody is waiting on and are lost without the reader being told.
+ *
+ * Both halves are now unnecessary, because the two things it traded between
+ * were each fixed directly:
+ *   - "may never print" is handled by app_SDCardTask's poll plus the bounded
+ *     hold, which reaches every path including the ones with no wait;
+ *   - "undercount silently" is handled by the sdIncomplete label, so an early
+ *     consume announces itself.
+ * One rule -- the hold and its bound -- instead of a rule and an exemption. */
+
+static void Streaming_EmitSessionSummaryImpl(bool recordDying) {
+    /* ⛔ #1055 r1 finding 1: THE FLAG CONSUME AND THE SNAPSHOT ARE ONE STEP.
+     *
+     * They used to be two critical sections -- test-and-clear the flag, exit,
+     * then snapshot. SYST:STR:STATS:CLEar runs Streaming_ClearStats() from
+     * SCPI at priority 7 and can land in the gap, zeroing every counter; the
+     * summary then reports nothing (hadDrops is false) while the flag has
+     * ALREADY been consumed, so the session's summary is lost and cannot be
+     * re-emitted by any later caller. Exactly-once and atomic-with-its-data
+     * are the same requirement here: a flag that says "a summary is owed" is
+     * worthless if the data it refers to can be wiped before it is read.
+     *
+     * Streaming_GetStats() takes taskENTER_CRITICAL() itself and FreeRTOS
+     * critical sections NEST (uxCriticalNesting is a counter), so calling it
+     * inside is safe on this port -- it copies a struct and three counters,
+     * which is the same order of work the outer section already does. It is
+     * called only when pending, so the common no-op path does not pay for it.
+     */
+    /* #1055 r3: consume the RECORD, do not re-read the live counters. The
+     * data was captured at stop (see gSessionRecord), so nothing that happens
+     * between the stop and this call can change what is reported -- which is
+     * what retires the ClearStats race, the ownership question and the
+     * "emitted but empty" outcome in one step. */
+    StreamingStats snap;
+    bool pending, hold;
+    TickType_t holdSince;
+    taskENTER_CRITICAL();
+    pending = gSessionRecordPending;
+    hold = gSessionRecordSdHold;
+    holdSince = gSessionRecordHoldSince;
+    taskEXIT_CRITICAL();
+    if (!pending) {
+        return;
+    }
+    /* #1055 r4: do not consume while the SD teardown may still have discards
+     * to add. sd_card_manager_IsIdle() is read OUTSIDE the critical section --
+     * it is the manager's own published state and must not be called with
+     * interrupts masked.
+     *
+     * #1055 r6: BOUNDED, and the bound is why the forced flushes are gone.
+     * Waiting forever is not available (the manager can park off-idle, see the
+     * hold's declaration) and consuming early loses the teardown's discards
+     * SILENTLY -- so after STREAMING_SD_HOLD_MAX_MS we emit and say the
+     * teardown was incomplete. `recordDying` is Streaming_Start()'s backstop,
+     * which is about to wipe this record: it skips the WAITING, not the label,
+     * so an early consume is still reported as incomplete rather than passed
+     * off as a complete summary. */
+    bool sdIncomplete = false;
+    uint32_t heldMs = 0;
+    if (hold && !sd_card_manager_IsIdle()) {
+        const TickType_t waited = (TickType_t)(xTaskGetTickCount() - holdSince);
+        if (!recordDying && waited < pdMS_TO_TICKS(STREAMING_SD_HOLD_MAX_MS)) {
+            return;
         }
+        sdIncomplete = true;
+        heldMs = (uint32_t)waited * (uint32_t)portTICK_PERIOD_MS;
+    }
+    taskENTER_CRITICAL();
+    /* Re-check under the lock: another caller may have consumed it in the
+     * window above. Exactly-once survives the two-phase read. */
+    pending = gSessionRecordPending;
+    if (pending) {
+        snap = gSessionRecord;
+        gSessionRecordPending = false;
+        gSessionRecordSdHold = false;
+    }
+    taskEXIT_CRITICAL();
+    if (!pending) {
+        return;
+    }
+
+    /* The torn-read hazard the snapshot above also closes (Qodo, PR #1055):
+     * the timer ISR is disabled by the time any caller reaches here, but the
+     * priority-9 deferred sample task can still be mid-increment on a
+     * notification already in flight, so reading a 64-bit field
+     * (totalSamplesStreamed, totalBytesStreamed) unprotected can observe a
+     * torn value. Streaming_GetStats() handles that correctly in one place;
+     * r1 finding 1 moved the CALL into the flag's critical section rather
+     * than duplicating its field-by-field logic here. */
+
+    // Gate on STEADY counters so startup-window transients (within
+    // gLossGraceSec, default 3 s) don't produce misleading end-of-
+    // session error logs.  Total counters are still available via
+    // SYST:STR:STATS? for forensic diagnostic.
+    //
+    // #1018: scanStaleDroppedSteady (not the raw scanStaleDropped) is the
+    // term here — see its declaration comment in streaming.h for why the
+    // raw counter would misattribute an in-grace-window freeze to
+    // "(all post-grace)".
+    // Qodo (PR #1055): encoderDroppedSamplesSteady was missing from this
+    // gate (pre-existing gap, not introduced by this PR — the pre-#982
+    // inline version had the identical omission) even though it already
+    // contributed to totalSampleLoss below, so a session losing samples
+    // ONLY via failed encodes printed nothing at all. Added.
+    bool hadDrops = snap.queueDroppedSamplesSteady > 0 ||
+                    snap.usbDroppedBytesSteady > 0 ||
+                    snap.wifiDroppedBytesSteady > 0 ||
+                    snap.sdDroppedBytesSteady > 0 ||
+                    snap.encoderFailuresSteady > 0 ||
+                    snap.encoderDroppedSamplesSteady > 0 ||  // Qodo: was missing
+                    snap.dioDroppedSamplesSteady > 0 ||
+                    snap.scanStaleDroppedSteady > 0 ||  // #1018 (was missing a Steady term entirely)
+                    snap.eosOverruns > 0;  // no Steady variant — hw staleness, not a grace-window false flag
+
+    /* ⛔ #1055 r6: OUTSIDE the hadDrops gate, deliberately. If the SD teardown
+     * did not finish, its discards are not in this record -- so "no drops" is
+     * not established, it is merely unobserved, and a silent return would let
+     * an operator read the absence of a summary as a clean session. This line
+     * is the difference between an incomplete answer and a wrong one.
+     *
+     * Worst case 93 bytes against Logger's 125-byte content ceiling (%u of a
+     * uint32 is 10 digits); test_1055_stream_end_summary_budget.c measures it
+     * with the other three. */
+    if (sdIncomplete) {
+        LOG_E("Stream end (post-grace): SD teardown incomplete after %u ms; "
+              "SD discards not included",
+              (unsigned)heldMs);
+    }
+
+    if (hadDrops) {
+        uint64_t totalAttempted = snap.totalSamplesStreamed +
+                                 snap.queueDroppedSamples;
+        // EOS coalescing is data staleness (ADC register overwrite),
+        // not a dropped sample — exclude from loss total/percentage.
+        // Steady counters for the loss math: startup-window transients
+        // shouldn't inflate the reported loss percent.
+        // #557: scan-stale ticks are genuine dropped samples (the prior
+        // scan never completed — its data is stale), so include them in the
+        // loss total, unlike eosOverruns (task-behind-but-fresh, excluded).
+        // #1018: the Steady subset, matching hadDrops above — see that
+        // term's comment.
+        uint32_t totalSampleLoss = snap.queueDroppedSamplesSteady +
+                                  snap.encoderDroppedSamplesSteady +
+                                  snap.dioDroppedSamplesSteady +
+                                  snap.scanStaleDroppedSteady;
+        uint32_t lossPercent = totalAttempted > 0
+            ? (uint32_t)((totalSampleLoss * 100ULL) / totalAttempted)
+            : 0;
+        // #982: by construction this runs after the stop-time SD teardown
+        // has had its chance to call Streaming_ReportSdDiscard(), so
+        // sdDroppedBytesSteady here already reflects any stop-time drain
+        // loss (unlike when this print lived inline in Streaming_Stop()).
+        /* ⛔ THREE LINES, NOT ONE. As a single message this was 212 bytes
+         * worst-case against Logger's 125-byte content ceiling, and Logger
+         * truncates the TAIL (Logger.c's clamp) -- so the operator lost the
+         * breakdown AND the "(all post-grace)" qualifier that gives the
+         * numbers their meaning. Exactly #1029's defect, in this file.
+         *
+         * Worst case is dominated by the COUNTERS, not the prose: seven
+         * uint32 fields are 70 digits on their own, which is why two lines
+         * could only be made to fit by cutting the labels down to
+         * encF/encD/dioD for 3 bytes of headroom. Split by MEANING instead --
+         * headline, transport bytes, pipeline samples -- which keeps every
+         * label self-describing and leaves real margin: 114, 80 and 94 bytes
+         * (83/80/109 before r1 moved eos onto the headline -- a stale
+         * number in a comment is simply false to the next reader)
+         * worst-case. (The operator's ruling said two; it was given before
+         * this was measured. Reported rather than quietly re-decided.)
+         *
+         * Each line repeats "(post-grace)" rather than stating it once: they
+         * are separate log records, an operator may see any one of them alone,
+         * and a steady-counter number read as a total is a misleading number.
+         * test_1055_stream_end_summary_budget.c measures all three against the
+         * real ceiling and proves the ten quantities all survived the split. */
+        /* #1055 r1 review LOW: eos belongs HERE, labelled, and NOT under
+         * "samples lost". eosOverruns is ADC-register staleness -- the task
+         * was behind but the data it read was fresh -- and this function
+         * deliberately EXCLUDES it from totalSampleLoss and the percentage
+         * for exactly that reason. Printing it beneath a "samples lost"
+         * heading contradicted the arithmetic two lines above it. */
+        LOG_E("Stream end (post-grace): lost %u/%llu samples (%u%%); "
+              "eos=%u stale not lost",
+              (unsigned)totalSampleLoss,
+              (unsigned long long)totalAttempted,
+              (unsigned)lossPercent,
+              (unsigned)snap.eosOverruns);
+        LOG_E("Stream end (post-grace) bytes lost: USB=%u WiFi=%u SD=%u",
+              (unsigned)snap.usbDroppedBytesSteady,
+              (unsigned)snap.wifiDroppedBytesSteady,
+              (unsigned)snap.sdDroppedBytesSteady);
+        LOG_E("Stream end (post-grace) samples lost: encFail=%u encDrop=%u dioDrop=%u",
+              (unsigned)snap.encoderFailuresSteady,
+              (unsigned)snap.encoderDroppedSamplesSteady,
+              (unsigned)snap.dioDroppedSamplesSteady);
     }
 }
 
@@ -2651,6 +3052,11 @@ void Streaming_Init(tStreamingConfig* pStreamingConfigInit,
     memset((void*)&gStreamStats, 0, sizeof(gStreamStats));
     gTimerISRCalls = 0;
     gScanStaleDropped = 0;
+    gScanStaleDroppedSteady = 0;  // #1018
+    /* #982/#1055 r3 (.bss.* isn't zeroed on MCLR/IPE-flash — #409): clear the
+     * pending flag AND the record it guards, so a boot cannot inherit either. */
+    gSessionRecordPending = false;
+    memset(&gSessionRecord, 0, sizeof(gSessionRecord));
     /* #814: the cumulative pair is inside gStreamStats and is already zeroed
      * by the memset above; only the live mask needs its own reset. */
     gClipLiveMask = 0;
@@ -2956,6 +3362,7 @@ void Streaming_GetStats(StreamingStats* out) {
                                                      : 0u;
     }
     out->scanStaleDropped = gScanStaleDropped;  // #557 (separate volatile, like timerISRCalls)
+    out->scanStaleDroppedSteady = gScanStaleDroppedSteady;  // #1018
     taskEXIT_CRITICAL();
 }
 
@@ -2975,6 +3382,20 @@ void Streaming_ClearStats(void) {
     if (uxInterruptNesting != 0) {
         return;
     }
+
+    /* #1055 r3: THE RESCUE FLUSH THAT USED TO BE HERE IS GONE, and its
+     * absence is the point of the record design.
+     *
+     * It existed because this function wiped the very counters an owed
+     * summary still had to read -- so it emitted first to save them. With the
+     * data snapshot into gSessionRecord at stop, this function can no longer
+     * reach it: it zeroes the LIVE counters only. Keeping the flush would now
+     * be actively harmful, because it would consume the record BEFORE the
+     * stop-time SD teardown had added its discards to it -- turning a
+     * rescue into the undercount it was written to avoid.
+     *
+     * It also carried a stated tradeoff ("a summary rescued this way may
+     * undercount SD loss"). That tradeoff is retired rather than accepted. */
 
     // Mid-session clearing is intentionally allowed: callers may want to
     // measure throughput over a sub-window without restarting the stream
@@ -3004,6 +3425,7 @@ void Streaming_ClearStats(void) {
     memset((void*)&gStreamStats, 0, sizeof(gStreamStats));
     gTimerISRCalls = 0;
     gScanStaleDropped = 0;
+    gScanStaleDroppedSteady = 0;  // #1018 — same critical section as its raw twin
     /* #814: gClipLiveMask is deliberately NOT cleared here. This function also
      * serves SYST:STR:STATS:CLEar, which a client may issue MID-SESSION, and
      * the live mask is not a session statistic -- zeroing it there would report
@@ -3314,6 +3736,27 @@ void streaming_Task(void) {
                   (unsigned)gTransportGraceSec);
             pRunTimeStreamConf->IsEnabled = false;
             Streaming_Stop();
+            /* ⛔ #1055 r6/r7: THERE IS NO EMIT CALL ON THIS PATH ANY MORE, and the
+             * paragraph that used to be here described one.
+             *
+             * It read "Emit immediately here instead ... what this call prevents is
+             * indefinite silence" -- written when #982 added a forced emit at this
+             * point, because the auto-stop has no SD-idle wait and
+             * Streaming_Start()'s backstop only fires at the NEXT session's start,
+             * which may never come (auto-stop means every transport looked dead, so
+             * nobody may be watching to restart it).
+             *
+             * r6 removed that call, and the concern is now handled where it belongs
+             * rather than here: app_SDCardTask polls the unforced emitter every
+             * iteration and the hold is bounded, so this session's summary is emitted
+             * by the POLL -- after the teardown drains, or after
+             * STREAMING_SD_HOLD_MAX_MS with the teardown labelled incomplete.
+             *
+             * Nothing is emitted at this line, and nothing here should be read as
+             * immediate: Streaming_Stop() above leaves the record pending and the
+             * poll is what consumes it. That also retires this path's old accepted
+             * cost -- it used to be allowed to miss stop-time SD-drain loss, and now
+             * it waits for that loss like every other path. */
             goto iter_done;
         }
 

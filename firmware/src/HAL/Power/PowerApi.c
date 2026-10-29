@@ -274,11 +274,12 @@ static void Power_ConsumeRebootRestore(void) {
             ((payload & POWER_REBOOT_HANDOFF_AUTOEXT_OFF) == 0u);
     /* #454: latch the power-up as the AUTOOn promote does when it issues its
      * own DO_POWER_UP. The replay bypasses that path, because
-     * Power_HandleStandbyState() only promotes on NO_CHANGE. Unlatched, the
-     * first manual power-off after the reboot would be undone with AUTOOn on
-     * and VBUS present: a button long-press posts DO_POWER_DOWN without
-     * setting the latch (Button_Tasks, UI.c), and the STANDBY pass that
-     * executes it would promote the board straight back up. */
+     * Power_HandleStandbyState() only promotes on NO_CHANGE, so this counts
+     * the restored power-up as this VBUS session's promote. When #1081 added
+     * it, it was also what kept a button long-press after the reboot from
+     * being undone with AUTOOn on and VBUS present; since #1084 a button
+     * long-press with USB present sets the latch itself (Button_Tasks,
+     * UI.c), as SYSTem:POWer:STATe 0 always did. */
     pData->autoPromotedThisVbusSession = true;
 }
 
@@ -638,20 +639,71 @@ void Power_Down(void) {
  * Future: Issue #173 tracks adding interrupt-driven I2C for scenarios that
  * require BQ24297 register access (config changes, detailed diagnostics).
  */
-static void Power_UpdateStatusFromGPIO(void) {
-    /* Update battery voltage and charge percentage from ADC */
-    Power_UpdateChgPct();
+/* ⛔ #1092 r4b: pgStat ALONE, from the USB PHY, with NOTHING ELSE ON THE PATH.
+ *
+ * This exists because the shutdown pass needs a fresh VBUS reading and must not
+ * be preceded by an unbounded transaction. Power_UpdateStatusFromGPIO() -- which
+ * r4 originally called here -- is NOT safe for that: it also runs
+ * Power_UpdateChgPct() and BQ24297_Read_I2C(REG08), and that read takes the I2C
+ * mutex with portMAX_DELAY (BQ24297.c:459) before a blocking Harmony transfer.
+ * Two unbounded waits. A held-low SCL5, or any task holding that mutex, would
+ * hang Power_Down() with the rails and the MCU self-hold still on.
+ *
+ * ⛔ r4's comment claimed this path was "one PHY read, no I2C". That was FALSE
+ * and I wrote it without reading the callee -- the register names were right
+ * there in the function I was citing. A claim about what a function does is a
+ * claim about its CALLEES, and the cost of checking was one grep.
+ *
+ * Kept as the single derivation of pgStat rather than duplicated at the two
+ * call sites, so a threshold change cannot reach one and miss the other. */
+static void Power_RefreshVbusFromPhy(void) {
+    pData->BQ24297Data.status.pgStat = Power_IsVbusPresentFresh();
+}
 
-    /* Update external power status from hardware VBUS detection
-     * Read directly from USB hardware register - more reliable than software events
+/* ⛔ #1092 r6: THE ONE DERIVATION OF "IS VBUS PRESENT", and deliberately
+ * SIDE-EFFECT FREE so a caller can ask without mutating the power cache.
+ *
+ * Public because the LATCH DECISION BELONGS AT THE MOMENT OF THE PRESS, not on
+ * some later pass. r4b re-armed the suppression latch on the first STANDBY pass
+ * that OBSERVED VBUS absent, and r5 found that nothing guarantees such a pass
+ * exists: a battery-only long-press held while USB is plugged in means every
+ * pass from then on sees VBUS, so the latch set by the press is never cleared
+ * and the board sits in STANDBY. Keying on an observation that may never occur
+ * cannot be made robust by ordering it better.
+ *
+ * So both posters of DO_POWER_DOWN now set the latch from a FRESH read taken
+ * WHEN THE POWER-OFF IS REQUESTED: latch = "was VBUS present at that moment?".
+ * Every case falls out of that one rule:
+ *   - USB present at press  -> latched -> the shutdown sticks (#1084);
+ *   - battery-only press    -> not latched -> a later plug-in auto-promotes
+ *                              (#454), with no re-arm pass required;
+ *   - stale CACHE at press  -> irrelevant, the PHY is read directly (the r2
+ *                              residual, fixed at its source rather than
+ *                              compensated for);
+ *   - VBUS cycled while in  -> the standby re-arm still clears it, which is
+ *     STANDBY                 why that re-arm is KEPT as belt and braces.
+ *
+ * Reads one USB PHY register. No I2C, no mutex, nothing that can block -- which
+ * is what makes it safe to call from the button path and is pinned by
+ * tests/host/pin_1092_no_blocking_before_powerdown.py. */
+bool Power_IsVbusPresentFresh(void) {
+    /* Read directly from USB hardware register - more reliable than software events
      * which may not trigger correctly for wall chargers without USB data lines.
      *
      * Use USBHS_VBUS_BELOW_VBUSVALID threshold (~4.0V) instead of USBHS_VBUS_VALID
      * (~4.75V) to handle wall chargers with minor voltage sag. This aligns better
      * with BQ24297's pgStat threshold (3.88V) for external power detection. */
     USBHS_VBUS_LEVEL vbusLevel = PLIB_USBHS_VBUSLevelGet(USBHS_ID_0);
-    bool hasExternalPower = (vbusLevel >= USBHS_VBUS_BELOW_VBUSVALID);
-    pData->BQ24297Data.status.pgStat = hasExternalPower;
+    return (vbusLevel >= USBHS_VBUS_BELOW_VBUSVALID);
+}
+
+static void Power_UpdateStatusFromGPIO(void) {
+    /* Update battery voltage and charge percentage from ADC */
+    Power_UpdateChgPct();
+
+    /* Update external power status from hardware VBUS detection. */
+    Power_RefreshVbusFromPhy();
+    bool hasExternalPower = pData->BQ24297Data.status.pgStat;
 
     /* vsysStat — the BQ24297's authoritative low-battery signal (REG08 bit0:
      * 1 = BAT < VSYSMIN 3.0V). #564: read it over I2C; do NOT synthesize it from
@@ -730,18 +782,69 @@ static bool Power_HasSufficientPower(void) {
  *   - Update status (faster on USB for button response)
  */
 static void Power_HandleStandbyState(void) {
+    /* ⛔ #1092 r4: REFRESH VBUS BEFORE ANY LATCH DECISION, because the two
+     * things this handler must get right want OPPOSITE answers from a FALSE
+     * cached reading:
+     *
+     *   - a stale FALSE while VBUS is really present must NOT clear a latch a
+     *     press just set, or the shutdown is undone (the r2 residual);
+     *   - a truthful FALSE must clear it, or a battery press followed by a
+     *     quick plug-in strands the board in STANDBY (the r3 regression).
+     *
+     * Those are indistinguishable from the CACHED pgStat: both read false and
+     * then true. So no predicate over the cache can serve both -- the
+     * ambiguity is entirely an artifact of reading a stale value, and the fix
+     * is to stop reading one.
+     *
+     * ⛔ THIS MUST BE THE PHY READ ALONE, NOT THE FULL STATUS REFRESH. r4
+     * called Power_UpdateStatusFromGPIO() here and that was a HIGH of its own:
+     * the shutdown pass runs below, and that helper reaches
+     * BQ24297_Read_I2C(REG08), which waits on the I2C mutex with portMAX_DELAY
+     * (BQ24297.c:459) and then on a blocking Harmony transfer. Putting either
+     * ahead of Power_Down() means a stuck I2C bus leaves the rails and the MCU
+     * self-hold ON -- the exact failure this row is about, reintroduced by its
+     * own fix. Nothing on the path from here to Power_Down() may block
+     * unboundedly; tests/host/pin_1092_no_blocking_before_powerdown.py checks the
+     * CALLEES transitively, so renaming a wrapper cannot defeat it. */
+    Power_RefreshVbusFromPhy();
+
     /* #454: Auto-power-up on VBUS-present.  Fires at boot (if USB
      * plugged at power-on) and on VBUS-rising mid-session (cable
      * inserted while device is in STANDBY on battery).  Suppressed
      * after the user explicitly returns to STANDBY in the same VBUS
      * session — only re-arms when VBUS goes away and comes back.
      * Skipped on battery-only (pgStat=0).  */
+    /* ⛔ #1092 r4: THE RE-ARM IS EVALUATED ON EVERY STANDBY PASS, not only on
+     * passes with no request outstanding. It used to live inside the gate
+     * below, and r3's two changes together made that unreachable exactly when
+     * it was needed:
+     *
+     *   battery only, AUTOOn 1, long-press and KEEP HOLDING (the button holds
+     *   the MCU up). The shutdown pass runs with DO_POWER_DOWN still pending
+     *   -- r3 stopped clearing it in the common handler -- so the gate below
+     *   is false and the re-arm never evaluates. USB goes in before the next
+     *   ~1 s pass, the button is released, and every later pass sees VBUS. The
+     *   latch that the press set unconditionally is therefore never cleared,
+     *   and the board sits in STANDBY instead of auto-powering on.
+     *
+     * The baseline did not have this because it re-armed on the shutdown pass
+     * (its request had already been cleared). So the regression came from r3's
+     * two fixes INTERACTING, not from either alone -- the deferred clear made
+     * the gate false on the one pass the unconditional set depended on.
+     *
+     * THE PROPERTY, stated so it cannot be re-derived wrongly: a latch set by
+     * a press must be cleared by the FIRST observation of VBUS absent,
+     * whichever pass makes it. Hoisting the re-arm out of the gate is what
+     * makes that true regardless of what request is outstanding.
+     *
+     * Deliberately NOT gated on autoPowerOnUsb either: if AUTOOn is turned on
+     * after the VBUS-absent period, the latch should already be armed. */
+    if (!pData->BQ24297Data.status.pgStat) {
+        pData->autoPromotedThisVbusSession = false;
+    }
     if (pData->autoPowerOnUsb && pData->requestedPowerState == NO_CHANGE) {
         bool vbusPresent = pData->BQ24297Data.status.pgStat;
-        if (!vbusPresent) {
-            /* VBUS gone — re-arm auto-promote for next plug-in */
-            pData->autoPromotedThisVbusSession = false;
-        } else if (!pData->autoPromotedThisVbusSession) {
+        if (vbusPresent && !pData->autoPromotedThisVbusSession) {
             /* VBUS present, haven't auto-promoted in this session yet */
             LOG_I("Power: auto-power-up on USB (#454)");
             pData->requestedPowerState = DO_POWER_UP;
@@ -753,7 +856,16 @@ static void Power_HandleStandbyState(void) {
     if (pData->requestedPowerState == DO_POWER_UP ||
         pData->requestedPowerState == DO_POWER_UP_EXT_DOWN) {
 
-        /* Refresh power status from GPIO/ADC before power-up decision */
+        /* Refresh power status from GPIO/ADC before power-up decision.
+         *
+         * ⚠ #1092 r4b: NOT redundant with the entry refresh, and the r4 comment
+         * that said so was wrong twice over. The entry call refreshes pgStat
+         * ONLY; this one also updates the battery ADC, reads vsysStat over I2C
+         * and derives chgStat -- and Power_HasSufficientPower() below consults
+         * vsysStat. The unbounded I2C wait that makes the full refresh unsafe
+         * on the shutdown path is acceptable here: this arm is powering UP, so
+         * a stuck bus delays a power-up instead of stranding a power-down with
+         * the rails on. */
         Power_UpdateStatusFromGPIO();
 
         if (Power_HasSufficientPower()) {
@@ -977,8 +1089,33 @@ static void Power_UpdateState(void) {
     /* Common handler: Power-down request (works in any state) */
     if (pData->requestedPowerState == DO_POWER_DOWN) {
         pData->powerState = STANDBY;
-        pData->requestedPowerState = NO_CHANGE;
-        /* Note: Actual power-down executed by STANDBY handler */
+        /* ⛔ #1092 r3: THE REQUEST IS **NOT** CLEARED HERE. It used to be, and
+         * that single line made the STANDBY handler power the board UP instead
+         * of executing the power-down it was delegated.
+         *
+         * NO_CHANGE conflated two states -- "nothing was requested" and "a
+         * request was just consumed" -- and only one consumer reads the field
+         * that way: Power_HandleStandbyState's auto-promote gate
+         * (`autoPowerOnUsb && requestedPowerState == NO_CHANGE`). Clearing here
+         * handed that gate the first meaning while the second was true, so with
+         * AUTOOn on and VBUS present the same pass took the auto-promote arm,
+         * called Power_Up() and `return`ed -- jumping clean over the
+         * `shutdownNotified` block that calls Power_Down(). The delegation in
+         * the old comment below never happened.
+         *
+         * Leaving DO_POWER_DOWN pending makes that gate correct again by
+         * construction: the request still says what was asked for, so the
+         * auto-promote cannot fire in this pass, and Power_Down() clears it at
+         * the point it is actually serviced. No new enum value and no new flag
+         * -- the third state simply stops existing.
+         *
+         * This is the pattern the file already states for the power-UP side:
+         * "Don't reset requestedPowerState here - let the state machine handle
+         * it" (Power_Up). Power_ConsumeRebootRestore's `pending == NO_CHANGE`
+         * fallback to powerState is a second place already shaped around this
+         * conflation. */
+        /* Actual power-down is executed by the STANDBY handler, which clears
+         * the request inside Power_Down(). */
     }
     
     /* Delegate to state-specific handlers */
