@@ -1283,16 +1283,23 @@ else
 fi
 restore
 
-echo "== R67 (PIN 31): FAULT on a foreign name too long for the path buffer.   =="
-echo "==      One 100-character *.mfst in the directory then refuses every     =="
-echo "==      capture there. Violates this module's own PIN 27 rule, which is  =="
-echo "==      why both pins exist.                                             =="
-if sub "$F" '        if (w < 0 || (size_t)w >= sizeof(path)) {' \
-            '        if (w < 0 || (size_t)w >= sizeof(path)) {
-            out = SD_INSPECT_FAULT;
-            break;
+echo "== R67 (PIN 31): a foreign name too long for the path buffer ABANDONS    =="
+echo "==      the rest of the directory instead of skipping that one entry.    =="
+echo "==      One 100-character *.mfst then hides every manifest filed after   =="
+echo "==      it -- a silent MISS, which is the failure direction this row     =="
+echo "==      exists to prevent.                                               =="
+echo "==      ⚠ Re-aimed at r30. It used to insert a FAULT, which PIN 21's new  =="
+echo "==      fault-source COUNT now catches FIRST -- correctly, but with a    =="
+echo "==      generic diagnostic, leaving PIN 31 itself unexercised. `break`    =="
+echo "==      keeps the fault count at 4 so this arm fails for PIN 31's own    =="
+echo "==      reason. Two pins catching one mutant is fine; a mutant that      =="
+echo "==      proves only the backstop is not.                                 =="
+if sub "$F" '            continue;
         }
-        if (false) {'; then
+        /* ⛔ r30 (:3141): OUR OWN MANIFEST, BY FULL PATH, AFTER THE PATH EXISTS.' \
+            '            break;
+        }
+        /* ⛔ r30 (:3141): OUR OWN MANIFEST, BY FULL PATH, AFTER THE PATH EXISTS.'; then
     expect "R67 an unconstructable name is skipped" \
            "PIN 31: a foreign manifest name that will not"
 else
