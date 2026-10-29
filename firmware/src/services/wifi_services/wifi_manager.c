@@ -1864,9 +1864,44 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     // "isConnected already false" case; OK is success.
                     // Anything else (INVALID_ARG, NOT_OPEN, DISCONNECT_FAIL)
                     // indicates a deeper driver/chip issue worth recording.
+                    /* ⛔⛔ #1060 r8: THIS SITE GETS THE RECOVERY ARM TOO, AND MY
+                     * r7 SCOPE CALL WAS WRONG.
+                     *
+                     * I classified this site and the STA->AP one as
+                     * PRE-EXISTING and left them alone, on the grounds that
+                     * their log-only handling is older than this PR -- which is
+                     * true of the CODE and is the wrong test. r7's own audit
+                     * then showed what the right one is: on origin/main a failed
+                     * disconnect here was recovered because the queued
+                     * STA_CONNECTED re-set the flag and the next enable+APPLY
+                     * retried, and THIS PR's stale-event drop removes that
+                     * route. So main recovers in this scenario and r7 did not.
+                     * The regression is INTRODUCED even though the line is old.
+                     *
+                     * ⭐ The lesson, recorded because I already had it written
+                     * down and still got it backwards: introduced-vs-pre-existing
+                     * is keyed on whether THIS CHANGE MADE THE OUTCOME WORSE,
+                     * not on the age of the lines involved. Line ancestry is not
+                     * defect ancestry.
+                     *
+                     * Same arm as the AP->STA and STA-reconfigure sites, for the
+                     * same reason and in the same shape -- see the
+                     * TEARDOWN_PENDING consumer for why the fresh-init arm
+                     * cannot clear a stuck isConnected by itself. */
                     const WDRV_WINC_STATUS discStatus = WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
-                    if ((WDRV_WINC_STATUS_OK != discStatus) &&
-                        (WDRV_WINC_STATUS_REQUEST_ERROR != discStatus)) {
+                    const bool reachedChip =
+                        ((WDRV_WINC_STATUS_OK == discStatus) ||
+                         (WDRV_WINC_STATUS_REQUEST_ERROR == discStatus));
+                    taskENTER_CRITICAL();
+                    if (reachedChip) {
+                        ResetEventFlag(&pInstance->eventFlags,
+                                       WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING);
+                    } else {
+                        SetEventFlag(&pInstance->eventFlags,
+                                     WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING);
+                    }
+                    taskEXIT_CRITICAL();
+                    if (!reachedChip) {
                         LOG_E("WiFi: BSS disconnect failed on disable (status=%d)", (int)discStatus);
                     }
                 }
@@ -1925,9 +1960,28 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
                     ArmApplyTeardownDeadline();  // #423
                     {
+                        /* ⛔ #1060 r8: the recovery arm, for the reason spelled
+                         * out at the DISABLE site above -- r7's blind audit
+                         * showed main recovers a failed teardown here via the
+                         * queued STA_CONNECTED and this PR's drop removes that,
+                         * so the regression is introduced here too. Fourth and
+                         * last site; after this no BSSDisconnect in this file
+                         * fails without recording that the chip may still hold
+                         * an association. */
                         const WDRV_WINC_STATUS discStatus = WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
-                        if ((WDRV_WINC_STATUS_OK != discStatus) &&
-                            (WDRV_WINC_STATUS_REQUEST_ERROR != discStatus)) {
+                        const bool reachedChip =
+                            ((WDRV_WINC_STATUS_OK == discStatus) ||
+                             (WDRV_WINC_STATUS_REQUEST_ERROR == discStatus));
+                        taskENTER_CRITICAL();
+                        if (reachedChip) {
+                            ResetEventFlag(&pInstance->eventFlags,
+                                           WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING);
+                        } else {
+                            SetEventFlag(&pInstance->eventFlags,
+                                         WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING);
+                        }
+                        taskEXIT_CRITICAL();
+                        if (!reachedChip) {
                             LOG_E("WiFi: BSS disconnect failed on STA->AP (status=%d)", (int)discStatus);
                         }
                     }

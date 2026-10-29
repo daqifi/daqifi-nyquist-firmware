@@ -57,6 +57,42 @@ cp "$F" "$BK" || backup_failed "cp of $F failed"
 cmp -s "$F" "$BK" || backup_failed "backup differs -- short copy"
 
 restore() { cp "$BK" "$F"; }
+
+# ⛔⛔ r8: REMOVE EVERY MARKER SETTER, WHATEVER ITS INDENTATION.
+#
+# M2's job is "the marker is never SET anywhere", and it used to spell out two
+# exact indented strings. r7 and r8 added three more set sites at three more
+# indentations, so M2 removed 2 of 5, left the marker still set, PIN 7 (a
+# PRESENCE check) stayed satisfied, and the harness then rejected the real
+# diagnostic and exited 1 AGAINST A CORRECT BASELINE. Found by r7's blind leg.
+#
+# ⭐ The lesson is about the ANCHOR, not the count: a mutant that enumerates
+# its targets has to be re-edited every time the code grows one, and nothing
+# reminds you. Keying on the PATTERN makes the mutant total over the sites by
+# construction, so it cannot go stale the same way.
+#
+# `(?<![A-Za-z])` keeps this off `ResetEventFlag`, whose own substring is
+# lowercase-`s` `setEventFlag` and would not match anyway -- belt and braces,
+# because quietly neutering the CLEARS as well would make the mutant test
+# something other than what it claims.
+sub_all_setters() {
+    python3 -c '
+import sys, re
+p = sys.argv[1]
+raw = open(p, newline="").read()
+crlf = "\r\n" in raw
+t = raw.replace("\r\n", "\n") if crlf else raw
+pat = re.compile(
+    r"(?<![A-Za-z])SetEventFlag\(&pInstance->eventFlags,\s*\n?\s*"
+    r"WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING\);")
+t, n = pat.subn("(void)0;", t)
+if n == 0:
+    sys.exit(9)
+if crlf:
+    t = t.replace("\n", "\r\n")
+open(p, "w", newline="").write(t)
+sys.stderr.write("    (M2 neutered %d marker setter(s))\n" % n)' "$1"
+}
 cleanup() { restore; rm -f "$BK"; }
 # The signal handlers exit EXPLICITLY: on INT/TERM bash runs the handler and
 # then RESUMES, so a plain `trap ... EXIT INT TERM` restores and re-mutates.
@@ -138,16 +174,12 @@ fi
 restore
 
 echo "== M2 (PIN 7): never SET the marker ANYWHERE, so the re-attempt can      =="
-echo "==            never run. ⚠ BOTH set sites must go: PIN 7 is a PRESENCE    =="
-echo "==            check, and the ENTRY restore is also a set -- removing only =="
-echo "==            the exhaustion site leaves PIN 7 satisfied and lets PIN     =="
-echo "==            10's COUNT answer instead. Measured, not assumed.          =="
-if sub "$F" '                            SetEventFlag(&pInstance->eventFlags,
-                                    WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING);' \
-            '                            (void)0;' \
-   && sub "$F" '                SetEventFlag(&pInstance->eventFlags,
-                             WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING);' \
-               '                (void)0;'; then
+echo "==            never run. ⚠ EVERY set site must go: PIN 7 is a PRESENCE   =="
+echo "==            check, so leaving ONE satisfies it and lets PIN 10's COUNT  =="
+echo "==            answer instead -- which is exactly how this mutant went    =="
+echo "==            STALE in r7 and then FAILED against a correct baseline.    =="
+echo "==            r8 keys on the PATTERN, so it is total over the sites.     =="
+if sub_all_setters "$F"; then
     expect "M2 marker is set somewhere" "nothing SETS the #1060 teardown"
 else
     echo "  FAIL M2 anchor absent."; fail=$((fail+1))
