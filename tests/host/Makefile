@@ -179,7 +179,7 @@ SD_MANAGER_SRC := ../../firmware/src/services/sd_card_services/sd_card_manager.c
 #   POLICY         we determined the answer, and it is a refusal
 SD1124_TOK_NOTE   := note
 SD1124_TOK_FAULT  := unparsable unreadable
-SD1124_TOK_POLICY := alias authpath exists foreign mfstname notafile notours ourpart scope
+SD1124_TOK_POLICY := alias authpath exists foreign mfstname nonascii notafile notours ourpart scope
 
 # ⛔ 9 -> 10 at #1124 r30 (RESIDUAL 2 CLOSED, audit HIGH :3311 x3 rounds):
 # sd_ScanBaseAndNameSubdir builds `<base>/<the configured name's subdirectory
@@ -2433,14 +2433,40 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	@# ⚠ UNSIGNED BYTES ARE LOAD-BEARING: `char` is signed on this target, so a
 	@# plain `c > 0x7E` is FALSE for every high byte and the check would pass
 	@# exactly what it exists to catch. Pinned on the cast.
+	@# ⛔⛔ r30 RE-KEYED THIS: THE ASCII TEST MOVED, SO COUNTING CASTS IN THE
+	@# SCPI FILE NO LONGER FINDS IT.
+	@#
+	@# r25 pinned "at least 2 unsigned-char casts in $(SD_BENCH_SRC)", one for
+	@# the filename and one for the directory, both inline there. r30 made the
+	@# refusal unconditional and moved the byte test into
+	@# SdManifest_PathHasNonAsciiLen, so the SCPI file has ONE cast (the
+	@# directory arm in SD_DirHasNonCanonicalForm) and the header has the other.
+	@# A count in one file would now fail on the correct change -- the fourth
+	@# such pin this row has had, which is why the guidance at the head of this
+	@# block exists.
+	@#
+	@# ⭐ AND THE CAST IS NO LONGER THE PRIMARY GUARD. test_924's
+	@# non_ascii_is_detected_in_a_name_or_a_directory asserts the BEHAVIOUR over
+	@# all 18 CP437 bytes that alias to pure ASCII, every one of them >= 0x80 --
+	@# so a signed-char regression fails by VALUE, which no cast count can do.
+	@# This pin is kept as the cheap structural half: the test exists wherever
+	@# the comparison is written.
 	@pp=`$(CC) -fpreprocessed -E $(SD_BENCH_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 hp=`$(CC) -fpreprocessed -E -I$(FW_UTIL) $(FW_UTIL)/SdManifest.h 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
 	 n=`printf '%s' "$$pp" | grep -o '(const unsigned char \*)' | grep -c .`; \
-	 if [ "$$n" -lt 2 ]; then \
-	   echo "ERROR: #1124 r25 PIN 32: fewer than 2 unsigned-char casts in the"; \
-	   echo "       SD:FILE ASCII checks (found $$n). Both the FILENAME and the"; \
-	   echo "       DIRECTORY must be range-checked, and on UNSIGNED bytes --"; \
-	   echo "       char is signed here, so a high byte compares as negative and"; \
-	   echo "       a signed test passes everything it exists to catch."; \
+	 nh=`printf '%s' "$$hp" | grep -o '(const unsigned char \*)' | grep -c .`; \
+	 if [ "$$n" -lt 1 ] || [ "$$nh" -lt 1 ]; then \
+	   echo "ERROR: #1124 r30 PIN 32: an ASCII range check is not on UNSIGNED"; \
+	   echo "       bytes. Casts found: $$n in $(SD_BENCH_SRC) (the DIRECTORY"; \
+	   echo "       arm in SD_DirHasNonCanonicalForm), $$nh in SdManifest.h"; \
+	   echo "       (SdManifest_PathHasNonAsciiLen, used for both the name and"; \
+	   echo "       the directory at use)."; \
+	   echo "       char is SIGNED here, so a high byte compares as negative and"; \
+	   echo "       a signed test passes everything it exists to catch -- and all"; \
+	   echo "       18 CP437 bytes that alias to pure ASCII are >= 0x80, i.e."; \
+	   echo "       exactly the ones a signed test would wave through."; \
+	   echo "       The behavioural guard is test_924's"; \
+	   echo "       non_ascii_is_detected_in_a_name_or_a_directory."; \
 	   exit 1; \
 	 fi; \
 	 case "$$pp" in \
@@ -2448,12 +2474,26 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	   *) echo "ERROR: #1124 r25 PIN 32a: the DIRECTORY no longer refuses the"; \
 	      echo "       grant on a non-ASCII byte (SdManifest.h:258). FatFs folds"; \
 	      echo "       case by code page; this firmware folds ASCII only."; \
+	      echo "       (r30: the NAME arm is PIN 32b below and is now"; \
+	      echo "       unconditional; this is the DIRECTORY arm.)"; \
 	      exit 1;; \
 	 esac; \
 	 case "$$pp" in \
-	   *"[SD1124] scope name is not ASCII"*) ;; \
-	   *) echo "ERROR: #1124 r25 PIN 32b: the FILENAME no longer refuses the"; \
-	      echo "       grant on a non-ASCII byte (SdManifest.h:258)."; \
+	   *"[SD1124] nonascii in the name"*) ;; \
+	   *) echo "ERROR: #1124 r30 PIN 32b: the FILENAME no longer refuses a"; \
+	      echo "       non-ASCII byte."; \
+	      echo "       ⛔ RE-KEYED AT r30, and the old key is the story: it was"; \
+	      echo "       \"[SD1124] scope name is not ASCII\" -- the message from"; \
+	      echo "       the OPT-IN-only check. r30's blind leg showed that scope"; \
+	      echo "       closes nothing: an ungranted session CREATES the"; \
+	      echo "       non-ASCII file, and FatFs stores a PURE-ASCII 8.3 alias"; \
+	      echo "       for it (ExCvt[0x02] is 'E' in the TBL_CT437 we ship, with"; \
+	      echo "       no ~N tail), which a later ASCII-named session resolves"; \
+	      echo "       to. So the refusal is unconditional and the message no"; \
+	      echo "       longer says \"scope\"."; \
+	      echo "       The behavioural guard is test_924's"; \
+	      echo "       non_ascii_is_detected_in_a_name_or_a_directory; this arm"; \
+	      echo "       only checks the refusal is still WIRED UP."; \
 	      exit 1;; \
 	 esac
 	@# ⛔⛔ PIN 33 -- r26 AUDIT MEDIUM (:2862): NO LINE CAP ON A MANIFEST.
@@ -2985,15 +3025,23 @@ test "$$raw" -eq 0 && test "$$canon" -eq $(SD1124_CANON) && test "$$acc" -eq $(S
 	@# the operator an immediate error, and this one closes the NVM-restore
 	@# route that never reaches a setter -- the route SD_ValidatePathParam's own
 	@# header names as what sank a setter-only fix for the directory half.
+	@# 22 -> 23 at #1124 r30 (AUDIT HIGH, blind SCPIStorageSD.c:1165): the
+	@# AT-USE non-ASCII refusal reads the configured directory to ask
+	@# SdManifest_PathHasNonAscii whether any of its bytes is outside
+	@# 0x20..0x7E.
+	@# CLASSIFICATION: canonicalisation-INDEPENDENT, by the same argument as the
+	@# r28 alias read directly above and the r14 delimiter guard -- the question
+	@# is whether a byte with a given value appears ANYWHERE, and stripping a
+	@# trailing or doubled separator can neither add nor remove one.
 	@# CLASSIFICATION: the rest are the ordinary canonicalisation-DEPENDENT
 	@# join shape, already routed through SdManifest_CanonicalDirLen(). A NET
 	@# would let a future edit add one read and drop an unrelated one unseen,
 	@# which is the one thing a count ledger exists to notice.
 	@n=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null \
 	    | grep -oE '(gpSDCardSettings|cfg)->(directory|opDirectory)' | wc -l`; \
-	 test "$$n" -eq 22 \
+	 test "$$n" -eq 23 \
 	  || { echo "ERROR: $(SD_MANAGER_SRC) now has $$n raw reads of ->directory /"; \
-	       echo "       ->opDirectory, not the 22 classified in this recipe (#1124)."; \
+	       echo "       ->opDirectory, not the 23 classified in this recipe (#1124)."; \
 	       echo "       The canonicalisation invariant is about every USE, not just"; \
 	       echo "       every join: a read can reach a callee that neither joins nor"; \
 	       echo "       canonicalises, and no join-keyed check sees it. (Until r13 the"; \

@@ -1153,28 +1153,15 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
          * r21's audit). The audit asking "find out why it isn't firing" has the
          * answer "because it was never there", and that is worth saying plainly
          * rather than presenting this as a repair. */
-        /* ⛔ r25 (SdManifest.h:258): the same ASCII-only rule for the NAME.
-         * Same reasoning as the directory arm in SD_DirHasNonCanonicalForm:
-         * our folder is ASCII-only and FatFs folds CP437, so a non-ASCII name
-         * can be FatFs-equal to a record we would not match. Unsigned bytes
-         * for the same signed-char reason. */
-        {
-            const unsigned char *u = (const unsigned char *)pBuff;
-            size_t i;
-            for (i = 0u; i < fileLen; i++) {
-                if ((u[i] < 0x20u) || (u[i] > 0x7Eu)) {
-                    /* log_budget: max=40 */
-                    LOG_E("[SD1124] scope name is not ASCII");
-                    SCPI_ExecutionError(context,
-                                        "SYST:STOR:SD:FILE: overwrite not allowed "
-                                        "for a name containing non-ASCII bytes - "
-                                        "FatFs folds case by code page and this "
-                                        "firmware folds ASCII only");
-                    result = SCPI_RES_ERR;
-                    goto __exit_point;
-                }
-            }
-        }
+        /* ⛔ r30: THE ASCII REFUSAL USED TO BE HERE TOO, and being here was the
+         * same defect as the '~' one. r25 added it to the opt-in only, on the
+         * reasoning that our folder is ASCII and FatFs folds CP437, so the
+         * GRANT must not be given for a name we cannot compare. True, and
+         * insufficient: the hazard is CREATED on the ungranted route, because
+         * the alias FatFs stores for an accented name can be pure ASCII
+         * (ExCvt[0x02] is 'E' in the TBL_CT437 we ship), and a later session
+         * may legitimately ask for that ASCII name. It is now unconditional,
+         * below, beside the '~' and '.mfst' arms. Do not re-add it here. */
         /* ⛔ r28: THE '~' REFUSAL USED TO BE HERE, AND BEING HERE WAS THE
          * DEFECT. It is now unconditional, below, with the length and
          * SD_ValidatePathParam checks -- see the block headed "ALIAS RISK AND
@@ -1274,6 +1261,18 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
          * a length and NO terminator -- which is why SD_ValidatePathParam
          * above takes a length, and why the '~' check this replaces was
          * written with memchr. strlen here would read past the operand. */
+        if (SdManifest_PathHasNonAsciiLen(pBuff, fileLen)) {
+            /* log_budget: max=40 */
+            LOG_E("[SD1124] nonascii in the name");
+            SCPI_ExecutionError(context,
+                                "SYST:STOR:SD:FILE: a name containing "
+                                "non-ASCII bytes is refused - FatFs folds case "
+                                "by code page and can store a pure-ASCII 8.3 "
+                                "alias for it, which a later session may ask "
+                                "for by that name");
+            result = SCPI_RES_ERR;
+            goto __exit_point;
+        }
         if (SdManifest_PathHasAliasRiskLen(pBuff, fileLen)) {
             /* log_budget: max=40 */
             LOG_E("[SD1124] alias risk: the name has a tilde");
@@ -3512,6 +3511,16 @@ scpi_result_t SCPI_StorageSDDirectorySet(scpi_t * context) {
      * SD_ValidatePathParam's own header documents.
      *
      * Length-taking form: pBuff is the raw SCPI operand with no terminator. */
+    if (SdManifest_PathHasNonAsciiLen(pBuff, pathLen)) {
+        /* log_budget: max=40 */
+        LOG_E("[SD1124] nonascii in the directory");
+        SCPI_ExecutionError(context,
+                            "SYST:STOR:SD:DIRectory: a path containing "
+                            "non-ASCII bytes is refused - FatFs folds case by "
+                            "code page and can store a pure-ASCII 8.3 alias "
+                            "for it");
+        return SCPI_RES_ERR;
+    }
     if (SdManifest_PathHasAliasRiskLen(pBuff, pathLen)) {
         /* log_budget: max=40 */
         LOG_E("[SD1124] alias risk: the directory has a tilde");

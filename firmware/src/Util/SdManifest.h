@@ -386,6 +386,81 @@ static inline bool SdManifest_NameReservedForManifests(const char *name)
  * ELSE -- a third party, or a build of this firmware predating this check --
  * may still hold an alias while this session names the long form. That cannot
  * be closed by a string rule at all; it needs directory-entry identity. */
+/* ⛔⛔⛔ #1124 r30 AUDIT HIGH, blind leg (SCPIStorageSD.c:1165): A NON-ASCII
+ * NAME IS REFUSED FOR THE SAME REASON '~' IS, AND THE REASON IS SHARPER THAN
+ * THE ONE THE RESIDUAL GAVE.
+ *
+ * The posted residual said this firmware folds case for ASCII only while FatFs
+ * folds the OEM code page, so two spellings of an accented name can be
+ * FatFs-equal and textually different -- and claimed the destructive route was
+ * closed because the overwrite opt-in refused non-ASCII. r30 showed that
+ * closes nothing, because THE ALIAS FatFs STORES FOR A NON-ASCII NAME CAN BE
+ * PURE ASCII:
+ *
+ *   1. an ordinary, UNGRANTED session creates `\x82.csv` (CP437 e-acute);
+ *   2. create_name converts the SFN char through `ExCvt[wc & 0x7F]`, and the
+ *      TBL_CT437 we ship begins {0x80,0x9A,0x45,0x41,...}, so ExCvt[0x02] is
+ *      0x45 -- ASCII 'E'. NS_LOSS is never set (0x45 is a legal SFN char), so
+ *      there is NO "~N" tail: the stored alias is a clean `E.CSV`;
+ *   3. `SD:FILE "E.csv",1` is PURE ASCII, so the opt-in's ASCII restriction
+ *      passes and the grant is given;
+ *   4. PartIndexOf compares `E.csv` against the record's 0x82 name, does not
+ *      match, no foreign check runs, and FatFs resolves `E.csv` through the
+ *      stored alias and TRUNCATES the original capture.
+ *
+ * ⭐ NOT ONE UNLUCKY CHARACTER: 18 of the 128 high CP437 bytes produce a
+ * pure-ASCII SFN character -- 0x82/0x88/0x89/0x8A->'E', 0x83/0x85/0xA0->'A',
+ * 0x8B/0x8C/0x8D/0xA1->'I', 0x93/0x95/0xA2->'O', 0x96/0x97/0xA3->'U',
+ * 0x98->'Y'. Every accented vowel in CP437 has an unnumbered ASCII alias.
+ *
+ * ⛔ SO THE RESTRICTION MOVES FROM THE GRANT TO THE CONFIGURATION, exactly as
+ * the '~' one did: no session logs with a non-ASCII directory or name, opt-in
+ * or not, so the firmware can never CREATE a file whose stored alias collides
+ * with a name a later session may legitimately ask for. Restricting only the
+ * grant protected the truncation route and left CREATION open -- and creation
+ * is what manufactures the alias.
+ *
+ * ⚠ WHAT THIS COSTS, stated because it is a real loss and not a free win: a
+ * filename or directory containing an accented vowel can no longer be used for
+ * logging at all. That is most realistic non-ASCII cases, which is why it was
+ * put to the operator rather than taken as obvious. Modelling CP437 instead
+ * was rejected: the table would have to track whatever FF_CODE_PAGE is set to
+ * and would go silently wrong if that moved.
+ *
+ * ⚠ READ/CRC/DELETE ARE UNAFFECTED, deliberately -- as with '~'. Refusing to
+ * read back or delete a file that already exists on the card would strand it,
+ * which is worse than the hazard. The at-use check sits under
+ * `!usesOperandName` for that reason.
+ *
+ * ASCII here means printable ASCII, 0x20..0x7E: the control range and 0x7F are
+ * already refused by SD_ValidatePathParam, and treating them as "ASCII" here
+ * would be a second, weaker opinion about the same bytes. */
+static inline bool SdManifest_PathHasNonAsciiLen(const char *p, size_t len)
+{
+    const unsigned char *u = (const unsigned char *)p;
+    size_t i;
+
+    if (p == NULL) {
+        return false;
+    }
+    for (i = 0u; i < len; i++) {
+        /* unsigned char is load-bearing: `char` is SIGNED on this target, so a
+         * byte >= 0x80 compares as NEGATIVE and `c > 0x7E` reads false. */
+        if ((u[i] < 0x20u) || (u[i] > 0x7Eu)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static inline bool SdManifest_PathHasNonAscii(const char *p)
+{
+    if (p == NULL) {
+        return false;
+    }
+    return SdManifest_PathHasNonAsciiLen(p, strlen(p));
+}
+
 static inline bool SdManifest_PathHasAliasRiskLen(const char *p, size_t len)
 {
     return (p != NULL) && (memchr(p, '~', len) != NULL);

@@ -5041,10 +5041,24 @@ void sd_card_manager_ProcessState() {
                      * present and the count-based pin cannot see it -- a pin
                      * that only counts call sites would pass while half the
                      * refusal was gone. */
+                    const bool nonAsciiName =
+                            SdManifest_PathHasNonAscii(nameOperand);
+                    const bool nonAsciiDir =
+                            SdManifest_PathHasNonAscii(gpSDCardSettings->directory);
                     const bool aliasInName =
                             SdManifest_PathHasAliasRisk(nameOperand);
                     const bool aliasInDir =
                             SdManifest_PathHasAliasRisk(gpSDCardSettings->directory);
+                    if (nonAsciiName || nonAsciiDir) {
+                        /* log_budget: max=40 */
+                        LOG_E("[SD1124] nonascii at use '%s'", nameOperand);
+                        gSDCardData.writeRefuseReason =
+                                SD_REFUSE_NAME_NOT_ASCII;
+                        gSDCardData.lastOperationSuccess = false;
+                        gSDCardData.currentProcessState =
+                                SD_CARD_MANAGER_PROCESS_STATE_ERROR;
+                        break;
+                    }
                     if (aliasInName || aliasInDir) {
                         /* log_budget: max=40 */
                         LOG_E("[SD1124] alias risk in dir or name '%s'", nameOperand);
@@ -8034,6 +8048,11 @@ const char* sd_card_manager_WriteRefuseText(void) {
         case SD_REFUSE_MANIFEST_UNPARSABLE:
             return "a manifest in this directory could not be read or did not "
                    "parse - refused rather than assumed to cover nothing";
+        case SD_REFUSE_NAME_NOT_ASCII:
+            return "the configured directory or logging name contains "
+                   "non-ASCII bytes - FatFs folds case by code page and can "
+                   "store a pure-ASCII 8.3 alias for such a name, which a "
+                   "later session may ask for by that name";
         case SD_REFUSE_NAME_ALIAS_RISK:
             return "the configured directory or logging name contains '~', so "
                    "it may be an 8.3 alias naming a different file than it "

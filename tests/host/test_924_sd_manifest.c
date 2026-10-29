@@ -1978,9 +1978,70 @@ TEST(a_session_whose_extension_is_not_the_manifest_one_can_never_write_a_reserve
     }
 }
 
+/* ⛔⛔⛔ #1124 r30 AUDIT HIGH, blind leg: NON-ASCII IS REFUSED BECAUSE THE
+ * ALIAS FatFs STORES FOR IT CAN BE PURE ASCII.
+ *
+ * The decisive fact is in the FatFs we ship, not in this file: TBL_CT437
+ * begins {0x80,0x9A,0x45,0x41,...}, so create_name's `ExCvt[wc & 0x7F]` maps
+ * 0x82 (e-acute) to 0x45 -- ASCII 'E' -- and sets no NS_LOSS, so the stored
+ * alias is a clean `E.CSV` with no "~N" tail. `SD:FILE "E.csv",1` is then pure
+ * ASCII, passes the opt-in's ASCII restriction, and truncates the earlier
+ * capture through the alias while every textual record comparison says the two
+ * names differ.
+ *
+ * ⚠ WHAT THIS TEST CAN AND CANNOT SHOW. It tests OUR predicate, not FatFs's
+ * table -- the table is vendor code and is quoted above with its file so the
+ * claim is checkable, not re-implemented here. A host test that modelled CP437
+ * would be asserting my reading of the table back to myself, which is the
+ * circularity this row has been caught by before. */
+TEST(non_ascii_is_detected_in_a_name_or_a_directory) {
+    ASSERT_TRUE(SdManifest_PathHasNonAscii("\x82.csv"));
+    ASSERT_TRUE(SdManifest_PathHasNonAscii("exp\x90.csv"));
+    ASSERT_TRUE(SdManifest_PathHasNonAscii("D\xA0/exp.csv"));
+    ASSERT_FALSE(SdManifest_PathHasNonAscii("exp.csv"));
+    ASSERT_FALSE(SdManifest_PathHasNonAscii("sub/exp.csv"));
+    ASSERT_FALSE(SdManifest_PathHasNonAscii("E.csv"));   /* the ALIAS is ASCII */
+    ASSERT_FALSE(SdManifest_PathHasNonAscii(""));
+    ASSERT_FALSE(SdManifest_PathHasNonAscii(NULL));
+
+    /* ⭐ THE SIGNED-CHAR TRAP, asserted rather than trusted: `char` is SIGNED
+     * on this target, so a byte >= 0x80 compares as NEGATIVE and a `c > 0x7E`
+     * test written on plain char reads FALSE -- the predicate would pass every
+     * high byte. Every one of the 18 CP437 bytes that alias to pure ASCII is
+     * >= 0x80, so getting this wrong would disable the check precisely where it
+     * matters. */
+    {
+        static const char high[18] = {
+            '\x82','\x83','\x85','\x88','\x89','\x8A','\x8B','\x8C','\x8D',
+            '\x93','\x95','\x96','\x97','\x98','\xA0','\xA1','\xA2','\xA3'
+        };
+        size_t i;
+        for (i = 0u; i < sizeof(high); i++) {
+            char buf[8];
+            snprintf(buf, sizeof(buf), "%c.csv", high[i]);
+            ASSERT_TRUE(SdManifest_PathHasNonAscii(buf));
+        }
+    }
+
+    /* the control range is already refused upstream, and this agrees rather
+     * than holding a second, weaker opinion about the same bytes */
+    ASSERT_TRUE(SdManifest_PathHasNonAscii("exp\x01.csv"));
+    ASSERT_TRUE(SdManifest_PathHasNonAscii("exp\x7F.csv"));
+
+    /* length-taking form stops at the length, like its siblings */
+    {
+        const char raw[6] = { 'e', 'x', 'p', '\x82', 'b', 'd' };
+        ASSERT_FALSE(SdManifest_PathHasNonAsciiLen(raw, 3u));
+        ASSERT_TRUE(SdManifest_PathHasNonAsciiLen(raw, 4u));
+        ASSERT_FALSE(SdManifest_PathHasNonAsciiLen(raw, 0u));
+        ASSERT_FALSE(SdManifest_PathHasNonAsciiLen(NULL, 4u));
+    }
+}
+
 int main(void)
 {
     printf("=== #924 SD session integrity manifest ===\n");
+    RUN(non_ascii_is_detected_in_a_name_or_a_directory);
     RUN(the_two_manifest_name_questions_disagree_only_on_the_bare_extension);
     RUN(a_session_whose_extension_is_not_the_manifest_one_can_never_write_a_reserved_name);
     RUN(part_suffix_parser_accepts_only_what_the_formatter_emits);

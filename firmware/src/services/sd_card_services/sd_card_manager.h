@@ -425,6 +425,16 @@ extern "C" {
          * recreates `exp.csv.mfst` as its own manifest while that record
          * survives, asserting the old size and CRC over unrelated bytes. */
         SD_REFUSE_NAME_IS_MANIFEST,
+        /* ⛔ #1124 r30 AUDIT HIGH, blind leg (SCPIStorageSD.c:1165): the
+         * configured directory or name contains non-ASCII bytes. FatFs folds
+         * case by the OEM code page and can store a PURE-ASCII 8.3 alias for
+         * such a name -- ExCvt[0x02] is 'E' in the CP437 table we ship, with
+         * no "~N" tail -- so a later session asking for that ASCII name
+         * resolves to this file through the alias while every textual record
+         * comparison says they are different. Refused on the ordinary creation
+         * path too, not only for the opt-in: creation is what manufactures the
+         * alias. Appended at the END; these values cross the SCPI boundary. */
+        SD_REFUSE_NAME_NOT_ASCII,
     } SdWriteRefuseReason;
 
     SdWriteRefuseReason sd_card_manager_WriteRefuseReason(void);
