@@ -661,14 +661,14 @@ restore
 echo "== R30: read ONE of the two inspection faults as an absence -- r18        =="
 echo "==      finding 3, reintroduced on the manifest side only. The count arm  =="
 echo "==      is what catches it: the data-file guard is still there.           =="
-if sub "$F" '        if (e != SYS_FS_ERROR_NO_PATH && e != SYS_FS_ERROR_NO_FILE) {
-            gSDCardData.writeRefuseReason = SD_REFUSE_TARGET_UNREADABLE;
-            /* log_budget: max=88 */
-            LOG_E("[SD1124] unreadable mfst %s e=%d", target, (int)e);
-            return false;
-        }
-        return true;                    /* no manifest at that name */' \
-            '        return true;                    /* mutant: fault read as absence */'; then
+echo "==      ⚠ Re-anchored at r33 on the LOG_E + return pair only. The old     =="
+echo "==      anchor spanned the whole guard INCLUDING its log_budget comment,  =="
+echo "==      so retuning that bound broke the arm. An anchor should not        =="
+echo "==      contain a comment it does not test.                                =="
+if sub "$F" '            LOG_E("[SD1124] unreadable mfst %s e=%d", target, (int)e);
+            return false;' \
+            '            LOG_E("[SD1124] unreadable mfst %s e=%d", target, (int)e);
+            return true;   /* mutant: the manifest-side fault reads as absence */'; then
     expect "R30 both inspections fail closed" "fail-closed inspection guard"
 else
     echo "  FAIL R30 anchor absent."; fail=$((fail+1))
