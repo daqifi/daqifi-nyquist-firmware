@@ -11737,3 +11737,56 @@ builds on it. My own first plan had them parallel, which would have duplicated t
 ⭐ Enumerate before deleting: `log_on_failure`/`seed_log` LOOK 1152-ish but serve a **test_1148**
 check (r6 finding 2). Removing the 1152 surface by name prefix would have silently deleted that
 coverage.
+
+## ts#458 MERGED · sk#236 PARKED at the cap · r8 row opened under an exception (2026-10-28/29)
+
+**ts#458 MERGED** at `eb01085f7efece429964c4b117198f9a6be5a57d` after 12 rounds. r12 PASS both legs at
+`26f1c0a0a`; ledger 569. The thing that unblocked it was taking the imported test OUT, not fixing it.
+
+**sk#236 PARKED** at `4ac511ee5`, ledger 621. Rounds `1/2/0 → 2/4/0 → 4/3/0 → 4/3/0 → 4/3/0` --
+**three identical counts**, two classes on their third appearance.
+Park: https://github.com/cptkoolbeenz/claude-skills/pull/236#issuecomment-6508038954
+
+⛔⛔⭐⭐ **I ENUMERATED THE CALL SITES AND CALLED THAT THE INVENTORY. THE CLASS IS THE TRUST
+BOUNDARY.** Round 5 was deliberately a closure round -- I handed over the 8 `git` call sites with
+each one's state and asked for every cell to end `readable / absent / REFUSE`. All 8 closed, a 9th
+gap found, tests 15→47 -- **and the same classes returned**, because `diff.external` is
+CONFIGURATION, a subdirectory argument is an INPUT SHAPE, and a missing tree object is a call that
+SUCCEEDS and returns a non-answer. None can appear in a list of invocations, so no care applied to
+that list would have reached them. The tool's own lineage is this error three times, one level
+deeper each: v2 distinct-sets missed a dropped REPEATED line; v3 counted multiplicity but NETTED it
+and missed a COMPENSATING PAIR; v6 checked every call's status and missed config + input shape.
+⭐ **Ask: what can change the answer that is not a line of my code?** Memory corrected --
+the earlier entry gave the right method at the wrong LEVEL, which is what cost the round.
+
+⭐ **`:275` -- a thorough negative over the WRONG FAMILY.** The r5 fire reported it not reproduced
+after 500+ randomised merges and an exhaustive small-N enumeration of *overlapping duplicate
+DELETIONS* -- both sides deleting. The real shape is a **compensating add+delete on ONE side**, so
+that side's net delta is zero while it made two real changes. Not in the search space. It asked me
+for the repro rather than inventing a fix, which is the only reason the finding survived; I built it
+and it reproduced immediately (false `⛔ DEFINITE LOSS` on a correct clean merge). Detection
+verified before handing back: per-side `git diff` +/- counts give `MAIN added=1 removed=0` vs
+`BR added=1 removed=1`.
+
+⭐ **PROVENANCE, applied against my own interest twice.** The coordinator relayed the r8 exception
+with the operator's verbatim as *"AX. A."* -- unparseable to me. I confirmed with the operator
+DIRECTLY before acting: not distrust, but I will not claim to act on authorising words I cannot
+read when they override a standing ruling. Earlier the same day I labelled their relay of
+*"i told nq-b to split"* as SECOND-HAND even though it supported me, because the standard has to be
+symmetric or it only ever gets applied to unflattering claims.
+
+⚠ **Instrument tally for the session: FIVE bad ad-hoc matchers, all mine, all UNDER-matching.**
+`[a-z0-9_]+` excluding a function I had myself named `..._WIRED_IN` (cost a wrong 58-vs-55 estimate
+handed to a fire); a label pattern missing `"25a-%s."`; a mutation regex that found nothing; Python
+`d.get('gate')` grepped against a BASH script (cost a false merge-gate alarm); and `main~1` after a
+merge read as the base. One root: **the pattern written from my expectation of the content's shape,
+not from the content.** An under-match renders as a confident ZERO, never as an error. Operational
+rule given to the coordinator: **a zero I report from a grep is a claim about the pattern until I
+show a hit from the matched region.**
+
+**r8 row** started off `origin/main` under the confirmed exception, cap 15. ts#458 merging is what
+enabled it (the offline driver is on main now). The restore is NOT a cherry-pick: preserve's driver
+is 2547 lines vs main's 1860 and the difference is not only the `_1152` support -- main's carries
+ts#458's LATER rounds, so a diff-and-merge would silently revert them. PR deliberately NOT opened
+until the pinning pass lands, so its first audit sees the pinned version rather than the defective
+import -- that import is what cost ts#458 four rounds.
