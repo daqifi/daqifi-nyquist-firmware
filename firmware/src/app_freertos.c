@@ -612,6 +612,39 @@ static void app_SDCardTask(void* p_arg) {
         SpiBusHealth_SetSdSuspended(state == APP_SD_STATE_SUSPENDED ||
                                     app_SDCard_SpiOwnedByWifi());
 
+        /* ⛔ #1055 r4 finding 1: THE OWED SESSION SUMMARY IS EMITTED HERE.
+         *
+         * Streaming_Stop() snapshots the session's counters into a pending
+         * record and raises an SD hold, because stop-time SD loss is still
+         * being reported while the teardown drains. The unforced emitter
+         * declines while that hold is up and the SD manager is not idle --
+         * correct, but only half a design: when the teardown outlives
+         * SCPI_PerformStreamingStop()'s bounded wait, that call site has
+         * already returned and NOTHING else ever asks again, so the summary
+         * is owed forever. Measured as a silent no-summary, not a wrong one.
+         *
+         * Polled here, in the loop whose own progress IS the teardown, rather
+         * than hooked onto a transition inside sd_card_manager.c. Three
+         * reasons, in order:
+         *   - It matches this loop's existing idiom (see the suspension flag
+         *     above): derive on every iteration, because a flag written at
+         *     one transition goes stale the moment another is added.
+         *   - The emitter already owns the whole decision -- it test-and-clears
+         *     a pending flag and consults sd_card_manager_IsIdle() itself -- so
+         *     a transition hook would be a second place that has to agree with
+         *     it. There is no new state here, and no new ordering rule.
+         *   - It keeps this fix out of sd_card_manager.c, which #1124 is
+         *     actively changing.
+         *
+         * Cost when nothing is owed: two volatile bool reads and a return.
+         * Latency: one iteration of this loop -- 1 ms in PROCESS, which is the
+         * state a post-stop teardown runs in.
+         *
+         * Exactly-once is the emitter's property, not this call site's: the
+         * test-and-clear means this poll and the STOP path cannot both print,
+         * whichever reaches it first. */
+        Streaming_EmitSessionSummary();
+
         /* #925: the leak watchdog only samples inside APP_SD_STATE_PROCESS, so
          * its dwell must not survive a trip through any other state. Without
          * this, a hold that had been timing for T seconds when WiFi took the
@@ -1021,14 +1054,21 @@ void app_SystemInit() {
             &tmpSettings.settings.wifi,
             sizeof (wifi_manager_settings_t));
 
-    // Load factory calibration parameters - if they are not initialized, 
-    // store them (first run after a program)
+    // Load factory calibration parameters. #908: a blank/invalid page is NOT
+    // re-stamped from the runtime array (still identity, CalM=1/CalB=0) --
+    // the next boot would load that as a genuine factory cal and the "never
+    // calibrated" signal would be gone for good. Flag and log it instead.
     if (!daqifi_settings_LoadADCCalSettings(
             DaqifiSettings_FactAInCalParams,
             &gpBoardRuntimeConfig->AInChannels)) {
-        daqifi_settings_SaveADCCalSettings(
-                DaqifiSettings_FactAInCalParams,
-                &gpBoardRuntimeConfig->AInChannels);
+        daqifi_settings_MarkFactoryCalMissing();
+        /* #908 Qodo: "readings use identity calibration" overclaimed --
+         * the calVals branch immediately below can still load a valid USER
+         * calibration over these identity defaults before any reading is
+         * taken, so identity is only the FACTORY baseline, not necessarily
+         * what streaming ends up using. */
+        LOG_E("Factory ADC calibration is missing or invalid; the factory "
+              "baseline defaults to identity until CONF:ADC:SAVEFcal is run.");
     }
     // If calVals has been set to 1 (user cal params), overwrite with user 
     // calibration parameters

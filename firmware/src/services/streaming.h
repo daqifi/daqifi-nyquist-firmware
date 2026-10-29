@@ -1224,6 +1224,55 @@ size_t Streaming_GetSdFileHeader(const uint8_t** ppHeader);
  * flight. Counts into SdDroppedBytes so the loss is visible instead of silent. */
 void Streaming_ReportSdDiscard(size_t bytes);
 
+/* #982: compute and, if warranted, print the deferred session-end loss
+ * summary. Exactly-once per session (test-and-clear on an internal pending
+ * flag set by Streaming_Stop()) -- see the function's own doc comment in
+ * streaming.c for why this is split out of Streaming_Stop() and the full
+ * list of call sites.
+ *
+ * ⛔ SEVEN call sites in SIX functions tree-wide; SIX sites in FIVE functions
+ * outside this file. Both numbers stated, because quoting one as the other is
+ * how this note went wrong before. ENUMERATE THIS
+ * MECHANICALLY -- `grep -rn Streaming_EmitSessionSummary firmware/src/` and then
+ * resolve each hit's enclosing function by its BRACES -- never from memory. This
+ * note has been wrong in three consecutive rounds (r7 named one caller, r8 named
+ * three, and both were written while a complete list sat in
+ * docs/STREAMING_AND_ADC.md). Derived mechanically 2026-10-26:
+ *  - app_SDCardTask()                  app_freertos.c   -- the per-iteration
+ *      poll, and the caller that actually emits most sessions' summary;
+ *  - SCPI_PerformStreamingStop()       SCPIInterface.c  -- after its bounded
+ *      SD-idle wait;
+ *  - SCPI_StartFailedAfterStop()       SCPIInterface.c  -- the named exit for
+ *      the post-teardown error returns;
+ *  - SCPI_RunThroughputBenchClaimed()  SCPIInterface.c  -- the
+ *      SYST:STR:THRoughput teardown;
+ *  - FindMeasureStep()                 SCPIInterface.c  -- the
+ *      SYST:STR:WIFI:FINd? step teardown, TWO call sites in the one function.
+ *
+ * The last two never arm SD logging (verified: neither function mentions
+ * sdLoggingRequested or UpdateSettingsForStreamingLog), so gSdExpectedThisSession
+ * is false for them and they raise no hold OF THEIR OWN -- which is why they
+ * need no special case. That is NOT the same as "they never wait": `hold` is
+ * read from whatever record is currently PENDING, so a THRoughput or FINd?
+ * teardown issued while an earlier USB+SD session's record is still held will
+ * defer to the drain, correctly. Streaming_Start()'s backstop is a SIXTH caller but is internal to
+ * streaming.c and calls the Impl directly. */
+void Streaming_EmitSessionSummary(void);
+
+/* #1055 r6: Streaming_FlushOwedSessionSummary() was REMOVED. The forced
+ * consume it provided lost a draining teardown's discards silently; the
+ * bounded hold plus app_SDCardTask's poll cover every path that needed it,
+ * and an early consume now labels itself. See its former definition site in
+ * streaming.c for the full reasoning. */
+
+/* #970: report samples an encoder CONSUMED and then destroyed. Only a site that
+ * has already popped the queue entry and knows it will not be emitted may call
+ * this; a merely RETAINED sample (buffer full this tick) is not a loss. Counts
+ * into EncoderDroppedSamples, which the caller's zero-return arm deliberately
+ * no longer guesses at -- a zero return is a byte count and carries no sample
+ * cardinality. */
+void Streaming_ReportEncoderSampleLoss(uint32_t samples);
+
 // #388 — Compile-time profiling counters for the PB streaming hot path.
 // When enabled, instruments encoder + USB write paths with _CP0_GET_COUNT()
 // cycle measurements.  Off by default in production: enable here for a
@@ -1265,9 +1314,27 @@ typedef struct {
     uint32_t usbDroppedBytesSteady;
     uint32_t wifiDroppedBytesSteady;
     uint32_t sdDroppedBytesSteady;
-    uint32_t encoderFailures;       // Encoder returned 0 with data available
+    /* #970: encode calls that returned 0 bytes with data available. The EVENT
+     * only. It says nothing about how many samples that call consumed or
+     * destroyed -- see the encoded == 0 arm in streaming.c for why the return
+     * cannot carry that. */
+    uint32_t encoderFailures;
     uint32_t encoderFailuresSteady;
-    uint32_t encoderDroppedSamples; // AIn samples consumed by failed encode calls (#297)
+    /* #970 (supersedes #297): samples an encoder CONSUMED from a queue and then
+     * did not emit -- a real, irrecoverable loss, booked by the encoder that
+     * knows it happened via Streaming_ReportEncoderSampleLoss(). NOT derived
+     * from a zero return: the same zero is produced after 0 pops (buffer merely
+     * full, retried) and after N (all-invalid validMask, consumed but carrying
+     * no channel data), so deriving it re-counted still-queued samples every
+     * tick. Only Json_Encode reports today (its oversize-sample drop arm);
+     * csv_Encode destroys nothing on any zero-return path, and
+     * Nanopb_EncodeStreamingFast reports too, at both paths that destroy an
+     * already-popped sample: the AIN-message encode failure and the
+     * standalone-DIO fallback. Note that the first of those returns a NON-ZERO
+     * bufferOffset when an earlier message succeeded, so it books loss WITHOUT
+     * bumping encoderFailures -- which is why Streaming_Stop's hadDrops gate
+     * has to test this counter directly rather than infer it. */
+    uint32_t encoderDroppedSamples;
     uint32_t encoderDroppedSamplesSteady;
     uint32_t dioDroppedSamples;     // DIO queue full — PushBack returned false (#296)
     uint32_t dioDroppedSamplesSteady;
@@ -1325,6 +1392,12 @@ typedef struct {
     uint32_t clippedChannelMask;
     uint32_t scanStaleDropped; // #557: scan armed but EOS not fired by next trigger
                                // (scan-busy/stale) — counted as a dropped sample
+    uint32_t scanStaleDroppedSteady; // #1018: post-grace subset of the above --
+                               // the term the session-end summary's "(all
+                               // post-grace)" total actually uses. Raw
+                               // scanStaleDropped above is unchanged and is
+                               // what SYST:STReam:STATS? reports as the
+                               // lifetime counter.
     // #541 D-A diagnostic: ticks where a T1 (dedicated-module) channel's
     // ARDY flag was not set when the deferred task went to read its result
     // register.  Expected ~0 (T1 conversion completes ~1.3 us after trigger;
