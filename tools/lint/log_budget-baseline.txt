@@ -89,7 +89,6 @@ firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s wit
 firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] Unmount unrecoverable (card %s, %u attempts) - forcing state clear
 firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] header write short: expected=%u written=%d ('%s')
 firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] rotation open abandoned (%s): discarded %u buffered byte(s)
-firmware/src/services/streaming.c :: worst case 212 bytes > ceiling 125 :: Stream end: lost %u/%llu samples (%u%%), USB=%u WiFi=%u SD=%u bytes, encFail=%u encDrop=%u dioDrop=%u eos=%u (all post-grace)
 firmware/src/services/wifi_services/iperf2/iperf2.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: iperf2: %s refused - WINC not started
 firmware/src/services/wifi_services/iperf2/iperf2.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: iperf2: %s refused - WINC not started
 firmware/src/services/wifi_services/iperf2/iperf2.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: iperf2: %s refused - WiFi DISABLED
