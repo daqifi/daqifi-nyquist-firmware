@@ -366,6 +366,8 @@ LIBSCPI_HDRS := $(wildcard $(LIBSCPI_DIR)/inc/scpi/*.h) $(wildcard $(LIBSCPI_DIR
 SCPI_INTERFACE_H := ../../firmware/src/services/SCPI/SCPIInterface.h
 SCPI_INTERFACE_C := ../../firmware/src/services/SCPI/SCPIInterface.c
 USBCDC_SRC := ../../firmware/src/services/UsbCdc/UsbCdc.c
+WIFI_MGR_SRC := ../../firmware/src/services/wifi_services/wifi_manager.c
+APSTA1060_BIN := run_1060_tests
 WIFI_TCP_SRC := ../../firmware/src/services/wifi_services/wifi_tcp_server.c
 # #1056 (was #913): the spin-then-vTaskDelay(1) wait loop UserSpi.c,
 # UserUart.c and UserI2c.c all use. It now exists ONCE, in
@@ -925,6 +927,289 @@ START_CLAIMED_END := while (!sd_card_manager_IsWriteReady() && readyWait < 500) 
 # ClearStartupDirFull at 5836 before ReleaseClaim at 5880, and exactly one
 # TryClaim in the file, which the anchor-count check above pins separately.
 START_CLAIMED_SHA := 6450eeb12fbf76b3ec202676df7dafc25c9bac768cdcb0f5446632a0854f7d0f
+
+$(APSTA1060_BIN): test_1060_apsta_disconnect_retry.c test_framework.h \
+                  $(WIFI_MGR_SRC) $(RECIPES)
+	@# ⛔ #1060 PIN 1 -- the AP->STA disconnect is RE-ATTEMPTED, and bounded.
+	@# The r1 audit's scenario is a transport failure that then RECOVERS, so a
+	@# single logged attempt loses the one call that would have cleared the
+	@# driver's isConnected -- after which ERROR -> REINIT takes the fresh-init
+	@# arm, never clears it, and DHCP is refused for ever.
+	@pp=`$(CC) -fpreprocessed -E $(WIFI_MGR_SRC) 2>/dev/null`; \
+	 printf '%s' "$$pp" \
+	   | grep -q 'while (attempt < WIFI_MANAGER_APSTA_SETTLE_SLICES)' \
+	  || { echo "ERROR: the AP->STA branch no longer re-attempts a failed"; \
+	       echo "       BSSDisconnect (#1060 r2). One logged attempt loses the"; \
+	       echo "       only call that clears the driver's isConnected, and the"; \
+	       echo "       fresh-init arm of ERROR -> REINIT does not clear it, so"; \
+	       echo "       every later IPUseDHCPSet is refused -- permanently,"; \
+	       echo "       after the transport has recovered."; exit 1; }
+	@# ⛔ PIN 2 -- THE SETTLE TIME IS PRESERVED, as a PRODUCT. The claim that the
+	@# retry "costs no wall clock" rests entirely on the attempts being spread
+	@# across the 500 ms this branch already spent letting the AP stop. Computed
+	@# from the source's own two constants, so raising either without lowering
+	@# the other fails the build instead of quietly lengthening every AP->STA
+	@# switch -- or, worse, shortening the settle the "Let AP fully stop"
+	@# comment depends on.
+	@sl=`sed -n 's/^#define WIFI_MANAGER_APSTA_SETTLE_SLICES *\([0-9]*\)u.*/\1/p' $(WIFI_MGR_SRC) | head -1`; \
+	 ms=`sed -n 's/^#define WIFI_MANAGER_APSTA_SETTLE_SLICE_MS *\([0-9]*\)u.*/\1/p' $(WIFI_MGR_SRC) | head -1`; \
+	 test -n "$$sl" && test -n "$$ms" \
+	  || { echo "ERROR: could not read the #1060 settle constants from"; \
+	       echo "       $(WIFI_MGR_SRC) -- an empty value would make the"; \
+	       echo "       product below 0 and this pin vacuous."; exit 1; }; \
+	 test $$(( sl * ms )) -eq 500 \
+	  || { echo "ERROR: the AP->STA settle is now $$sl x $$ms = $$(( sl * ms )) ms,"; \
+	       echo "       not 500 (#1060 r2). The retry is spread ACROSS that"; \
+	       echo "       wait, so the two constants are one decision: changing"; \
+	       echo "       either alone either lengthens every AP->STA switch or"; \
+	       echo "       shortens the settle that 'Let AP fully stop' needs."; \
+	       exit 1; }
+	@# ⛔ PIN 3 -- REQUEST_ERROR still counts as DONE, not as a failure. It is
+	@# the harmless "isConnected was already false" answer and is the COMMON
+	@# case on an ordinary AP->STA switch; treating it as a failure would retry
+	@# five times on every single switch and log an error each time.
+	@$(CC) -fpreprocessed -E $(WIFI_MGR_SRC) 2>/dev/null \
+	   | grep -q 'WDRV_WINC_STATUS_REQUEST_ERROR == discStatus' \
+	  || { echo "ERROR: the #1060 retry no longer treats REQUEST_ERROR as done."; \
+	       echo "       That is the harmless already-disconnected answer and the"; \
+	       echo "       common case, so the loop would retry on every AP->STA"; \
+	       echo "       switch and report a failure that did not happen."; exit 1; }
+	@# ⛔⛔⛔ PIN 4 (r8) -- EVERY DETECTED BSSDisconnect FAILURE RECORDS THE
+	@# TEARDOWN. NO SITE IS LOG-ONLY.
+	@#
+	@# ⚠ THIS PIN HAS REVERSED ITS PURPOSE, AND THAT IS THE HISTORY WORTH
+	@# KEEPING. It began as a STOP-WORK pin: "the three older log-only sites are
+	@# UNTOUCHED", guarding the operator's ruling A (fix the introduced instance,
+	@# ticket the wider class) against a well-meant "while I'm here". r7 narrowed
+	@# it to two. r8 deletes the category.
+	@#
+	@# What changed is the CLASSIFICATION, not the ruling. I had called those
+	@# sites pre-existing because their log-only handling is older than this PR
+	@# -- true of the CODE, and the wrong test. r7's audit showed the right one:
+	@# on origin/main a failed disconnect at those sites was recovered by the
+	@# queued STA_CONNECTED re-setting the flag, and THIS PR's stale-event drop
+	@# removes that route. main recovers; r7 did not. So the regression is
+	@# INTRODUCED at all four sites even though three of the lines are old.
+	@# ⭐ Introduced-vs-pre-existing is keyed on whether THIS CHANGE MADE THE
+	@# OUTCOME WORSE, not on the age of the lines. Line ancestry is not defect
+	@# ancestry.
+	@#
+	@# So the pin now REQUIRES work rather than forbidding it, and it is keyed
+	@# per site on that site's own LOG_E text -- a file-wide count cannot say
+	@# WHICH site has an arm, which is the by-name blindness this file has paid
+	@# for three times now.
+	@#
+	@# Measured: `disable` and `STA->AP` have 0 arms at 4f876ae9f and 1 here;
+	@# `STA reconfigure` has 1 at both, so it is this pin's own control.
+	@n=`$(CC) -fpreprocessed -E $(WIFI_MGR_SRC) 2>/dev/null \
+	     | grep -c 'BSS disconnect failed on '`; \
+	 test "$$n" -eq 3 \
+	  || { echo "ERROR: $$n BSSDisconnect failure-log site(s), expected 3"; \
+	       echo "       (disable, STA->AP, STA reconfigure). A NEW one has to"; \
+	       echo "       be added to the list below with its own arm, or it is a"; \
+	       echo "       failure path that records nothing (#1060 r8)."; exit 1; }
+	@for tag in 'disable' 'STA->AP' 'STA reconfigure'; do \
+	   set -- `$(CC) -fpreprocessed -E $(WIFI_MGR_SRC) 2>/dev/null \
+	     | awk -v tag="$$tag" '{ buf[NR]=$$0 } \
+	            index($$0, "BSS disconnect failed on " tag) { found=1; \
+	              for (k=NR-14; k<NR; k++) \
+	                if (buf[k] ~ /WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING/ \
+	                    && buf[k-1] ~ /SetEventFlag/) armed++ } \
+	            END { printf "%d %d", found+0, armed+0 }'`; \
+	   test "$$1" -eq 1 \
+	    || { echo "ERROR: no BSSDisconnect failure log found for the '$$tag'"; \
+	         echo "       site (#1060 r8). This pin keys on that text; if the"; \
+	         echo "       message was reworded, update the list."; exit 1; }; \
+	   test "$$2" -eq 1 \
+	    || { echo "ERROR: the '$$tag' BSSDisconnect failure has $$2"; \
+	         echo "       TEARDOWN_PENDING set-arm(s), expected exactly 1"; \
+	         echo "       (#1060 r8). Without one, a bus fault there leaves the"; \
+	         echo "       chip associated with isConnected stuck true, every"; \
+	         echo "       later IPUseDHCPSet refused, and APPLY unable to"; \
+	         echo "       recover -- because this PR's stale-event drop removed"; \
+	         echo "       the queued STA_CONNECTED that used to retry it by"; \
+	         echo "       accident. Mirror the arm the other sites use."; \
+	         exit 1; }; \
+	 done
+	@# ⛔ PIN 5 -- the exhausted-retry log names the TICKET. When the retry does
+	@# not save it the operator is in the pre-existing class, and the one thing
+	@# that makes that diagnosable from SYSTem:LOG? is the reference.
+	@#
+	@# ⚠ KEYED ON A FRAGMENT THAT LIVES ON ONE SOURCE LINE. The message is built
+	@# from adjacent string literals across three lines, and
+	@# `cc -fpreprocessed -E` strips COMMENTS while PRESERVING THE GEOMETRY --
+	@# it does not join literals or collapse lines. Matching the whole sentence
+	@# therefore failed on correct code (measured: this pin fired on the very
+	@# commit that added the message). Flattening would not fix it either: the
+	@# concatenation boundary leaves `a " "reinit` in the text, not `a reinit`.
+	@#
+	@# ⚠ IT BIT TWICE. Shortening the message for the ceiling moved the split,
+	@# and the three-word fragment this pin used straddled it. So the fragment
+	@# is now the SHORTEST thing that is still unique -- the ticket reference
+	@# itself, which no reflow can split because it is one token.
+	@$(CC) -fpreprocessed -E $(WIFI_MGR_SRC) 2>/dev/null \
+	   | grep -q 'isConnected (#1060)' \
+	  || { echo "ERROR: the #1060 exhausted-retry message no longer names the"; \
+	       echo "       ticket. A bare 'disconnect failed' leaves the operator"; \
+	       echo "       with a board that refuses DHCP and no way to connect"; \
+	       echo "       that symptom to the known class."; exit 1; }
+	@# ⛔ PIN 6 -- r3: AN OUTSTANDING TEARDOWN IS RE-ATTEMPTED ON EVERY REINIT.
+	@# This is the UNBOUNDED retry the stale STA_CONNECTED used to supply by
+	@# accident. r2 bounded it to the settle window, and the r2 audit was right
+	@# that bounding an unbounded retry still turns a transient fault into a
+	@# permanent one -- just later. Without this block the exhaustion case is a
+	@# regression, not the pre-existing class.
+	@pp=`$(CC) -fpreprocessed -E $(WIFI_MGR_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING)) { const WDRV_WINC_STATUS retryStatus = WDRV_WINC_BSSDisconnect("*) ;; \
+	   *) echo "ERROR: no REINIT-side re-attempt of an outstanding teardown"; \
+	      echo "       (#1060 r3). The bounded retry in the AP->STA branch is"; \
+	      echo "       NOT sufficient on its own: before this PR the stale"; \
+	      echo "       STA_CONNECTED made every ERROR -> REINIT retry the"; \
+	      echo "       disconnect indefinitely, so any transient fault healed."; \
+	      echo "       With only a bounded retry, a fault that outlasts the"; \
+	      echo "       500 ms window is PERMANENT -- a regression this PR would"; \
+	      echo "       be introducing, not inheriting."; exit 1;; \
+	 esac
+	@# ⛔ PIN 7 -- the teardown flag is SET somewhere and CLEARED somewhere.
+	@# Set-only would retry for ever after one failure; clear-only would never
+	@# retry at all. Both directions, because one of them passing says nothing
+	@# about the other.
+	@#
+	@# ⚠ THIS IS A PRESENCE CHECK AND IT IS NOT POSITIONAL -- measured by its own
+	@# mutant. There are now FIVE set sites (one per BSSDisconnect site, plus
+	@# the ENTRY restore), so deleting any subset leaves this pin satisfied;
+	@# what catches that is PIN 10's exactly-ten COUNT and PIN 4's per-site
+	@# check. The pins are complementary and none is sufficient: this one says
+	@# "both directions exist", PIN 4 says "each site has its arm", PIN 10 says
+	@# "and all ten writes are still there, each under a lock".
+	@#
+	@# ⛔ r8: PIN 4 now SHADOWS this pin's SET half -- remove every setter and
+	@# PIN 4 fires first. This pin is NOT redundant, because its CLEAR half is
+	@# unique: nothing else in this file asserts that anything ever clears the
+	@# marker, and a set-only implementation would re-issue a disconnect on
+	@# every REINIT for the rest of the session. That clear half has no mutant
+	@# of its own, which is a stated hole in pin1060_mutate.sh rather than a
+	@# fixed one.
+	@pp=`$(CC) -fpreprocessed -E $(WIFI_MGR_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING)"*) ;; \
+	   *) echo "ERROR: nothing SETS the #1060 teardown-pending flag, so the"; \
+	      echo "       REINIT re-attempt can never run."; exit 1;; \
+	 esac; \
+	 case "$$pp" in \
+	   *"ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING)"*) ;; \
+	   *) echo "ERROR: nothing CLEARS the #1060 teardown-pending flag, so once"; \
+	      echo "       set it would re-issue a disconnect on every REINIT for"; \
+	      echo "       the rest of the session."; exit 1;; \
+	 esac
+	@# ⛔ PIN 8 -- ⭐ EXACTLY ONE WRITER OF STA_CONNECTED, and a COUNT rather
+	@# than an absence, which is the whole lesson of this pin.
+	@#
+	@# The property is "the AP->STA branch must not re-set STA_CONNECTED":
+	@# doing so would restore the lost unbounded retry -- that is exactly why it
+	@# is tempting -- and would reinstate the wrong link-state report this PR
+	@# exists to fix, one flag answering two questions. r3 uses a dedicated flag.
+	@#
+	@# ⚠ MY FIRST VERSION FORBADE THE WRITE FILE-WIDE AND FIRED IMMEDIATELY, on
+	@# the LEGITIMATE writer: the association-event handler in MainState sets
+	@# STA_CONNECTED when a real connection (or an AP client) arrives, and must.
+	@# That is "presence without position" from the other side -- a negative pin
+	@# whose scope is wrong fails on correct code. A count fixes it without a
+	@# brittle range extraction: ONE writer is the association handler, a SECOND
+	@# is someone re-setting the flag to buy back the retry.
+	@#
+	@# It also cannot go vacuous, which a bare absence check can: a count of 0
+	@# fails just as loudly as a count of 2, so a broken pattern or a moved file
+	@# reports instead of passing.
+	@n=`$(CC) -fpreprocessed -E $(WIFI_MGR_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' ' \
+	     | grep -o 'SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED)' \
+	     | wc -l`; \
+	 test "$$n" -eq 1 \
+	  || { echo "ERROR: $$n writer(s) of STA_CONNECTED, expected exactly 1"; \
+	       echo "       (#1060 r3). ONE is the association-event handler in"; \
+	       echo "       MainState, which is correct and required."; \
+	       echo "       A SECOND is almost certainly the AP->STA branch"; \
+	       echo "       re-setting the flag to recover the unbounded disconnect"; \
+	       echo "       retry -- which also reinstates the stale link-state"; \
+	       echo "       report this PR removes. Use"; \
+	       echo "       WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING, which answers"; \
+	       echo "       only \"is a teardown outstanding?\"."; \
+	       echo "       ZERO means the pattern or the path is broken, not that"; \
+	       echo "       the code is clean."; exit 1; }
+	@# ⛔ PIN 9 -- r4: THE TEARDOWN MARKER SURVIVES MainState ENTRY.
+	@# ResetAllEventFlags() is a memset of the whole flag word, so without an
+	@# explicit preserve the marker dies on the fresh-init fall-through -- and
+	@# that falsifies r3's central claim that the disconnect is re-attempted on
+	@# every REINIT pass. It is re-attempted ONCE, then the marker is erased.
+	@# Checked as the file's own idiom: read into a local BEFORE the reset and
+	@# re-set AFTER, the same shape the firmware-update request uses.
+	@pp=`$(CC) -fpreprocessed -E $(WIFI_MGR_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
+	 case "$$pp" in \
+	   *"bool teardownPending = GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING);"*) ;; \
+	   *) echo "ERROR: MainState ENTRY does not preserve the #1060 teardown"; \
+	      echo "       marker across ResetAllEventFlags() (r4). That memset"; \
+	      echo "       erases the whole flag word, so a FAILED REINIT-side"; \
+	      echo "       retry -- which falls through to fresh-init and re-enters"; \
+	      echo "       MainState -- loses the marker and the disconnect is"; \
+	      echo "       never retried again. The flag records a fact about the"; \
+	      echo "       CHIP and may be cleared ONLY by a disconnect that"; \
+	      echo "       reached it."; exit 1;; \
+	 esac
+	@# ⛔ PIN 10 -- ⭐ EVERY write of the marker is inside a CRITICAL SECTION,
+	@# counted and positional, per PIN 8's lesson.
+	@#
+	@# Set/ResetEventFlag are plain read-modify-writes on one shared 16-bit word
+	@# ($(WIFI_MGR_SRC):948 and :952). A higher-priority USB-task
+	@# SYST:COMM:LAN:FWUpdate setting WIFI_FW_UPDATE_REQUESTED between a load
+	@# and its store is ERASED. This PR already documented that and took the
+	@# lock for two writes, and r3 then added three more without it.
+	@#
+	@# ⛔ NOT A DEPTH COUNTER. A depth counter is the wrong MODEL of this file:
+	@# critical sections here have MULTIPLE EXIT PATHS (an early return inside
+	@# the section needs its own taskEXIT_CRITICAL), so ENTER and EXIT are
+	@# deliberately unbalanced -- measured 27 ENTER against 31 EXIT. A counter
+	@# therefore goes negative near the top of the file and reads every later
+	@# write as unprotected. My first version did exactly that and reported all
+	@# four sites unprotected, including ones I had just wrapped; a direct read
+	@# of the four sites disproved it.
+	@#
+	@# The sound test is the NEAREST PRECEDING MARKER: a write is inside a
+	@# section iff the last ENTER/EXIT seen before it was an ENTER. That is
+	@# correct under multiple exits and needs no balance assumption.
+	@#
+	@# The COUNT is asserted too, so a write that moves out of the scanned
+	@# region -- or a pattern that stops matching -- fails instead of passing
+	@# quietly.
+	@$(CC) -fpreprocessed -E $(WIFI_MGR_SRC) 2>/dev/null \
+	  | awk '/taskENTER_CRITICAL/{last="in"} \
+	         /taskEXIT_CRITICAL/{last="out"} \
+	         /WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING\)?;?$$/ { \
+	             if (prev ~ /(Set|Reset)EventFlag\(/) { n++; if (last != "in") bad++ } } \
+	         {prev=$$0} \
+	         END{printf "%d %d\n", n+0, bad+0}' > /tmp/.p1060cs.$$$$; \
+	 read n bad < /tmp/.p1060cs.$$$$; rm -f /tmp/.p1060cs.$$$$; \
+	 test "$$n" -eq 10 \
+	  || { echo "ERROR: found $$n write(s) of the #1060 teardown marker,"; \
+	       echo "       expected 10: a set+clear PAIR at each of the four"; \
+	       echo "       BSSDisconnect sites (AP->STA, STA-reconfigure, disable,"; \
+	       echo "       STA->AP), plus the clear in the REINIT retry and the"; \
+	       echo "       ENTRY restore. A different count means this pin is no"; \
+	       echo "       longer looking at the writes it was written for --"; \
+	       echo "       which is a failure, not a pass."; \
+	       echo "       (4 before r7, 6 after it, 10 after r8. Each step added"; \
+	       echo "       a pair because the audit showed this PR had removed that"; \
+	       echo "       site's accidental recovery route. This pin caught every"; \
+	       echo "       addition, which is exactly its job.)"; \
+	       exit 1; }; \
+	 test "$$bad" -eq 0 \
+	  || { echo "ERROR: $$bad write(s) of the #1060 teardown marker are OUTSIDE"; \
+	       echo "       a critical section. Set/ResetEventFlag are plain"; \
+	       echo "       read-modify-writes on one shared 16-bit word, so a"; \
+	       echo "       higher-priority task's flag write in that window is"; \
+	       echo "       silently erased -- including the FWUpdate request this"; \
+	       echo "       file already preserves by hand."; exit 1; }
+	$(CC) $(CFLAGS) -o $(APSTA1060_BIN) test_1060_apsta_disconnect_retry.c
 
 $(BIN): test_circularbuffer.c test_framework.h stubs/Logger.h stubs/osal/osal.h $(FW_UTIL)/CircularBuffer.c $(FW_UTIL)/CircularBuffer.h $(RECIPES)
 	cp $(FW_UTIL)/CircularBuffer.c $(UUT)
@@ -4594,8 +4879,9 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
      $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) \
      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) \
      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(USECALTYPE_BIN) $(ARM_BIN) $(NAME_BIN) \
-     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN)
+     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN)
 	./$(SEQ908_BIN)
+	./$(APSTA1060_BIN)
 	./$(BUTTONLATCH_BIN)
 	./$(TEAR904_BIN)
 	./$(SUMBUDGET_BIN)
@@ -4899,6 +5185,6 @@ clean:
 	      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(GEN_1125) \
 	      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(SDLOG1029_GEN).tmp \
 	      $(USECALTYPE_BIN) $(NAME_BIN) $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(ARM_BIN) $(SCPIDAC_RAILGATE_BIN) \
-	      $(FORCEGATE_BIN) $(LOG1039_BIN) $(LOG1039_GEN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN)
+	      $(FORCEGATE_BIN) $(LOG1039_BIN) $(LOG1039_GEN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN)
 
 .PHONY: run clean
