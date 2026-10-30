@@ -169,6 +169,20 @@ _Static_assert(offsetof(SYS_FS_FSTAT, lfname) >= sizeof(FILINFO),
  * overflow path is "skip" turns a sizing mistake into a correctness regression
  * with no symptom, so the size is PROVEN at compile time rather than argued. */
 
+/* ⛔ #1124 r38: THE PEEK CHUNK MUST OUTSIZE THE LONGEST LINE WE CAN WRITE.
+ *
+ * sd_ManifestRecordsName() refuses with SD_INSPECT_FAULT when the first line
+ * does not end inside its first read (r37 finding (a): "not a manifest" and
+ * "could not see the first line" are different answers). That refusal must be
+ * impossible for a manifest THIS firmware produced, or an ordinary card would
+ * disarm every later capture -- the r21 defect, arrived at from the other side.
+ *
+ * It is impossible because our own records are bounded by SD_MANIFEST_LINE_MAX
+ * and the chunk is strictly larger. Those were two independent literals; this
+ * makes them one source, so a chunk shrink (a stack-budget trim is the likely
+ * reason anyone would) cannot quietly cross the line. */
+#define SD_MANIFEST_PEEK_CHUNK  256u
+
 /* sd_BuildBucketPath formats <dir> + '/' + prefix + 3 digits + NUL. */
 #define SD_BUCKET_PATH_MAX \
         (SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX + 1u \
@@ -181,8 +195,40 @@ _Static_assert(offsetof(SYS_FS_FSTAT, lfname) >= sizeof(FILINFO),
         ((SD_BUCKET_PATH_MAX - 1u) + 1u \
          + SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX + 1u)
 
+/* ⛔⛔ #1124 r38: THE TWO "CANNOT NAME IT" GIVE-UPS IN sd_ScanForeignManifests
+ * ARE UNREACHABLE, AND THIS IS WHERE THAT IS PROVEN RATHER THAN ARGUED.
+ *
+ * That scan has two places where a path it cannot build is simply skipped --
+ * the `parentLen < sizeof(parent)` look-up leg, and sd_BuildBucketPath()
+ * returning false in the look-down loop. Both leave the verdict CLEAR, i.e.
+ * they PERMIT an overwrite on the strength of a directory nobody read. If
+ * either could fire, it would be the r37-class defect: a give-up that reports
+ * the same thing as a clean scan.
+ *
+ * They cannot fire, because both buffers are sized from the bound the settings
+ * field itself enforces -- but "cannot" was an argument about today's sizes, and
+ * the whole r37 finding was that such arguments go stale silently. Following
+ * :235's rule, the assert ties the bound to the STRUCT the scan reads from, not
+ * to its own definition: widen sd_card_manager_settings_t.directory and this
+ * fails at compile time instead of turning two skips live. */
+_Static_assert(sizeof(((sd_card_manager_settings_t *)0)->directory)
+               <= SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX + 1u,
+               "#1124 r38: SD_BUCKET_PATH_MAX and sd_ScanForeignManifests' "
+               "parent[] are sized from SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX; "
+               "a wider settings directory makes both give-ups reachable");
+_Static_assert(SD_BUCKET_PATH_MAX
+               >= (sizeof(((sd_card_manager_settings_t *)0)->directory) + 1u
+                   + (sizeof(SD_CARD_MANAGER_BUCKET_PREFIX) - 1u) + 3u),
+               "#1124 r38: the bucket path must hold a full-capacity configured "
+               "directory plus its separator, prefix and 3-digit index");
+
 /* The bucket index is printed with three padded digits, so a ceiling above 999
  * would silently outgrow SD_BUCKET_PATH_MAX. Tied to the ceiling itself. */
+_Static_assert(SD_MANIFEST_LINE_MAX < SD_MANIFEST_PEEK_CHUNK,
+               "#1124 r38: a manifest line WE wrote must always terminate "
+               "inside the peek chunk, or the truncated-first-line FAULT "
+               "would refuse an ordinary card");
+
 _Static_assert(SD_CARD_MANAGER_MAX_BUCKET <= 999u,
                "#1124: SD_BUCKET_PATH_MAX assumes a 3-digit bucket index");
 /* A shrink must never become a growth: neither bound may exceed the buffer
@@ -2988,12 +3034,13 @@ static sd_InspectResult sd_NameIsRotationPartOfExistingManifest(const char *name
  *                   indices this manifest already claims. */
 static sd_InspectResult sd_ManifestRecordsName(const char *manifestPath,
                                                const char *needle) {
-    /* 256 and not 64: the read count is what this costs, and a 4x bigger
+    /* SD_MANIFEST_PEEK_CHUNK (256) and not 64: the read count is what this
+     * costs, and a 4x bigger
      * chunk is 4x fewer SYS_FS_FileRead calls over the same bytes. Not larger,
      * because this runs on app_SDCardTask, whose stack is 1024 words with a
      * profiled 468-word peak (app_freertos.c) -- 256 + SD_MANIFEST_LINE_MAX
      * keeps the addition well inside that margin. */
-    char chunk[256];
+    char chunk[SD_MANIFEST_PEEK_CHUNK];
     char line[SD_MANIFEST_LINE_MAX];
     size_t lineLen = 0u;
     uint32_t lines = 0u;
@@ -3052,6 +3099,33 @@ static sd_InspectResult sd_ManifestRecordsName(const char *manifestPath,
         if (!identified && got > 0u) {
             identified = true;
             if (!SdManifest_FirstLineLooksLikeManifest(chunk, got)) {
+                /* ⛔⛔ #1124 r38: "NOT A MANIFEST" AND "COULD NOT SEE THE FIRST
+                 * LINE" ARE DIFFERENT ANSWERS, AND ONLY ONE OF THEM IS CLEAR.
+                 *
+                 * SdManifest_FirstLineLooksLikeManifest returns false both for
+                 * a line that is genuinely not a manifest header AND for one
+                 * it ran out of buffer before finishing (`i >= len`). The sniff
+                 * sees only this first read -- at most sizeof(chunk) -- so a
+                 * first record longer than that produced "not a manifest", the
+                 * whole file was SKIPPED as CLEAR, its records set no foreign
+                 * bit, and rotation truncated a file it had recorded. That is
+                 * r37 finding (a), and it is the same conflation as r24's
+                 * over-long name: COULD NOT INSPECT reported as NOTHING HERE.
+                 *
+                 * Discriminate on whether the whole first line was actually
+                 * visible. No terminator AND a full buffer means more bytes
+                 * follow that we have not looked at -- we did not inspect it,
+                 * so FAULT. No terminator with a SHORT read means the file
+                 * simply ends there, so the line WAS fully seen and a genuine
+                 * "not a manifest" verdict stands. */
+                if (!SdManifest_FirstLineFullyVisible(chunk, got,
+                                                      sizeof(chunk))) {
+                    /* log_budget: max=87 */
+                    LOG_E("[SD1124] unparsable first line exceeds %u bytes",
+                          (unsigned)sizeof(chunk));
+                    out = SD_INSPECT_FAULT;
+                    break;
+                }
                 /* log_budget: max=87 */
                 LOG_E("[SD1124] note not a manifest: '%s'", manifestPath);
                 break;              /* out stays CLEAR: skipped, not refused */
@@ -3548,6 +3622,10 @@ static sd_InspectResult sd_ScanForeignManifests(const char *needle) {
          * and recorded it from up there. */
         char parent[SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX + 1u];
         const size_t parentLen = cut - 1u;      /* drop the separator */
+        /* #1124 r38: parentLen < dirLen <= the settings field's capacity, and
+         * parent[] is that capacity + 1, so this is always true -- see the
+         * _Static_asserts at SD_BUCKET_PATH_MAX. A false here would silently
+         * skip the look-up leg and leave the verdict CLEAR. */
         if (parentLen < sizeof(parent)) {
             memcpy(parent, dir, parentLen);
             parent[parentLen] = '\0';
@@ -3569,7 +3647,17 @@ static sd_InspectResult sd_ScanForeignManifests(const char *needle) {
                      && (out == SD_INSPECT_CLEAR); b++) {
             char child[SD_BUCKET_PATH_MAX];
             if (!sd_BuildBucketPath(child, sizeof(child), dir, b)) {
-                continue;               /* cannot name it: nothing to read */
+                /* ⛔ #1124 r38: UNREACHABLE BY CONSTRUCTION, and the earlier
+                 * comment here ("cannot name it: nothing to read") stated the
+                 * refuted reasoning -- a bucket we cannot NAME is a bucket we
+                 * cannot READ, so skipping it would PERMIT on the strength of
+                 * an unscanned directory. child[] is SD_BUCKET_PATH_MAX, sized
+                 * for a full-capacity settings directory plus '/P###', and the
+                 * _Static_asserts beside that macro fail the build if the field
+                 * ever outgrows it. Kept as a skip rather than a FAULT only
+                 * because it cannot happen; if those asserts are ever relaxed,
+                 * this must become SD_INSPECT_FAULT, not a continue. */
+                continue;
             }
             /* ⛔ r30 (:3141): THE CLAIM THAT USED TO BE HERE -- "our own
              * manifest is in D, never in a bucket" -- WAS FALSE. SD:FILE

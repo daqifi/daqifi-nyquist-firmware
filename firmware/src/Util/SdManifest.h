@@ -1162,6 +1162,49 @@ static inline bool SdManifest_PathsEqualCaseInsensitive(const char *a,
 }
 
 /**
+ * @brief Was the WHOLE first line visible in this first read?
+ *
+ * ⛔⛔ #1124 r38. SdManifest_FirstLineLooksLikeManifest() returns false for TWO
+ * different reasons -- a line that genuinely is not a manifest header, and one
+ * it ran out of buffer before finishing. Its caller in the foreign scan treated
+ * both as "not a manifest" and SKIPPED the whole file as CLEAR, so a first
+ * record longer than the scan's read buffer meant the manifest's records set no
+ * foreign bit and rotation truncated a file it had recorded (r37 finding (a)).
+ *
+ * This is the discriminator, kept HERE rather than inline at the call site so
+ * it is the same code the host tests exercise with real inputs -- an outcome
+ * pin rather than a structural one.
+ *
+ * A terminator anywhere in the read means the first line ended inside it. With
+ * no terminator, a SHORT read (len < cap) means the file itself ended, so the
+ * line was still fully seen; a FULL read (len == cap) means more bytes follow
+ * that nobody has looked at.
+ *
+ * @param data First bytes read. May be NULL only when len is 0.
+ * @param len  Valid bytes in `data`.
+ * @param cap  Capacity of the read buffer `data` came from.
+ * @return true when a verdict about the first line is safe to trust.
+ */
+static inline bool SdManifest_FirstLineFullyVisible(const char *data,
+                                                     size_t len, size_t cap)
+{
+    size_t i;
+    if (len == 0u) {
+        return true;        /* empty file: nothing to mis-read */
+    }
+    if (data == NULL) {
+        return false;
+    }
+    for (i = 0u; i < len; i++) {
+        if (data[i] == '\n') {
+            return true;    /* the first line ended inside this read */
+        }
+    }
+    return (len < cap);     /* no terminator: trustworthy only at EOF */
+}
+
+
+/**
  * @brief True if `data` (the first `len` bytes read back from an
  * already-existing file) is empty, or begins with a line
  * SdManifest_FormatLine could have produced: a run of one or more characters

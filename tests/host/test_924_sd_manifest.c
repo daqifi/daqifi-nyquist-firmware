@@ -742,6 +742,117 @@ TEST(first_line_check_rejects_near_misses)
     ASSERT_FALSE(SdManifest_FirstLineLooksLikeManifest(g, sizeof(g) - 1u));
 }
 
+/* ======================================================================
+ * #1124 r38 -- OUTCOME PINS for the truncated-first-line give-up site.
+ *
+ * sd_ScanForeignManifests() reads the first chunk of a candidate manifest and
+ * asks SdManifest_FirstLineLooksLikeManifest(). That returns false for TWO
+ * reasons, and r37 finding (a) was that the call site collapsed them: a real
+ * manifest whose first record is longer than the read buffer was skipped as
+ * CLEAR, so its recorded names set no foreign bit and rotation could truncate
+ * a file the manifest had recorded.
+ *
+ * These are OUTCOME pins, not structural ones: the discriminator the site now
+ * calls is exercised here directly, with the real inputs, so a regression that
+ * widens the FAULT arm (refusing ordinary non-manifests) or narrows it
+ * (re-swallowing a truncated manifest) fails a test rather than a grep.
+ * ====================================================================== */
+
+TEST(r38_truncated_first_line_is_not_fully_visible)
+{
+    /* THE DEFECT ITSELF. A full read (len == cap) with no terminator in it:
+     * more bytes follow that nobody has looked at, so "not a manifest" is an
+     * answer about a line we never saw the end of. Must be FAULT-worthy. */
+    char chunk[64];
+    memset(chunk, 'A', sizeof(chunk));          /* no '\n' anywhere */
+
+    /* The classifier rejects it -- that is the ambiguous verdict ... */
+    ASSERT_FALSE(SdManifest_FirstLineLooksLikeManifest(chunk, sizeof(chunk)));
+    /* ... and the discriminator says why: we could not see the whole line. */
+    ASSERT_FALSE(SdManifest_FirstLineFullyVisible(chunk, sizeof(chunk),
+                                                  sizeof(chunk)));
+
+    /* A LONG manifest-shaped first record is the realistic form of it: the
+     * name alone overruns the buffer, so the bytes in hand look like nothing. */
+    char longName[64];
+    memset(longName, 'n', sizeof(longName));
+    ASSERT_FALSE(SdManifest_FirstLineLooksLikeManifest(longName,
+                                                       sizeof(longName)));
+    ASSERT_FALSE(SdManifest_FirstLineFullyVisible(longName, sizeof(longName),
+                                                  sizeof(longName)));
+}
+
+TEST(r38_short_read_without_terminator_is_fully_visible)
+{
+    /* No terminator, but the read came up SHORT -- the file ended. The whole
+     * first line is in hand, it simply has no '\n'. That is a genuine
+     * not-a-manifest and must stay CLEAR (skipped), never FAULT: treating EOF
+     * as unreadable would refuse to scan every unterminated foreign file. */
+    static const char f[] = "name,123,0x1A2B3C4D";   /* no '\n' */
+    ASSERT_FALSE(SdManifest_FirstLineLooksLikeManifest(f, sizeof(f) - 1u));
+    ASSERT_TRUE(SdManifest_FirstLineFullyVisible(f, sizeof(f) - 1u, 64u));
+}
+
+TEST(r38_terminator_present_is_fully_visible_even_on_a_full_read)
+{
+    /* A full read is not itself suspicious -- only a full read with nothing
+     * to end the first line is. Fill the buffer completely but terminate the
+     * first line inside it. */
+    char chunk[64];
+    memset(chunk, 'x', sizeof(chunk));
+    chunk[3] = '\n';
+    ASSERT_TRUE(SdManifest_FirstLineFullyVisible(chunk, sizeof(chunk),
+                                                 sizeof(chunk)));
+
+    /* Terminator on the very last byte still counts: the line ended. */
+    memset(chunk, 'x', sizeof(chunk));
+    chunk[sizeof(chunk) - 1u] = '\n';
+    ASSERT_TRUE(SdManifest_FirstLineFullyVisible(chunk, sizeof(chunk),
+                                                 sizeof(chunk)));
+}
+
+TEST(r38_empty_and_null_are_fully_visible)
+{
+    /* An empty read has no first line to mis-read, and must not be refused --
+     * it is the same "nothing to lose" case
+     * first_line_check_accepts_empty_content covers for the classifier. */
+    ASSERT_TRUE(SdManifest_FirstLineFullyVisible("", 0u, 64u));
+    ASSERT_TRUE(SdManifest_FirstLineFullyVisible(NULL, 0u, 64u));
+
+    /* A non-zero length with no buffer is a caller bug, not an EOF: refuse. */
+    ASSERT_FALSE(SdManifest_FirstLineFullyVisible(NULL, 8u, 64u));
+}
+
+/* ⛔ THE ARM MUST BE EXACTLY AS WIDE AS THE DEFECT. Every input the classifier
+ * already rejects for a CONTENT reason has to come back fully-visible, or the
+ * new FAULT arm would refuse ordinary foreign files and the scan would stop
+ * working on a healthy card. This is the half a structural pin cannot state:
+ * it asserts which side of the split each real input lands on. */
+TEST(r38_content_rejections_stay_clear_not_fault)
+{
+    static const char *const seenInFull[] = {
+        "timestamp,ch0,ch1,ch2\n1000,1.23,4.56,7.89\n",  /* unrelated data */
+        "exp-3.csv,204\n",                               /* disk-full fragment */
+        "exp-3.csv,\n",
+        "exp-3.csv,204,0x1A2\n",
+        "name,1230x1A2B3C4D\n",                          /* near misses */
+        "name,,0x1A2B3C4D\n",
+        "name,123,1A2B3C4D\n",
+        "name,123,0x1A2B3C4\n",
+        "name,123,0x1A2B3C4D5\n",
+        ",123,0x1A2B3C4D\n",
+    };
+    size_t i;
+    for (i = 0u; i < (sizeof(seenInFull) / sizeof(seenInFull[0])); i++) {
+        size_t len = strlen(seenInFull[i]);
+        /* Each is rejected ... */
+        ASSERT_FALSE(SdManifest_FirstLineLooksLikeManifest(seenInFull[i], len));
+        /* ... and each was rejected on CONTENT, having been seen whole, so
+         * the site skips it as CLEAR. None of these may become a FAULT. */
+        ASSERT_TRUE(SdManifest_FirstLineFullyVisible(seenInFull[i], len, 64u));
+    }
+}
+
 /* ---------------------------------- defect 3: fresh-file accounting reset */
 
 /* The exact record for a file that was just truncate-opened and never
@@ -2105,5 +2216,12 @@ int main(void)
     RUN(a_configured_name_containing_separators_is_matched);
     RUN(a_configured_name_with_separators_still_rejects_near_misses);
     RUN(a_padded_index_is_never_one_of_our_parts);
+
+    /* #1124 r38: outcome pins for the truncated-first-line give-up site. */
+    RUN(r38_truncated_first_line_is_not_fully_visible);
+    RUN(r38_short_read_without_terminator_is_fully_visible);
+    RUN(r38_terminator_present_is_fully_visible_even_on_a_full_read);
+    RUN(r38_empty_and_null_are_fully_visible);
+    RUN(r38_content_rejections_stay_clear_not_fault);
     return TEST_SUMMARY();
 }
