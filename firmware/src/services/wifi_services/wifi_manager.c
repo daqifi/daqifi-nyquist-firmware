@@ -255,6 +255,38 @@ static volatile TickType_t gConsoleIdleDeadlineTicks =
 // SCPI task and read from app_WifiTask.
 static volatile bool gWincDeepPowerOff = false;
 
+/* #1193 r1 AUDIT MEDIUM: A TEARDOWN IS REQUESTED SYNCHRONOUSLY AND COMPLETED
+ * LATER, SO THE BRING-UP FLAGS OUTLIVE THE RADIO.
+ *
+ * wifi_manager_Deinit() only QUEUES WIFI_MANAGER_EVENT_DEINIT. On a power-down
+ * the task can reach WAIT_POWER_UP without ever processing it, and
+ * InvalidateStaLinkState() deliberately returns early while AP_STARTED is set,
+ * so AP_STARTED/STA_STARTED can still read "up" with the module powered off.
+ * wifi_manager_GetActiveNetworkMode() derives from that pair and would report
+ * mode 4 throughout STANDBY.
+ *
+ * ⚠ Why a NEW latch rather than any existing predicate -- all three obvious
+ * candidates are unsound here, checked at source:
+ *   - IsPoweredOff() (gWincDeepPowerOff) is NOT path-complete: PowerOff() is
+ *     reached only from PowerApi's button path and SYST:COMM:LAN:POWer 0.
+ *     SYST:POW:STAT 0 and SYST:REboot call wifi_manager_Deinit() DIRECTLY and
+ *     never set it, so gating on it passes a button bench test and misses the
+ *     SCPI path entirely.
+ *   - IsEnabled() IS path-complete (Deinit clears isEnabled in its critical
+ *     section) but is CONTAMINATED: SCPI_LANEnabledSet writes that same field
+ *     with no APPLY, so `LAN:ENAbled 0` alone would report "no mode" while the
+ *     radio still beacons -- reintroducing, through the back door, the exact
+ *     staged-vs-active confusion #1186 exists to remove.
+ *   - Clearing AP_STARTED/STA_STARTED in Deinit would break the teardown:
+ *     those flags GUARD what gets torn down, so clearing them before the
+ *     queued DEINIT runs makes the guards skip their work.
+ *
+ * So: set SYNCHRONOUSLY at the one chokepoint every teardown path passes
+ * through (Deinit), beside the synchronous work it already does there for the
+ * same reason, and cleared only where a bring-up has actually succeeded. It
+ * touches no existing flag semantics and is unreachable from staged config. */
+static volatile bool gWincTeardownPending = false;
+
 // Recursive mutex serializing wifi_manager_ProcessState across callers.
 // Today app_WifiTask is the primary owner; SCPI_Reset's active pump
 // (SYSTem:REboot path) also enters from the SCPI dispatch task.  Without
@@ -1454,6 +1486,10 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     break;
                 }
                 SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
+                /* #1193: a bring-up SUCCEEDED, so the queued teardown (if any) is
+                 * moot -- clear the latch HERE, co-located with the flag it
+                 * qualifies, so the two cannot drift apart. */
+                gWincTeardownPending = false;
 
             } else {
                 if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSCtxSetSSID(&pInstance->bssCtx, (uint8_t*) pInstance->pWifiSettings->ssid, strlen(pInstance->pWifiSettings->ssid))) {
@@ -1524,6 +1560,10 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 }
 
                 SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED);
+                /* #1193: a bring-up SUCCEEDED, so the queued teardown (if any) is
+                 * moot -- clear the latch HERE, co-located with the flag it
+                 * qualifies, so the two cannot drift apart. */
+                gWincTeardownPending = false;
                 // Reached steady state — release APPLY gate (#425).
                 // Order: deadline first, flag second.  If a higher-priority
                 // SCPI APPLY preempts between the two stores, it enters
@@ -2310,6 +2350,10 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 }
                 
                 SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED);
+                /* #1193: a bring-up SUCCEEDED, so the queued teardown (if any) is
+                 * moot -- clear the latch HERE, co-located with the flag it
+                 * qualifies, so the two cannot drift apart. */
+                gWincTeardownPending = false;
                 LOG_D("AP restarted with new settings\r\n");
                 
                 // Re-register socket callback after AP restart
@@ -2582,6 +2626,10 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     }
 
                     SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
+                    /* #1193: a bring-up SUCCEEDED, so the queued teardown (if any) is
+                     * moot -- clear the latch HERE, co-located with the flag it
+                     * qualifies, so the two cannot drift apart. */
+                    gWincTeardownPending = false;
                     LOG_D("STA mode connection initiated\r\n");
                 }
             }
@@ -2915,6 +2963,22 @@ wifi_manager_networkMode_t wifi_manager_GetActiveNetworkMode(void) {
     // One aligned read of eventFlags; no WINC round-trip, no wait, no lock,
     // so this is safe from the USB SCPI task (priority 7) and from
     // app_WifiTask itself -- the same contract as wifi_manager_GetLinkState().
+    // #1193 r1 AUDIT MEDIUM: A QUEUED TEARDOWN BEATS THE FLAGS.
+    //
+    // Checked BEFORE the flags, not after, because the flags are exactly what
+    // is stale here: wifi_manager_Deinit() only queues DEINIT, and on a
+    // power-down the task can reach WAIT_POWER_UP without processing it, so
+    // AP_STARTED/STA_STARTED can still read "up" with the module powered off.
+    // Without this, NETType? 1 answered 4 throughout STANDBY -- measured on
+    // the bench alongside LAN:POWer? reading 0.
+    //
+    // This is the whole reason the derivation needs a gate at all, and it is
+    // why the header's own description of the flags is now qualified: they are
+    // cleared on their teardown paths only once that teardown is PROCESSED.
+    if (gWincTeardownPending) {
+        return WIFI_MANAGER_NETWORK_MODE_NONE;
+    }
+
     const wifi_manager_stateFlag_t flags = gStateMachineContext.eventFlags;
 
     // AP first, matching the order DhcpEventCallback uses. Each bring-up path
@@ -3245,6 +3309,18 @@ bool wifi_manager_Deinit() {
     // STA_STARTED/assocHandle leaves BSSID?/RSSI/ADDR? reporting the dead
     // link.  Doing it here makes the query gates trip the moment Deinit runs.
     InvalidateStaLinkState();
+    /* #1193: latch the teardown SYNCHRONOUSLY, for the same reason the clear
+     * above is synchronous -- the DEINIT event below can be deferred
+     * indefinitely (BUSY re-queue, or app_WifiTask never scheduled again on a
+     * power-down), and until it runs the bring-up flags still read "up".
+     * InvalidateStaLinkState() cannot carry this: it returns early while
+     * AP_STARTED is set, deliberately, so the AP case would never be latched.
+     *
+     * Set AFTER that call and BEFORE the event, so a reader either sees the
+     * old state entirely or sees the teardown -- never a half-cleared STA link
+     * that still claims a mode. Each store is one aligned write, atomic on
+     * PIC32MZ, and this runs on whichever task called Deinit. */
+    gWincTeardownPending = true;
     return SendEvent(WIFI_MANAGER_EVENT_DEINIT);
 }
 

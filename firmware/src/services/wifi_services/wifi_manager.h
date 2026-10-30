@@ -291,8 +291,21 @@ extern "C" {
      * up, derived from the manager's own (file-private) AP_STARTED and
      * STA_STARTED bring-up flags: AP_STARTED is set immediately after a
      * successful WDRV_WINC_APStart and STA_STARTED immediately after a
-     * successful WDRV_WINC_BSSConnect, and each is cleared on its own
-     * teardown paths.
+     * successful WDRV_WINC_BSSConnect.
+     *
+     * ⛔ An earlier revision of this comment added "and each is cleared on its
+     * own teardown paths", full stop. That was FALSE and it is what made the
+     * derivation look safe to write: a teardown is only QUEUED
+     * (wifi_manager_Deinit sends WIFI_MANAGER_EVENT_DEINIT), and on a
+     * power-down the task can reach WAIT_POWER_UP without ever processing it,
+     * so the flags outlive the radio. #1193's round-1 audit caught it, and the
+     * bench showed NETType? 1 answering 4 throughout STANDBY while
+     * LAN:POWer? correctly read 0.
+     *
+     * They are cleared on their own teardown paths **once that teardown is
+     * processed**. Until then a separate synchronous latch, set inside
+     * wifi_manager_Deinit itself, makes this query report NONE -- see the
+     * implementation for why none of the existing predicates could serve.
      *
      * No new state was added for this. That pair IS the manager's existing
      * record of which mode is up: DhcpEventCallback already discriminates AP
