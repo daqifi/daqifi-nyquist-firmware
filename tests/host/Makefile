@@ -1209,6 +1209,12 @@ $(APSTA1060_BIN): test_1060_apsta_disconnect_retry.c test_framework.h \
 	       echo "       higher-priority task's flag write in that window is"; \
 	       echo "       silently erased -- including the FWUpdate request this"; \
 	       echo "       file already preserves by hand."; exit 1; }
+	@# ⚠ r3's arm here used to COUNT assignments of false and require 2. r5
+	@# added legitimate ones (the full-queue fallback, EVENT_EXIT's
+	@# xQueueReset, the #409 scrub), so that count was brittle and would have
+	@# failed on a CORRECT change -- the same way PIN 31 came to require a
+	@# defect. It is re-keyed onto the property it was protecting: no
+	@# BRING-UP site may touch the latch.
 	@# ⛔⛔ #1193 r2 PIN -- QUEUEING A TEARDOWN *IS* LATCHING IT.
 	@#
 	@# r1 set gWincDeinitQueued inside wifi_manager_Deinit() and called that
@@ -1265,17 +1271,31 @@ $(APSTA1060_BIN): test_1060_apsta_disconnect_retry.c test_framework.h \
 	       echo "       higher-priority NETType? 1 in that window reads the"; \
 	       echo "       stale mode. Order is the invariant, not just presence."; \
 	       exit 1; } ; \
-	 nc=`printf '%s\n' "$$pp" | grep -c 'gWincDeinitQueued = false'`; \
-	 test "$$nc" -eq 2 \
-	  || { echo "ERROR: #1193 r3 PIN: found $$nc assignment(s) of false to"; \
-	       echo "       gWincDeinitQueued, expected 2 (the declaration's"; \
-	       echo "       initialiser, and ONE clear)."; \
-	       echo "       ⛔ r2 cleared it at every successful bring-up and that"; \
-	       echo "       RACED: HRESet during INIT's 100 ms delay queues a"; \
-	       echo "       DEINIT and sets the latch, then the resuming bring-up"; \
-	       echo "       cleared it -- erasing a teardown NEWER than itself --"; \
-	       echo "       and the queued DEINIT reported a live mode again."; \
-	       echo "       A bring-up must never discard a newer teardown."; \
+	 printf '%s\n' "$$pp" \
+	   | grep -A3 -E 'SetEventFlag\(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_(AP|STA)_STARTED\)' \
+	   | grep -q 'gWincDeinitQueued' \
+	  && { echo "ERROR: #1193 r3 PIN: a BRING-UP site touches"; \
+	       echo "       gWincDeinitQueued. r2 cleared it at every successful"; \
+	       echo "       bring-up and that RACED: HRESet during INIT's 100 ms"; \
+	       echo "       delay queues a DEINIT and sets the latch, then the"; \
+	       echo "       resuming bring-up cleared it -- erasing a teardown"; \
+	       echo "       NEWER than itself -- and the queued DEINIT reported a"; \
+	       echo "       live mode again. A bring-up must never discard a"; \
+	       echo "       newer teardown."; \
+	       exit 1; } || true; \
+	 nq=`printf '%s\n' "$$pp" \
+	      | grep -cE 'xQueueSend\(gEventQH|xQueueReceive\(gEventQH|xQueueReset\(gEventQH'`; \
+	 test "$$nq" -eq 5 \
+	  || { echo "ERROR: #1193 r5 PIN: gEventQH is mutated at $$nq site(s),"; \
+	       echo "       not the 5 this latch's maintenance was derived for."; \
+	       echo "       gWincDeinitQueued CACHES 'the queue holds a DEINIT',"; \
+	       echo "       so EVERY site adding or discarding queued events must"; \
+	       echo "       keep it true. r4 covered a failed SEND; its audit found"; \
+	       echo "       the full-queue fallback DISCARDS a successfully queued"; \
+	       echo "       DEINIT; enumerating the rest found EVENT_EXIT's"; \
+	       echo "       xQueueReset too. A new mutation site is a new way for"; \
+	       echo "       the cache to desynchronise -- re-derive the"; \
+	       echo "       maintenance set before raising this number."; \
 	       exit 1; }; \
 	 printf '%s\n' "$$pp" | grep -A2 'ResetAllEventFlags(&' \
 	   | grep -q 'gWincDeinitQueued = false' \

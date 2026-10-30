@@ -1206,9 +1206,33 @@ static bool SendEvent(wifi_manager_event_t event) {
         while (xQueueReceive(gEventQH, &drop, 0) == pdPASS) {
             /* drop stale events */
         }
+        /* ⛔⛔ #1193 r4 AUDIT MEDIUM: THIS DRAIN DISCARDS A QUEUED DEINIT, SO
+         * THE LATCH MUST BE RECOMPUTED HERE -- a successful send is NOT the
+         * same as an event that will be delivered.
+         *
+         * gWincDeinitQueued caches "the queue holds a DEINIT". r4 tied it to
+         * SendEvent's RETURN, which covers a failed send but not this: the
+         * DEINIT's send SUCCEEDED and the event is discarded LATER, by a
+         * subsequent lifecycle event's fallback. Repro from the audit: one
+         * batch `POW 0;POW 0;...;POW 1` -- TCP holds the mutex, twenty DEINITs
+         * fill the 20-deep queue, and the final INIT's fallback drops them
+         * all. The latch then stayed true for ever while the radio ran, so the
+         * active mode read 0 permanently.
+         *
+         * ⚠ The comment above ("pending stale events would have been
+         * invalidated by the lifecycle transition anyway") is true of the
+         * EVENTS and false of the LATCH, which is why this was not caught by
+         * reading it.
+         *
+         * After the drain the queue is empty, so the latch is exactly "the
+         * event we are about to insert is a DEINIT". */
+        gWincDeinitQueued = (event == WIFI_MANAGER_EVENT_DEINIT);
         if (xQueueSend(gEventQH, &event, 0) == pdPASS) {
             return true;
         }
+        /* The insert failed too, so the queue is empty and nothing is
+         * pending -- not even what we just claimed. */
+        gWincDeinitQueued = false;
     }
     LOG_E("WiFi SendEvent: queue full (event=%u)", (unsigned)event);
     return false;
@@ -2771,6 +2795,12 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             break;
         case WIFI_MANAGER_EVENT_EXIT:
             xQueueReset(gEventQH);
+            /* #1193 r5: a SECOND discard point, found by enumerating every
+             * mutation of gEventQH rather than only the one the audit named.
+             * This reset drops a queued DEINIT exactly as the full-queue
+             * fallback does, so the latch is stale in the same way. The queue
+             * is empty after it, so nothing is pending. */
+            gWincDeinitQueued = false;
             returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_HANDLED;
             break;
         case WIFI_MANAGER_EVENT_ERROR:
@@ -2917,6 +2947,7 @@ void wifi_manager_BootInit(void) {
     gLastRssiPercentage = 0;
     gWifiReinitDeadlineTick = 0;
     gWincDeepPowerOff = false;  // #334 — retained-RAM scrub
+    gWincDeinitQueued = false;  // #1193 — same scrub as its sibling above
     gApplyInProgress = false;
     gApplyInProgressDeadlineTick = 0;
     gApplyTeardownStartTick = 0;
