@@ -197,6 +197,58 @@ _Static_assert(SD_SCAN_SUBDIR_PATH_MAX <= SD_CARD_MANAGER_FILE_PATH_LEN_MAX + 1u
          + SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX \
          + sizeof(SD_MANIFEST_EXT) + 2u)
 
+/* ⛔⛔ #1124 r36 AUDIT HIGH (:3241): SIZE THE SCAN'S PATH FROM WHAT THE
+ * FILESYSTEM CAN HAND US, NOT FROM WHAT WE CAN WRITE.
+ *
+ * The scan built each candidate path into a SD_SESSION_MANIFEST_PATH_MAX (88 B)
+ * buffer and SKIPPED anything that did not fit, justified like this at r24:
+ * "the buffer is sized for the LONGEST path this firmware can construct, so a
+ * name that does not fit is a name no session of ours could have written, and
+ * its records cannot be about our files."
+ *
+ * ⭐ THE PREMISE IS TRUE AND THE INFERENCE DOES NOT FOLLOW. A manifest's own
+ * FILENAME LENGTH says nothing about the filenames inside its RECORDS. A PC can
+ * write `<95 chars>.mfst` whose records name `exp.csv` -- one of ours. r24
+ * conflated "we could not have WRITTEN this manifest" with "this manifest
+ * cannot be ABOUT our files": ownership of the manifest versus subject of its
+ * records. The skip then set no foreign bit and rotation truncated a recorded
+ * file. Another comment whose load-bearing premise nothing enforced.
+ *
+ * ⚠ It also cited PIN 27 as the authority for skipping. PIN 27 is narrower than
+ * that: it pins SdManifest_PartIndexOf's SIGNATURE (no fault out-param) so a
+ * foreign PART INDEX cannot disarm a directory. It is not a blanket licence to
+ * skip any foreign name.
+ *
+ * THE FIX REMOVES THE CHOICE instead of picking a side. Sized from the leaf the
+ * directory reader can actually return -- `char fname[SYS_FS_FILE_NAME_LEN + 1]`
+ * (sys_fs.h:674) -- no name the filesystem can produce overflows this, so the
+ * scan neither faults on a foreign name (PIN 27's concern) nor silently misses
+ * one (r36's). The overflow branch survives only as a fail-closed belt and is
+ * unreachable by construction; the assert below is what keeps that true if
+ * SYS_FS_FILE_NAME_LEN or the scan bases ever grow.
+ *
+ * The widest `dir` handed to sd_ScanOneDirectory is a bucket plus the
+ * configured name's subdirectory chain, i.e. SD_SCAN_SUBDIR_PATH_MAX. */
+#define SD_SCAN_PATH_MAX \
+        ((SD_SCAN_SUBDIR_PATH_MAX - 1u) + 1u + SYS_FS_FILE_NAME_LEN + 1u)
+
+/* ⚠ The assert that matters is the one tying SD_SCAN_PATH_MAX to the STRUCT the
+ * scan reads from, not to its own definition. Restating the macro back to
+ * itself (`SD_SCAN_PATH_MAX >= <the same expression>`) is an assertion that
+ * cannot fail -- I wrote exactly that first. This form fails if sys_fs.h's
+ * fname capacity and SYS_FS_FILE_NAME_LEN ever drift apart, which is the only
+ * way the "no filesystem name can overflow" claim above can become false. */
+_Static_assert(sizeof(((SYS_FS_FSTAT *)0)->fname) == SYS_FS_FILE_NAME_LEN + 1u,
+               "#1124 r36: the scan's leaf bound is taken from "
+               "SYS_FS_FILE_NAME_LEN; it must still match SYS_FS_FSTAT.fname");
+_Static_assert(SD_SCAN_PATH_MAX
+               >= (SD_SCAN_SUBDIR_PATH_MAX + sizeof(((SYS_FS_FSTAT *)0)->fname)),
+               "#1124 r36: the scan path must hold the widest base plus a "
+               "full-capacity leaf, its separator and its terminator");
+_Static_assert(SD_SCAN_PATH_MAX > SD_SESSION_MANIFEST_PATH_MAX,
+               "#1124 r36: a foreign leaf can be longer than any name WE can "
+               "write, so the scan path must exceed our own manifest-path bound");
+
 /* ⛔⛔ #1124 r21 AUDIT HIGH (:2915): THERE IS NO CAP ON THE MANIFEST COUNT,
  * and there must not be. This held 16, FAULTed on the 17th, and a FAULT is a
  * refusal -- so after 17 short sessions in one directory (34 files, well under
@@ -3160,8 +3212,12 @@ static sd_InspectResult sd_ManifestRecordsName(const char *manifestPath,
  * invitation to pass the wrong one. */
 static sd_InspectResult sd_ScanOneDirectory(const char *dir,
                                             const char *needle) {
+    /* ownPath stays at OUR bound: we construct it, so it cannot exceed what
+     * this firmware can write. Only `path` receives a foreign leaf, so only
+     * `path` is sized from the filesystem's capacity (#1124 r36) -- widening
+     * both would have cost twice the stack for no reach. */
     char ownPath[SD_SESSION_MANIFEST_PATH_MAX];
-    char path[SD_SESSION_MANIFEST_PATH_MAX];
+    char path[SD_SCAN_PATH_MAX];
     const size_t dirLen = SdManifest_CanonicalDirLen(dir);
     uint32_t scanned = 0u;
     sd_InspectResult out = SD_INSPECT_CLEAR;
@@ -3223,22 +3279,40 @@ static sd_InspectResult sd_ScanOneDirectory(const char *dir,
         const int w = snprintf(path, sizeof(path), "%.*s/%s",
                                (int)dirLen, dir, st.fname);
         if (w < 0 || (size_t)w >= sizeof(path)) {
-            /* ⛔⛔ #1124 r24 AUDIT MEDIUM (:2996): SKIPPED, NOT FAULTED.
+            /* ⛔⛔ #1124 r36 AUDIT HIGH: FAIL CLOSED, AND UNREACHABLE.
              *
-             * A 100-character foreign *.mfst name does not fit this buffer,
-             * and r23 made that a FAULT -- i.e. one such file disarmed every
-             * capture in the directory. By THIS MODULE'S OWN RULE, stated one
-             * round earlier and pinned as PIN 27: A FOREIGN NAME CAN NEVER
-             * FAULT THE SCAN. Its length is the outside world's choice.
+             * HISTORY, because this line has now been wrong in both
+             * directions. r23 made an over-long foreign name a FAULT, so one
+             * such file disarmed every capture in the directory. r24 made it a
+             * SKIP and argued the skip "loses nothing", because the buffer held
+             * the longest path WE can construct, so a name that did not fit
+             * could not be about our files. That inference was false: a
+             * manifest's own filename length says nothing about the filenames
+             * in its RECORDS, so `<95 chars>.mfst` recording `exp.csv` was
+             * skipped, set no foreign bit, and rotation truncated a recorded
+             * file (r36).
              *
-             * ⚠ And skipping loses nothing, which is why it is not a trade:
-             * the buffer is sized for the LONGEST path this firmware can
-             * construct (dir + '/' + file + ".mfst"), so a name that does not
-             * fit is a name no session of ours could have written, and its
-             * records cannot be about our files. Sixth instance of one
-             * mistake; the rule was already written down when I wrote this
-             * line. */
-            continue;
+             * ⭐ Neither skip nor fault is the answer -- the CHOICE was the
+             * defect. `path` is now sized from SYS_FS_FSTAT.fname's own
+             * capacity (SD_SCAN_PATH_MAX, asserted at its definition), so no
+             * leaf the directory reader can return overflows it. This branch is
+             * therefore UNREACHABLE BY CONSTRUCTION, and both rules hold at
+             * once: no foreign name faults the scan, and none is silently
+             * missed.
+             *
+             * It is kept, and kept FAIL-CLOSED, as a belt: if the bound is ever
+             * broken in a way the static asserts do not catch, the scan must
+             * refuse rather than under-report a collision. A refusal is loud
+             * and recoverable; a missed foreign bit truncates a user's file. */
+            /* PIN 17: the SECOND token names the reason and comes from a
+             * closed set, because a client discriminates refusals through
+             * SYSTem:LOG?. `unreadable` is the right member here -- the scan
+             * could not read that manifest -- and `scan`, which this line said
+             * first, is not in the set at all. The pin caught it. */
+            LOG_E("[SD1124] unreadable scanpath w=%d max=%u",
+                  w, (unsigned)sizeof(path));
+            out = SD_INSPECT_FAULT;
+            break;
         }
         /* ⛔ r30 (:3141): OUR OWN MANIFEST, BY FULL PATH, AFTER THE PATH EXISTS.
          * It has to be here rather than beside the name test above, because the
@@ -3414,9 +3488,22 @@ static sd_InspectResult sd_ScanBaseAndNameSubdir(const char *base,
         const int w = snprintf(sub, sizeof(sub), "%.*s/%.*s",
                                (int)baseLen, base, (int)chainLen, file);
         if (w < 0 || (size_t)w >= sizeof(sub)) {
-            /* Cannot name it, so no session of ours could have written a path
-             * through it either -- SKIPPED, never a fault. Same reasoning as
-             * the over-long foreign manifest name in sd_ScanOneDirectory. */
+            /* UNREACHABLE BY CONSTRUCTION, and it stands on a compile-time
+             * proof rather than on an argument.
+             *
+             * ⚠ This comment used to end "same reasoning as the over-long
+             * foreign manifest name in sd_ScanOneDirectory". That citation is
+             * withdrawn: the reasoning it pointed at was the r24 error r36
+             * corrected, so this site was leaning on a justification that was
+             * wrong at its source. It does not need it. Every input here is
+             * OURS -- `base` is a path this firmware built and `file` is the
+             * configured name's subdirectory chain -- and SD_SCAN_SUBDIR_PATH_MAX
+             * is derived from those same bounds with a _Static_assert at its
+             * definition, so the formatted result cannot exceed the buffer.
+             *
+             * Kept as a belt only. CLEAR rather than FAULT is right for an
+             * unreachable branch over OUR OWN names: unlike the foreign-leaf
+             * case, there is no outside input here that could trip it. */
             return SD_INSPECT_CLEAR;
         }
         out = sd_ScanOneDirectory(sub, needle);

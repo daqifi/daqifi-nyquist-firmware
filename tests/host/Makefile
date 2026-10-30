@@ -1719,18 +1719,33 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	@# SOURCES, enumerated and counted -- any new one, under any variable name,
 	@# moves the number. That is the property; the identifier never was.
 	@#
-	@# FOUR, in sd_ScanOneDirectory, and each is a filesystem fault rather than
+	@# FIVE, in sd_ScanOneDirectory, and each is a filesystem fault rather than
 	@# a quantity:
 	@#   1. our own manifest path cannot be built  (return)
 	@#   2. SYS_FS_DirOpen failed, not absent      (return)
 	@#   3. the directory did not terminate within SD_FOREIGN_SCAN_MAX_DIR_ENTRIES
 	@#   4. SYS_FS_DirRead failed
+	@#   5. a candidate's path exceeds SD_SCAN_PATH_MAX                (r36)
 	@# ⚠ 3 IS A COUNT, and it is the exception that proves the rule: it bounds
 	@# ENTRIES READ, not work pre-existing on the card, and at 65536 a directory
-	@# that has not ended is a filesystem fault. If a fifth appears, decide
+	@# that has not ended is a filesystem fault. If a sixth appears, decide
 	@# which kind it is before raising this number -- r21 shipped a cap of 16
 	@# manifests with a FAULT past it, so 17 short sessions in one directory
 	@# disarmed every later capture (audit :2915).
+	@#
+	@# ⭐ 5 WAS ADDED AT r36 AND IS THE KIND THIS PIN ALLOWS. It replaced a
+	@# SILENT SKIP: an over-long foreign *.mfst name did not fit the old 88-byte
+	@# buffer, was skipped, set no foreign bit, and rotation then truncated a
+	@# file that manifest had recorded. It is NOT a cap on pre-existing work --
+	@# adding files to the card can never trigger it, because `path` is now
+	@# sized from SYS_FS_FSTAT.fname's own capacity, which makes the branch
+	@# UNREACHABLE BY CONSTRUCTION (two _Static_asserts at SD_SCAN_PATH_MAX's
+	@# definition hold that). It is a fail-closed belt: if the bound is ever
+	@# broken, the scan must refuse loudly rather than under-report a collision.
+	@# ⚠ So this pin now counts a fault source that cannot fire. That is
+	@# deliberate -- the pin's question is "can a COUNT refuse a session?", and
+	@# an unreachable representation fault answers no -- but it means the number
+	@# alone no longer tells you how many faults are REACHABLE.
 	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null`; \
 	 body=`printf '%s\n' "$$pp" | awk '/static sd_InspectResult sd_ScanOneDirectory/,/^static sd_InspectResult sd_ScanBaseAndNameSubdir/'`; \
 	 nb=`printf '%s\n' "$$body" | grep -c .`; \
@@ -1742,9 +1757,9 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	   echo "       it get renamed?"; \
 	   exit 1; \
 	 fi; \
-	 test "$$nf" -eq 4 \
+	 test "$$nf" -eq 5 \
 	  || { echo "ERROR: #1124 r30 PIN 21: the foreign scan has $$nf FAULT sources,"; \
-	       echo "       not the 4 enumerated in this recipe."; \
+	       echo "       not the 5 enumerated in this recipe."; \
 	       echo "       A FAULT here IS a refusal, and the rule is that A COUNT"; \
 	       echo "       OF PRE-EXISTING WORK MUST NEVER REFUSE A NEW SESSION."; \
 	       echo "       r21 shipped a cap of 16 manifests with a FAULT past it,"; \
@@ -2430,36 +2445,80 @@ $(GATE1124_BIN): test_1124_overwrite_gate.c test_framework.h \
 	      echo "       whole paths."; \
 	      exit 1;; \
 	 esac
-	@# ⛔⛔ PIN 31 -- r24 AUDIT MEDIUM (:2996): AN UNCONSTRUCTABLE FOREIGN NAME IS
-	@# SKIPPED, NOT FAULTED.
+	@# ⛔⛔⛔ PIN 31 -- RE-KEYED AT r36. IT USED TO REQUIRE THE DEFECT.
 	@#
-	@# A 100-character foreign *.mfst name does not fit the path buffer, and r23
-	@# made that a FAULT -- so one such file disarmed every capture in the
-	@# directory. By this module's OWN rule, written one round earlier and pinned
-	@# as PIN 27: a foreign NAME can never fault the scan. Its length is the
-	@# outside world's choice.
+	@# HISTORY, because this pin has now been wrong once in each direction.
+	@# r23 made an unconstructable foreign name a FAULT, so one over-long
+	@# *.mfst in a directory refused every capture there. r24 made it a SKIP and
+	@# pinned the literal statement `{ continue; }` here, justified like this:
+	@# "Nothing is lost by skipping ... the buffer is sized for the LONGEST path
+	@# this firmware can construct, so a name that does not fit is one no
+	@# session of ours could have written, and its records cannot be about our
+	@# files."
 	@#
-	@# Nothing is lost by skipping, which is why it is not a trade: the buffer is
-	@# sized for the LONGEST path this firmware can construct, so a name that
-	@# does not fit is one no session of ours could have written, and its records
-	@# cannot be about our files.
+	@# ⛔ THAT JUSTIFICATION IS FALSE, and r36 found the consequence: a
+	@# manifest's own FILENAME LENGTH says nothing about the filenames in its
+	@# RECORDS. `<95 chars>.mfst` recording `exp.csv` was skipped, set no
+	@# foreign bit, and rotation truncated a recorded file. r24 conflated "we
+	@# could not have WRITTEN this manifest" with "it cannot be ABOUT our
+	@# files" -- ownership versus subject.
 	@#
-	@# ⭐ SIXTH INSTANCE of one mistake, and the rule was already written down
-	@# when I wrote the faulting line. A rule being recorded is not the same as it
-	@# being applied at the next site.
-	@# Line markers stripped: -fpreprocessed emits `# N "file"` where it removed
-	@# a comment, and the explanation for this `continue` sits between the test
-	@# and the statement -- so the key would otherwise span a marker carrying a
-	@# line number.
+	@# ⭐⭐ SO THE FIX MADE THIS PIN FAIL, AND THE PIN WAS WHAT WAS WRONG. The
+	@# tell was "my correct change breaks a pin"; the arbiter is the RULE both
+	@# artifacts cite, not the pin that encoded one round's reading of it.
+	@#
+	@# ⭐ WHAT IS PINNED NOW IS THE PROPERTY THAT MAKES BOTH RULES HOLD AT ONCE,
+	@# not either arm of a choice that should never have been made: `path` is
+	@# sized from what the FILESYSTEM can hand us, so no leaf the directory
+	@# reader can return is unrepresentable. Then nothing is skipped (r36's
+	@# concern) and no foreign name faults the scan (PIN 27's / r23's), because
+	@# the branch cannot be reached at all. A pin on `continue` or on FAULT keys
+	@# the arm; this keys the reason the arm is dead.
+	@#
+	@# ⚠ Three things must hold together, and any one of them regressing brings
+	@# a small buffer back under a different spelling:
+	@#   a. the declaration uses SD_SCAN_PATH_MAX, not our own manifest bound;
+	@#   b. SD_SCAN_PATH_MAX is derived from SYS_FS_FILE_NAME_LEN, so it tracks
+	@#      the reader's capacity rather than our configuration;
+	@#   c. a _Static_assert ties that to SYS_FS_FSTAT.fname, which is the only
+	@#      thing that can falsify (b) silently.
+	@# (a) is checked on the preprocessed stream; (b) and (c) must be checked on
+	@# the RAW source, because the recipe below strips `#` lines and that would
+	@# take the #define and the assert with them.
 	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | grep -v '^#' \
 	    | tr '\n' ' ' | tr -s ' '`; \
 	 case "$$pp" in \
-	   *"if (w < 0 || (size_t)w >= sizeof(path)) { continue; }"*) ;; \
-	   *) echo "ERROR: #1124 r24 PIN 31: a foreign manifest name that will not"; \
-	      echo "       fit the path buffer no longer SKIPS (audit :2996). If it"; \
-	      echo "       faults, one over-long filename in the directory refuses"; \
-	      echo "       every capture there. A foreign NAME must never fault the"; \
-	      echo "       scan -- see PIN 27."; \
+	   *"char path[SD_SCAN_PATH_MAX]"*) ;; \
+	   *) echo "ERROR: #1124 r36 PIN 31(a): sd_ScanOneDirectory's path buffer is"; \
+	      echo "       no longer declared SD_SCAN_PATH_MAX. Sized from anything"; \
+	      echo "       WE can write, an over-long foreign *.mfst name becomes"; \
+	      echo "       unrepresentable again -- and then it is either SKIPPED (a"; \
+	      echo "       silent missed collision, r36) or FAULTED (one filename"; \
+	      echo "       disarms the directory, r23). Both were shipped once."; \
+	      exit 1;; \
+	 esac; \
+	 raw=`cat $(SD_MANAGER_SRC)`; \
+	 case "$$raw" in \
+	   *"define SD_SCAN_PATH_MAX"*) ;; \
+	   *) echo "ERROR: #1124 r36 PIN 31(b): SD_SCAN_PATH_MAX is gone."; \
+	      exit 1;; \
+	 esac; \
+	 bound=`printf '%s\n' "$$raw" | grep -A3 'define SD_SCAN_PATH_MAX'`; \
+	 case "$$bound" in \
+	   *SYS_FS_FILE_NAME_LEN*) ;; \
+	   *) echo "ERROR: #1124 r36 PIN 31(b): SD_SCAN_PATH_MAX no longer derives"; \
+	      echo "       from SYS_FS_FILE_NAME_LEN, so it has stopped tracking the"; \
+	      echo "       directory reader's capacity. A bound derived from OUR"; \
+	      echo "       configuration cannot cover a name a PC chose."; \
+	      exit 1;; \
+	 esac; \
+	 case "$$raw" in \
+	   *"sizeof(((SYS_FS_FSTAT *)0)->fname) == SYS_FS_FILE_NAME_LEN"*) ;; \
+	   *) echo "ERROR: #1124 r36 PIN 31(c): the _Static_assert tying the scan's"; \
+	      echo "       leaf bound to SYS_FS_FSTAT.fname is gone. Without it,"; \
+	      echo "       SYS_FS_FILE_NAME_LEN and the struct it describes can"; \
+	      echo "       drift apart and the no-overflow claim fails SILENTLY --"; \
+	      echo "       which is the only way (b) stops being true."; \
 	      exit 1;; \
 	 esac
 	@# ⛔⛔ PIN 32 -- r25 AUDIT HIGH (SdManifest.h:258): THE GRANT REQUIRES
