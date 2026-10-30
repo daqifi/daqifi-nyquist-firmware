@@ -2905,17 +2905,12 @@ bool wifi_manager_GetChipInfo(wifi_manager_chipInfo_t *pChipInfo) {
 }
 
 wifi_manager_networkMode_t wifi_manager_GetActiveNetworkMode(void) {
-    // #1186. The mode the radio is RUNNING, as opposed to
-    // pWifiSettings->networkMode, which is what APPLY would bring up next.
-    //
-    // Derived, not stored. The two bring-up flags already ARE this record:
-    // AP_STARTED is set immediately after a successful WDRV_WINC_APStart and
-    // STA_STARTED immediately after a successful WDRV_WINC_BSSConnect, and
-    // each mode's teardown clears its own. Two consumers already read the
-    // pair as "which mode is up" -- DhcpEventCallback, to decide whose IP a
-    // DHCP event describes, and the #1060 stale-association guard, to drop an
-    // event whose mode is no longer up. A separate mode variable would be a
-    // third source free to disagree with those two.
+    // #1186. Why this is DERIVED from the bring-up flags rather than stored in
+    // its own variable is written out once in the header comment; don't
+    // restate it here. The two other readers of the same pair, for whoever
+    // edits one of them next, are DhcpEventCallback above (whose IP a DHCP
+    // event describes) and MainState's stale-association guard (whether an
+    // event's mode is still up, #1060).
     //
     // One aligned read of eventFlags; no WINC round-trip, no wait, no lock,
     // so this is safe from the USB SCPI task (priority 7) and from

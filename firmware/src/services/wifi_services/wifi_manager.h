@@ -278,7 +278,7 @@ extern "C" {
 
     /** Returned by wifi_manager_GetActiveNetworkMode() when no mode is up.
      *  Deliberately 0: SCPI_LANNetModeSet accepts only 1 (STA) and 4 (AP) and
-     *  rejects everything else with -108, so 0 cannot collide with a mode a
+     *  rejects everything else with -224, so 0 cannot collide with a mode a
      *  client could ever have staged. */
 #define WIFI_MANAGER_NETWORK_MODE_NONE  ((wifi_manager_networkMode_t) 0)
 
@@ -288,10 +288,11 @@ extern "C" {
      * SYSTem:COMMunicate:LAN:NETType? reports the STAGED runtime setting --
      * what APPLY would bring up next -- so it cannot answer "is this board an
      * AP or a STA right now?". This reads the mode that was actually brought
-     * up, derived from the two bring-up flags the state machine already
-     * maintains: AP_STARTED is set immediately after a successful
-     * WDRV_WINC_APStart and STA_STARTED immediately after a successful
-     * WDRV_WINC_BSSConnect, and each is cleared on its own teardown paths.
+     * up, derived from the manager's own (file-private) AP_STARTED and
+     * STA_STARTED bring-up flags: AP_STARTED is set immediately after a
+     * successful WDRV_WINC_APStart and STA_STARTED immediately after a
+     * successful WDRV_WINC_BSSConnect, and each is cleared on its own
+     * teardown paths.
      *
      * No new state was added for this. That pair IS the manager's existing
      * record of which mode is up: DhcpEventCallback already discriminates AP
