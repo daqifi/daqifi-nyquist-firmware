@@ -1211,7 +1211,7 @@ $(APSTA1060_BIN): test_1060_apsta_disconnect_retry.c test_framework.h \
 	       echo "       file already preserves by hand."; exit 1; }
 	@# ⛔⛔ #1193 r2 PIN -- QUEUEING A TEARDOWN *IS* LATCHING IT.
 	@#
-	@# r1 set gWincTeardownPending inside wifi_manager_Deinit() and called that
+	@# r1 set gWincDeinitQueued inside wifi_manager_Deinit() and called that
 	@# "the ONE chokepoint every teardown path passes through". It was wrong by
 	@# three sites: SYST:COMM:LAN:HRESet (wifi_manager_HardReset) queues DEINIT
 	@# DIRECTLY without calling Deinit, so the latch was never set and
@@ -1225,7 +1225,7 @@ $(APSTA1060_BIN): test_1060_apsta_disconnect_retry.c test_framework.h \
 	@# there is exactly ONE way to queue the event and that way latches, so a
 	@# fifth site CANNOT be written that forgets. Coupling, not vigilance.
 	@#
-	@# ⚠ Deliberately NOT pinned: the number of wifi_QueueTeardown() call
+	@# ⚠ Deliberately NOT pinned: the number of wifi_QueueDeinit() call
 	@# sites. That count churns with ordinary work and adds no safety -- arm 1
 	@# below already makes every call site latching by construction. A count
 	@# here would fail on correct changes, which is how pins get weakened.
@@ -1234,36 +1234,58 @@ $(APSTA1060_BIN): test_1060_apsta_disconnect_retry.c test_framework.h \
 	 test "$$n" -eq 1 \
 	  || { echo "ERROR: #1193 r2 PIN: found $$n code site(s) queueing"; \
 	       echo "       WIFI_MANAGER_EVENT_DEINIT, expected exactly 1 (inside"; \
-	       echo "       wifi_QueueTeardown). A bare SendEvent(...DEINIT)"; \
+	       echo "       wifi_QueueDeinit). A bare SendEvent(...DEINIT)"; \
 	       echo "       elsewhere takes the radio down WITHOUT latching"; \
-	       echo "       gWincTeardownPending, so NETType? 1 reports a mode"; \
+	       echo "       gWincDeinitQueued, so NETType? 1 reports a mode"; \
 	       echo "       that is no longer running -- the r2 defect, which"; \
 	       echo "       reached a shipped head because r1 trusted one"; \
 	       echo "       chokepoint it had not enumerated."; \
-	       echo "       Route the new site through wifi_QueueTeardown()."; \
+	       echo "       Route the new site through wifi_QueueDeinit()."; \
 	       exit 1; }; \
-	 blk=`printf '%s\n' "$$pp" | awk '/static bool wifi_QueueTeardown\(void\)/,/^\}/'`; \
+	 blk=`printf '%s\n' "$$pp" | awk '/static bool wifi_QueueDeinit\(void\)/,/^\}/'`; \
 	 nb=`printf '%s\n' "$$blk" | grep -c .`; \
 	 if [ "$$nb" -lt 3 ]; then \
-	   echo "ERROR: #1193 r2 PIN could not slice wifi_QueueTeardown's body"; \
+	   echo "ERROR: #1193 r2 PIN could not slice wifi_QueueDeinit's body"; \
 	   echo "       ($$nb lines) -- the pin cannot evaluate its invariant,"; \
 	   echo "       which is a FAILURE, not a pass. Was it renamed?"; \
 	   exit 1; \
 	 fi; \
-	 lt=`printf '%s\n' "$$blk" | grep -n 'gWincTeardownPending = true;' | head -1 | cut -d: -f1`; \
+	 lt=`printf '%s\n' "$$blk" | grep -n 'gWincDeinitQueued = true;' | head -1 | cut -d: -f1`; \
 	 lq=`printf '%s\n' "$$blk" | grep -n 'SendEvent(WIFI_MANAGER_EVENT_DEINIT)' | head -1 | cut -d: -f1`; \
 	 test -n "$$lt" \
-	  || { echo "ERROR: #1193 r2 PIN: wifi_QueueTeardown no longer sets"; \
-	       echo "       gWincTeardownPending, so queueing a teardown has"; \
+	  || { echo "ERROR: #1193 r2 PIN: wifi_QueueDeinit no longer sets"; \
+	       echo "       gWincDeinitQueued, so queueing a teardown has"; \
 	       echo "       stopped latching it and every caller silently loses"; \
 	       echo "       the guarantee."; exit 1; }; \
 	 test -n "$$lq" -a "$$lt" -lt "$$lq" \
-	  || { echo "ERROR: #1193 r2 PIN: wifi_QueueTeardown sets the latch AFTER"; \
+	  || { echo "ERROR: #1193 r2 PIN: wifi_QueueDeinit sets the latch AFTER"; \
 	       echo "       queueing the event (or not at all). The store must"; \
 	       echo "       come FIRST: in between, the event exists while the"; \
 	       echo "       latch still says no teardown is pending, and a"; \
 	       echo "       higher-priority NETType? 1 in that window reads the"; \
 	       echo "       stale mode. Order is the invariant, not just presence."; \
+	       exit 1; } ; \
+	 nc=`printf '%s\n' "$$pp" | grep -c 'gWincDeinitQueued = false'`; \
+	 test "$$nc" -eq 2 \
+	  || { echo "ERROR: #1193 r3 PIN: found $$nc assignment(s) of false to"; \
+	       echo "       gWincDeinitQueued, expected 2 (the declaration's"; \
+	       echo "       initialiser, and ONE clear)."; \
+	       echo "       ⛔ r2 cleared it at every successful bring-up and that"; \
+	       echo "       RACED: HRESet during INIT's 100 ms delay queues a"; \
+	       echo "       DEINIT and sets the latch, then the resuming bring-up"; \
+	       echo "       cleared it -- erasing a teardown NEWER than itself --"; \
+	       echo "       and the queued DEINIT reported a live mode again."; \
+	       echo "       A bring-up must never discard a newer teardown."; \
+	       exit 1; }; \
+	 printf '%s\n' "$$pp" | grep -A2 'ResetAllEventFlags(&' \
+	   | grep -q 'gWincDeinitQueued = false' \
+	  || { echo "ERROR: #1193 r3 PIN: the clear is no longer adjacent to"; \
+	       echo "       ResetAllEventFlags. That call is what ends the window"; \
+	       echo "       the latch exists to cover -- after it the bring-up"; \
+	       echo "       flags answer correctly on their own -- so the latch's"; \
+	       echo "       lifetime equals the flags' staleness ONLY while the two"; \
+	       echo "       are cleared together. Moved apart, they drift and the"; \
+	       echo "       race comes back in whichever direction the gap opens."; \
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(APSTA1060_BIN) test_1060_apsta_disconnect_retry.c
 
