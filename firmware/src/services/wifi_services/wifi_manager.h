@@ -276,6 +276,46 @@ extern "C" {
      */
     wifi_link_state_t wifi_manager_GetLinkState(void);
 
+    /** Returned by wifi_manager_GetActiveNetworkMode() when no mode is up.
+     *  Deliberately 0: SCPI_LANNetModeSet accepts only 1 (STA) and 4 (AP) and
+     *  rejects everything else with -108, so 0 cannot collide with a mode a
+     *  client could ever have staged. */
+#define WIFI_MANAGER_NETWORK_MODE_NONE  ((wifi_manager_networkMode_t) 0)
+
+    /**
+     * @brief Get the network mode the radio is ACTUALLY running (#1186).
+     *
+     * SYSTem:COMMunicate:LAN:NETType? reports the STAGED runtime setting --
+     * what APPLY would bring up next -- so it cannot answer "is this board an
+     * AP or a STA right now?". This reads the mode that was actually brought
+     * up, derived from the two bring-up flags the state machine already
+     * maintains: AP_STARTED is set immediately after a successful
+     * WDRV_WINC_APStart and STA_STARTED immediately after a successful
+     * WDRV_WINC_BSSConnect, and each is cleared on its own teardown paths.
+     *
+     * No new state was added for this. That pair IS the manager's existing
+     * record of which mode is up: DhcpEventCallback already discriminates AP
+     * from STA with exactly this test, and #1060's stale-association guard
+     * uses the same pair to decide whether an event's "mode is no longer up".
+     * A separate mode variable would be a second source free to disagree with
+     * those two consumers.
+     *
+     * AP is tested first, matching the order both existing consumers use. The
+     * flags are not expected to be set simultaneously (each mode's bring-up
+     * path clears the other's flag on the way through), so the order is a
+     * tie-break that should never be needed rather than a policy choice.
+     *
+     * Read-only and strictly non-blocking (no WINC round-trip, no wait), the
+     * same contract as wifi_manager_GetLinkState().
+     *
+     * @return WIFI_MANAGER_NETWORK_MODE_AP, WIFI_MANAGER_NETWORK_MODE_STA, or
+     *         WIFI_MANAGER_NETWORK_MODE_NONE when neither mode is up -- which
+     *         is the honest answer from power-up until the first successful
+     *         bring-up, and again from a teardown until the next one. Callers
+     *         must handle NONE rather than folding it into either mode.
+     */
+    wifi_manager_networkMode_t wifi_manager_GetActiveNetworkMode(void);
+
     /**
      * @brief Initializes the WiFi manager and its state machine.
      * 

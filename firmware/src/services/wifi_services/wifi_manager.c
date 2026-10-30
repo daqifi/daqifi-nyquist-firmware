@@ -2904,6 +2904,39 @@ bool wifi_manager_GetChipInfo(wifi_manager_chipInfo_t *pChipInfo) {
     return true;
 }
 
+wifi_manager_networkMode_t wifi_manager_GetActiveNetworkMode(void) {
+    // #1186. The mode the radio is RUNNING, as opposed to
+    // pWifiSettings->networkMode, which is what APPLY would bring up next.
+    //
+    // Derived, not stored. The two bring-up flags already ARE this record:
+    // AP_STARTED is set immediately after a successful WDRV_WINC_APStart and
+    // STA_STARTED immediately after a successful WDRV_WINC_BSSConnect, and
+    // each mode's teardown clears its own. Two consumers already read the
+    // pair as "which mode is up" -- DhcpEventCallback, to decide whose IP a
+    // DHCP event describes, and the #1060 stale-association guard, to drop an
+    // event whose mode is no longer up. A separate mode variable would be a
+    // third source free to disagree with those two.
+    //
+    // One aligned read of eventFlags; no WINC round-trip, no wait, no lock,
+    // so this is safe from the USB SCPI task (priority 7) and from
+    // app_WifiTask itself -- the same contract as wifi_manager_GetLinkState().
+    const wifi_manager_stateFlag_t flags = gStateMachineContext.eventFlags;
+
+    // AP first, matching the order DhcpEventCallback uses. Each bring-up path
+    // clears the other mode's flag, so this is a tie-break that should never
+    // be reached rather than a precedence policy.
+    if (GetEventFlagStatus(flags, WIFI_MANAGER_STATE_FLAG_AP_STARTED)) {
+        return WIFI_MANAGER_NETWORK_MODE_AP;
+    }
+    if (GetEventFlagStatus(flags, WIFI_MANAGER_STATE_FLAG_STA_STARTED)) {
+        return WIFI_MANAGER_NETWORK_MODE_STA;
+    }
+    // Neither mode is up. Reported as 0, never folded into a real mode: the
+    // honest answer from power-up until the first successful bring-up, and
+    // again from a teardown until the next one.
+    return WIFI_MANAGER_NETWORK_MODE_NONE;
+}
+
 wifi_link_state_t wifi_manager_GetLinkState(void) {
     // #951. Single decision point for "what is the WiFi link actually doing".
     // wifi_manager_GetWiFiStatus() below is a pure projection of this result,
