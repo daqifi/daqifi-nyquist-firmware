@@ -150,6 +150,48 @@ _Static_assert(offsetof(SYS_FS_FSTAT, lfname) >= sizeof(FILINFO),
  * spelled this sum out longhand and had to be kept in step by hand; a fifth
  * (the r21 authorisation snapshot) is one too many. Expands to 87 for the
  * current 40/40 maxima: dir + '/' + file + ".mfst" + NUL. */
+/* ⛔⛔⛔ THE FOREIGN SCAN'S PATH BUFFERS ARE SIZED FROM THEIR FORMATS, NOT FROM
+ * SD_CARD_MANAGER_FILE_PATH_LEN_MAX (510 = SYS_FS_FILE_NAME_LEN*2).
+ *
+ * WHY: the scan nests four frames on app_SDCardTask, whose stack is 1024 words
+ * = 4096 bytes (app_freertos.c), and whose only published profile -- "468
+ * words peak, 2x+ margin" -- PREDATES this scan entirely. Two of those frames
+ * each carried a 511-byte buffer for paths that cannot exceed 46 and 87 bytes,
+ * so ~890 bytes of the budget was spent on headroom the formats can never use.
+ * On a 4 KB stack shared with FatFs's own frames under DirRead and FileRead,
+ * that is not a rounding error.
+ *
+ * ⚠ AND THE ASSERTS BELOW ARE LOAD-BEARING, NOT DECORATION. Both call sites
+ * handle snprintf overflow by SKIPPING the directory -- deliberately, because
+ * a foreign name must never fault the scan. So a buffer that is too small does
+ * not overrun and does not crash: it SILENTLY SKIPS A DIRECTORY THE SCAN WAS
+ * SUPPOSED TO READ, which is a missed collision. Shrinking a buffer whose
+ * overflow path is "skip" turns a sizing mistake into a correctness regression
+ * with no symptom, so the size is PROVEN at compile time rather than argued. */
+
+/* sd_BuildBucketPath formats <dir> + '/' + prefix + 3 digits + NUL. */
+#define SD_BUCKET_PATH_MAX \
+        (SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX + 1u \
+         + (sizeof(SD_CARD_MANAGER_BUCKET_PREFIX) - 1u) + 3u + 1u)
+
+/* sd_ScanBaseAndNameSubdir formats <base> + '/' + <chain> + NUL, where the
+ * widest base is a bucket path and the chain is at most the configured
+ * filename less its leaf. */
+#define SD_SCAN_SUBDIR_PATH_MAX \
+        ((SD_BUCKET_PATH_MAX - 1u) + 1u \
+         + SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX + 1u)
+
+/* The bucket index is printed with three padded digits, so a ceiling above 999
+ * would silently outgrow SD_BUCKET_PATH_MAX. Tied to the ceiling itself. */
+_Static_assert(SD_CARD_MANAGER_MAX_BUCKET <= 999u,
+               "#1124: SD_BUCKET_PATH_MAX assumes a 3-digit bucket index");
+/* A shrink must never become a growth: neither bound may exceed the buffer
+ * these two sites used before. */
+_Static_assert(SD_BUCKET_PATH_MAX <= SD_CARD_MANAGER_FILE_PATH_LEN_MAX + 1u,
+               "#1124: the bucket-path bound grew past the old buffer");
+_Static_assert(SD_SCAN_SUBDIR_PATH_MAX <= SD_CARD_MANAGER_FILE_PATH_LEN_MAX + 1u,
+               "#1124: the subdir-path bound grew past the old buffer");
+
 #define SD_SESSION_MANIFEST_PATH_MAX \
         (SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX \
          + SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX \
@@ -3367,7 +3409,7 @@ static sd_InspectResult sd_ScanBaseAndNameSubdir(const char *base,
         return out;
     }
     {
-        char sub[SD_CARD_MANAGER_FILE_PATH_LEN_MAX + 1u];
+        char sub[SD_SCAN_SUBDIR_PATH_MAX];
         const size_t baseLen = SdManifest_CanonicalDirLen(base);
         const int w = snprintf(sub, sizeof(sub), "%.*s/%.*s",
                                (int)baseLen, base, (int)chainLen, file);
@@ -3438,7 +3480,7 @@ static sd_InspectResult sd_ScanForeignManifests(const char *needle) {
         uint32_t b;
         for (b = 1u; (b <= SD_CARD_MANAGER_MAX_BUCKET)
                      && (out == SD_INSPECT_CLEAR); b++) {
-            char child[SD_CARD_MANAGER_FILE_PATH_LEN_MAX + 1u];
+            char child[SD_BUCKET_PATH_MAX];
             if (!sd_BuildBucketPath(child, sizeof(child), dir, b)) {
                 continue;               /* cannot name it: nothing to read */
             }
