@@ -136,7 +136,7 @@ budget**), same trigger scoping as cppcheck. Baseline at introduction:
 
 ### Programming with PICkit 4 (ipecmd)
 
-Preferred wrapper on this dev station: `bash ~/.claude/skills/flash/flash.sh [--build]` (user-local helper, not repo-tracked) — builds (optional), flashes, reattaches usbipd, verifies a `/dev/ttyACM*` node appears (node presence only — board *identity* still needs the device verification protocol below). Without the wrapper, use the direct invocation, which works anywhere:
+Preferred wrapper on this dev station: `bash ~/.claude/skills/flash/flash.sh [--build]` (user-local helper, not repo-tracked) — builds (optional), flashes, reattaches usbipd, verifies a `/dev/ttyACM*` node appears (node presence only — board *identity* still needs the device verification protocol below). ⚠ **A flash counts only when the firmware CRC read back from the board matches the CRC of the hex you meant to program** — not when a log looks normal. On 2026-10-29 `flash.sh` (no `--build`) twice stopped right after `[1/3] Skip build`, with no `[2/3]`, no "Program Succeeded" and no error (exit 141, SIGPIPE in its staleness check), and left the board on its OLD image; only the CRC read-back caught it. If `flash.sh` stops after `[1/3]`, treat the board as NOT flashed and use the direct invocation below, which worked first time in the same session. Without the wrapper, use the direct invocation, which works anywhere:
 ```bash
 "/mnt/c/Program Files/Microchip/MPLABX/v6.30/mplab_platform/mplab_ipe/ipecmd.exe" \
   -TPPK4 -P32MZ2048EFM144 -M \
