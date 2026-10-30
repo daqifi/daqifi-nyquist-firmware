@@ -255,94 +255,7 @@ static volatile TickType_t gConsoleIdleDeadlineTicks =
 // SCPI task and read from app_WifiTask.
 static volatile bool gWincDeepPowerOff = false;
 
-/* #1193 r1 AUDIT MEDIUM: A TEARDOWN IS REQUESTED SYNCHRONOUSLY AND COMPLETED
- * LATER, SO THE BRING-UP FLAGS OUTLIVE THE RADIO.
- *
- * wifi_manager_Deinit() only QUEUES WIFI_MANAGER_EVENT_DEINIT. On a power-down
- * the task can reach WAIT_POWER_UP without ever processing it, and
- * InvalidateStaLinkState() deliberately returns early while AP_STARTED is set,
- * so AP_STARTED/STA_STARTED can still read "up" with the module powered off.
- * wifi_manager_GetActiveNetworkMode() derives from that pair and would report
- * mode 4 throughout STANDBY.
- *
- * ⚠ Why a NEW latch rather than any existing predicate -- all three obvious
- * candidates are unsound here, checked at source:
- *   - IsPoweredOff() (gWincDeepPowerOff) is NOT path-complete: PowerOff() is
- *     reached only from PowerApi's button path and SYST:COMM:LAN:POWer 0.
- *     SYST:POW:STAT 0 and SYST:REboot call wifi_manager_Deinit() DIRECTLY and
- *     never set it, so gating on it passes a button bench test and misses the
- *     SCPI path entirely.
- *   - IsEnabled() IS path-complete (Deinit clears isEnabled in its critical
- *     section) but is CONTAMINATED: SCPI_LANEnabledSet writes that same field
- *     with no APPLY, so `LAN:ENAbled 0` alone would report "no mode" while the
- *     radio still beacons -- reintroducing, through the back door, the exact
- *     staged-vs-active confusion #1186 exists to remove.
- *   - Clearing AP_STARTED/STA_STARTED in Deinit would break the teardown:
- *     those flags GUARD what gets torn down, so clearing them before the
- *     queued DEINIT runs makes the guards skip their work.
- *
- * So: set SYNCHRONOUSLY at the one chokepoint every teardown path passes
- * through (Deinit), beside the synchronous work it already does there for the
- * same reason, and cleared only where a bring-up has actually succeeded. It
- * touches no existing flag semantics and is unreachable from staged config. */
-static volatile bool gWincDeinitQueued = false;
 
-/* ⛔⛔ #1193 r2 AUDIT MEDIUM: QUEUEING A TEARDOWN *IS* LATCHING IT.
- *
- * r1 set the latch inside wifi_manager_Deinit() and I described that function
- * as "the ONE chokepoint every teardown path passes through". **That was wrong
- * by three sites.** Enumerating by predicate rather than by name --
- * `grep SendEvent(WIFI_MANAGER_EVENT_DEINIT)` -- finds FOUR:
- *
- *   1. wifi_manager_Deinit()            (the one r1 knew about)
- *   2. wifi_manager_HardReset()         SYST:COMM:LAN:HRESet, queues DEINIT
- *                                       DIRECTLY without calling Deinit, so
- *                                       the latch was never set and NETT? 1
- *                                       still answered 4 during nm_reset's
- *                                       CHIP_EN/RESET_N-low window (r2)
- *   3. MainState, firmware-update path  uses DEINIT "for proper cleanup"
- *   4. MainState, DEINIT handler        re-queue while the driver is BUSY
- *
- * ⭐ So the fix is not "set it in one more place" -- that leaves the next site
- * to be found by the next audit. It is to make the two inseparable: this is
- * the ONLY way the event is queued, and it cannot be queued without latching.
- * A structural check in tests/host/Makefile forbids a bare
- * SendEvent(WIFI_MANAGER_EVENT_DEINIT) anywhere else, so a fifth site cannot
- * be added that forgets.
- *
- * The store comes BEFORE the queue deliberately: in between, the event does
- * not exist yet, so there is no window where a teardown is pending and the
- * latch says otherwise. The reverse order would have one. */
-static bool wifi_QueueDeinit(void) {
-    /* ⛔⛔ #1193 r4 REVIEW: THE SEND CAN FAIL, SO THE STORE MUST BE UNDONE --
-     * BUT NOT BY CLEARING IT.
-     *
-     * SendEvent returns false when the queue is not yet initialised, and its
-     * xQueueSend is deliberately BOUNDED (20 ms, or 0 when the caller is
-     * already the drainer, to avoid a self-deadlock), so a full queue fails
-     * too. Left set after a failed send, the latch would report "no mode"
-     * for ever while the radio kept running -- a stuck wrong answer, and
-     * this query exists precisely so a client can confirm reality.
-     *
-     * ⚠ A naive rollback to false is WRONG and would reintroduce the r3
-     * defect: if an EARLIER call already queued a teardown and this later
-     * call's send fails, clearing the latch discards a teardown that really
-     * is pending. So restore the PRIOR value instead of assuming it was
-     * false. (Same save-and-restore shape this file already uses for
-     * WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING across ResetAllEventFlags.)
-     *
-     * The store still comes FIRST on the success path, so there is no window
-     * where the event exists and the latch says otherwise. */
-    const bool wasQueued = gWincDeinitQueued;
-    gWincDeinitQueued = true;
-    if (!SendEvent(WIFI_MANAGER_EVENT_DEINIT)) {
-        gWincDeinitQueued = wasQueued;
-        LOG_E("WiFi: teardown could not be queued; latch restored to %u",
-              (unsigned)wasQueued);
-        return false;
-    }
-    return true;
-}
 
 // Recursive mutex serializing wifi_manager_ProcessState across callers.
 // Today app_WifiTask is the primary owner; SCPI_Reset's active pump
@@ -1206,33 +1119,9 @@ static bool SendEvent(wifi_manager_event_t event) {
         while (xQueueReceive(gEventQH, &drop, 0) == pdPASS) {
             /* drop stale events */
         }
-        /* ⛔⛔ #1193 r4 AUDIT MEDIUM: THIS DRAIN DISCARDS A QUEUED DEINIT, SO
-         * THE LATCH MUST BE RECOMPUTED HERE -- a successful send is NOT the
-         * same as an event that will be delivered.
-         *
-         * gWincDeinitQueued caches "the queue holds a DEINIT". r4 tied it to
-         * SendEvent's RETURN, which covers a failed send but not this: the
-         * DEINIT's send SUCCEEDED and the event is discarded LATER, by a
-         * subsequent lifecycle event's fallback. Repro from the audit: one
-         * batch `POW 0;POW 0;...;POW 1` -- TCP holds the mutex, twenty DEINITs
-         * fill the 20-deep queue, and the final INIT's fallback drops them
-         * all. The latch then stayed true for ever while the radio ran, so the
-         * active mode read 0 permanently.
-         *
-         * ⚠ The comment above ("pending stale events would have been
-         * invalidated by the lifecycle transition anyway") is true of the
-         * EVENTS and false of the LATCH, which is why this was not caught by
-         * reading it.
-         *
-         * After the drain the queue is empty, so the latch is exactly "the
-         * event we are about to insert is a DEINIT". */
-        gWincDeinitQueued = (event == WIFI_MANAGER_EVENT_DEINIT);
         if (xQueueSend(gEventQH, &event, 0) == pdPASS) {
             return true;
         }
-        /* The insert failed too, so the queue is empty and nothing is
-         * pending -- not even what we just claimed. */
-        gWincDeinitQueued = false;
     }
     LOG_E("WiFi SendEvent: queue full (event=%u)", (unsigned)event);
     return false;
@@ -1272,39 +1161,6 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             bool teardownPending = GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING);
 
             ResetAllEventFlags(&pInstance->eventFlags);
-            /* ⛔⛔ #1193 r3 AUDIT MEDIUM: CLEARED HERE, AND ONLY HERE.
-             *
-             * r2 cleared it at each successful bring-up, which RACED: HRESet
-             * during INIT's 100 ms vTaskDelay queues a DEINIT and sets the
-             * latch; INIT then resumes, starts the AP and unconditionally
-             * cleared it -- erasing a teardown request NEWER than itself --
-             * and the queued DEINIT's nm_reset window reported a live mode
-             * again. A bring-up must never discard a newer teardown.
-             *
-             * ⭐ The audit suggested a generation counter. This is simpler and
-             * needs no counter, because of what the latch is actually FOR: it
-             * exists only to cover the window where AP_STARTED/STA_STARTED are
-             * STALE. ResetAllEventFlags, one line above, is what ends that
-             * window -- after it the flags answer correctly on their own. So
-             * the latch's lifetime is exactly the flags' staleness, and
-             * clearing it where they are cleared makes that true by
-             * construction rather than by a comparison that could be got
-             * wrong.
-             *
-             * It is also safe on the paths that reach this ENTRY without a
-             * teardown having been processed: the flags have just been cleared
-             * too, so the derivation reports NONE from them regardless.
-             *
-             * ⚠ ACCEPTED TRANSIENT -- DO NOT "FIX" THIS BACK INTO THE RACE.
-             * Between a teardown being queued and processed, the query reports
-             * 0 even if a bring-up completes in that window (HRESet during
-             * INIT's delay: the AP really is briefly up, and we say 0). That is
-             * deliberate and conservative -- the radio is on its way down, so
-             * under-reporting is the honest answer for a client deciding
-             * whether a mode is usable. The obvious "improvement" is to let the
-             * bring-up clear the latch, which is EXACTLY the r3 race: a
-             * bring-up erasing a teardown request newer than itself. */
-            gWincDeinitQueued = false;
             // #475 step 3 — bulk-clear includes TCP_SOCKET_OPEN flag, so
             // pair it with the matching tick clear to keep observable in
             // sync.
@@ -1889,7 +1745,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
 
                 // Use DEINIT event for proper cleanup instead of manual reset
                 // DEINIT will Close handle, Deinitialize driver, fix reset state, then transition to MainState
-                wifi_QueueDeinit();
+                SendEvent(WIFI_MANAGER_EVENT_DEINIT);
                 break;
             }
             // If WiFi firmware update requested, transition to MainState which
@@ -2749,7 +2605,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 wifi_serial_bridge_interface_DeInit();
             }
             if (WDRV_WINC_Status(sysObj.drvWifiWinc) == SYS_STATUS_BUSY) {
-                wifi_QueueDeinit();
+                SendEvent(WIFI_MANAGER_EVENT_DEINIT);
                 break;
             }
             returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_TRAN;
@@ -2795,12 +2651,6 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             break;
         case WIFI_MANAGER_EVENT_EXIT:
             xQueueReset(gEventQH);
-            /* #1193 r5: a SECOND discard point, found by enumerating every
-             * mutation of gEventQH rather than only the one the audit named.
-             * This reset drops a queued DEINIT exactly as the full-queue
-             * fallback does, so the latch is stale in the same way. The queue
-             * is empty after it, so nothing is pending. */
-            gWincDeinitQueued = false;
             returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_HANDLED;
             break;
         case WIFI_MANAGER_EVENT_ERROR:
@@ -2947,7 +2797,6 @@ void wifi_manager_BootInit(void) {
     gLastRssiPercentage = 0;
     gWifiReinitDeadlineTick = 0;
     gWincDeepPowerOff = false;  // #334 — retained-RAM scrub
-    gWincDeinitQueued = false;  // #1193 — same scrub as its sibling above
     gApplyInProgress = false;
     gApplyInProgressDeadlineTick = 0;
     gApplyTeardownStartTick = 0;
@@ -3058,47 +2907,76 @@ bool wifi_manager_GetChipInfo(wifi_manager_chipInfo_t *pChipInfo) {
 }
 
 wifi_manager_networkMode_t wifi_manager_GetActiveNetworkMode(void) {
-    // #1186. Why this is DERIVED from the bring-up flags rather than stored in
-    // its own variable is written out once in the header comment; don't
-    // restate it here. The two other readers of the same pair, for whoever
-    // edits one of them next, are DhcpEventCallback above (whose IP a DHCP
-    // event describes) and MainState's stale-association guard (whether an
-    // event's mode is still up, #1060).
-    //
-    // One aligned read of eventFlags; no WINC round-trip, no wait, no lock,
-    // so this is safe from the USB SCPI task (priority 7) and from
-    // app_WifiTask itself -- the same contract as wifi_manager_GetLinkState().
-    // #1193 r1 AUDIT MEDIUM: A QUEUED TEARDOWN BEATS THE FLAGS.
-    //
-    // Checked BEFORE the flags, not after, because the flags are exactly what
-    // is stale here: wifi_manager_Deinit() only queues DEINIT, and on a
-    // power-down the task can reach WAIT_POWER_UP without processing it, so
-    // AP_STARTED/STA_STARTED can still read "up" with the module powered off.
-    // Without this, NETType? 1 answered 4 throughout STANDBY -- measured on
-    // the bench alongside LAN:POWer? reading 0.
-    //
-    // This is the whole reason the derivation needs a gate at all, and it is
-    // why the header's own description of the flags is now qualified: they are
-    // cleared on their teardown paths only once that teardown is PROCESSED.
-    if (gWincDeinitQueued) {
+    /* ⛔⛔⛔ #1186 r6: DERIVED LIVE. THERE IS NO CACHED MODE STATE, BY DESIGN.
+     *
+     * r1-r5 answered this from the AP_STARTED/STA_STARTED flags plus a
+     * gWincDeinitQueued latch tracking "a teardown is pending". FIVE audit
+     * rounds found FIVE ways for that latch to desynchronise:
+     *   r3  a bring-up cleared it, erasing a teardown NEWER than itself
+     *   r4  SendEvent could fail, leaving it set with no teardown coming
+     *   r5a the full-queue fallback DISCARDED an already-queued DEINIT, so a
+     *       SUCCESSFUL send's event never arrived
+     *   r5b a teardown already DEQUEUED and running is not IN the queue, so
+     *       "queue empty" cleared it mid-nm_reset
+     * r5b is why no amount of queue-tracking could work: the fact being
+     * cached is not a property of the queue. Patching instance n produced
+     * instance n+1 four times, so the mechanism is replaced, not fixed again.
+     *
+     * TWO LIVE SOURCES, NEITHER OF THEM OURS TO KEEP IN SYNC:
+     *
+     * 1. The board power state, read the way this file already reads it for
+     *    the APPLY gate. This closes the window the latch was originally
+     *    added for: a long-press power-down cuts the rail while a queued
+     *    teardown may never be processed, so the DRIVER's own view goes
+     *    stale. Power is the fact that is true regardless.
+     *
+     * 2. WDRV_WINC_OperatingModeGet(), the vendor's own query. UNKNOWN covers
+     *    an invalid handle, which also covers every reset window: the DEINIT
+     *    handler invalidates wdrvHandle BEFORE calling
+     *    wifi_manager_FixWincResetState(), and that function has exactly one
+     *    caller, so no reset path runs with a valid handle. isAP is written
+     *    only by the vendor driver (APStart / APStop / its control-descriptor
+     *    reset) and never by us -- we cannot desynchronise what we do not
+     *    write, which is the whole point.
+     *
+     * ⚠ TWO READINGS TO KNOW ABOUT, both verified by reading the paths:
+     *
+     * (a) A STA that cannot associate reports 1 for as long as it retries
+     *     (ERROR -> backoff -> REINIT re-queues itself without closing the
+     *     handle; the backoff escalates 1 s -> 30 s over up to 200 attempts).
+     *     That is CORRECT, not a defect: the radio is configured for STA and
+     *     actively retrying, so "STA, not associated" is a true description.
+     *     Requiring association instead would report 0 for a STA that is up,
+     *     the worse answer, AND would need a cached bit to produce.
+     *
+     * (b) The one genuinely false reading is ~100 ms of AP bring-up: between
+     *     WDRV_WINC_Open and WDRV_WINC_APStart the driver's isAP is still
+     *     false, so this says 1 while an AP comes up. Bounded by the
+     *     BSSCtx/AuthCtx setup plus the 100 ms vTaskDelay before APStart,
+     *     self-correcting, and it cannot stick. Accepted deliberately: every
+     *     defect the latch produced was a STUCK wrong value, which this shape
+     *     cannot produce at all.
+     *
+     * Non-blocking: one BoardData read and one pointer-dereferencing vendor
+     * call -- no WINC round-trip, no lock. Same contract as
+     * wifi_manager_GetLinkState(). */
+    const tPowerData *pPowerState = (tPowerData *) BoardData_Get(BOARDDATA_POWER_DATA, 0);
+    if (pPowerState == NULL ||
+        (pPowerState->powerState != POWERED_UP &&
+         pPowerState->powerState != POWERED_UP_EXT_DOWN)) {
         return WIFI_MANAGER_NETWORK_MODE_NONE;
     }
 
-    const wifi_manager_stateFlag_t flags = gStateMachineContext.eventFlags;
-
-    // AP first, matching the order DhcpEventCallback uses. Each bring-up path
-    // clears the other mode's flag, so this is a tie-break that should never
-    // be reached rather than a precedence policy.
-    if (GetEventFlagStatus(flags, WIFI_MANAGER_STATE_FLAG_AP_STARTED)) {
-        return WIFI_MANAGER_NETWORK_MODE_AP;
+    switch (WDRV_WINC_OperatingModeGet(gStateMachineContext.wdrvHandle)) {
+        case WDRV_WINC_OP_MODE_AP:
+        case WDRV_WINC_OP_MODE_PROV_AP:
+            return WIFI_MANAGER_NETWORK_MODE_AP;
+        case WDRV_WINC_OP_MODE_STA:
+            return WIFI_MANAGER_NETWORK_MODE_STA;
+        default:
+            /* UNKNOWN: invalid handle / no control block -- nothing is up. */
+            return WIFI_MANAGER_NETWORK_MODE_NONE;
     }
-    if (GetEventFlagStatus(flags, WIFI_MANAGER_STATE_FLAG_STA_STARTED)) {
-        return WIFI_MANAGER_NETWORK_MODE_STA;
-    }
-    // Neither mode is up. Reported as 0, never folded into a real mode: the
-    // honest answer from power-up until the first successful bring-up, and
-    // again from a teardown until the next one.
-    return WIFI_MANAGER_NETWORK_MODE_NONE;
 }
 
 wifi_link_state_t wifi_manager_GetLinkState(void) {
@@ -3414,7 +3292,7 @@ bool wifi_manager_Deinit() {
     // STA_STARTED/assocHandle leaves BSSID?/RSSI/ADDR? reporting the dead
     // link.  Doing it here makes the query gates trip the moment Deinit runs.
     InvalidateStaLinkState();
-    return wifi_QueueDeinit();
+    return SendEvent(WIFI_MANAGER_EVENT_DEINIT);
 }
 
 // #334: Full deep power-down of the WINC1500 chip for battery savings.
@@ -3517,7 +3395,7 @@ bool wifi_manager_HardReset(void) {
     gApplyInProgress = false;
     taskEXIT_CRITICAL();
     InvalidateStaLinkState();  // #517: same rationale as wifi_manager_Deinit
-    return wifi_QueueDeinit();
+    return SendEvent(WIFI_MANAGER_EVENT_DEINIT);
 }
 
 bool wifi_manager_UpdateNetworkSettings(wifi_manager_settings_t * pSettings) {

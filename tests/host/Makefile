@@ -1209,121 +1209,64 @@ $(APSTA1060_BIN): test_1060_apsta_disconnect_retry.c test_framework.h \
 	       echo "       higher-priority task's flag write in that window is"; \
 	       echo "       silently erased -- including the FWUpdate request this"; \
 	       echo "       file already preserves by hand."; exit 1; }
-	@# ⚠ r3's arm here used to COUNT assignments of false and require 2. r5
-	@# added legitimate ones (the full-queue fallback, EVENT_EXIT's
-	@# xQueueReset, the #409 scrub), so that count was brittle and would have
-	@# failed on a CORRECT change -- the same way PIN 31 came to require a
-	@# defect. It is re-keyed onto the property it was protecting: no
-	@# BRING-UP site may touch the latch.
-	@# ⛔⛔ #1193 r2 PIN -- QUEUEING A TEARDOWN *IS* LATCHING IT.
+	@# ⛔⛔⛔ #1186 r6 PIN -- THE ACTIVE MODE IS DERIVED LIVE. NO CACHED STATE.
 	@#
-	@# r1 set gWincDeinitQueued inside wifi_manager_Deinit() and called that
-	@# "the ONE chokepoint every teardown path passes through". It was wrong by
-	@# three sites: SYST:COMM:LAN:HRESet (wifi_manager_HardReset) queues DEINIT
-	@# DIRECTLY without calling Deinit, so the latch was never set and
-	@# NETType? 1 still answered a live mode during nm_reset's CHIP_EN-low
-	@# window; MainState's firmware-update path and its BUSY re-queue are two
-	@# more. The r2 audit found the first; the other two came from enumerating
-	@# by PREDICATE instead of by name.
+	@# This replaces five rounds of pins (r2-r5) that each guarded one way a
+	@# cached "teardown pending" latch could desynchronise: a bring-up erasing
+	@# a newer teardown (r3), a failed SendEvent leaving it stuck (r4), the
+	@# full-queue fallback discarding an already-queued DEINIT (r5a), and a
+	@# teardown already DEQUEUED and running not being IN the queue (r5b).
 	@#
-	@# ⭐ SO THIS PIN DOES NOT CHECK "THE LATCH IS SET IN N PLACES" -- that is
-	@# the shape that let a fourth site be added without one. It checks that
-	@# there is exactly ONE way to queue the event and that way latches, so a
-	@# fifth site CANNOT be written that forgets. Coupling, not vigilance.
+	@# ⭐ r5b is why those pins are gone rather than extended: the fact being
+	@# cached was never a property of the queue, so no queue-keyed pin could
+	@# have covered it. Each round's pin was sound for its own instance and
+	@# blind to the next. The property worth pinning is that there is NOTHING
+	@# TO DESYNCHRONISE -- so these arms assert the ABSENCE of cached mode
+	@# state and the PRESENCE of both live sources.
 	@#
-	@# ⚠ Deliberately NOT pinned: the number of wifi_QueueDeinit() call
-	@# sites. That count churns with ordinary work and adds no safety -- arm 1
-	@# below already makes every call site latching by construction. A count
-	@# here would fail on correct changes, which is how pins get weakened.
+	@# Arm 1 is the load-bearing one: a reintroduced cache under ANY name
+	@# would have to be read by the accessor, and arms 2+3 pin what the
+	@# accessor reads instead.
 	@pp=`$(CC) -fpreprocessed -E $(WIFI_MGR_SRC) 2>/dev/null`; \
-	 n=`printf '%s\n' "$$pp" | grep -c 'SendEvent(WIFI_MANAGER_EVENT_DEINIT)'`; \
-	 test "$$n" -eq 1 \
-	  || { echo "ERROR: #1193 r2 PIN: found $$n code site(s) queueing"; \
-	       echo "       WIFI_MANAGER_EVENT_DEINIT, expected exactly 1 (inside"; \
-	       echo "       wifi_QueueDeinit). A bare SendEvent(...DEINIT)"; \
-	       echo "       elsewhere takes the radio down WITHOUT latching"; \
-	       echo "       gWincDeinitQueued, so NETType? 1 reports a mode"; \
-	       echo "       that is no longer running -- the r2 defect, which"; \
-	       echo "       reached a shipped head because r1 trusted one"; \
-	       echo "       chokepoint it had not enumerated."; \
-	       echo "       Route the new site through wifi_QueueDeinit()."; \
-	       exit 1; }; \
-	 blk=`printf '%s\n' "$$pp" | awk '/static bool wifi_QueueDeinit\(void\)/,/^\}/'`; \
+	 printf '%s\n' "$$pp" | grep -qE 'gWincDeinitQueued|wifi_QueueDeinit' \
+	  && { echo "ERROR: #1186 r6 PIN 1: the deinit latch is back in CODE."; \
+	       echo "       Five audit rounds found five ways for it to fall out"; \
+	       echo "       of step with the radio, the last of them unfixable by"; \
+	       echo "       queue-tracking (a dequeued, running teardown is not IN"; \
+	       echo "       the queue). The active mode must be derived live from"; \
+	       echo "       the power state and WDRV_WINC_OperatingModeGet, with no"; \
+	       echo "       cached mode state at all. Do not reintroduce one."; \
+	       exit 1; } || true; \
+	 blk=`printf '%s\n' "$$pp" | awk '/wifi_manager_networkMode_t wifi_manager_GetActiveNetworkMode\(void\)/,/^\}/'`; \
 	 nb=`printf '%s\n' "$$blk" | grep -c .`; \
-	 if [ "$$nb" -lt 3 ]; then \
-	   echo "ERROR: #1193 r2 PIN could not slice wifi_QueueDeinit's body"; \
+	 if [ "$$nb" -lt 8 ]; then \
+	   echo "ERROR: #1186 r6 PIN: could not slice GetActiveNetworkMode's body"; \
 	   echo "       ($$nb lines) -- the pin cannot evaluate its invariant,"; \
 	   echo "       which is a FAILURE, not a pass. Was it renamed?"; \
 	   exit 1; \
 	 fi; \
-	 lt=`printf '%s\n' "$$blk" | grep -n 'gWincDeinitQueued = true;' | head -1 | cut -d: -f1`; \
-	 lq=`printf '%s\n' "$$blk" | grep -n 'SendEvent(WIFI_MANAGER_EVENT_DEINIT)' | head -1 | cut -d: -f1`; \
-	 test -n "$$lt" \
-	  || { echo "ERROR: #1193 r2 PIN: wifi_QueueDeinit no longer sets"; \
-	       echo "       gWincDeinitQueued, so queueing a teardown has"; \
-	       echo "       stopped latching it and every caller silently loses"; \
-	       echo "       the guarantee."; exit 1; }; \
-	 test -n "$$lq" -a "$$lt" -lt "$$lq" \
-	  || { echo "ERROR: #1193 r2 PIN: wifi_QueueDeinit sets the latch AFTER"; \
-	       echo "       queueing the event (or not at all). The store must"; \
-	       echo "       come FIRST: in between, the event exists while the"; \
-	       echo "       latch still says no teardown is pending, and a"; \
-	       echo "       higher-priority NETType? 1 in that window reads the"; \
-	       echo "       stale mode. Order is the invariant, not just presence."; \
-	       exit 1; } ; \
-	 printf '%s\n' "$$pp" \
-	   | grep -A3 -E 'SetEventFlag\(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_(AP|STA)_STARTED\)' \
-	   | grep -q 'gWincDeinitQueued' \
-	  && { echo "ERROR: #1193 r3 PIN: a BRING-UP site touches"; \
-	       echo "       gWincDeinitQueued. r2 cleared it at every successful"; \
-	       echo "       bring-up and that RACED: HRESet during INIT's 100 ms"; \
-	       echo "       delay queues a DEINIT and sets the latch, then the"; \
-	       echo "       resuming bring-up cleared it -- erasing a teardown"; \
-	       echo "       NEWER than itself -- and the queued DEINIT reported a"; \
-	       echo "       live mode again. A bring-up must never discard a"; \
-	       echo "       newer teardown."; \
-	       exit 1; } || true; \
-	 nq=`printf '%s\n' "$$pp" \
-	      | grep -cE 'xQueueSend\(gEventQH|xQueueReceive\(gEventQH|xQueueReset\(gEventQH'`; \
-	 test "$$nq" -eq 5 \
-	  || { echo "ERROR: #1193 r5 PIN: gEventQH is mutated at $$nq site(s),"; \
-	       echo "       not the 5 this latch's maintenance was derived for."; \
-	       echo "       gWincDeinitQueued CACHES 'the queue holds a DEINIT',"; \
-	       echo "       so EVERY site adding or discarding queued events must"; \
-	       echo "       keep it true. r4 covered a failed SEND; its audit found"; \
-	       echo "       the full-queue fallback DISCARDS a successfully queued"; \
-	       echo "       DEINIT; enumerating the rest found EVENT_EXIT's"; \
-	       echo "       xQueueReset too. A new mutation site is a new way for"; \
-	       echo "       the cache to desynchronise -- re-derive the"; \
-	       echo "       maintenance set before raising this number."; \
+	 printf '%s\n' "$$blk" | grep -q 'WDRV_WINC_OperatingModeGet' \
+	  || { echo "ERROR: #1186 r6 PIN 2: the accessor no longer asks the VENDOR"; \
+	       echo "       driver for the operating mode. isAP is written only by"; \
+	       echo "       the driver (APStart/APStop/its descriptor reset) and"; \
+	       echo "       never by us, which is exactly why it cannot drift."; \
+	       echo "       Deriving from our own flags again reopens the class."; \
 	       exit 1; }; \
-	 printf '%s\n' "$$pp" | grep -A2 'ResetAllEventFlags(&' \
-	   | grep -q 'gWincDeinitQueued = false' \
-	  || { echo "ERROR: #1193 r3 PIN: the clear is no longer adjacent to"; \
-	       echo "       ResetAllEventFlags. That call is what ends the window"; \
-	       echo "       the latch exists to cover -- after it the bring-up"; \
-	       echo "       flags answer correctly on their own -- so the latch's"; \
-	       echo "       lifetime equals the flags' staleness ONLY while the two"; \
-	       echo "       are cleared together. Moved apart, they drift and the"; \
-	       echo "       race comes back in whichever direction the gap opens."; \
-	       exit 1; } ; \
-	 printf '%s\n' "$$blk" | grep -q 'const bool wasQueued = gWincDeinitQueued;' \
-	  || { echo "ERROR: #1193 r4 PIN: wifi_QueueDeinit no longer SAVES the"; \
-	       echo "       prior latch value before setting it. SendEvent can"; \
-	       echo "       fail (queue uninitialised, or its bounded xQueueSend"; \
-	       echo "       timing out on a full queue), and a latch left set with"; \
-	       echo "       no teardown coming reports 'no mode' for ever while"; \
-	       echo "       the radio runs."; exit 1; }; \
-	 printf '%s\n' "$$blk" | grep -q 'gWincDeinitQueued = wasQueued;' \
-	  || { echo "ERROR: #1193 r4 PIN: the failed-send path no longer RESTORES"; \
-	       echo "       the prior latch value."; exit 1; }; \
-	 printf '%s\n' "$$blk" | grep -q 'gWincDeinitQueued = false' \
-	  && { echo "ERROR: #1193 r4 PIN: wifi_QueueDeinit rolls the latch back to"; \
-	       echo "       FALSE. That is the naive rollback and it reintroduces"; \
-	       echo "       the r3 defect from the other side: if an EARLIER call"; \
-	       echo "       already queued a teardown and this later send fails,"; \
-	       echo "       clearing the latch discards a teardown that really is"; \
-	       echo "       pending. Restore the SAVED value, not false."; \
+	 printf '%s\n' "$$blk" | grep -q 'BOARDDATA_POWER_DATA' \
+	  || { echo "ERROR: #1186 r6 PIN 3: the accessor no longer consults the"; \
+	       echo "       BOARD POWER STATE. That check is what closes the"; \
+	       echo "       long-press standby window: the rail can be cut while a"; \
+	       echo "       queued teardown is never processed, so the driver's own"; \
+	       echo "       view stays stale and reports a mode with the module"; \
+	       echo "       unpowered. The vendor API alone does NOT cover it."; \
+	       exit 1; }; \
+	 printf '%s\n' "$$blk" \
+	   | grep -qE 'WIFI_MANAGER_STATE_FLAG_(AP|STA)_STARTED' \
+	  && { echo "ERROR: #1186 r6 PIN 4: the accessor reads the bring-up flags"; \
+	       echo "       again. Those flags are event-latched and outlive the"; \
+	       echo "       radio -- they are the original r1 defect, and every"; \
+	       echo "       subsequent round was an attempt to compensate for"; \
+	       echo "       them. Derive from the live sources instead."; \
 	       exit 1; } || true
 	$(CC) $(CFLAGS) -o $(APSTA1060_BIN) test_1060_apsta_disconnect_retry.c
 

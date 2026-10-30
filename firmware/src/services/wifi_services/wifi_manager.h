@@ -287,46 +287,34 @@ extern "C" {
      *
      * SYSTem:COMMunicate:LAN:NETType? reports the STAGED runtime setting --
      * what APPLY would bring up next -- so it cannot answer "is this board an
-     * AP or a STA right now?". This reads the mode that was actually brought
-     * up, derived from the manager's own (file-private) AP_STARTED and
-     * STA_STARTED bring-up flags: AP_STARTED is set immediately after a
-     * successful WDRV_WINC_APStart and STA_STARTED immediately after a
-     * successful WDRV_WINC_BSSConnect.
+     * AP or a STA right now?". This answers that.
      *
-     * ⛔ An earlier revision of this comment added "and each is cleared on its
-     * own teardown paths", full stop. That was FALSE and it is what made the
-     * derivation look safe to write: a teardown is only QUEUED
-     * (wifi_manager_Deinit sends WIFI_MANAGER_EVENT_DEINIT), and on a
-     * power-down the task can reach WAIT_POWER_UP without ever processing it,
-     * so the flags outlive the radio. #1193's round-1 audit caught it, and the
-     * bench showed NETType? 1 answering 4 throughout STANDBY while
-     * LAN:POWer? correctly read 0.
+     * ⭐ DERIVED LIVE FROM TWO SOURCES, WITH NO CACHED MODE STATE OF OUR OWN:
+     * the board power state, and the vendor driver's own
+     * WDRV_WINC_OperatingModeGet(). Nothing here is maintained by this module,
+     * so there is nothing that can fall out of step with the radio.
      *
-     * They are cleared on their own teardown paths **once that teardown is
-     * processed**. Until then a separate synchronous latch, set inside
-     * wifi_manager_Deinit itself, makes this query report NONE -- see the
-     * implementation for why none of the existing predicates could serve.
-     *
-     * No new state was added for this. That pair IS the manager's existing
-     * record of which mode is up: DhcpEventCallback already discriminates AP
-     * from STA with exactly this test, and #1060's stale-association guard
-     * uses the same pair to decide whether an event's "mode is no longer up".
-     * A separate mode variable would be a second source free to disagree with
-     * those two consumers.
-     *
-     * AP is tested first, matching the order both existing consumers use. The
-     * flags are not expected to be set simultaneously (each mode's bring-up
-     * path clears the other's flag on the way through), so the order is a
-     * tie-break that should never be needed rather than a policy choice.
-     *
-     * Read-only and strictly non-blocking (no WINC round-trip, no wait), the
-     * same contract as wifi_manager_GetLinkState().
+     * ⛔ That is a deliberate replacement, not the original design. Revisions
+     * r1-r5 derived this from the AP_STARTED/STA_STARTED bring-up flags plus a
+     * latch tracking "a teardown is pending", and FIVE audit rounds found five
+     * different ways for that latch to desynchronise -- the last of them
+     * fatal to the whole approach, because a teardown already dequeued and
+     * running is not IN the queue being tracked. The implementation comment
+     * lists all five. Do not reintroduce a cached mode bit here.
      *
      * @return WIFI_MANAGER_NETWORK_MODE_AP, WIFI_MANAGER_NETWORK_MODE_STA, or
-     *         WIFI_MANAGER_NETWORK_MODE_NONE when neither mode is up -- which
-     *         is the honest answer from power-up until the first successful
-     *         bring-up, and again from a teardown until the next one. Callers
-     *         must handle NONE rather than folding it into either mode.
+     *         WIFI_MANAGER_NETWORK_MODE_NONE when nothing is up. Callers must
+     *         handle NONE rather than folding it into either mode.
+     *
+     * ⚠ Two readings worth knowing, both documented at the implementation:
+     * a STA that cannot associate reads STA for as long as it retries (which
+     * is true -- it is configured for STA and retrying), and ~100 ms of AP
+     * bring-up reads STA before the driver's own flag flips (the one false
+     * reading, bounded and self-correcting).
+     *
+     * Read-only and strictly non-blocking -- one BoardData read and one
+     * vendor call, no WINC round-trip and no lock, the same contract as
+     * wifi_manager_GetLinkState().
      */
     wifi_manager_networkMode_t wifi_manager_GetActiveNetworkMode(void);
 
