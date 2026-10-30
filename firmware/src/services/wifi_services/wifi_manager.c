@@ -2949,6 +2949,11 @@ wifi_manager_networkMode_t wifi_manager_GetActiveNetworkMode(void) {
      *     Requiring association instead would report 0 for a STA that is up,
      *     the worse answer, AND would need a cached bit to produce.
      *
+     * ⛔ r7 CORRECTION: an earlier revision of this comment said there was no
+     *    state with the driver open and neither mode intended, "ruled out by
+     *    predicate". Two exist; see the STA case below. The enumeration that
+     *    produced that claim covered INIT and ERROR and skipped REINIT.
+     *
      * (b) The one genuinely false reading is ~100 ms of AP bring-up: between
      *     WDRV_WINC_Open and WDRV_WINC_APStart the driver's isAP is still
      *     false, so this says 1 while an AP comes up. Bounded by the
@@ -2972,7 +2977,39 @@ wifi_manager_networkMode_t wifi_manager_GetActiveNetworkMode(void) {
         case WDRV_WINC_OP_MODE_PROV_AP:
             return WIFI_MANAGER_NETWORK_MODE_AP;
         case WDRV_WINC_OP_MODE_STA:
-            return WIFI_MANAGER_NETWORK_MODE_STA;
+            /* ⛔⛔ #1186 r7: STA IS THE VENDOR'S *DEFAULT*, NOT A SIGNAL, so it
+             * needs positive corroboration. OperatingModeGet returns STA
+             * whenever isAP is false -- including with the driver open and
+             * NOTHING running.
+             *
+             * r6's comment claimed no such steady state existed, "ruled out by
+             * predicate". That was WRONG: I enumerated INIT's post-Open breaks
+             * and the ERROR handler and never looked at REINIT's own branches.
+             * Two steady states exist, both found by the r6 audit:
+             *   (a) REINIT's `!isEnabled` branch (APPLY;ENAbled 0;APPLY) calls
+             *       WDRV_WINC_APStop and clears the flags but KEEPS wdrvHandle
+             *       -- APStop sets the driver's isAP false, so this read STA
+             *       indefinitely with WiFi stopped;
+             *   (b) a failed AP start (e.g. a 1-character WPA key that
+             *       m2m_validate_ap_parameters rejects) leaves a valid handle
+             *       with isAP false, reading STA through repeated AP attempts.
+             *
+             * STA_STARTED is the corroboration, and it is ONE bit on ONE axis
+             * rather than a return to the cache that was just deleted: it is
+             * SET only after a successful WDRV_WINC_BSSConnect (two sites) and
+             * CLEARED only on REINIT's teardown paths (five, including (a)'s
+             * at the APStop above), so it tracks the work that actually
+             * happened. It is consulted ONLY as a conjunct, after the power
+             * check and after the vendor call -- never as the answer.
+             *
+             * Reading it here: a STA that came up and is now retrying reads 1
+             * (true -- it is configured for STA and retrying); a STA that has
+             * never come up reads 0. Under-reporting is the safe direction. */
+            if (GetEventFlagStatus(gStateMachineContext.eventFlags,
+                                   WIFI_MANAGER_STATE_FLAG_STA_STARTED)) {
+                return WIFI_MANAGER_NETWORK_MODE_STA;
+            }
+            return WIFI_MANAGER_NETWORK_MODE_NONE;
         default:
             /* UNKNOWN: invalid handle / no control block -- nothing is up. */
             return WIFI_MANAGER_NETWORK_MODE_NONE;

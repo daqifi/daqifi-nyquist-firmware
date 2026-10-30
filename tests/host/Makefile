@@ -1260,14 +1260,27 @@ $(APSTA1060_BIN): test_1060_apsta_disconnect_retry.c test_framework.h \
 	       echo "       view stays stale and reports a mode with the module"; \
 	       echo "       unpowered. The vendor API alone does NOT cover it."; \
 	       exit 1; }; \
-	 printf '%s\n' "$$blk" \
-	   | grep -qE 'WIFI_MANAGER_STATE_FLAG_(AP|STA)_STARTED' \
-	  && { echo "ERROR: #1186 r6 PIN 4: the accessor reads the bring-up flags"; \
-	       echo "       again. Those flags are event-latched and outlive the"; \
-	       echo "       radio -- they are the original r1 defect, and every"; \
-	       echo "       subsequent round was an attempt to compensate for"; \
-	       echo "       them. Derive from the live sources instead."; \
-	       exit 1; } || true
+	 printf '%s\n' "$$blk" | grep -q 'WIFI_MANAGER_STATE_FLAG_AP_STARTED' \
+	  && { echo "ERROR: #1186 r6 PIN 4: the accessor reads AP_STARTED again."; \
+	       echo "       The AP axis must come from the VENDOR driver, which"; \
+	       echo "       writes isAP at the real APStart/APStop and cannot be"; \
+	       echo "       desynchronised by us. AP_STARTED is event-latched and"; \
+	       echo "       outlives the radio -- it is the original r1 defect, and"; \
+	       echo "       five rounds were spent compensating for it."; \
+	       exit 1; } || true; \
+	 printf '%s\n' "$$blk" | grep -q 'WIFI_MANAGER_STATE_FLAG_STA_STARTED' \
+	  || { echo "ERROR: #1186 r7 PIN 5: the STA answer is no longer"; \
+	       echo "       corroborated by STA_STARTED."; \
+	       echo "       ⛔ OperatingModeGet returns STA whenever isAP is FALSE"; \
+	       echo "       -- it is the vendor's DEFAULT, not a signal -- so an"; \
+	       echo "       open driver with nothing running reads STA. Two steady"; \
+	       echo "       states do exactly that (r6 audit): REINIT's !isEnabled"; \
+	       echo "       branch APStops and clears the flags but KEEPS the"; \
+	       echo "       handle, and a rejected AP key leaves a valid handle"; \
+	       echo "       with isAP false through repeated AP attempts."; \
+	       echo "       Returning the vendor's STA unconditioned reports a"; \
+	       echo "       live STA with WiFi stopped. Under-report instead."; \
+	       exit 1; }
 	$(CC) $(CFLAGS) -o $(APSTA1060_BIN) test_1060_apsta_disconnect_retry.c
 
 $(BIN): test_circularbuffer.c test_framework.h stubs/Logger.h stubs/osal/osal.h $(FW_UTIL)/CircularBuffer.c $(FW_UTIL)/CircularBuffer.h $(RECIPES)
