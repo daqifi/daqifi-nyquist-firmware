@@ -276,6 +276,48 @@ extern "C" {
      */
     wifi_link_state_t wifi_manager_GetLinkState(void);
 
+    /** Returned by wifi_manager_GetActiveNetworkMode() when no mode is up.
+     *  Deliberately 0: SCPI_LANNetModeSet accepts only 1 (STA) and 4 (AP) and
+     *  rejects everything else with -224, so 0 cannot collide with a mode a
+     *  client could ever have staged. */
+#define WIFI_MANAGER_NETWORK_MODE_NONE  ((wifi_manager_networkMode_t) 0)
+
+    /**
+     * @brief Get the network mode the radio is ACTUALLY running (#1186).
+     *
+     * SYSTem:COMMunicate:LAN:NETType? reports the STAGED runtime setting --
+     * what APPLY would bring up next -- so it cannot answer "is this board an
+     * AP or a STA right now?". This answers that.
+     *
+     * ⭐ DERIVED LIVE FROM TWO SOURCES, WITH NO CACHED MODE STATE OF OUR OWN:
+     * the board power state, and the vendor driver's own
+     * WDRV_WINC_OperatingModeGet(). Nothing here is maintained by this module,
+     * so there is nothing that can fall out of step with the radio.
+     *
+     * ⛔ That is a deliberate replacement, not the original design. Revisions
+     * r1-r5 derived this from the AP_STARTED/STA_STARTED bring-up flags plus a
+     * latch tracking "a teardown is pending", and FIVE audit rounds found five
+     * different ways for that latch to desynchronise -- the last of them
+     * fatal to the whole approach, because a teardown already dequeued and
+     * running is not IN the queue being tracked. The implementation comment
+     * lists all five. Do not reintroduce a cached mode bit here.
+     *
+     * @return WIFI_MANAGER_NETWORK_MODE_AP, WIFI_MANAGER_NETWORK_MODE_STA, or
+     *         WIFI_MANAGER_NETWORK_MODE_NONE when nothing is up. Callers must
+     *         handle NONE rather than folding it into either mode.
+     *
+     * ⚠ Two readings worth knowing, both documented at the implementation:
+     * a STA that cannot associate reads STA for as long as it retries (which
+     * is true -- it is configured for STA and retrying), and ~100 ms of AP
+     * bring-up reads STA before the driver's own flag flips (the one false
+     * reading, bounded and self-correcting).
+     *
+     * Read-only and strictly non-blocking -- one BoardData read and one
+     * vendor call, no WINC round-trip and no lock, the same contract as
+     * wifi_manager_GetLinkState().
+     */
+    wifi_manager_networkMode_t wifi_manager_GetActiveNetworkMode(void);
+
     /**
      * @brief Initializes the WiFi manager and its state machine.
      * 

@@ -1209,6 +1209,78 @@ $(APSTA1060_BIN): test_1060_apsta_disconnect_retry.c test_framework.h \
 	       echo "       higher-priority task's flag write in that window is"; \
 	       echo "       silently erased -- including the FWUpdate request this"; \
 	       echo "       file already preserves by hand."; exit 1; }
+	@# ⛔⛔⛔ #1186 r6 PIN -- THE ACTIVE MODE IS DERIVED LIVE. NO CACHED STATE.
+	@#
+	@# This replaces five rounds of pins (r2-r5) that each guarded one way a
+	@# cached "teardown pending" latch could desynchronise: a bring-up erasing
+	@# a newer teardown (r3), a failed SendEvent leaving it stuck (r4), the
+	@# full-queue fallback discarding an already-queued DEINIT (r5a), and a
+	@# teardown already DEQUEUED and running not being IN the queue (r5b).
+	@#
+	@# ⭐ r5b is why those pins are gone rather than extended: the fact being
+	@# cached was never a property of the queue, so no queue-keyed pin could
+	@# have covered it. Each round's pin was sound for its own instance and
+	@# blind to the next. The property worth pinning is that there is NOTHING
+	@# TO DESYNCHRONISE -- so these arms assert the ABSENCE of cached mode
+	@# state and the PRESENCE of both live sources.
+	@#
+	@# Arm 1 is the load-bearing one: a reintroduced cache under ANY name
+	@# would have to be read by the accessor, and arms 2+3 pin what the
+	@# accessor reads instead.
+	@pp=`$(CC) -fpreprocessed -E $(WIFI_MGR_SRC) 2>/dev/null`; \
+	 printf '%s\n' "$$pp" | grep -qE 'gWincDeinitQueued|wifi_QueueDeinit' \
+	  && { echo "ERROR: #1186 r6 PIN 1: the deinit latch is back in CODE."; \
+	       echo "       Five audit rounds found five ways for it to fall out"; \
+	       echo "       of step with the radio, the last of them unfixable by"; \
+	       echo "       queue-tracking (a dequeued, running teardown is not IN"; \
+	       echo "       the queue). The active mode must be derived live from"; \
+	       echo "       the power state and WDRV_WINC_OperatingModeGet, with no"; \
+	       echo "       cached mode state at all. Do not reintroduce one."; \
+	       exit 1; } || true; \
+	 blk=`printf '%s\n' "$$pp" | awk '/wifi_manager_networkMode_t wifi_manager_GetActiveNetworkMode\(void\)/,/^\}/'`; \
+	 nb=`printf '%s\n' "$$blk" | grep -c .`; \
+	 if [ "$$nb" -lt 8 ]; then \
+	   echo "ERROR: #1186 r6 PIN: could not slice GetActiveNetworkMode's body"; \
+	   echo "       ($$nb lines) -- the pin cannot evaluate its invariant,"; \
+	   echo "       which is a FAILURE, not a pass. Was it renamed?"; \
+	   exit 1; \
+	 fi; \
+	 printf '%s\n' "$$blk" | grep -q 'WDRV_WINC_OperatingModeGet' \
+	  || { echo "ERROR: #1186 r6 PIN 2: the accessor no longer asks the VENDOR"; \
+	       echo "       driver for the operating mode. isAP is written only by"; \
+	       echo "       the driver (APStart/APStop/its descriptor reset) and"; \
+	       echo "       never by us, which is exactly why it cannot drift."; \
+	       echo "       Deriving from our own flags again reopens the class."; \
+	       exit 1; }; \
+	 printf '%s\n' "$$blk" | grep -q 'BOARDDATA_POWER_DATA' \
+	  || { echo "ERROR: #1186 r6 PIN 3: the accessor no longer consults the"; \
+	       echo "       BOARD POWER STATE. That check is what closes the"; \
+	       echo "       long-press standby window: the rail can be cut while a"; \
+	       echo "       queued teardown is never processed, so the driver's own"; \
+	       echo "       view stays stale and reports a mode with the module"; \
+	       echo "       unpowered. The vendor API alone does NOT cover it."; \
+	       exit 1; }; \
+	 printf '%s\n' "$$blk" | grep -q 'WIFI_MANAGER_STATE_FLAG_AP_STARTED' \
+	  && { echo "ERROR: #1186 r6 PIN 4: the accessor reads AP_STARTED again."; \
+	       echo "       The AP axis must come from the VENDOR driver, which"; \
+	       echo "       writes isAP at the real APStart/APStop and cannot be"; \
+	       echo "       desynchronised by us. AP_STARTED is event-latched and"; \
+	       echo "       outlives the radio -- it is the original r1 defect, and"; \
+	       echo "       five rounds were spent compensating for it."; \
+	       exit 1; } || true; \
+	 printf '%s\n' "$$blk" | grep -q 'WIFI_MANAGER_STATE_FLAG_STA_STARTED' \
+	  || { echo "ERROR: #1186 r7 PIN 5: the STA answer is no longer"; \
+	       echo "       corroborated by STA_STARTED."; \
+	       echo "       ⛔ OperatingModeGet returns STA whenever isAP is FALSE"; \
+	       echo "       -- it is the vendor's DEFAULT, not a signal -- so an"; \
+	       echo "       open driver with nothing running reads STA. Two steady"; \
+	       echo "       states do exactly that (r6 audit): REINIT's !isEnabled"; \
+	       echo "       branch APStops and clears the flags but KEEPS the"; \
+	       echo "       handle, and a rejected AP key leaves a valid handle"; \
+	       echo "       with isAP false through repeated AP attempts."; \
+	       echo "       Returning the vendor's STA unconditioned reports a"; \
+	       echo "       live STA with WiFi stopped. Under-report instead."; \
+	       exit 1; }
 	$(CC) $(CFLAGS) -o $(APSTA1060_BIN) test_1060_apsta_disconnect_retry.c
 
 $(BIN): test_circularbuffer.c test_framework.h stubs/Logger.h stubs/osal/osal.h $(FW_UTIL)/CircularBuffer.c $(FW_UTIL)/CircularBuffer.h $(RECIPES)
