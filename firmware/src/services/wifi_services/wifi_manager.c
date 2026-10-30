@@ -287,6 +287,37 @@ static volatile bool gWincDeepPowerOff = false;
  * touches no existing flag semantics and is unreachable from staged config. */
 static volatile bool gWincTeardownPending = false;
 
+/* ⛔⛔ #1193 r2 AUDIT MEDIUM: QUEUEING A TEARDOWN *IS* LATCHING IT.
+ *
+ * r1 set the latch inside wifi_manager_Deinit() and I described that function
+ * as "the ONE chokepoint every teardown path passes through". **That was wrong
+ * by three sites.** Enumerating by predicate rather than by name --
+ * `grep SendEvent(WIFI_MANAGER_EVENT_DEINIT)` -- finds FOUR:
+ *
+ *   1. wifi_manager_Deinit()            (the one r1 knew about)
+ *   2. wifi_manager_HardReset()         SYST:COMM:LAN:HRESet, queues DEINIT
+ *                                       DIRECTLY without calling Deinit, so
+ *                                       the latch was never set and NETT? 1
+ *                                       still answered 4 during nm_reset's
+ *                                       CHIP_EN/RESET_N-low window (r2)
+ *   3. MainState, firmware-update path  uses DEINIT "for proper cleanup"
+ *   4. MainState, DEINIT handler        re-queue while the driver is BUSY
+ *
+ * ⭐ So the fix is not "set it in one more place" -- that leaves the next site
+ * to be found by the next audit. It is to make the two inseparable: this is
+ * the ONLY way the event is queued, and it cannot be queued without latching.
+ * A structural check in tests/host/Makefile forbids a bare
+ * SendEvent(WIFI_MANAGER_EVENT_DEINIT) anywhere else, so a fifth site cannot
+ * be added that forgets.
+ *
+ * The store comes BEFORE the queue deliberately: in between, the event does
+ * not exist yet, so there is no window where a teardown is pending and the
+ * latch says otherwise. The reverse order would have one. */
+static bool wifi_QueueTeardown(void) {
+    gWincTeardownPending = true;
+    return SendEvent(WIFI_MANAGER_EVENT_DEINIT);
+}
+
 // Recursive mutex serializing wifi_manager_ProcessState across callers.
 // Today app_WifiTask is the primary owner; SCPI_Reset's active pump
 // (SYSTem:REboot path) also enters from the SCPI dispatch task.  Without
@@ -1783,7 +1814,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
 
                 // Use DEINIT event for proper cleanup instead of manual reset
                 // DEINIT will Close handle, Deinitialize driver, fix reset state, then transition to MainState
-                SendEvent(WIFI_MANAGER_EVENT_DEINIT);
+                wifi_QueueTeardown();
                 break;
             }
             // If WiFi firmware update requested, transition to MainState which
@@ -2651,7 +2682,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 wifi_serial_bridge_interface_DeInit();
             }
             if (WDRV_WINC_Status(sysObj.drvWifiWinc) == SYS_STATUS_BUSY) {
-                SendEvent(WIFI_MANAGER_EVENT_DEINIT);
+                wifi_QueueTeardown();
                 break;
             }
             returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_TRAN;
@@ -3309,19 +3340,7 @@ bool wifi_manager_Deinit() {
     // STA_STARTED/assocHandle leaves BSSID?/RSSI/ADDR? reporting the dead
     // link.  Doing it here makes the query gates trip the moment Deinit runs.
     InvalidateStaLinkState();
-    /* #1193: latch the teardown SYNCHRONOUSLY, for the same reason the clear
-     * above is synchronous -- the DEINIT event below can be deferred
-     * indefinitely (BUSY re-queue, or app_WifiTask never scheduled again on a
-     * power-down), and until it runs the bring-up flags still read "up".
-     * InvalidateStaLinkState() cannot carry this: it returns early while
-     * AP_STARTED is set, deliberately, so the AP case would never be latched.
-     *
-     * Set AFTER that call and BEFORE the event, so a reader either sees the
-     * old state entirely or sees the teardown -- never a half-cleared STA link
-     * that still claims a mode. Each store is one aligned write, atomic on
-     * PIC32MZ, and this runs on whichever task called Deinit. */
-    gWincTeardownPending = true;
-    return SendEvent(WIFI_MANAGER_EVENT_DEINIT);
+    return wifi_QueueTeardown();
 }
 
 // #334: Full deep power-down of the WINC1500 chip for battery savings.
@@ -3424,7 +3443,7 @@ bool wifi_manager_HardReset(void) {
     gApplyInProgress = false;
     taskEXIT_CRITICAL();
     InvalidateStaLinkState();  // #517: same rationale as wifi_manager_Deinit
-    return SendEvent(WIFI_MANAGER_EVENT_DEINIT);
+    return wifi_QueueTeardown();
 }
 
 bool wifi_manager_UpdateNetworkSettings(wifi_manager_settings_t * pSettings) {
