@@ -314,8 +314,34 @@ static volatile bool gWincDeinitQueued = false;
  * not exist yet, so there is no window where a teardown is pending and the
  * latch says otherwise. The reverse order would have one. */
 static bool wifi_QueueDeinit(void) {
+    /* ⛔⛔ #1193 r4 REVIEW: THE SEND CAN FAIL, SO THE STORE MUST BE UNDONE --
+     * BUT NOT BY CLEARING IT.
+     *
+     * SendEvent returns false when the queue is not yet initialised, and its
+     * xQueueSend is deliberately BOUNDED (20 ms, or 0 when the caller is
+     * already the drainer, to avoid a self-deadlock), so a full queue fails
+     * too. Left set after a failed send, the latch would report "no mode"
+     * for ever while the radio kept running -- a stuck wrong answer, and
+     * this query exists precisely so a client can confirm reality.
+     *
+     * ⚠ A naive rollback to false is WRONG and would reintroduce the r3
+     * defect: if an EARLIER call already queued a teardown and this later
+     * call's send fails, clearing the latch discards a teardown that really
+     * is pending. So restore the PRIOR value instead of assuming it was
+     * false. (Same save-and-restore shape this file already uses for
+     * WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING across ResetAllEventFlags.)
+     *
+     * The store still comes FIRST on the success path, so there is no window
+     * where the event exists and the latch says otherwise. */
+    const bool wasQueued = gWincDeinitQueued;
     gWincDeinitQueued = true;
-    return SendEvent(WIFI_MANAGER_EVENT_DEINIT);
+    if (!SendEvent(WIFI_MANAGER_EVENT_DEINIT)) {
+        gWincDeinitQueued = wasQueued;
+        LOG_E("WiFi: teardown could not be queued; latch restored to %u",
+              (unsigned)wasQueued);
+        return false;
+    }
+    return true;
 }
 
 // Recursive mutex serializing wifi_manager_ProcessState across callers.
@@ -1243,7 +1269,17 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
              *
              * It is also safe on the paths that reach this ENTRY without a
              * teardown having been processed: the flags have just been cleared
-             * too, so the derivation reports NONE from them regardless. */
+             * too, so the derivation reports NONE from them regardless.
+             *
+             * ⚠ ACCEPTED TRANSIENT -- DO NOT "FIX" THIS BACK INTO THE RACE.
+             * Between a teardown being queued and processed, the query reports
+             * 0 even if a bring-up completes in that window (HRESet during
+             * INIT's delay: the AP really is briefly up, and we say 0). That is
+             * deliberate and conservative -- the radio is on its way down, so
+             * under-reporting is the honest answer for a client deciding
+             * whether a mode is usable. The obvious "improvement" is to let the
+             * bring-up clear the latch, which is EXACTLY the r3 race: a
+             * bring-up erasing a teardown request newer than itself. */
             gWincDeinitQueued = false;
             // #475 step 3 — bulk-clear includes TCP_SOCKET_OPEN flag, so
             // pair it with the matching tick clear to keep observable in

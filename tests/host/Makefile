@@ -1286,7 +1286,25 @@ $(APSTA1060_BIN): test_1060_apsta_disconnect_retry.c test_framework.h \
 	       echo "       lifetime equals the flags' staleness ONLY while the two"; \
 	       echo "       are cleared together. Moved apart, they drift and the"; \
 	       echo "       race comes back in whichever direction the gap opens."; \
-	       exit 1; }
+	       exit 1; } ; \
+	 printf '%s\n' "$$blk" | grep -q 'const bool wasQueued = gWincDeinitQueued;' \
+	  || { echo "ERROR: #1193 r4 PIN: wifi_QueueDeinit no longer SAVES the"; \
+	       echo "       prior latch value before setting it. SendEvent can"; \
+	       echo "       fail (queue uninitialised, or its bounded xQueueSend"; \
+	       echo "       timing out on a full queue), and a latch left set with"; \
+	       echo "       no teardown coming reports 'no mode' for ever while"; \
+	       echo "       the radio runs."; exit 1; }; \
+	 printf '%s\n' "$$blk" | grep -q 'gWincDeinitQueued = wasQueued;' \
+	  || { echo "ERROR: #1193 r4 PIN: the failed-send path no longer RESTORES"; \
+	       echo "       the prior latch value."; exit 1; }; \
+	 printf '%s\n' "$$blk" | grep -q 'gWincDeinitQueued = false' \
+	  && { echo "ERROR: #1193 r4 PIN: wifi_QueueDeinit rolls the latch back to"; \
+	       echo "       FALSE. That is the naive rollback and it reintroduces"; \
+	       echo "       the r3 defect from the other side: if an EARLIER call"; \
+	       echo "       already queued a teardown and this later send fails,"; \
+	       echo "       clearing the latch discards a teardown that really is"; \
+	       echo "       pending. Restore the SAVED value, not false."; \
+	       exit 1; } || true
 	$(CC) $(CFLAGS) -o $(APSTA1060_BIN) test_1060_apsta_disconnect_retry.c
 
 $(BIN): test_circularbuffer.c test_framework.h stubs/Logger.h stubs/osal/osal.h $(FW_UTIL)/CircularBuffer.c $(FW_UTIL)/CircularBuffer.h $(RECIPES)
