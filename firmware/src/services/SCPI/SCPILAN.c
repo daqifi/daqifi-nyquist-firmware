@@ -248,7 +248,52 @@ scpi_result_t SCPI_LANPowerSet(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+/* #1186. Selector for the optional argument. 0 (or no argument at all) keeps
+ * the original meaning -- the STAGED runtime setting, what APPLY would bring
+ * up next. 1 asks what the radio is ACTUALLY running. The no-argument form is
+ * byte-for-byte what it was before #1186, so every existing client is
+ * unaffected. */
+#define LAN_NETMODE_QUERY_STAGED  0
+#define LAN_NETMODE_QUERY_ACTIVE  1
+
 scpi_result_t SCPI_LANNetModeGet(scpi_t * context) {
+    int32_t which = LAN_NETMODE_QUERY_STAGED;
+
+    /* Optional argument, read through the #874 helper rather than
+     * SCPI_ParamInt32(..., FALSE): that idiom reports ABSENT and
+     * PRESENT-BUT-UNPARSEABLE as the same FALSE, so `NETType? BANANA` would
+     * silently answer the STAGED value instead of rejecting -- the client
+     * being told its request was replaced only by a -104 it has to go looking
+     * for. The contract is written out once at SCPI_OptionalParamInt32 in
+     * SCPIInterface.h: short form on ABSENT only, reject on BAD. */
+    switch (SCPI_OptionalParamInt32(context, &which)) {
+        case SCPI_OPT_ABSENT:
+            which = LAN_NETMODE_QUERY_STAGED;
+            break;
+        case SCPI_OPT_PRESENT:
+            if (which != LAN_NETMODE_QUERY_STAGED &&
+                which != LAN_NETMODE_QUERY_ACTIVE) {
+                /* A number we do not define. Refuse rather than falling back
+                 * to the staged value: a client that mistyped the selector
+                 * must not be handed a reading it did not ask for. */
+                SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+                return SCPI_RES_ERR;
+            }
+            break;
+        case SCPI_OPT_BAD:
+        default:
+            /* An error is already queued -- libscpi's -104, or the helper's
+             * own where libscpi queued nothing. */
+            return SCPI_RES_ERR;
+    }
+
+    if (which == LAN_NETMODE_QUERY_ACTIVE) {
+        /* 0 when neither mode is up. Deliberately not folded into STA or AP:
+         * see wifi_manager_GetActiveNetworkMode(). */
+        SCPI_ResultInt32(context, (int) wifi_manager_GetActiveNetworkMode());
+        return SCPI_RES_OK;
+    }
+
     wifi_manager_settings_t * pWifiSettings = BoardRunTimeConfig_Get(BOARDRUNTIME_WIFI_SETTINGS);
     uint8_t type = pWifiSettings->networkMode;
     SCPI_ResultInt32(context, (int) type);

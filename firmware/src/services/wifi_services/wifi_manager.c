@@ -255,6 +255,8 @@ static volatile TickType_t gConsoleIdleDeadlineTicks =
 // SCPI task and read from app_WifiTask.
 static volatile bool gWincDeepPowerOff = false;
 
+
+
 // Recursive mutex serializing wifi_manager_ProcessState across callers.
 // Today app_WifiTask is the primary owner; SCPI_Reset's active pump
 // (SYSTem:REboot path) also enters from the SCPI dispatch task.  Without
@@ -2902,6 +2904,116 @@ bool wifi_manager_GetChipInfo(wifi_manager_chipInfo_t *pChipInfo) {
             sizeof(pChipInfo->BuildTime) - 1);
     pChipInfo->BuildTime[sizeof(pChipInfo->BuildTime) - 1] = '\0';
     return true;
+}
+
+wifi_manager_networkMode_t wifi_manager_GetActiveNetworkMode(void) {
+    /* ⛔⛔⛔ #1186 r6: DERIVED LIVE. THERE IS NO CACHED MODE STATE, BY DESIGN.
+     *
+     * r1-r5 answered this from the AP_STARTED/STA_STARTED flags plus a
+     * gWincDeinitQueued latch tracking "a teardown is pending". FIVE audit
+     * rounds found FIVE ways for that latch to desynchronise:
+     *   r3  a bring-up cleared it, erasing a teardown NEWER than itself
+     *   r4  SendEvent could fail, leaving it set with no teardown coming
+     *   r5a the full-queue fallback DISCARDED an already-queued DEINIT, so a
+     *       SUCCESSFUL send's event never arrived
+     *   r5b a teardown already DEQUEUED and running is not IN the queue, so
+     *       "queue empty" cleared it mid-nm_reset
+     * r5b is why no amount of queue-tracking could work: the fact being
+     * cached is not a property of the queue. Patching instance n produced
+     * instance n+1 four times, so the mechanism is replaced, not fixed again.
+     *
+     * TWO LIVE SOURCES, NEITHER OF THEM OURS TO KEEP IN SYNC:
+     *
+     * 1. The board power state, read the way this file already reads it for
+     *    the APPLY gate. This closes the window the latch was originally
+     *    added for: a long-press power-down cuts the rail while a queued
+     *    teardown may never be processed, so the DRIVER's own view goes
+     *    stale. Power is the fact that is true regardless.
+     *
+     * 2. WDRV_WINC_OperatingModeGet(), the vendor's own query. UNKNOWN covers
+     *    an invalid handle, which also covers every reset window: the DEINIT
+     *    handler invalidates wdrvHandle BEFORE calling
+     *    wifi_manager_FixWincResetState(), and that function has exactly one
+     *    caller, so no reset path runs with a valid handle. isAP is written
+     *    only by the vendor driver (APStart / APStop / its control-descriptor
+     *    reset) and never by us -- we cannot desynchronise what we do not
+     *    write, which is the whole point.
+     *
+     * ⚠ TWO READINGS TO KNOW ABOUT, both verified by reading the paths:
+     *
+     * (a) A STA that cannot associate reports 1 for as long as it retries
+     *     (ERROR -> backoff -> REINIT re-queues itself without closing the
+     *     handle; the backoff escalates 1 s -> 30 s over up to 200 attempts).
+     *     That is CORRECT, not a defect: the radio is configured for STA and
+     *     actively retrying, so "STA, not associated" is a true description.
+     *     Requiring association instead would report 0 for a STA that is up,
+     *     the worse answer, AND would need a cached bit to produce.
+     *
+     * ⛔ r7 CORRECTION: an earlier revision of this comment said there was no
+     *    state with the driver open and neither mode intended, "ruled out by
+     *    predicate". Two exist; see the STA case below. The enumeration that
+     *    produced that claim covered INIT and ERROR and skipped REINIT.
+     *
+     * (b) The one genuinely false reading is ~100 ms of AP bring-up: between
+     *     WDRV_WINC_Open and WDRV_WINC_APStart the driver's isAP is still
+     *     false, so this says 1 while an AP comes up. Bounded by the
+     *     BSSCtx/AuthCtx setup plus the 100 ms vTaskDelay before APStart,
+     *     self-correcting, and it cannot stick. Accepted deliberately: every
+     *     defect the latch produced was a STUCK wrong value, which this shape
+     *     cannot produce at all.
+     *
+     * Non-blocking: one BoardData read and one pointer-dereferencing vendor
+     * call -- no WINC round-trip, no lock. Same contract as
+     * wifi_manager_GetLinkState(). */
+    const tPowerData *pPowerState = (tPowerData *) BoardData_Get(BOARDDATA_POWER_DATA, 0);
+    if (pPowerState == NULL ||
+        (pPowerState->powerState != POWERED_UP &&
+         pPowerState->powerState != POWERED_UP_EXT_DOWN)) {
+        return WIFI_MANAGER_NETWORK_MODE_NONE;
+    }
+
+    switch (WDRV_WINC_OperatingModeGet(gStateMachineContext.wdrvHandle)) {
+        case WDRV_WINC_OP_MODE_AP:
+        case WDRV_WINC_OP_MODE_PROV_AP:
+            return WIFI_MANAGER_NETWORK_MODE_AP;
+        case WDRV_WINC_OP_MODE_STA:
+            /* ⛔⛔ #1186 r7: STA IS THE VENDOR'S *DEFAULT*, NOT A SIGNAL, so it
+             * needs positive corroboration. OperatingModeGet returns STA
+             * whenever isAP is false -- including with the driver open and
+             * NOTHING running.
+             *
+             * r6's comment claimed no such steady state existed, "ruled out by
+             * predicate". That was WRONG: I enumerated INIT's post-Open breaks
+             * and the ERROR handler and never looked at REINIT's own branches.
+             * Two steady states exist, both found by the r6 audit:
+             *   (a) REINIT's `!isEnabled` branch (APPLY;ENAbled 0;APPLY) calls
+             *       WDRV_WINC_APStop and clears the flags but KEEPS wdrvHandle
+             *       -- APStop sets the driver's isAP false, so this read STA
+             *       indefinitely with WiFi stopped;
+             *   (b) a failed AP start (e.g. a 1-character WPA key that
+             *       m2m_validate_ap_parameters rejects) leaves a valid handle
+             *       with isAP false, reading STA through repeated AP attempts.
+             *
+             * STA_STARTED is the corroboration, and it is ONE bit on ONE axis
+             * rather than a return to the cache that was just deleted: it is
+             * SET only after a successful WDRV_WINC_BSSConnect (two sites) and
+             * CLEARED only on REINIT's teardown paths (five, including (a)'s
+             * at the APStop above), so it tracks the work that actually
+             * happened. It is consulted ONLY as a conjunct, after the power
+             * check and after the vendor call -- never as the answer.
+             *
+             * Reading it here: a STA that came up and is now retrying reads 1
+             * (true -- it is configured for STA and retrying); a STA that has
+             * never come up reads 0. Under-reporting is the safe direction. */
+            if (GetEventFlagStatus(gStateMachineContext.eventFlags,
+                                   WIFI_MANAGER_STATE_FLAG_STA_STARTED)) {
+                return WIFI_MANAGER_NETWORK_MODE_STA;
+            }
+            return WIFI_MANAGER_NETWORK_MODE_NONE;
+        default:
+            /* UNKNOWN: invalid handle / no control block -- nothing is up. */
+            return WIFI_MANAGER_NETWORK_MODE_NONE;
+    }
 }
 
 wifi_link_state_t wifi_manager_GetLinkState(void) {
