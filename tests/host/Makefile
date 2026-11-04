@@ -5507,7 +5507,7 @@ $(NVM1153_BIN): test_1153_nvm_recursive_lock.c test_framework.h \
 	        echo "       bytes overwritten before its own write reads them back"; \
 	        echo "       out. See test_1153_nvm_recursive_lock.c Pin 4."; \
 	        exit 1; }; \
-	 nret=`printf '%s\n' "$$sbody" | awk -v lk="$$lk" -v ul="$$ul" 'NR>lk && NR<ul && /return/ {print}'`; \
+	 nret=`printf '%s\n' "$$sbody" | awk -v lk="$$lk" -v ul="$$ul" 'NR>=lk && NR<ul { s=$$0; if (NR==lk) sub(/.*nvm_Lock\(\);/,"",s); if (s ~ /return/) print s }'`; \
 	 test -z "$$nret" \
 	   || { echo "ERROR: daqifi_settings_SaveToNvm() in $(SETTINGS_SRC) has a"; \
 	        echo "       'return' between its nvm_Lock() (body line $$lk) and"; \
@@ -5537,7 +5537,7 @@ $(NVM1153_BIN): test_1153_nvm_recursive_lock.c test_framework.h \
 	        echo "       direct caller must not be able to bypass this lock by"; \
 	        echo "       skipping SaveToNvm()."; \
 	        exit 1; }; \
-	 nret=`printf '%s\n' "$$cbody" | awk -v lk="$$lk" -v ul="$$ul" 'NR>lk && NR<ul && /return/ {print}'`; \
+	 nret=`printf '%s\n' "$$cbody" | awk -v lk="$$lk" -v ul="$$ul" 'NR>=lk && NR<ul { s=$$0; if (NR==lk) sub(/.*nvm_Lock\(\);/,"",s); if (s ~ /return/) print s }'`; \
 	 test -z "$$nret" \
 	   || { echo "ERROR: daqifi_settings_ClearNvm() in $(SETTINGS_SRC) has a"; \
 	        echo "       'return' between its nvm_Lock() (body line $$lk) and"; \
