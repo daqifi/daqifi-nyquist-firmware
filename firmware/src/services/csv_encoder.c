@@ -19,6 +19,7 @@
 #include "state/board/BoardConfig.h"
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "Util/StringFormatters.h"
+#include "Util/SampleEmit.h"   /* #1199 non-finite guard */
 #include "Util/Logger.h"  // For LOG_E
 #include "encoder.h"
 #include "csv_encoder.h"
@@ -450,16 +451,17 @@ static size_t tryWriteRow(
                 // Integer millivolts (shorter output strings)
                 double voltage_mv = ADC_ConvertToVoltageByIndex(
                     mapConfigIdx[j], ainPeek->Values[j]) * 1000.0;
+                // #1199: the clamp this replaces let NaN reach the cast (every
+                // comparison with NaN is false), which is UB.
+                // sample_emit_to_int32 tests finiteness FIRST; a non-finite
+                // value leaves `p` where it is, which emits an EMPTY value
+                // field -- the same shape the !valid arm below already uses,
+                // and the separators for this field are already written.
                 int32_t mv;
-                if (voltage_mv > (double)INT32_MAX) {
-                    mv = INT32_MAX;
-                } else if (voltage_mv < (double)INT32_MIN) {
-                    mv = INT32_MIN;
-                } else {
-                    mv = (int32_t)(voltage_mv >= 0.0 ? voltage_mv + 0.5 : voltage_mv - 0.5);
+                if (sample_emit_to_int32(voltage_mv, &mv)) {
+                    p = int_to_str(mv, p, space);
+                    if (p == NULL) return 0;
                 }
-                p = int_to_str(mv, p, space);
-                if (p == NULL) return 0;
             } else {
                 // Volts with N decimal places.
                 //
@@ -477,10 +479,21 @@ static size_t tryWriteRow(
                 // the two exhaustively across every NQ1 code and stepped NQ3,
                 // 821,880 comparisons, zero mismatches. snprintf remains the
                 // fallback for anything outside that proven envelope (precision
-                // above FIXEDFMT_MAX_PRECISION, non-finite, out-of-range), so
-                // behaviour is unchanged there rather than approximated.
+                // above FIXEDFMT_MAX_PRECISION, out-of-range), so behaviour is
+                // unchanged there rather than approximated.
+                //
+                // #1199: "non-finite" USED to be in that fallback list, and is
+                // not any more -- it is rejected before either formatter runs.
+                // fixedfmt_can_format() still returns false for it, so without
+                // this guard a non-finite value fell through to snprintf and
+                // printed `inf`/`nan` into the CSV. An empty field says
+                // "no reading" in a format that has no literal for it.
                 double voltage_v = ADC_ConvertToVoltageByIndex(
                     mapConfigIdx[j], ainPeek->Values[j]);
+                if (!sample_emit_is_numeric(voltage_v)) {
+                    /* Leave `p` -- empty value field, separators already
+                     * written. Same shape as the !valid arm below. */
+                } else
                 if (fixedfmt_can_format(voltage_v, (unsigned)voltagePrecision)) {
                     /* Not named `q`: the enclosing scope already has one,
                      * and it is read as `p - q` just below. */
