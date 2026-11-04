@@ -5091,6 +5091,11 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
 	./$(LOGONCE_BIN)
 	./$(CAP1202_BIN)
 	./$(ISRLOG1197_BIN)
+	@# #1158: no AD7609 rate override in START (SCPIInterface.c is not
+	@# host-compilable; see the script's header). Self-test first, so a guard
+	@# that can no longer fail is caught before it is trusted.
+	@bash check_1158_no_ad7609_rate_override.sh --self-test
+	@bash check_1158_no_ad7609_rate_override.sh $(SCPISD_START_SRC)
 	./$(USECALTYPE_BIN)
 	./$(DACREINIT_BIN)
 	./$(CALFINITE_BIN)
