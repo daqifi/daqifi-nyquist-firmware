@@ -744,27 +744,40 @@ size_t csv_Encode(
                  * the wrong trade (a diagnostic over-count is recoverable,
                  * mispaired exported data is not) and the premise was wrong
                  * anyway, since that counter is per-CALL, as the comment
-                 * above now records. One discarded row books one drop here
-                 * regardless of how many queue heads composed it.
+                 * above now records.
+                 *
+                 * ⛔ #1200: this used to say "one discarded row books one drop
+                 * here regardless of how many queue heads composed it", and
+                 * that was wrong against the contract it was citing. Each
+                 * POPPED QUEUE ENTRY is a destroyed sample -- see the
+                 * parameter name and doc on Streaming_ReportEncoderSampleLoss
+                 * ("report samples an encoder CONSUMED and then destroyed ...
+                 * a site that has already popped the queue entry"). A row
+                 * carrying AIN+DIO destroys TWO samples, and the PB encoder
+                 * books exactly that for the same row
+                 * (`(dioS > 0) ? 2u : 1u`, NanoPB_Encoder.c). Booking one
+                 * made CSV under-report against the other two encoders.
                  *
                  * Both pops discard their return deliberately, matching the
                  * success path: a failed pop (queue torn down concurrently)
                  * means nothing was evicted, which is benign -- the row was
                  * never written either, so the sample stays queued for a
                  * normal retry rather than being mis-reported as gone. */
-                bool evictedAny = false;
+                /* #1200: a COUNT, not a flag. Each successful pop destroyed
+                 * one queued sample, and the counter's unit is samples. */
+                uint32_t evictedSamples = 0u;
                 if (hadAIN) {
                     AInPublicSampleList_t *evicted = NULL;
                     if (AInSampleList_PopFront(&evicted)) {
                         AInSampleList_FreeToPool(evicted);
-                        evictedAny = true;
+                        evictedSamples++;
                     }
                 }
                 if (hadDIO) {
                     DIOSample evictedDio;
                     if (DIOSampleList_PopFront(&state->DIOSamples,
                                                &evictedDio)) {
-                        evictedAny = true;
+                        evictedSamples++;
                     }
                 }
                 /* #970 / PR #991 (audit round 1, both legs): BOOK THE LOSS
@@ -777,14 +790,15 @@ size_t csv_Encode(
                  * read ZERO through repeated real destruction -- a counter
                  * reading zero while the thing it counts is happening.
                  *
-                 * ONE per discarded ROW, not per queue head, which is the
-                 * contract the comment above states: "one discarded row books
-                 * one drop here regardless of how many queue heads composed
-                 * it". tryWriteRow() peeks both queues and writes both heads
-                 * into ONE row, so a row carrying AIN+DIO is still one lost
-                 * row.
+                 * ⛔ #1200: ONE PER POPPED ENTRY, not one per row. The
+                 * previous revision booked one per row and said so here; the
+                 * contract it cited counts SAMPLES, so a row carrying AIN+DIO
+                 * destroys two and must book two. The PB encoder already does
+                 * exactly that for the same row, and JSON books per entry, so
+                 * CSV was the only one under-reporting -- the three now agree.
                  *
-                 * GATED ON evictedAny, so a failed pop books nothing. The
+                 * GATED ON a non-zero count, so a failed pop books nothing (it
+                 * never increments). The
                  * comment above is explicit that a pop failing (queue torn
                  * down concurrently) means nothing was evicted and the sample
                  * stays queued for a normal retry -- reporting there would
@@ -793,8 +807,8 @@ size_t csv_Encode(
                  * previously discarded with `(void)`; it is now read for
                  * exactly this decision, which is the same intent the
                  * discard had. */
-                if (evictedAny) {
-                    Streaming_ReportEncoderSampleLoss(1u);
+                if (evictedSamples > 0u) {
+                    Streaming_ReportEncoderSampleLoss(evictedSamples);
                 }
                 LOG_E_SESSION(LOG_SESSION_CSV_SAMPLE_TOO_LARGE,
                         "CSV: row (%u ch) does not fit a %u B encoder "

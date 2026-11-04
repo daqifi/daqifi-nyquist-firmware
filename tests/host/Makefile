@@ -4951,7 +4951,7 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
      $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) \
      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) \
      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(USECALTYPE_BIN) $(ARM_BIN) $(NAME_BIN) \
-     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN)
+     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) check-1200-parity
 	./$(SEQ908_BIN)
 	./$(APSTA1060_BIN)
 	./$(BUTTONLATCH_BIN)
@@ -5258,5 +5258,15 @@ clean:
 	      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(SDLOG1029_GEN).tmp \
 	      $(USECALTYPE_BIN) $(NAME_BIN) $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(ARM_BIN) $(SCPIDAC_RAILGATE_BIN) \
 	      $(FORCEGATE_BIN) $(LOG1039_BIN) $(LOG1039_GEN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN)
+
+# #1200: the three encoders must book the same loss for the same discard.
+# A source-derived check rather than a mock, because a model of the encoders
+# is a COPY that drifts -- same reasoning as $(BENCH_BIN)'s constant greps.
+.PHONY: check-1200-parity
+check-1200-parity: check_1200_eviction_loss_parity.py \
+                   $(CSV_ENC_SRC) $(NANOPB_ENC_SRC) $(JSON_ENC_SRC) $(STREAMING_HDR) \
+                   ../../docs/STREAMING_AND_ADC.md $(RECIPES)
+	@python3 check_1200_eviction_loss_parity.py >/dev/null \
+	  || { python3 check_1200_eviction_loss_parity.py; exit 1; }
 
 .PHONY: run clean
