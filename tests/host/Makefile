@@ -3394,6 +3394,67 @@ $(LOGONCE_BIN): test_1125_log_once_claim.c test_framework.h $(FW_LOG_C) $(RECIPE
 	 printf '#endif\n' >> $(GEN_1125)
 	$(CC) $(CFLAGS) -o $(LOGONCE_BIN) test_1125_log_once_claim.c
 
+# #1202: CONF:CAP:JSON? published current_max_rate_hz only when an ANALOG
+# channel was enabled, while START also accepts DIO alone and applies the cap
+# computation's zero-analog branch to it. Capabilities_HasStreamingInput() is
+# now the one predicate for "START has an input"; both functions are
+# extracted verbatim from Capabilities.c (not host-includable: BoardConfig.h,
+# streaming.h) and run against mocks in test_1202_cap_json_streaming_input.c.
+#
+# Two pins on SCPIInterface.c, which no host test can compile:
+#  - SCPI_CapabilitiesJsonGet's per-interface recompute is the SECOND gate on
+#    the same decision. Before #1202 it re-tested `terms.totalChannels > 0`,
+#    which would zero the DIO-only rate the summary had just published. It
+#    must call the shared predicate, and must not carry its own count test.
+#  - EmitAoutChannelJson must advertise user_override_supported:false. Every
+#    CONF:DAC calibration command is SCPI_NotImplemented (-200) since
+#    #993/#1002, and no AO-bearing board (NQ3) is on the bench to check it
+#    end to end, so the wire text is pinned here instead.
+CAP1202_BIN  := run_1202_tests
+GEN_1202     := gen_1202_cap_streaming.h
+FW_CAP_C     := ../../firmware/src/services/Capabilities.c
+FW_CAP_DIR   := ../../firmware/src/services
+FW_SCPI_IF_C := ../../firmware/src/services/SCPI/SCPIInterface.c
+
+$(CAP1202_BIN): test_1202_cap_json_streaming_input.c test_framework.h $(FW_CAP_C) $(FW_CAP_DIR)/Capabilities.h $(FW_SCPI_IF_C) $(RECIPES)
+	@pred=`sed -n '/^bool Capabilities_HasStreamingInput(uint16_t analogCount) {/,/^}/p' $(FW_CAP_C) | tr -d '\r'`; \
+	 summ=`sed -n '/^void Capabilities_GetStreamingSummary(CapabilitiesStreamingSummary\* out) {/,/^}/p' $(FW_CAP_C) | tr -d '\r'`; \
+	 test -n "$$pred" && test -n "$$summ" \
+	   || { echo "ERROR: Capabilities_HasStreamingInput(uint16_t analogCount) or"; \
+	        echo "       Capabilities_GetStreamingSummary(CapabilitiesStreamingSummary* out)"; \
+	        echo "       was not found at column 0 in $(FW_CAP_C) -- a test that"; \
+	        echo "       extracted nothing must fail rather than pass vacuously."; \
+	        exit 1; }; \
+	 json=`sed -n '/^static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t \* context) {/,/^}/p' $(FW_SCPI_IF_C) | tr -d '\r'`; \
+	 test -n "$$json" || { echo "ERROR: SCPI_CapabilitiesJsonGet not found in $(FW_SCPI_IF_C)"; exit 1; }; \
+	 n_pred=`printf '%s\n' "$$json" | grep -cF 'Capabilities_HasStreamingInput(terms.totalChannels)'`; \
+	 n_own=`printf '%s\n' "$$json" | grep -cE 'totalChannels[[:space:]]*(>|!=)[[:space:]]*0'`; \
+	 if [ "$$n_pred" != "1" ] || [ "$$n_own" != "0" ]; then \
+	   echo "ERROR: SCPI_CapabilitiesJsonGet's recompute gate must be exactly one"; \
+	   echo "       Capabilities_HasStreamingInput(terms.totalChannels) call and no"; \
+	   echo "       count test of its own (found predicate=$$n_pred own=$$n_own) --"; \
+	   echo "       an analog-only test there zeroes the DIO-only rate (#1202)."; \
+	   exit 1; \
+	 fi; \
+	 aout=`sed -n '/^static void EmitAoutChannelJson(scpi_t\* context,/,/^}/p' $(FW_SCPI_IF_C) | tr -d '\r'`; \
+	 test -n "$$aout" || { echo "ERROR: EmitAoutChannelJson not found in $(FW_SCPI_IF_C)"; exit 1; }; \
+	 n_false=`printf '%s\n' "$$aout" | grep -cF '"\"user_override_supported\":false},"'`; \
+	 n_any=`printf '%s\n' "$$aout" | grep -cF '\"user_override_supported\"'`; \
+	 if [ "$$n_false" != "1" ] || [ "$$n_any" != "1" ]; then \
+	   echo "ERROR: EmitAoutChannelJson must emit user_override_supported exactly"; \
+	   echo "       once, as false (found false=$$n_false total=$$n_any). Every"; \
+	   echo "       CONF:DAC calibration command answers -200 (#993/#1002)."; \
+	   exit 1; \
+	 fi; \
+	 printf '/* GENERATED at build time by tests/host/Makefile ($(CAP1202_BIN)).\n' > $(GEN_1202); \
+	 printf ' * Do not edit, do not commit -- see tests/host/.gitignore.\n' >> $(GEN_1202); \
+	 printf ' * Verbatim Capabilities_HasStreamingInput() and\n' >> $(GEN_1202); \
+	 printf ' * Capabilities_GetStreamingSummary() from $(FW_CAP_C). */\n' >> $(GEN_1202); \
+	 printf '#ifndef GEN_1202_CAP_STREAMING_H\n#define GEN_1202_CAP_STREAMING_H\n' >> $(GEN_1202); \
+	 printf '%s\n\n%s\n' "$$pred" "$$summ" >> $(GEN_1202); \
+	 printf '#endif\n' >> $(GEN_1202)
+	$(CC) $(CFLAGS) -I$(FW_CAP_DIR) -o $(CAP1202_BIN) test_1202_cap_json_streaming_input.c
+
 # #985: build-time guard over SD_SuspendReasonText() -- see the merge-history
 # comment above `run:` below for how this target's registration in run/clean
 # was resolved.
@@ -4949,7 +5010,7 @@ $(BUTTONLATCH_BIN): test_1092_button_poweroff_latch.c test_framework.h \
 
 run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) \
      $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) \
-     $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) \
+     $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(CAP1202_BIN) \
      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(USECALTYPE_BIN) $(ARM_BIN) $(NAME_BIN) \
      $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN)
 	./$(SEQ908_BIN)
@@ -4980,6 +5041,7 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
 	./$(REPLYBUF_BIN)
 	./$(HEXWIN_BIN)
 	./$(LOGONCE_BIN)
+	./$(CAP1202_BIN)
 	./$(USECALTYPE_BIN)
 	./$(DACREINIT_BIN)
 	./$(CALFINITE_BIN)
@@ -5254,7 +5316,7 @@ clean:
 	rm -f $(TEAR904_BIN)
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
 	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) \
-	      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(GEN_1125) \
+	      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(GEN_1125) $(CAP1202_BIN) $(GEN_1202) \
 	      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(SDLOG1029_GEN).tmp \
 	      $(USECALTYPE_BIN) $(NAME_BIN) $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(ARM_BIN) $(SCPIDAC_RAILGATE_BIN) \
 	      $(FORCEGATE_BIN) $(LOG1039_BIN) $(LOG1039_GEN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN)

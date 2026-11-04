@@ -8958,10 +8958,14 @@ static void EmitAoutChannelJson(scpi_t* context,
         (unsigned)ch->DaqifiDacChannelId,
         (unsigned)ao->resolutionBits);
 
+    /* user_override_supported is false (#1202): since #993/#1002 every
+     * CONF:DAC calibration command (CHANCALM/B, SAVE/LOAD[F]cal, USECal)
+     * is routed to SCPI_NotImplemented and answers -200, so a client that
+     * trusted true would be told it can do something every setter refuses. */
     scpi_printf(context,
         "\"ranges\":[{\"min\":%.3f,\"max\":%.3f}],"
         "\"calibration\":{\"model\":\"linear\","
-        "\"user_override_supported\":true},"
+        "\"user_override_supported\":false},"
         "\"extensions\":{}}",
         ao->moduleMinVoltage, ao->moduleMaxVoltage);
 }
@@ -9102,8 +9106,8 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
      * actually stream on. When ActiveInterface is still the default USB (or already
      * matches the detected connection), START will auto-detect this connection — so
      * advertise the cap for the DETECTED interface, computed WITHOUT mutating the
-     * shared runtime config (#524 Qodo). Skip when no channels are enabled
-     * (st.maxFreqHz == 0). */
+     * shared runtime config (#524 Qodo). Skip when there is no streaming
+     * input (st.maxFreqHz == 0). */
     if (st.maxFreqHz > 0) {
         StreamingRuntimeConfig* scq =
             BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
@@ -9124,8 +9128,10 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
          * other SCPI transport can disable the last channel in between, and the
          * zero-channel branch of the cap deliberately returns ISR_MAX rather
          * than 0. Without this check the blob would advertise a healthy rate,
-         * and non-zero terms, for a device with no inputs. */
-        if (terms.totalChannels > 0) {
+         * and non-zero terms, for a device with no inputs. "Inputs" includes
+         * DIO alone, which START accepts (#1202) -- the same predicate as
+         * Capabilities_GetStreamingSummary, so the two gates cannot disagree. */
+        if (Capabilities_HasStreamingInput(terms.totalChannels)) {
             st.maxFreqHz        = ifaceMaxHz;
             st.capAdcAdditiveHz = terms.adcAdditiveHz;
             st.capTransportHz   = terms.transportHz;

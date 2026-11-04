@@ -90,7 +90,7 @@ typedef struct {
  * streaming.h compile-time defines; maxFreqHz is computed for the
  * currently-enabled channel set. */
 typedef struct {
-    uint32_t maxFreqHz;            /* 0 if no channels enabled */
+    uint32_t maxFreqHz;            /* 0 if START has no input (#1202) */
     uint32_t isrMaxHz;
     uint32_t type1AggMaxHz;
     uint32_t tickBudget;
@@ -101,7 +101,8 @@ typedef struct {
      * different computation than it does. 0 means "does not apply to this
      * configuration", never a 0 Hz cap -- no producer of these values can
      * return 0 (see StreamingCapTerms in streaming.h). All 0 when maxFreqHz is
-     * 0, i.e. when no channels are enabled.
+     * 0, i.e. when no analog channel is enabled and DIO is not enabled for
+     * streaming -- DIO alone is an input START accepts (#1202).
      * Mirrors StreamingCapTerms field-for-field, kept as flat uint32_t so this
      * header stays free of a streaming.h dependency. */
     uint32_t capAdcAdditiveHz;
@@ -146,6 +147,13 @@ void Capabilities_GetAinSummary      (CapabilitiesAinSummary*       out);
 void Capabilities_GetAoutSummary     (CapabilitiesAoutSummary*      out);
 void Capabilities_GetDioSummary      (CapabilitiesDioSummary*       out);
 void Capabilities_GetStreamingSummary(CapabilitiesStreamingSummary* out);
+
+/* True when START would accept the current input set: at least one enabled
+ * public analog channel (analogCount, taken from the cap computation being
+ * published) OR the DIO port enabled for streaming (#1202). Every gate that
+ * decides whether to publish a streaming rate must use this, so the
+ * capability document and START cannot disagree about what is streamable. */
+bool Capabilities_HasStreamingInput(uint16_t analogCount);
 void Capabilities_GetStorageSummary  (CapabilitiesStorageSummary*   out);
 void Capabilities_GetPowerSummary    (CapabilitiesPowerSummary*     out);
 void Capabilities_GetTransportsSummary(CapabilitiesTransportsSummary* out);
