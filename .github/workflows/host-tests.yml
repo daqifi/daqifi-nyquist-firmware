@@ -343,6 +343,10 @@ on:
       - 'firmware/src/Util/Logger.h'
       - 'firmware/src/Util/Logger.c'
       - 'firmware/src/services/SCPI/**'
+      # #1202: test_1202_cap_json_streaming_input.c extracts two functions
+      # from Capabilities.c and includes the real Capabilities.h.
+      - 'firmware/src/services/Capabilities.c'
+      - 'firmware/src/services/Capabilities.h'
       # #1039: test_1039_log_message_ceiling.c (PR #1116) greps these two for
       # the shipped format strings it hardcodes (SCPIADC.c is already covered
       # by the entry above). Also #1039/#1110's test_1039_log_message_budget.c
@@ -484,6 +488,10 @@ on:
       - 'firmware/src/Util/Logger.h'
       - 'firmware/src/Util/Logger.c'
       - 'firmware/src/services/SCPI/**'
+      # #1202: test_1202_cap_json_streaming_input.c extracts two functions
+      # from Capabilities.c and includes the real Capabilities.h.
+      - 'firmware/src/services/Capabilities.c'
+      - 'firmware/src/services/Capabilities.h'
       # #1039: test_1039_log_message_ceiling.c (PR #1116) greps these two for
       # the shipped format strings it hardcodes (SCPIADC.c is already covered
       # by the entry above). Also #1039/#1110's test_1039_log_message_budget.c
