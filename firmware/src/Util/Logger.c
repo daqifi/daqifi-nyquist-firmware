@@ -203,7 +203,8 @@ static int LogMessageAdd(const char *message);
 static inline bool LogIsInISR(void);
 
 /* ISR deferred queue — initialized in LogIsrInit(), used by LogMessage's
- * ISR-aware early path and the drain task. */
+ * ISR-aware early path. The drain task does NOT read this global: it gets the
+ * same handle through its task parameter (#1197). */
 static QueueHandle_t gIsrLogQueue = NULL;
 
 /* Count of ISR log messages dropped (queue full or not initialized).
@@ -701,11 +702,16 @@ static TaskHandle_t  gIsrLogTaskHandle = NULL;
  *        Blocks on the ISR queue and forwards messages to the main log buffer.
  */
 static void LogIsrDrainTask(void* pvParameters) {
-    (void)pvParameters;
+    /* #1197: the queue arrives as the task parameter, never via gIsrLogQueue.
+     * LogIsrInit publishes the global only AFTER xTaskCreate returns, and this
+     * priority-1 task may run first (LogIsrInit can be reached lazily from a
+     * priority-1 task's first LOG_x) -- reading the global here would then be
+     * xQueueReceive(NULL, ...), a configASSERT and a hang at boot. */
+    QueueHandle_t queue = (QueueHandle_t)pvParameters;
     LogEntry entry;
 
     for (;;) {
-        if (xQueueReceive(gIsrLogQueue, &entry, portMAX_DELAY) == pdTRUE) {
+        if (xQueueReceive(queue, &entry, portMAX_DELAY) == pdTRUE) {
             /* LogMessageAdd handles mutex, ICSP output, etc. */
             LogMessageAdd(entry.message);
         }
@@ -724,7 +730,7 @@ void LogIsrInit(void) {
 
     TaskHandle_t newTaskHandle = NULL;
     if (xTaskCreate(LogIsrDrainTask, "logISR", LOG_ISR_TASK_STACK,
-                    NULL, LOG_ISR_TASK_PRIO, &newTaskHandle) != pdPASS) {
+                    (void*)newQueue, LOG_ISR_TASK_PRIO, &newTaskHandle) != pdPASS) {
         vQueueDelete(newQueue);
         return;
     }

@@ -41,6 +41,8 @@ gen_1029_log_budget.h.tmp
 gen_1125_log_once_claim.h
 run_1202_tests
 gen_1202_cap_streaming.h
+run_1197_tests
+gen_1197_isr_log_init.h
 gen_1039_log_budget.h
 *.o
 
