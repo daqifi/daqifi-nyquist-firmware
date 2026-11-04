@@ -10,6 +10,7 @@
 #include "state/board/BoardConfig.h"
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "Util/StringFormatters.h"
+#include "Util/SampleEmit.h"   /* #1199 non-finite guard */
 #include "Util/Logger.h"
 #include "encoder.h"
 #include "JSON_Encoder.h"
@@ -893,24 +894,42 @@ size_t Json_Encode(tBoardData* state,
                     // Integer millivolts (backwards compatible)
                     double voltage_mv = ADC_ConvertToVoltageByIndex(
                         mapConfigIdx[j], rawValue) * 1000.0;
+                    // #1199: the clamp this replaces let NaN through to the
+                    // cast (every comparison with NaN is false), which is UB.
+                    // sample_emit_to_int32 tests finiteness FIRST.
                     int32_t mv;
-                    if (voltage_mv > (double)INT32_MAX) mv = INT32_MAX;
-                    else if (voltage_mv < (double)INT32_MIN) mv = INT32_MIN;
-                    else mv = (int32_t)(voltage_mv >= 0.0 ? voltage_mv + 0.5 : voltage_mv - 0.5);
-                    written = snprintf(charBuffer + startIndex,
-                            buffSize - startIndex,
-                            "{\"ch\":%u, \"val\":%d},\n",
-                            channelId,
-                            (int)mv);
+                    if (sample_emit_to_int32(voltage_mv, &mv)) {
+                        written = snprintf(charBuffer + startIndex,
+                                buffSize - startIndex,
+                                "{\"ch\":%u, \"val\":%d},\n",
+                                channelId,
+                                (int)mv);
+                    } else {
+                        written = snprintf(charBuffer + startIndex,
+                                buffSize - startIndex,
+                                "{\"ch\":%u, \"val\":null},\n",
+                                channelId);
+                    }
                 } else {
                     // Volts with N decimal places
                     double voltage = ADC_ConvertToVoltageByIndex(
                         mapConfigIdx[j], rawValue);
-                    written = snprintf(charBuffer + startIndex,
-                            buffSize - startIndex,
-                            "{\"ch\":%u, \"val\":%.*f},\n",
-                            channelId,
-                            (int)precision, voltage);
+                    // #1199: "%.*f" of inf/nan emits `inf`/`nan`, which are
+                    // not JSON literals -- one bad sample made the whole
+                    // message unparseable for every client, not just this
+                    // channel. `null` is the only valid stand-in.
+                    if (sample_emit_is_numeric(voltage)) {
+                        written = snprintf(charBuffer + startIndex,
+                                buffSize - startIndex,
+                                "{\"ch\":%u, \"val\":%.*f},\n",
+                                channelId,
+                                (int)precision, voltage);
+                    } else {
+                        written = snprintf(charBuffer + startIndex,
+                                buffSize - startIndex,
+                                "{\"ch\":%u, \"val\":null},\n",
+                                channelId);
+                    }
                 }
                 if (written < 0 || written >= (int)(buffSize - startIndex)) {
                     sampleOk = false;
