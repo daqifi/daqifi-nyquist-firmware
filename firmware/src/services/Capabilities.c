@@ -144,10 +144,11 @@ void Capabilities_GetStreamingSummary(CapabilitiesStreamingSummary* out) {
      * callee's zero-channel branch deliberately returns ISR_MAX rather than 0.
      * The published document would then advertise a healthy rate, and non-zero
      * cap terms, for a device with no inputs at all. One count now decides both
-     * WHETHER to publish and WHAT to publish, so the two cannot disagree.
+     * WHETHER to publish (with the DIO flag, via Capabilities_HasStreamingInput)
+     * and WHAT to publish, so the two cannot disagree.
      *
      * memset above already left maxFreqHz and every term 0, which is exactly
-     * the report the no-channel case needs -- no valid rate, so no binding
+     * the report the no-input case needs -- no valid rate, so no binding
      * term. */
     StreamingCapTerms terms;
     memset(&terms, 0, sizeof(terms));
