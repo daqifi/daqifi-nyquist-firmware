@@ -5465,6 +5465,85 @@ $(NVM1153_BIN): test_1153_nvm_recursive_lock.c test_framework.h \
 	        echo "       locked span (load failure, validate failure, the"; \
 	        echo "       unreachable default case) plus the one after save."; \
 	        exit 1; }
+# #1153 round 2: the round-1 guards above pin daqifi_settings_Update()'s
+# lock and nvm.c's own internal write/erase locks -- neither covers
+# daqifi_settings_SaveToNvm()'s OWN erase -> stage-into-gTempFflashBuffer ->
+# write span, which a DIRECT caller of SaveToNvm() (SCPILAN.c's two WiFi
+# savers, daqifi_settings_SaveADCCalSettings()) reaches WITHOUT ever taking
+# daqifi_settings_Update()'s lock. The two guards below pin the round-2 fix:
+# SaveToNvm() and ClearNvm() now each take nvm_Lock() themselves, around
+# their own whole body, nesting (recursive) with any outer hold. See
+# test_1153_nvm_recursive_lock.c's Pin 4 for the model this fix closes.
+#
+# Both guards ALSO assert there is no 'return' between the lock and the
+# unlock they find: a return in that span that does not itself call
+# nvm_Unlock() first permanently deadlocks every future NVM operation, and
+# -Werror cannot catch it (see the PR description). This is why both
+# functions were restructured to a single exit point (set a result
+# variable, unlock once, return it once) rather than unlocking before each
+# early return -- the guard enforces that shape instead of trusting every
+# return site to carry its own unlock.
+	@sbody=`sed -n '/^bool daqifi_settings_SaveToNvm(DaqifiSettings\* settings) {/,/^}/p' $(SETTINGS_SRC) | tr -d '\r' | grep -v '^[[:space:]]*[*/]'`; \
+	 test -n "$$sbody" \
+	   || { echo "ERROR: daqifi_settings_SaveToNvm() was not found in"; \
+	        echo "       $(SETTINGS_SRC), or no longer opens at column 0."; \
+	        exit 1; }; \
+	 lk=`printf '%s\n' "$$sbody" | grep -n 'nvm_Lock();' | head -1 | cut -d: -f1`; \
+	 cl=`printf '%s\n' "$$sbody" | grep -n 'daqifi_settings_ClearNvm(settings->type)' | head -1 | cut -d: -f1`; \
+	 wr=`printf '%s\n' "$$sbody" | grep -n 'nvm_WriteRowtoAddr(address, gTempFflashBuffer)' | head -1 | cut -d: -f1`; \
+	 ul=`printf '%s\n' "$$sbody" | grep -n 'nvm_Unlock();' | head -1 | cut -d: -f1`; \
+	 test -n "$$lk" && test -n "$$cl" && test -n "$$wr" && test -n "$$ul" \
+	   && test "$$lk" -lt "$$cl" && test "$$cl" -lt "$$wr" && test "$$wr" -lt "$$ul" \
+	   || { echo "ERROR: daqifi_settings_SaveToNvm() in $(SETTINGS_SRC) no"; \
+	        echo "       longer brackets ClearNvm() -> stage -> nvm_WriteRowtoAddr()"; \
+	        echo "       with its OWN nvm_Lock() ... nvm_Unlock() (lock='$$lk'"; \
+	        echo "       clear='$$cl' write='$$wr' unlock='$$ul')."; \
+	        echo "       This is the #1153 round 2 fix: round 1's lock lived inside"; \
+	        echo "       nvm.c's write/erase entry points only, which is AFTER"; \
+	        echo "       this function has already staged the record into the"; \
+	        echo "       shared gTempFflashBuffer -- a direct caller (SCPILAN.c's"; \
+	        echo "       two WiFi savers, or SaveADCCalSettings) racing another"; \
+	        echo "       direct caller in that window can have its own staged"; \
+	        echo "       bytes overwritten before its own write reads them back"; \
+	        echo "       out. See test_1153_nvm_recursive_lock.c Pin 4."; \
+	        exit 1; }; \
+	 nret=`printf '%s\n' "$$sbody" | awk -v lk="$$lk" -v ul="$$ul" 'NR>lk && NR<ul && /return/ {print}'`; \
+	 test -z "$$nret" \
+	   || { echo "ERROR: daqifi_settings_SaveToNvm() in $(SETTINGS_SRC) has a"; \
+	        echo "       'return' between its nvm_Lock() (body line $$lk) and"; \
+	        echo "       its nvm_Unlock() (body line $$ul): '$$nret'."; \
+	        echo "       A return in that span that skips nvm_Unlock() first"; \
+	        echo "       permanently deadlocks every future NVM operation --"; \
+	        echo "       set 'result' and fall through to the single"; \
+	        echo "       unlock-then-return at the bottom instead."; \
+	        exit 1; }
+	@cbody=`sed -n '/^bool daqifi_settings_ClearNvm(DaqifiSettingsType type) {/,/^}/p' $(SETTINGS_SRC) | tr -d '\r' | grep -v '^[[:space:]]*[*/]'`; \
+	 test -n "$$cbody" \
+	   || { echo "ERROR: daqifi_settings_ClearNvm() was not found in"; \
+	        echo "       $(SETTINGS_SRC), or no longer opens at column 0."; \
+	        exit 1; }; \
+	 lk=`printf '%s\n' "$$cbody" | grep -n 'nvm_Lock();' | head -1 | cut -d: -f1`; \
+	 er=`printf '%s\n' "$$cbody" | grep -n 'nvm_ErasePage(address)' | head -1 | cut -d: -f1`; \
+	 ul=`printf '%s\n' "$$cbody" | grep -n 'nvm_Unlock();' | head -1 | cut -d: -f1`; \
+	 test -n "$$lk" && test -n "$$er" && test -n "$$ul" \
+	   && test "$$lk" -lt "$$er" && test "$$er" -lt "$$ul" \
+	   || { echo "ERROR: daqifi_settings_ClearNvm() in $(SETTINGS_SRC) no"; \
+	        echo "       longer brackets its nvm_ErasePage() call with its OWN"; \
+	        echo "       nvm_Lock() ... nvm_Unlock() (lock='$$lk' erase='$$er'"; \
+	        echo "       unlock='$$ul')."; \
+	        echo "       ClearNvm() is a public entry point in its own right,"; \
+	        echo "       exactly like nvm_WriteWordtoAddr() in nvm.c (which"; \
+	        echo "       stays locked despite zero callers today) -- a future"; \
+	        echo "       direct caller must not be able to bypass this lock by"; \
+	        echo "       skipping SaveToNvm()."; \
+	        exit 1; }; \
+	 nret=`printf '%s\n' "$$cbody" | awk -v lk="$$lk" -v ul="$$ul" 'NR>lk && NR<ul && /return/ {print}'`; \
+	 test -z "$$nret" \
+	   || { echo "ERROR: daqifi_settings_ClearNvm() in $(SETTINGS_SRC) has a"; \
+	        echo "       'return' between its nvm_Lock() (body line $$lk) and"; \
+	        echo "       its nvm_Unlock() (body line $$ul): '$$nret' -- a missed"; \
+	        echo "       unlock deadlocks every future NVM operation."; \
+	        exit 1; }
 	$(CC) $(CFLAGS) -o $(NVM1153_BIN) test_1153_nvm_recursive_lock.c
 
 clean:
