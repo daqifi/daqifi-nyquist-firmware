@@ -3412,6 +3412,35 @@ $(LOGONCE_BIN): test_1125_log_once_claim.c test_framework.h $(FW_LOG_C) $(RECIPE
 	 printf '#endif\n' >> $(GEN_1125)
 	$(CC) $(CFLAGS) -o $(LOGONCE_BIN) test_1125_log_once_claim.c
 
+# #1197: LogIsrInit created the ISR-log drain task BEFORE publishing
+# gIsrLogQueue, and the task read that global -- so a scheduler that ran the
+# new task first made it call xQueueReceive(NULL, ...) and hang the board at
+# boot. The task now gets its queue through pvParameters. Same extraction
+# constraint as $(LOGONCE_BIN) above: both functions are pulled out of
+# Logger.c verbatim and compiled against mocks in
+# test_1197_isr_log_init_order.c, whose xTaskCreate mock can run the new task
+# BEFORE returning -- the ordering the defect needs, reproduced rather than
+# inferred.
+ISRLOG1197_BIN := run_1197_tests
+GEN_1197       := gen_1197_isr_log_init.h
+
+$(ISRLOG1197_BIN): test_1197_isr_log_init_order.c test_framework.h $(FW_LOG_C) $(RECIPES)
+	@task=`sed -n '/^static void LogIsrDrainTask(void\* pvParameters) {/,/^}/p' $(FW_LOG_C) | tr -d '\r'`; \
+	 init=`sed -n '/^void LogIsrInit(void) {/,/^}/p' $(FW_LOG_C) | tr -d '\r'`; \
+	 test -n "$$task" && test -n "$$init" \
+	   || { echo "ERROR: LogIsrDrainTask(void* pvParameters) or LogIsrInit(void) was not"; \
+	        echo "       found at column 0 with that exact signature in $(FW_LOG_C) --"; \
+	        echo "       the extraction would compile nothing, and a test of nothing"; \
+	        echo "       must fail rather than pass vacuously."; \
+	        exit 1; }; \
+	 printf '/* GENERATED at build time by tests/host/Makefile ($(ISRLOG1197_BIN)).\n' > $(GEN_1197); \
+	 printf ' * Do not edit, do not commit -- see tests/host/.gitignore.\n' >> $(GEN_1197); \
+	 printf ' * Verbatim LogIsrDrainTask() and LogIsrInit() from $(FW_LOG_C). */\n' >> $(GEN_1197); \
+	 printf '#ifndef GEN_1197_ISR_LOG_INIT_H\n#define GEN_1197_ISR_LOG_INIT_H\n' >> $(GEN_1197); \
+	 printf '%s\n\n%s\n' "$$task" "$$init" >> $(GEN_1197); \
+	 printf '#endif\n' >> $(GEN_1197)
+	$(CC) $(CFLAGS) -o $(ISRLOG1197_BIN) test_1197_isr_log_init_order.c
+
 # #985: build-time guard over SD_SuspendReasonText() -- see the merge-history
 # comment above `run:` below for how this target's registration in run/clean
 # was resolved.
@@ -4967,7 +4996,7 @@ $(BUTTONLATCH_BIN): test_1092_button_poweroff_latch.c test_framework.h \
 
 run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) \
      $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) \
-     $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) \
+     $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(ISRLOG1197_BIN) \
      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(USECALTYPE_BIN) $(ARM_BIN) $(NAME_BIN) \
      $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) check-1200-parity
 	./$(SEQ908_BIN)
@@ -4999,6 +5028,7 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
 	./$(REPLYBUF_BIN)
 	./$(HEXWIN_BIN)
 	./$(LOGONCE_BIN)
+	./$(ISRLOG1197_BIN)
 	./$(USECALTYPE_BIN)
 	./$(DACREINIT_BIN)
 	./$(CALFINITE_BIN)
@@ -5273,7 +5303,7 @@ clean:
 	rm -f $(TEAR904_BIN)
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
 	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) \
-	      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(GEN_1125) \
+	      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(GEN_1125) $(ISRLOG1197_BIN) $(GEN_1197) \
 	      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(SDLOG1029_GEN).tmp \
 	      $(USECALTYPE_BIN) $(NAME_BIN) $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(ARM_BIN) $(SCPIDAC_RAILGATE_BIN) \
 	      $(FORCEGATE_BIN) $(LOG1039_BIN) $(LOG1039_GEN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN)
