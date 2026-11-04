@@ -409,6 +409,9 @@ on:
       - 'firmware/src/HAL/Power/PowerApi.c'
       - 'firmware/src/HAL/UI/UI.c'
       - 'firmware/src/HAL/BQ24297/BQ24297.c'
+      # #1153: run_1153_tests greps nvm.c for the recursive mutex and its
+      # three write/erase entry points' lock/unlock bracket.
+      - 'firmware/src/HAL/NVM/nvm.c'
       - 'firmware/src/services/sd_card_services/sd_card_manager.h'
       - 'firmware/src/config/default/FreeRTOSConfig.h'
       # #1056: the shared wait loop test_1056_wait_loop.c compiles, plus its
@@ -546,6 +549,9 @@ on:
       - 'firmware/src/HAL/Power/PowerApi.c'
       - 'firmware/src/HAL/UI/UI.c'
       - 'firmware/src/HAL/BQ24297/BQ24297.c'
+      # #1153: run_1153_tests greps nvm.c for the recursive mutex and its
+      # three write/erase entry points' lock/unlock bracket.
+      - 'firmware/src/HAL/NVM/nvm.c'
       - 'firmware/src/services/sd_card_services/sd_card_manager.h'
       - 'firmware/src/config/default/FreeRTOSConfig.h'
       # #1056: the shared wait loop test_1056_wait_loop.c compiles, plus its

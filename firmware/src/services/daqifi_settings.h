@@ -202,6 +202,118 @@ extern "C" {
     bool daqifi_settings_SaveToNvm(DaqifiSettings* settings);
 
     /**
+     * #1153: the decision a daqifi_settings_Update() callback hands back,
+     * distinguishing "save this" from the two ways a sequence can end
+     * WITHOUT a save -- which daqifi_settings_Update()'s own bool return
+     * cannot otherwise tell apart (both would otherwise collapse to the
+     * same "false", and a caller recovering from a REPORTED SaveToNvm
+     * failure -- e.g. ADCUseCalSetClaimed's #1152 readback-verification
+     * dance -- needs to know whether a save was even attempted before
+     * deciding whether that recovery applies).
+     */
+    typedef enum eDaqifiSettingsUpdateDecision {
+        /** Apply the callback's changes: daqifi_settings_Update() calls
+         *  daqifi_settings_SaveToNvm() and returns ITS result. */
+        DAQIFI_SETTINGS_UPDATE_SAVE,
+        /** Nothing needs persisting (e.g. the load already succeeded and
+         *  the caller had nothing to change) -- daqifi_settings_Update()
+         *  returns true without calling SaveToNvm(). */
+        DAQIFI_SETTINGS_UPDATE_OK_NO_SAVE,
+        /** Abort before any save (e.g. the load failed and there is no
+         *  usable record to modify, or a pre-save validation failed) --
+         *  daqifi_settings_Update() returns false without calling
+         *  SaveToNvm(). */
+        DAQIFI_SETTINGS_UPDATE_FAIL,
+    } DaqifiSettingsUpdateDecision;
+
+    /**
+     * #1153: the callback daqifi_settings_Update() invokes between its load
+     * and its (possible) save.
+     *
+     * @param settings On entry, holds whatever daqifi_settings_LoadFromNvm
+     *        produced (zeroed if @p loaded is false), with `.type` already
+     *        normalized to the `type` daqifi_settings_Update() was called
+     *        with -- never the possibly-corrupt stored type (#1152). The
+     *        callback may read and modify it freely; if it returns
+     *        DAQIFI_SETTINGS_UPDATE_SAVE, this exact struct is what gets
+     *        persisted.
+     * @param loaded True if the load succeeded, false if it failed (bad
+     *        checksum, blank flash, etc.) -- the callback decides what
+     *        that means for its own record type (e.g. fall back to
+     *        daqifi_settings_LoadFactoryDeafult(), or abort).
+     * @param context Caller-supplied, passed through unchanged.
+     * @return What daqifi_settings_Update() should do next.
+     */
+    typedef DaqifiSettingsUpdateDecision (*DaqifiSettingsUpdateFn)(
+            DaqifiSettings* settings, bool loaded, void* context);
+
+    /**
+     * #1153: run a load-modify-save sequence as ONE atomic unit, so a
+     * concurrent transport's own load-modify-save on the SAME settings
+     * record cannot interleave with this one and have one of its fields
+     * silently reverted (the #1153 defect: every TopLevelSettings saver
+     * does LoadFromNvm -> modify one field -> SaveToNvm with no
+     * synchronization, so a stale load on one transport can revert a
+     * field another transport just saved).
+     *
+     * Takes the nvm.c recursive mutex (nvm_Lock()) across the WHOLE
+     * sequence below, not just across the save:
+     *
+     *   nvm_Lock()
+     *   loaded = daqifi_settings_LoadFromNvm(type, settings)   // or zeroed
+     *   settings->type = type                                 // #1152 normalize
+     *   decision = fn(settings, loaded, context)
+     *   switch (decision) {
+     *     SAVE:        result = daqifi_settings_SaveToNvm(settings); break;
+     *     OK_NO_SAVE:  result = true; break;
+     *     FAIL:        result = false; break;
+     *   }
+     *   nvm_Unlock()
+     *   return result
+     *
+     * Recursive because daqifi_settings_SaveToNvm() itself calls
+     * daqifi_settings_ClearNvm() -- see nvm_Lock()'s doc comment in nvm.h
+     * for why the mutex must be recursive rather than this deadlocking on
+     * every single call, boot's included.
+     *
+     * @param type The settings record to load, pass to @p fn, and
+     *             possibly save -- the same type is used for all three.
+     * @param settings Caller-owned scratch; on return holds whatever was
+     *             loaded (or left by @p fn / LoadFactoryDeafult on a failed
+     *             load), exactly as a plain LoadFromNvm + SaveToNvm call
+     *             pair would have left it. Passing the caller's own buffer
+     *             (rather than an internal one) lets callers that need the
+     *             resulting record afterward -- e.g. app_SystemInit()'s
+     *             boot sequences -- read it straight out, with no extra
+     *             copy.
+     * @param fn   Applies the caller's modification and decides whether to
+     *             save; see DaqifiSettingsUpdateFn.
+     * @param context Passed through to @p fn unchanged; may be NULL.
+     * @return True if the sequence completed with nothing to persist, or
+     *         completed and daqifi_settings_SaveToNvm() reported success.
+     *         False if @p fn returned DAQIFI_SETTINGS_UPDATE_FAIL, or it
+     *         returned SAVE and daqifi_settings_SaveToNvm() reported
+     *         failure.
+     */
+    bool daqifi_settings_Update(DaqifiSettingsType type, DaqifiSettings* settings,
+            DaqifiSettingsUpdateFn fn, void* context);
+
+    /**
+     * #1153: accessors so a caller whose load-modify-save sequence cannot
+     * be expressed through a single daqifi_settings_Update() callback --
+     * ADCUseCalSetClaimed() in SCPIADC.c is the one case today, because its
+     * sequence is interleaved with a separate NVM read
+     * (daqifi_settings_ValidateADCCalBank) and a #1152 readback-recovery
+     * path that must run AFTER the save but OUTSIDE this lock -- can still
+     * hold the SAME nvm.c recursive mutex across its own load-through-save
+     * span. Thin wrappers over nvm_Lock()/nvm_Unlock() (nvm.h) so callers
+     * in services/SCPI do not need to depend on the HAL/NVM layer directly.
+     * See nvm_Lock()'s doc comment for the recursion/blocking contract.
+     */
+    void daqifi_settings_Lock(void);
+    void daqifi_settings_Unlock(void);
+
+    /**
      * #909: Re-stamp a loaded TopLevelSettings image with THIS build's
      * revision strings.
      *

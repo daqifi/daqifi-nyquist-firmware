@@ -25,6 +25,7 @@
 #include "services/UsbCdc/UsbCdc.h"
 #include "services/wifi_services/wifi_tcp_server.h"
 #include "services/wifi_services/iperf2/iperf2.h"
+#include "HAL/NVM/nvm.h"   /* #1153: nvm_MutexInit() */
 
 /*
  * SPI Coordination Framework for Future Extensibility
@@ -910,11 +911,34 @@ void app_PowerAndUITask(void) {
     }
 }
 
+/* #1153: app_SystemInit()'s boot-time "load this record; if that failed,
+ * fall back to factory defaults and persist them" sequence, below, for
+ * BOTH TopLevelSettings and Wifi -- identical shape, parameterized by
+ * which type to fall back to. Routed through daqifi_settings_Update() like
+ * every other load-modify-save site in this PR, even though boot runs
+ * single-threaded (before app_TasksCreate()) and is therefore never
+ * actually contended: the point is to not carve out an exception to the
+ * pattern, not to close a race that exists here today. */
+static DaqifiSettingsUpdateDecision BootLoadOrFactoryDefaultFn(
+        DaqifiSettings* settings, bool loaded, void* context) {
+    if (loaded) {
+        return DAQIFI_SETTINGS_UPDATE_OK_NO_SAVE;
+    }
+    DaqifiSettingsType* pType = (DaqifiSettingsType*)context;
+    daqifi_settings_LoadFactoryDeafult(*pType, settings);
+    return DAQIFI_SETTINGS_UPDATE_SAVE;
+}
+
 void app_SystemInit() {
     // #347 / #350: init the shared SCPI response-buffer mutex before any
     // transport creates its SCPI context or dispatches a callback.
     SCPI_ResponseBuf_Init();
     SCPI_StatusLock_Init();   /* #852: OPER/QUES status-register lock */
+    /* #1153: the recursive NVM mutex, before the very first settings
+     * load/save sequence a few lines below (and before any transport task
+     * is created further down this function). Explicit rather than lazy --
+     * see nvm_MutexInit()'s own doc comment for why. */
+    nvm_MutexInit();
 
     // Initialize SPI coordination framework (currently disabled)
     // Note: Coordination disabled (SPI0_COORDINATION_ENABLED=0) - no runtime overhead
@@ -944,12 +968,13 @@ void app_SystemInit() {
     memset(&tmpSettings, 0, sizeof (tmpSettings));
 
 
-    // Try to load TopLevelSettings from NVM - if this fails, store default 
+    // Try to load TopLevelSettings from NVM - if this fails, store default
     // settings to NVM (first run after a program)
-    if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings, &tmpTopLevelSettings)) {
-        // Get board variant and cal param type from TopLevelSettings NVM 
-        daqifi_settings_LoadFactoryDeafult(DaqifiSettings_TopLevelSettings, &tmpTopLevelSettings);
-        daqifi_settings_SaveToNvm(&tmpTopLevelSettings);
+    {
+        DaqifiSettingsType topLevelType = DaqifiSettings_TopLevelSettings;
+        daqifi_settings_Update(DaqifiSettings_TopLevelSettings,
+                &tmpTopLevelSettings, BootLoadOrFactoryDefaultFn,
+                &topLevelType);
     }
 
     /* #909: the bootloader now preserves the settings pages across an in-app
@@ -1035,13 +1060,10 @@ void app_SystemInit() {
 
     // Try to load WiFiSettings from NVM - if this fails, store default
     // settings to NVM (first run after a program)
-
-
-    tmpSettings.type = DaqifiSettings_Wifi;
-    if (!daqifi_settings_LoadFromNvm(DaqifiSettings_Wifi, &tmpSettings)) {
-        // Get board wifi settings from Wifi NVM variable
-        daqifi_settings_LoadFactoryDeafult(DaqifiSettings_Wifi, &tmpSettings);
-        daqifi_settings_SaveToNvm(&tmpSettings);
+    {
+        DaqifiSettingsType wifiType = DaqifiSettings_Wifi;
+        daqifi_settings_Update(DaqifiSettings_Wifi, &tmpSettings,
+                BootLoadOrFactoryDefaultFn, &wifiType);
     }
     // Move temp variable to global variables.
     // #29: the old force-false of the deprecated FW-update flag is gone — that

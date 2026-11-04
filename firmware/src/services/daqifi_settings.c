@@ -593,6 +593,47 @@ bool daqifi_settings_SaveToNvm(DaqifiSettings* settings) {
     return nvm_WriteRowtoAddr(address, gTempFflashBuffer);
 }
 
+void daqifi_settings_Lock(void) {
+    nvm_Lock();
+}
+
+void daqifi_settings_Unlock(void) {
+    nvm_Unlock();
+}
+
+bool daqifi_settings_Update(DaqifiSettingsType type, DaqifiSettings* settings,
+        DaqifiSettingsUpdateFn fn, void* context) {
+    bool result;
+
+    nvm_Lock();
+
+    memset(settings, 0, sizeof(*settings));
+    bool loaded = daqifi_settings_LoadFromNvm(type, settings);
+    /* #1152: trust the type WE asked for, not whatever type byte NVM
+     * physically held -- that byte rides outside the payload checksum.
+     * Set unconditionally (load success or failure) so every caller's
+     * callback sees a normalized record, matching what every pre-#1153
+     * call site already did by hand right after its own LoadFromNvm. */
+    settings->type = type;
+
+    DaqifiSettingsUpdateDecision decision = fn(settings, loaded, context);
+    switch (decision) {
+        case DAQIFI_SETTINGS_UPDATE_SAVE:
+            result = daqifi_settings_SaveToNvm(settings);
+            break;
+        case DAQIFI_SETTINGS_UPDATE_OK_NO_SAVE:
+            result = true;
+            break;
+        case DAQIFI_SETTINGS_UPDATE_FAIL:
+        default:
+            result = false;
+            break;
+    }
+
+    nvm_Unlock();
+    return result;
+}
+
 bool daqifi_settings_ClearNvm(DaqifiSettingsType type) {
     uint32_t address = 0;
     

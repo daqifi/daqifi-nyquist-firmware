@@ -31,6 +31,19 @@ FW_ADC   := ../../firmware/src/HAL/ADC
 FW_SVC   := ../../firmware/src/services
 INCLUDES := -Istubs -I$(FW_UTIL)
 
+# PR firmware#1153: NVM1153_BIN must be assigned here, ahead of the `run:`
+# target below -- a target's PREREQUISITE list is expanded immediately when
+# make reads that line (unlike a recipe body, which expands lazily at
+# execution time), so a `:=` assignment appearing textually AFTER `run:`
+# would still be empty at the point `run:`'s prerequisite list is parsed,
+# silently dropping this binary from the dependency graph (the recipe line
+# `./$(NVM1153_BIN)` would still expand correctly by then, giving a
+# confusing "No such file or directory" instead of a build). Every other
+# _BIN variable in this file (SEQ908_BIN, USECALTYPE_BIN, SUMBUDGET_BIN, ...)
+# follows the same rule -- assigned near the top, built wherever.
+NVM_SRC     := ../../firmware/src/HAL/NVM/nvm.c
+NVM1153_BIN := run_1153_tests
+
 BIN := run_tests
 UUT := CircularBuffer_uut.c
 
@@ -4969,7 +4982,9 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
      $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) \
      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) \
      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(USECALTYPE_BIN) $(ARM_BIN) $(NAME_BIN) \
-     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) check-1200-parity
+     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) check-1200-parity \
+     $(NVM1153_BIN)
+	./$(NVM1153_BIN)
 	./$(SEQ908_BIN)
 	./$(APSTA1060_BIN)
 	./$(BUTTONLATCH_BIN)
@@ -5268,7 +5283,192 @@ $(SUMBUDGET_BIN): test_1055_stream_end_summary_budget.c test_framework.h \
 	       exit 1; }
 	$(CC) $(CFLAGS) -DFW_LOG_MESSAGE_SIZE=$(LOG_MSG_SIZE) -o $(SUMBUDGET_BIN) test_1055_stream_end_summary_budget.c
 
+# PR firmware#1153: one recursive mutex for the NVM API, guarding every
+# TopLevelSettings/Wifi load-modify-save against the stale-load race
+# between transports (#1153: a saver's LoadFromNvm -> modify one field ->
+# SaveToNvm has no synchronization, so a concurrent saver's own stale load
+# can silently revert the first saver's field).
+#
+# Neither nvm.c nor daqifi_settings.c is host-includable (Harmony,
+# FreeRTOS, the PIC32 SFR headers), so -- same technique as $(SEQ908_BIN)
+# and $(USECALTYPE_BIN) -- test_1153_nvm_recursive_lock.c models the lock
+# span itself against an in-memory backing store, and the guards below pin
+# the REAL sources: the recursive mutex and its three write/erase entry
+# points in nvm.c, daqifi_settings_Update()'s lock/load/callback/save/unlock
+# order in daqifi_settings.c, the 5 call sites this PR routes through it
+# (app_SystemInit()'s 2 boot sequences, SCPIInterface.c's 3 savers), and
+# ADCUseCalSetClaimed()'s own direct lock/unlock bracket in SCPIADC.c (not
+# routed through daqifi_settings_Update() -- its sequence is interleaved
+# with a second NVM read (daqifi_settings_ValidateADCCalBank) and a #1152
+# readback-recovery path that must run AFTER the save but OUTSIDE this
+# lock, and $(USECALTYPE_BIN) already pins that function's existing call
+# sites and their order by exact text, so this reuses the same mutex
+# directly instead of restructuring it).
+#
+# Comment lines are stripped before any "does X still call Y directly"
+# search, same reason and same technique as $(USECALTYPE_BIN): this PR's
+# own comments mention daqifi_settings_LoadFromNvm/SaveToNvm by name right
+# next to the code that used to call them directly.
+#
+# NVM_SRC / NVM1153_BIN are assigned near the top of this file (with the
+# other _BIN variables), not here -- see the comment at that assignment
+# for why a prerequisite-list use in `run:` needs it defined before that
+# point textually.
+$(NVM1153_BIN): test_1153_nvm_recursive_lock.c test_framework.h \
+                $(NVM_SRC) $(SETTINGS_SRC) $(APP_FREERTOS_SRC) \
+                $(SCPI_IFACE_SRC) $(SCPIADC_SRC) $(RECIPES)
+	@grep -qE 'xSemaphoreCreateRecursiveMutex(Static)?\(' $(NVM_SRC) \
+	  || { echo "ERROR: $(NVM_SRC) no longer creates a RECURSIVE mutex."; \
+	       echo "       A plain (non-recursive) mutex taken in both"; \
+	       echo "       nvm_WriteRowtoAddr and the nvm_ErasePage it calls"; \
+	       echo "       FROM INSIDE daqifi_settings_SaveToNvm would"; \
+	       echo "       self-deadlock on every save, boot's included."; \
+	       exit 1; }
+	@grep -qF 'xSemaphoreTakeRecursive(' $(NVM_SRC) \
+	  && grep -qF 'xSemaphoreGiveRecursive(' $(NVM_SRC) \
+	  || { echo "ERROR: $(NVM_SRC)'s nvm_Lock()/nvm_Unlock() no longer use"; \
+	       echo "       the recursive take/give pair -- see the recursive-"; \
+	       echo "       mutex check above for why that matters."; \
+	       exit 1; }
+	@body=`sed -n '/^bool nvm_ErasePage(/,/^}/p' $(NVM_SRC) | tr -d '\r'`; \
+	 test -n "$$body" \
+	   || { echo "ERROR: nvm_ErasePage() was not found in $(NVM_SRC), or no"; \
+	        echo "       longer opens at column 0."; exit 1; }; \
+	 lk=`printf '%s\n' "$$body" | grep -n 'nvm_Lock();' | head -1 | cut -d: -f1`; \
+	 ul=`printf '%s\n' "$$body" | grep -n 'nvm_Unlock();' | head -1 | cut -d: -f1`; \
+	 test -n "$$lk" && test -n "$$ul" && test "$$lk" -lt "$$ul" \
+	   || { echo "ERROR: nvm_ErasePage() in $(NVM_SRC) no longer brackets its"; \
+	        echo "       body with nvm_Lock() ... nvm_Unlock() (lock='$$lk'"; \
+	        echo "       unlock='$$ul')."; exit 1; }
+	@body=`sed -n '/^bool nvm_WriteWordtoAddr(/,/^}/p' $(NVM_SRC) | tr -d '\r'`; \
+	 test -n "$$body" \
+	   || { echo "ERROR: nvm_WriteWordtoAddr() was not found in $(NVM_SRC),"; \
+	        echo "       or no longer opens at column 0."; exit 1; }; \
+	 lk=`printf '%s\n' "$$body" | grep -n 'nvm_Lock();' | head -1 | cut -d: -f1`; \
+	 ul=`printf '%s\n' "$$body" | grep -n 'nvm_Unlock();' | head -1 | cut -d: -f1`; \
+	 test -n "$$lk" && test -n "$$ul" && test "$$lk" -lt "$$ul" \
+	   || { echo "ERROR: nvm_WriteWordtoAddr() in $(NVM_SRC) no longer"; \
+	        echo "       brackets its body with nvm_Lock() ... nvm_Unlock()"; \
+	        echo "       (lock='$$lk' unlock='$$ul'). This function has zero"; \
+	        echo "       callers today, but the lock belongs at the owning"; \
+	        echo "       layer regardless of today's call graph -- a future"; \
+	        echo "       direct caller must not bypass it."; exit 1; }
+	@body=`sed -n '/^bool nvm_WriteRowtoAddr(/,/^}/p' $(NVM_SRC) | tr -d '\r'`; \
+	 test -n "$$body" \
+	   || { echo "ERROR: nvm_WriteRowtoAddr() was not found in $(NVM_SRC),"; \
+	        echo "       or no longer opens at column 0."; exit 1; }; \
+	 lk=`printf '%s\n' "$$body" | grep -n 'nvm_Lock();' | head -1 | cut -d: -f1`; \
+	 ul=`printf '%s\n' "$$body" | grep -n 'nvm_Unlock();' | head -1 | cut -d: -f1`; \
+	 test -n "$$lk" && test -n "$$ul" && test "$$lk" -lt "$$ul" \
+	   || { echo "ERROR: nvm_WriteRowtoAddr() in $(NVM_SRC) no longer"; \
+	        echo "       brackets its body with nvm_Lock() ... nvm_Unlock()"; \
+	        echo "       (lock='$$lk' unlock='$$ul'). daqifi_settings_SaveToNvm"; \
+	        echo "       stages into the shared gTempFflashBuffer right before"; \
+	        echo "       calling this -- without the lock, two concurrent"; \
+	        echo "       saves can corrupt each other's readback comparison."; \
+	        exit 1; }
+	@ubody=`sed -n '/^bool daqifi_settings_Update(/,/^}/p' $(SETTINGS_SRC) | tr -d '\r'`; \
+	 test -n "$$ubody" \
+	   || { echo "ERROR: daqifi_settings_Update() was not found in"; \
+	        echo "       $(SETTINGS_SRC), or no longer opens at column 0."; \
+	        exit 1; }; \
+	 lk=`printf '%s\n' "$$ubody" | grep -n 'nvm_Lock();' | head -1 | cut -d: -f1`; \
+	 ld=`printf '%s\n' "$$ubody" | grep -n 'daqifi_settings_LoadFromNvm(type, settings)' | head -1 | cut -d: -f1`; \
+	 fc=`printf '%s\n' "$$ubody" | grep -n 'fn(settings, loaded, context)' | head -1 | cut -d: -f1`; \
+	 sv=`printf '%s\n' "$$ubody" | grep -n 'daqifi_settings_SaveToNvm(settings)' | head -1 | cut -d: -f1`; \
+	 ul=`printf '%s\n' "$$ubody" | grep -n 'nvm_Unlock();' | head -1 | cut -d: -f1`; \
+	 test -n "$$lk" && test -n "$$ld" && test -n "$$fc" && test -n "$$sv" && test -n "$$ul" \
+	   && test "$$lk" -lt "$$ld" && test "$$ld" -lt "$$fc" \
+	   && test "$$fc" -lt "$$sv" && test "$$sv" -lt "$$ul" \
+	   || { echo "ERROR: daqifi_settings_Update() in $(SETTINGS_SRC) no"; \
+	        echo "       longer runs LOCK -> load -> callback -> SaveToNvm ->"; \
+	        echo "       UNLOCK in that order (lock='$$lk' load='$$ld'"; \
+	        echo "       callback='$$fc' save='$$sv' unlock='$$ul'). This IS"; \
+	        echo "       the #1153 fix: a lock that does not span the whole"; \
+	        echo "       load-modify-save sequence leaves the stale-load"; \
+	        echo "       window open."; exit 1; }
+	@sbody=`sed -n '/^static scpi_result_t SCPI_SaveAutoPowerOnUsb(scpi_t \* context) {/,/^}/p' $(SCPI_IFACE_SRC) | tr -d '\r' | grep -v '^[[:space:]]*[*/]'`; \
+	 test -n "$$sbody" \
+	   || { echo "ERROR: SCPI_SaveAutoPowerOnUsb() was not found in"; \
+	        echo "       $(SCPI_IFACE_SRC), or no longer opens at column 0."; \
+	        exit 1; }; \
+	 printf '%s\n' "$$sbody" | grep -qF 'daqifi_settings_Update(' \
+	   || { echo "ERROR: SCPI_SaveAutoPowerOnUsb() in $(SCPI_IFACE_SRC) no"; \
+	        echo "       longer calls daqifi_settings_Update() -- #1153 routes"; \
+	        echo "       its load-modify-save through that, not a bare"; \
+	        echo "       LoadFromNvm/SaveToNvm pair."; exit 1; }; \
+	 printf '%s\n' "$$sbody" | grep -q 'daqifi_settings_LoadFromNvm\|daqifi_settings_SaveToNvm' \
+	   && { echo "ERROR: SCPI_SaveAutoPowerOnUsb() in $(SCPI_IFACE_SRC) still"; \
+	        echo "       calls LoadFromNvm/SaveToNvm directly, alongside"; \
+	        echo "       daqifi_settings_Update() -- an UNLOCKED second"; \
+	        echo "       sequence on the same record."; exit 1; } || true
+	@sbody=`sed -n '/^static scpi_result_t SCPI_SaveDataPrecision(scpi_t \* context) {/,/^}/p' $(SCPI_IFACE_SRC) | tr -d '\r' | grep -v '^[[:space:]]*[*/]'`; \
+	 test -n "$$sbody" \
+	   || { echo "ERROR: SCPI_SaveDataPrecision() was not found in"; \
+	        echo "       $(SCPI_IFACE_SRC), or no longer opens at column 0."; \
+	        exit 1; }; \
+	 printf '%s\n' "$$sbody" | grep -qF 'daqifi_settings_Update(' \
+	   || { echo "ERROR: SCPI_SaveDataPrecision() in $(SCPI_IFACE_SRC) no"; \
+	        echo "       longer calls daqifi_settings_Update() (#1153)."; \
+	        exit 1; }; \
+	 printf '%s\n' "$$sbody" | grep -q 'daqifi_settings_LoadFromNvm\|daqifi_settings_SaveToNvm' \
+	   && { echo "ERROR: SCPI_SaveDataPrecision() in $(SCPI_IFACE_SRC) still"; \
+	        echo "       calls LoadFromNvm/SaveToNvm directly, alongside"; \
+	        echo "       daqifi_settings_Update()."; exit 1; } || true
+	@sbody=`sed -n '/^static scpi_result_t SCPI_SaveDeviceName(scpi_t \* context) {/,/^}/p' $(SCPI_IFACE_SRC) | tr -d '\r' | grep -v '^[[:space:]]*[*/]'`; \
+	 test -n "$$sbody" \
+	   || { echo "ERROR: SCPI_SaveDeviceName() was not found in"; \
+	        echo "       $(SCPI_IFACE_SRC), or no longer opens at column 0."; \
+	        exit 1; }; \
+	 printf '%s\n' "$$sbody" | grep -qF 'daqifi_settings_Update(' \
+	   || { echo "ERROR: SCPI_SaveDeviceName() in $(SCPI_IFACE_SRC) no longer"; \
+	        echo "       calls daqifi_settings_Update() (#1153)."; exit 1; }; \
+	 printf '%s\n' "$$sbody" | grep -q 'daqifi_settings_LoadFromNvm\|daqifi_settings_SaveToNvm' \
+	   && { echo "ERROR: SCPI_SaveDeviceName() in $(SCPI_IFACE_SRC) still"; \
+	        echo "       calls LoadFromNvm/SaveToNvm directly, alongside"; \
+	        echo "       daqifi_settings_Update()."; exit 1; } || true
+	@abody=`sed -n '/^void app_SystemInit() {/,/^}/p' $(APP_FREERTOS_SRC) | tr -d '\r'`; \
+	 test -n "$$abody" \
+	   || { echo "ERROR: app_SystemInit() was not found in"; \
+	        echo "       $(APP_FREERTOS_SRC), or no longer opens at column 0."; \
+	        exit 1; }; \
+	 n=`printf '%s\n' "$$abody" | grep -v '^[[:space:]]*[*/]' | grep -cF 'daqifi_settings_Update('`; \
+	 test "$$n" -eq 2 \
+	   || { echo "ERROR: app_SystemInit() in $(APP_FREERTOS_SRC) calls"; \
+	        echo "       daqifi_settings_Update() $$n time(s), want 2 (the"; \
+	        echo "       TopLevelSettings boot sequence and the Wifi boot"; \
+	        echo "       sequence -- #1153 routes BOTH through it, even"; \
+	        echo "       though boot runs single-threaded, deliberately not"; \
+	        echo "       carving out an exception to the pattern)."; exit 1; }; \
+	 printf '%s\n' "$$abody" | grep -v '^[[:space:]]*[*/]' | grep -q 'daqifi_settings_LoadFromNvm\|daqifi_settings_SaveToNvm' \
+	   && { echo "ERROR: app_SystemInit() in $(APP_FREERTOS_SRC) still calls"; \
+	        echo "       LoadFromNvm/SaveToNvm directly -- #1153 routes both"; \
+	        echo "       boot sequences through daqifi_settings_Update()"; \
+	        echo "       instead, which calls those for you."; exit 1; } || true
+	@cbody=`sed -n '/^static scpi_result_t ADCUseCalSetClaimed(scpi_t \* context) {/,/^}/p' $(SCPIADC_SRC) | tr -d '\r'`; \
+	 test -n "$$cbody" \
+	   || { echo "ERROR: ADCUseCalSetClaimed() was not found in"; \
+	        echo "       $(SCPIADC_SRC), or no longer opens at column 0."; \
+	        exit 1; }; \
+	 lk=`printf '%s\n' "$$cbody" | grep -n 'daqifi_settings_Lock();' | head -1 | cut -d: -f1`; \
+	 ld=`printf '%s\n' "$$cbody" | grep -n 'daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings,' | head -1 | cut -d: -f1`; \
+	 sv=`printf '%s\n' "$$cbody" | grep -n 'daqifi_settings_SaveToNvm(&tmpTopLevelSettings)' | head -1 | cut -d: -f1`; \
+	 ul=`printf '%s\n' "$$cbody" | grep -c 'daqifi_settings_Unlock();'`; \
+	 ulpos=`printf '%s\n' "$$cbody" | grep -n 'daqifi_settings_Unlock();' | tail -1 | cut -d: -f1`; \
+	 test -n "$$lk" && test -n "$$ld" && test -n "$$sv" && test -n "$$ul" && test "$$ul" -ge 3 \
+	   && test "$$lk" -lt "$$ld" && test "$$ld" -lt "$$sv" && test "$$sv" -lt "$$ulpos" \
+	   || { echo "ERROR: ADCUseCalSetClaimed() in $(SCPIADC_SRC) no longer"; \
+	        echo "       brackets load..save with daqifi_settings_Lock() /"; \
+	        echo "       daqifi_settings_Unlock() (lock='$$lk' load='$$ld'"; \
+	        echo "       save='$$sv' unlocks=$$ul lastUnlock='$$ulpos')."; \
+	        echo "       Expect >= 3 unlocks: one per early-return out of the"; \
+	        echo "       locked span (load failure, validate failure, the"; \
+	        echo "       unreachable default case) plus the one after save."; \
+	        exit 1; }
+	$(CC) $(CFLAGS) -o $(NVM1153_BIN) test_1153_nvm_recursive_lock.c
+
 clean:
+	rm -f $(NVM1153_BIN)
 	rm -f $(SEQ908_BIN)
 	rm -f $(TEAR904_BIN)
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
