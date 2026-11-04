@@ -5281,10 +5281,9 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
 
     uint16_t activeType1ChannelCount = 0;
     uint16_t totalEnabledPublicChannels = 0;
-    bool hasActiveAD7609Channels = false;
     Streaming_CountActiveChannels(&activeType1ChannelCount,
                                   &totalEnabledPublicChannels,
-                                  &hasActiveAD7609Channels);
+                                  NULL);
     bool hasEnabledChannels = (totalEnabledPublicChannels > 0);
 
     // Build channel mapping for compact sample pool (#177).
@@ -5438,12 +5437,14 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
      * publishes it. Zero means "not computed"; the check below enforces it. */
     uint32_t periodCycles = 0;
     {
-        // NQ3 Smart Frequency Management:
-        // When external AD7609 channels are active WITHOUT any Type 1 MC12bADC channels,
-        // force internal monitoring to 1Hz (since only monitoring channels would be streaming)
-        if (hasActiveAD7609Channels && activeType1ChannelCount == 0 && freq > 1) {
-            freq = 1; // Override to 1Hz for internal monitoring when external ADC active
-        }
+        /* #1158: no AD7609 rate override. An earlier "NQ3 Smart Frequency
+         * Management" block forced freq = 1 whenever an AD7609 channel was
+         * enabled with no type-1 MC12b channel. On NQ3 that is EVERY analog
+         * stream (its public analog channels are the AD7609's; its MC12b
+         * channels are non-public type 2), and the same timer triggers the
+         * AD7609 conversions, so it throttled NQ3's acquisition path to 1 Hz
+         * silently. The rate is now bounded only by the cap computation
+         * below, like every other variant. */
 
         // Three-constraint frequency capping (validated via benchmark testing)
         // See https://github.com/daqifi/daqifi-nyquist-firmware/issues/215
