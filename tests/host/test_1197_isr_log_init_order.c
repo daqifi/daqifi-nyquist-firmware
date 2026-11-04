@@ -87,8 +87,8 @@ static TaskHandle_t  gIsrLogTaskHandle;
 #define LOG_ISR_TASK_STACK 256
 #define LOG_ISR_TASK_PRIO  1
 
-static int g_log_adds;
-static int LogMessageAdd(const char *message) { (void)message; g_log_adds++; return 0; }
+/* Never reached: the xQueueReceive mock escapes before a message exists. */
+static int LogMessageAdd(const char *message) { (void)message; return 0; }
 
 static QueueHandle_t xQueueCreate(UBaseType_t depth, UBaseType_t item) {
     (void)depth; (void)item;
@@ -139,7 +139,6 @@ static void reset(void) {
     g_deleted_queue = NULL;
     gIsrLogQueue = NULL;
     gIsrLogTaskHandle = NULL;
-    g_log_adds = 0;
 }
 
 /* THE REAL FUNCTIONS, extracted verbatim by the Makefile recipe. */
