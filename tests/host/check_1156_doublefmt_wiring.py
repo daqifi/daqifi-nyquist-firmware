@@ -33,7 +33,11 @@ def strip_block_comments(text):
     `%.15lg` and HAVE_DTOSTRE -- the very tokens check 2 below forbids. A
     checker that grepped the raw file would fail on its own explanation.
     """
-    return re.sub(r'/\*.*?\*/', ' ', text, flags=re.S)
+    # Each block becomes its OWN NEWLINES, not a space: collapsing them
+    # shifted every reported line number (the define at config.h:235 was
+    # reported as :163, and the error grew with the new comment block).
+    return re.sub(r'/\*.*?\*/',
+                  lambda m: '\n' * m.group(0).count('\n'), text, flags=re.S)
 
 
 def active_define(code, name):
@@ -112,24 +116,38 @@ def main():
                 'their stub dirs on the include path, so a project-rooted '
                 'include fails there.' % (inc.group(1), resolved))
 
-    # 4. the formatter still tries the NARROW width first. If it did not,
-    #    every ordinary value's wire format would change -- which is the
-    #    cost this design exists to avoid, and no host assertion about
-    #    round-tripping would catch it.
-    if not re.search(r'for\s*\(\s*digits\s*=\s*DAQIFI_DOUBLE_FMT_MIN_DIGITS',
-                     header):
-        problems.append(
-            'DoubleFmt.h no longer starts at DAQIFI_DOUBLE_FMT_MIN_DIGITS, '
-            'so it may widen a value that 15 digits already rendered exactly '
-            '-- changing the wire format of every double-valued getter')
-
-    # 5. and the width is still chosen by PARSING BACK, not by a rule about
-    #    the value. This is the property the whole design rests on.
-    if 'strtod' not in header:
-        problems.append(
-            'DoubleFmt.h no longer calls strtod, so the width is no longer '
-            'selected by verifying the text reproduces the value -- it is a '
-            'guess again, and #1156 is about a guess that failed silently')
+    # ⛔⛔ CHECKS 4 AND 5 WERE DELETED, and the reason is worth keeping.
+    #
+    # They grepped DoubleFmt.h for the loop header
+    # (`for (digits = DAQIFI_DOUBLE_FMT_MIN_DIGITS`) and for the token
+    # `strtod`, claiming to guard "narrow-first" and "the width is chosen by
+    # parsing back". An adversarial review showed BOTH were unfalsifiable and
+    # that each also broke on correct code:
+    #
+    #   * `strtod` was matched against the RAW header, so the prose comment
+    #     mentioning strtod -- and `daqifi_double_round_trips`, which the
+    #     header itself documents as "not used by the SCPI path" -- satisfied
+    #     it. Replacing the round-trip test with `if (1)`, i.e. deleting the
+    #     entire verification the check is named after, left this script at
+    #     exit 0 with a "round-trip-verified" success banner.
+    #   * The loop-header grep passed while the body hardcoded
+    #     DAQIFI_DOUBLE_FMT_MAX_DIGITS in the snprintf, widening every value
+    #     to 17 digits -- the exact regression it claimed to prevent.
+    #   * And three semantically identical edits FAILED them, each breaking
+    #     `make run` through this recipe: a `#define` split over a line
+    #     continuation, `for (int digits = ...)` (legal C11), and renaming
+    #     the loop variable to `prec`.
+    #
+    # Both behaviours ARE covered, by assertions that can fail: the host
+    # test's `a_value_that_fits_15_digits_is_rendered_IDENTICALLY_to_before`
+    # kills the hardcoded-width mutant, and `the_issues_four_reproduction_
+    # rows_round_trip_now` plus the short-buffer oracle kill the removed
+    # round-trip check. A source-diction pin added nothing over them and cost
+    # three false failures.
+    #
+    # What survives here is only what the host test CANNOT see: whether the
+    # vendored macro routes to this formatter at all (checks 1-3). That is
+    # the one claim a host test linking the header directly can never make.
 
     if problems:
         print('#1156 double-formatter wiring: %d FINDING(S)' % len(problems))
@@ -138,8 +156,10 @@ def main():
         return 1
 
     print('#1156 double-formatter wiring OK: SCPIDEFINE_doubleToStr -> %s, '
-          'one unconditional definition, no 15-digit double renderer left, '
-          'narrow-first and round-trip-verified' % FORMATTER)
+          'one unconditional definition, no 15-digit double renderer '
+          'left, and the include resolves relative to config.h. (The '
+          'formatter BEHAVIOUR is the host test\'s claim, not this '
+          'script\'s.)' % FORMATTER)
     return 0
 
 

@@ -34,15 +34,22 @@
  * ⚠ AND IT NEVER EMITS A TRUNCATED NUMERAL. A numeral cut off by a short
  * buffer is a CORRUPT value, strictly worse than a rounded one — 1.2345e+10
  * truncated to "1.2345e+1" is wrong by a factor of 10^9, not by an epsilon.
- * So a width is only eligible if its rendering FITS, and if nothing fits, the
- * narrowest attempt (which is what the old code would have written) is kept.
+ * So a width is only eligible if its rendering FITS; if NO width fits, the
+ * empty string and 0 are returned. That is a deliberate difference from the
+ * old `snprintf`, which wrote a TRUNCATED numeral and reported `len-1`: an
+ * empty reply is recognisably absent, a truncated number is not. It is only
+ * reachable through `SCPI_NumberToStr`, which has no caller in
+ * `firmware/src`; `SCPI_ResultDouble`'s own buffer is 32 bytes, and the
+ * widest rendering is 24, so it always fits there.
  *
  * Header-only and dependency-free, for the same reason as FixedPointFmt.h and
  * SampleEmit.h beside it: the behaviour at the 15/16/17-digit boundaries, at
  * the non-finite values, and in a short buffer can then be checked
  * exhaustively on a host with no stubs. It is reached from the vendored
- * libscpi config.h, whose quoted include falls through to the project's
- * `../src` include path.
+ * libscpi config.h by an include RELATIVE TO THAT FILE -- the project-rooted
+ * `"Util/DoubleFmt.h"` form resolves for the firmware build but NOT for the
+ * host tests, which compile libscpi with only their own stub directories on
+ * the include path.
  */
 #ifndef DAQIFI_UTIL_DOUBLEFMT_H
 #define DAQIFI_UTIL_DOUBLEFMT_H
@@ -86,9 +93,17 @@ static inline size_t daqifi_double_to_str(double v, char *s, size_t len)
         int n = snprintf(probe, sizeof probe, "%.*lg", digits, v);
 
         if (n < 0 || (size_t) n >= sizeof probe || (size_t) n >= len) {
-            /* Does not fit the caller's buffer. A wider one never will, so
-             * stop and keep whatever narrower rendering already landed. */
-            break;
+            /* ⛔ This width does not fit, but a WIDER ONE STILL MIGHT, so
+             * keep going rather than stopping here. `%g` length is NOT
+             * monotonic in precision: it switches from `%e` to `%f` once the
+             * precision exceeds the decimal exponent, and the `%f` form is
+             * often SHORTER. The issue's own reproduction row is an example --
+             * 9007199254740991.0 renders as "9.00719925474099e+15" (20 chars,
+             * inexact) at 15 digits and "9007199254740991" (16 chars, EXACT)
+             * at 16. An earlier revision did `break` here, and so returned
+             * the EMPTY STRING for every buffer of 17..20 bytes while a
+             * shorter exact rendering was available one width up. */
+            continue;
         }
         memcpy(s, probe, (size_t) n + 1u);
         best = (size_t) n;

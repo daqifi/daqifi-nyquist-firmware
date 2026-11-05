@@ -171,7 +171,18 @@ TEST(a_short_buffer_never_yields_a_TRUNCATED_numeral)
      * 1.2345e+10, not by an epsilon. So no rendering may be left truncated.
      * Checked by parsing whatever was produced and requiring it to be within
      * the rounding error of the value -- never off by an exponent. */
-    double v = 0.30000000000000004;     /* needs 17 digits */
+    /* ⛔ THE VALUE MATTERS, and the first choice here hid a real bug.
+     * 0.30000000000000004 renders in `%f` form at all three widths (3/3/19
+     * chars), so it has NO exponent to truncate -- the justification below
+     * was never exercised, and because its widths are monotonic the sweep
+     * could not see that `%g` length is not.
+     *
+     * 9007199254740991.0 is the issue's own reproduction row 1 and renders
+     * 20/16/16: `%e` at 15 digits, `%f` at 16. So it exercises the exponent
+     * hazard for real, AND it is non-monotonic -- which is exactly the case
+     * an earlier revision's `break` got wrong, returning "" for a 17..20
+     * byte buffer while a 16-char exact rendering existed. */
+    double v = 9007199254740991.0;      /* needs 16 digits; widths 20/16/16 */
     size_t len;
 
     for (len = 2; len <= 32; len++) {
@@ -183,9 +194,35 @@ TEST(a_short_buffer_never_yields_a_TRUNCATED_numeral)
 
         ASSERT_TRUE(n < len);                   /* always NUL-terminated */
         ASSERT_EQ((long long) n, (long long) strlen(small));
+
+        /* ⛔ THE ASSERTION THAT MAKES THIS TEST SEE THE `break` BUG.
+         * Everything above is satisfied by returning "" -- `0 < len` and
+         * `strlen("") == 0` both hold -- and the value check below is inside
+         * `if (n > 0)`, so an abandoned rendering was SKIPPED rather than
+         * failed. Measured: with `break` restored, this test passed and
+         * merely reported 4 FEWER assertions.
+         *
+         * So the contract is asserted directly, against an oracle computed
+         * here rather than by the code under test: if ANY of the three widths
+         * fits `len`, the function must produce something. */
+        {
+            int digits, any_fits = 0;
+            for (digits = 15; digits <= 17; digits++) {
+                char probe[64];
+                int pn = snprintf(probe, sizeof probe, "%.*lg", digits, v);
+                if (pn > 0 && (size_t) pn < len) {
+                    any_fits = 1;
+                }
+            }
+            ASSERT_EQ(n > 0, any_fits != 0);
+        }
+
         if (n > 0) {
             double back = strtod(small, NULL);
-            /* within 1% -- a truncated exponent would be orders out */
+            /* Within 1%. ⚠ For THIS value the 15-digit form is `%e`, so a
+             * truncated exponent really is orders out -- which is what the
+             * comment above always claimed and the previous value never
+             * exercised. */
             ASSERT_TRUE(fabs(back - v) < 0.01 * fabs(v));
         }
     }
@@ -212,27 +249,42 @@ TEST(the_widest_rendering_fits_the_SCPI_result_buffer)
     }
 }
 
-TEST(the_platforms_own_limit_is_STATED_not_assumed)
+TEST(the_extremes_render_to_their_known_exact_decimal)
 {
-    /* ⚠ #1144 measured this toolchain's %g as unfaithful at the extremes.
-     * This test does not assert that DBL_MAX round trips -- it asserts that
-     * daqifi_double_round_trips REPORTS whatever is true here, so a platform
-     * that cannot carry a value says so instead of pretending.
+    /* ⛔ An earlier version of this test compared daqifi_double_round_trips()
+     * against `(n > 0) && strtod(buf) == v` -- which is that function's own
+     * body, inlined. It was a function compared to a reimplementation of
+     * itself: it could not fail, and it asserted nothing about the platform
+     * whatever its name claimed.
      *
-     * On the host gcc these do round trip. On XC32 DBL_MAX measured as
-     * `0e+309` from the device, which does NOT round trip -- and the point of
-     * the accessor is that a caller can tell the difference. Either way the
-     * two sides below must AGREE, which is the real invariant. */
-    static const double extremes[] = { DBL_MAX, -DBL_MAX, DBL_MIN };
+     * Replaced with an INDEPENDENT oracle: the exact shortest decimal of
+     * these constants, written as literals. Nothing in DoubleFmt.h produced
+     * these strings, so a formatter that silently stopped reproducing them
+     * fails here.
+     *
+     * ⚠ #1144 measured this toolchain's own `%g` as unfaithful at the
+     * extremes, and the DEVICE returns `0e+309` for a stored DBL_MAX. That is
+     * a claim about XC32, provable only on XC32, and the companion device
+     * test owns it. On the host these literals are what glibc produces, so
+     * this is a real assertion here and the honest division of labour. */
+    static const struct { double v; const char *want; } known[] = {
+        { DBL_MAX,  "1.7976931348623157e+308" },
+        { -DBL_MAX, "-1.7976931348623157e+308" },
+        { DBL_MIN,  "2.2250738585072014e-308" },
+        { 0.30000000000000004, "0.30000000000000004" },
+        { 1.0000000000000002, "1.0000000000000002" },
+        { 9007199254740991.0, "9007199254740991" }
+    };
     size_t i;
 
-    for (i = 0; i < sizeof extremes / sizeof extremes[0]; i++) {
+    for (i = 0; i < sizeof known / sizeof known[0]; i++) {
         char buf[64];
-        size_t n = daqifi_double_to_str(extremes[i], buf, sizeof buf);
-        int reported = daqifi_double_round_trips(extremes[i]);
-        int actual   = (n > 0) && (strtod(buf, NULL) == extremes[i]);
+        size_t n = daqifi_double_to_str(known[i].v, buf, sizeof buf);
 
-        ASSERT_EQ(reported, actual);
+        ASSERT_TRUE(n > 0);
+        ASSERT_STR_EQ(buf, known[i].want);
+        /* and the accessor agrees with the fact, rather than defining it */
+        ASSERT_TRUE(daqifi_double_round_trips(known[i].v));
     }
 }
 
@@ -256,7 +308,7 @@ int main(void)
     RUN(a_non_finite_renders_exactly_as_it_did_before);
     RUN(a_short_buffer_never_yields_a_TRUNCATED_numeral);
     RUN(the_widest_rendering_fits_the_SCPI_result_buffer);
-    RUN(the_platforms_own_limit_is_STATED_not_assumed);
+    RUN(the_extremes_render_to_their_known_exact_decimal);
     RUN(a_null_or_zero_length_buffer_is_refused_not_written);
     return TEST_SUMMARY();
 }
