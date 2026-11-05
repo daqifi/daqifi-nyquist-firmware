@@ -71,3 +71,32 @@ bq24297.*
 # can still hold session checkpoints and transcripts under .entire/ (metadata/, logs/, tmp/,
 # settings.local.json). Keep all of it out of git -- a stray `git add -A` must not commit it.
 /.entire/
+
+# Secrets and credentials. This repo is PUBLIC and the agent workflow routinely
+# runs `git add -A`, so a credential file dropped in a checkout is one careless
+# commit away from being published. None of these patterns matches anything
+# tracked today (verified across all paths including firmware/src/third_party),
+# so this is purely preventative -- it changes no current file's status.
+.env
+.env.*
+# ...but KEEP the committed template: `.env.*` above would otherwise match it,
+# and while gitignore cannot untrack an already-tracked file, a future remove-
+# and-re-add would silently skip it. The template's OWN header says "copy to
+# .env (which is gitignored) and fill in" -- a claim that was FALSE until this
+# commit, since `.env` was not ignored. The copy is what must stay ignored.
+!.env.example
+*.pem
+*.key
+*.p12
+id_rsa*
+id_ed25519*
+credentials.json
+*.tfstate
+
+# ⚠ Interaction worth knowing about: `git clean -fd` does NOT remove ignored
+# files. The wolfSSL revert recipe in CLAUDE.md (`git checkout --` +
+# `git clean -fd` over firmware/src/third_party/wolfssl/ after an MCC session)
+# would therefore leave behind any *.pem / *.key that a regeneration produced,
+# and `git status` would not show them either. wolfSSL ships no such files in
+# this repo today, so nothing is affected now -- but use `git clean -fdx` there
+# if that ever changes.
