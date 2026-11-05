@@ -1974,6 +1974,26 @@ static scpi_result_t SCPI_GetAutoPowerOnUsb(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+/* #1153: daqifi_settings_Update() callback for SCPI_SaveAutoPowerOnUsb
+ * below. No failure path of its own -- a failed load falls back to
+ * factory defaults, exactly as the pre-#1153 code did -- so this always
+ * asks Update() to save. */
+static DaqifiSettingsUpdateDecision SaveAutoPowerOnUsbUpdateFn(
+        DaqifiSettings* settings, bool loaded, void* context) {
+    (void)context;
+    if (!loaded) {
+        daqifi_settings_LoadFactoryDeafult(DaqifiSettings_TopLevelSettings, settings);
+    }
+    /* Set autoPowerOnUsb from PowerData runtime explicitly (don't rely on
+     * SaveToNvm's auto-capture — that path would also affect unrelated
+     * saves like CONF:VOLT:SAVE). */
+    tPowerData *pPwr = BoardData_Get(BOARDDATA_POWER_DATA, 0);
+    if (pPwr != NULL) {
+        settings->settings.topLevelSettings.autoPowerOnUsb = pPwr->autoPowerOnUsb;
+    }
+    return DAQIFI_SETTINGS_UPDATE_SAVE;
+}
+
 static scpi_result_t SCPI_SaveAutoPowerOnUsb(scpi_t * context) {
     /* Use shared SCPI response buffer instead of stack-local —
      * DaqifiSettings is ~500 bytes (union includes WiFi settings),
@@ -1985,21 +2005,11 @@ static scpi_result_t SCPI_SaveAutoPowerOnUsb(scpi_t * context) {
         SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
         return SCPI_RES_ERR;
     }
-    memset(pSettings, 0, sizeof(*pSettings));
-    /* Load existing NVM to preserve other TopLevelSettings fields.
-     * Set autoPowerOnUsb from PowerData runtime explicitly (don't rely
-     * on SaveToNvm's auto-capture — that path would also affect
-     * unrelated saves like CONF:VOLT:SAVE).
-     */
-    if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings, pSettings)) {
-        daqifi_settings_LoadFactoryDeafult(DaqifiSettings_TopLevelSettings, pSettings);
-    }
-    pSettings->type = DaqifiSettings_TopLevelSettings;
-    tPowerData *pPwr = BoardData_Get(BOARDDATA_POWER_DATA, 0);
-    if (pPwr != NULL) {
-        pSettings->settings.topLevelSettings.autoPowerOnUsb = pPwr->autoPowerOnUsb;
-    }
-    bool ok = daqifi_settings_SaveToNvm(pSettings);
+    /* #1153: load, apply, and save as ONE sequence under the NVM mutex, so
+     * a concurrent transport's own TopLevelSettings load-modify-save
+     * cannot land between this load and this save. */
+    bool ok = daqifi_settings_Update(DaqifiSettings_TopLevelSettings,
+            pSettings, SaveAutoPowerOnUsbUpdateFn, NULL);
     SCPI_ResponseBuf_Give();
     return ok ? SCPI_RES_OK : SCPI_RES_ERR;
 }
@@ -7479,16 +7489,26 @@ static scpi_result_t SCPI_GetDataPrecision(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+/* #1153: daqifi_settings_Update() callback shared by SCPI_SaveDataPrecision
+ * and SCPI_SaveDeviceName below -- both have the identical shape (fall
+ * back to factory defaults on a failed load, then always save; the field
+ * each actually persists is auto-captured by SaveToNvm itself, not set
+ * here). */
+static DaqifiSettingsUpdateDecision LoadOrDefaultTopLevelThenSaveFn(
+        DaqifiSettings* settings, bool loaded, void* context) {
+    (void)context;
+    if (!loaded) {
+        daqifi_settings_LoadFactoryDeafult(DaqifiSettings_TopLevelSettings, settings);
+    }
+    return DAQIFI_SETTINGS_UPDATE_SAVE;
+}
+
 static scpi_result_t SCPI_SaveDataPrecision(scpi_t * context) {
     DaqifiSettings settings;
-    memset(&settings, 0, sizeof(DaqifiSettings));
-    // Load existing NVM to preserve other fields (e.g. calVals)
-    if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings, &settings)) {
-        daqifi_settings_LoadFactoryDeafult(DaqifiSettings_TopLevelSettings, &settings);
-    }
-    settings.type = DaqifiSettings_TopLevelSettings;
-    // SaveToNvm captures current precision from runtime config automatically
-    if (!daqifi_settings_SaveToNvm(&settings)) {
+    // SaveToNvm captures current precision from runtime config
+    // automatically. #1153: load + save as one locked sequence.
+    if (!daqifi_settings_Update(DaqifiSettings_TopLevelSettings, &settings,
+            LoadOrDefaultTopLevelThenSaveFn, NULL)) {
         return SCPI_RES_ERR;
     }
     return SCPI_RES_OK;
@@ -7571,17 +7591,11 @@ static scpi_result_t SCPI_GetDeviceName(scpi_t * context) {
 
 static scpi_result_t SCPI_SaveDeviceName(scpi_t * context) {
     DaqifiSettings settings;
-    memset(&settings, 0, sizeof(DaqifiSettings));
-    // Load existing NVM to preserve other TopLevelSettings fields.
-    if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings,
-            &settings)) {
-        daqifi_settings_LoadFactoryDeafult(DaqifiSettings_TopLevelSettings,
-                &settings);
-    }
-    settings.type = DaqifiSettings_TopLevelSettings;
     // SaveToNvm captures the current friendly name from the runtime cache
-    // automatically (same pattern as voltagePrecision).
-    if (!daqifi_settings_SaveToNvm(&settings)) {
+    // automatically (same pattern as voltagePrecision). #1153: load + save
+    // as one locked sequence (LoadOrDefaultTopLevelThenSaveFn, above).
+    if (!daqifi_settings_Update(DaqifiSettings_TopLevelSettings, &settings,
+            LoadOrDefaultTopLevelThenSaveFn, NULL)) {
         return SCPI_RES_ERR;
     }
     return SCPI_RES_OK;
