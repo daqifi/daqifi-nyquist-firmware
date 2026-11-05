@@ -712,6 +712,18 @@ CALFINITE_BIN := run_1154_tests
 # this one.
 EMIT1199_BIN := run_1199_tests
 
+# #1156: Util/DoubleFmt.h is header-only and dependency-free for the same
+# reason as FMT_BIN and EMIT1199_BIN -- no UUT copy, no stubs, and NOT
+# $(INCLUDES). -lm for nextafter/fabs in the test vectors.
+#
+# This is the READ side of the calibration interface whose WRITE side
+# $(CALFINITE_BIN) guards (#1154) and whose stream output $(EMIT1199_BIN)
+# guards (#1199). Three defects on the same two commands, each needing its
+# own test: a setter that refuses a non-finite coefficient says nothing about
+# whether the getter can read a finite one back exactly.
+SCPI_CONFIG_H := ../../firmware/src/libraries/scpi/libscpi/inc/scpi/config.h
+FMT1156_BIN := run_1156_tests
+
 # #1100: DAC_EnsureHardwareInitialized()'s caller-level power check missed the
 # 5/10V rail's own commanded enable (PowerWriteVars.EN_5_10V_Val) -- the same
 # blind spot #1099 closed one call site over, at the HAL level in
@@ -1323,6 +1335,14 @@ $(EMIT1199_BIN): test_1199_sample_emit.c test_framework.h $(FW_UTIL)/SampleEmit.
 	@python3 check_1199_emitter_wiring.py >/dev/null \
 	  || { python3 check_1199_emitter_wiring.py; exit 1; }
 	$(CC) $(CFLAGS) -I$(FW_UTIL) -o $(EMIT1199_BIN) test_1199_sample_emit.c -lm
+
+# The wiring check runs INSIDE this recipe, not as a sibling target: the
+# formatter being correct and the formatter being REACHED are two halves of
+# one claim, and a sibling target can be skipped on its own. See #1199.
+$(FMT1156_BIN): test_1156_double_fmt.c test_framework.h $(FW_UTIL)/DoubleFmt.h check_1156_doublefmt_wiring.py $(SCPI_CONFIG_H) $(RECIPES)
+	@python3 check_1156_doublefmt_wiring.py >/dev/null \
+	  || { python3 check_1156_doublefmt_wiring.py; exit 1; }
+	$(CC) $(CFLAGS) -I$(FW_UTIL) -o $(FMT1156_BIN) test_1156_double_fmt.c -lm
 
 $(JSONESC_BIN): test_json_string_escape.c test_framework.h $(FW_SVC)/JSON_StringEscape.h $(RECIPES)
 	$(CC) $(CFLAGS) -I$(FW_SVC) -o $(JSONESC_BIN) test_json_string_escape.c
@@ -5072,7 +5092,7 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
      $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) \
      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(CAP1202_BIN) $(ISRLOG1197_BIN) \
      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(USECALTYPE_BIN) $(ARM_BIN) $(NAME_BIN) \
-     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) check-1200-parity \
+     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(FMT1156_BIN) check-1200-parity \
      $(NVM1153_BIN)
 	./$(NVM1153_BIN)
 	./$(SEQ908_BIN)
@@ -5083,6 +5103,7 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(EMIT1199_BIN)
+	./$(FMT1156_BIN)
 	./$(AD7609_BIN)
 	./$(BENCH_BIN)
 	./$(ARM_BIN)
@@ -5652,7 +5673,7 @@ clean:
 	      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(GEN_1125) $(CAP1202_BIN) $(GEN_1202) $(ISRLOG1197_BIN) $(GEN_1197) \
 	      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(SDLOG1029_GEN).tmp \
 	      $(USECALTYPE_BIN) $(NAME_BIN) $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(ARM_BIN) $(SCPIDAC_RAILGATE_BIN) \
-	      $(FORCEGATE_BIN) $(LOG1039_BIN) $(LOG1039_GEN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN)
+	      $(FORCEGATE_BIN) $(LOG1039_BIN) $(LOG1039_GEN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(FMT1156_BIN)
 
 # #1200: the three encoders must book the same loss for the same discard.
 # A source-derived check rather than a mock, because a model of the encoders
