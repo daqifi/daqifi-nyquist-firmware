@@ -81,8 +81,9 @@ bq24297.*
 .env.*
 # ...but KEEP the committed template: `.env.*` above would otherwise match it,
 # and while gitignore cannot untrack an already-tracked file, a future remove-
-# and-re-add would silently skip it. The documented workflow is to copy this
-# template to .env and fill it in, which is exactly what must stay ignored.
+# and-re-add would silently skip it. The template's OWN header says "copy to
+# .env (which is gitignored) and fill in" -- a claim that was FALSE until this
+# commit, since `.env` was not ignored. The copy is what must stay ignored.
 !.env.example
 *.pem
 *.key
