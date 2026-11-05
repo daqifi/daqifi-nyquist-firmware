@@ -26,10 +26,28 @@
  * ⚠ WHAT THIS CANNOT PROMISE. An exact round trip at every magnitude. #1144
  * measured this toolchain's own conversions as unfaithful at the extremes
  * ("%.17g" of 1e300 gives 9.999999999999998e+299). Where NO width reproduces
- * the value, the widest that fits is returned — the most information
- * available, and never worse than the old behaviour.
- * `daqifi_double_round_trips()` exposes that honestly, so a test can state
- * which values this platform can and cannot carry rather than assume.
+ * the value, the widest that fits is returned and
+ * `daqifi_double_round_trips()` reports that it did not verify, so a test can
+ * STATE which values this platform carries rather than assume all of them do.
+ *
+ * ⛔ AND AT DBL_MAX THAT FALLBACK IS NOT STRICTLY AN IMPROVEMENT — measured
+ * on an NQ1, same board, same getter, both images:
+ *
+ *     old ("%.15lg")  -> "0e+309"                  parses to 0.0
+ *     new (this file) -> "1.797693134862316e+308"  parses to INFINITY
+ *
+ * The toolchain cannot render DBL_MAX to 17 significant digits at all, so no
+ * width round-trips and the 16-digit result is returned — and that rendering
+ * rounds UP past the representable maximum, so a client parsing it gets inf
+ * for a finite stored value. An earlier revision of this comment claimed the
+ * fallback was "never worse than the old behaviour"; 0.0 -> inf does not
+ * support that, so the claim is withdrawn rather than softened. Both answers
+ * are wrong; inf is at least detectable by an isfinite() check where 0.0
+ * looks plausible — the same argument #1199 made for null over a clamped
+ * INT32_MAX — but that is a consolation, not a promise.
+ *
+ * The defect there is the toolchain's conversion, not the digit count, and it
+ * is #1144's surface. #1156 is the width, and the width is fixed.
  *
  * ⚠ AND IT NEVER EMITS A TRUNCATED NUMERAL. A numeral cut off by a short
  * buffer is a CORRUPT value, strictly worse than a rounded one — 1.2345e+10
