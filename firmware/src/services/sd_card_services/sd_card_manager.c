@@ -2669,10 +2669,14 @@ void sd_card_manager_ProcessState() {
                  * So the current behaviour is ASYMMETRIC, deliberately, and the
                  * two halves are decided differently:
                  *
-                 * - EXHAUSTION -- every candidate within the bound (now 65 rather
-                 *   than 17, see the UNIQUE_TARGET_MAX definition) was EXAMINED and
+                 * - EXHAUSTION -- every candidate within the bound was EXAMINED and
                  *   found occupied: open the last examined candidate and say so in
-                 *   the log. That is a knowing trade of a possible user file against
+                 *   the log. The bound is SD_CARD_MANAGER_UNIQUE_TARGET_MAX, which
+                 *   is now the bucket ceiling rather than the old fixed 17; the
+                 *   value is deliberately NOT restated here, because a number
+                 *   written beside the macro that defines it goes stale the moment
+                 *   the macro changes and nothing fails.
+                 *   That is a knowing trade of a possible user file against
                  *   reopening a concurrency defect. Refusing instead would wedge
                  *   SD:BENCHmark on any card holding a full bucket of old benchmark
                  *   files until someone cleared it by hand.
