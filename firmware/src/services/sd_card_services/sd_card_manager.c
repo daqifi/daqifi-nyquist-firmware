@@ -2666,16 +2666,38 @@ void sd_card_manager_ProcessState() {
                  * earlier revision of this fix shipped the race. There is also no
                  * bucket-advance available at this point to sidestep it.
                  *
-                 * So the current behaviour is: if no candidate is verified ABSENT
-                 * within the bound -- now 65 candidates rather than 17, see the
-                 * UNIQUE_TARGET_MAX definition -- or the card cannot answer, open
-                 * the last EXAMINED candidate and say so in the log. That is a knowing
-                 * trade of a possible user file against reopening a concurrency
-                 * defect, and it is the OPERATOR's call rather than this comment's
-                 * -- which is why the reason is stated plainly instead of being
-                 * dressed up as harmless. An adversarial audit asks for the
-                 * refusal (both legs, `high`/data_loss); that request is live and
-                 * unresolved, not dismissed. */
+                 * So the current behaviour is ASYMMETRIC, deliberately, and the
+                 * two halves are decided differently:
+                 *
+                 * - EXHAUSTION -- every candidate within the bound was EXAMINED and
+                 *   found occupied: open the last examined candidate and say so in
+                 *   the log. The bound is SD_CARD_MANAGER_UNIQUE_TARGET_MAX, which
+                 *   is now the bucket ceiling rather than the old fixed 17; the
+                 *   value is deliberately NOT restated here, because a number
+                 *   written beside the macro that defines it goes stale the moment
+                 *   the macro changes and nothing fails.
+                 *   That is a knowing trade of a possible user file against
+                 *   reopening a concurrency defect. Refusing instead would wedge
+                 *   SD:BENCHmark on any card holding a full bucket of old benchmark
+                 *   files until someone cleared it by hand.
+                 * - THE CARD CANNOT ANSWER -- a stat fault, so the candidate is
+                 *   UNKNOWN: REFUSE. See the statFault arm further down, which sets
+                 *   SD_REFUSE_BUCKET_UNREADABLE and logs "#958 '<leaf>' unverifiable
+                 *   - refusing, retry or clear card". Refuse what you cannot verify;
+                 *   proceed on what you can.
+                 *
+                 * DECIDED (operator, 2026-11-05) for the UNVERIFIABLE half only: the
+                 * refusal STAYS, and the proposal to make it log-and-proceed is
+                 * withdrawn. The decision was taken with the retraction above in
+                 * view -- the bytes at risk may be a USER RECORDING, and in the
+                 * unverifiable case we cannot know which, because the refusal fires
+                 * precisely when the card could not tell us.
+                 *
+                 * The adversarial audit asked for the refusal in BOTH legs
+                 * (`high`/data_loss). It is granted for the unverifiable half and
+                 * NOT for exhaustion, which keeps the trade described above. The
+                 * exhaustion half was not put to the operator and is not re-opened
+                 * by this note; do not read the decision as wider than it is. */
                 if (bucketOk && uniqueTargetAtOpen) {
                     /* WALK THE CANDIDATES. A codex audit found TWO defects here
                      * -- in BOTH legs independently, the blind one running with
