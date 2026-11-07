@@ -37,7 +37,6 @@ firmware/src/services/SCPI/SCPIInterface.c :: unresolvable: %s with no /* log_bu
 firmware/src/services/SCPI/SCPIInterface.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: SD log arm refused (#942): %s\r\n
 firmware/src/services/SCPI/SCPIInterface.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: SD start refused (#689): %s
 firmware/src/services/SCPI/SCPIInterface.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: STR:START refused (#861): %s; the device stays stopped. Retry.
-firmware/src/services/SCPI/SCPIInterface.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: Throughput benchmark: %s
 firmware/src/services/SCPI/SCPIInterface.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: WIFI:FIND %u Hz: arm refused - %s
 firmware/src/services/SCPI/SCPIInterface.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] Streaming stop: SD still finalising in state=%s mode=%s; OPER bit 11 set until idle. Poll STAT:OPER:COND?
 firmware/src/services/SCPI/SCPIStorageSD.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: SD:%s - SD card busy, state=%s mode=%s\r\n

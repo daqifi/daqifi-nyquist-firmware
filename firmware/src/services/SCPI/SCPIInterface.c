@@ -2708,10 +2708,13 @@ static scpi_result_t SCPI_RefuseSessionStartBusy(scpi_t * context,
  * one. Same reasoning, and the same statement of it, as SCPI_MemRunClaimed.
  */
 /* #1120: tentative (no-initializer) forward declarations, so the runner below
- * can take the stop pin itself. Same idiom and same justification the #938
- * block further down states in full: a file-scope static may have any number
- * of declarations without an initializer, and they all name the same object
- * as the one initialized definition. Needed here because
+ * can take the stop pin itself. This is legal C: a file-scope static may have
+ * any number of declarations without an initializer, and they all name the
+ * same object as the one initialized definition. (#1201: this used to defer
+ * the argument to "the #938 block further down", which was FindMeasureStep's
+ * own copy of these declarations -- #1201 deleted that block, because the
+ * function no longer reads either global, so the argument is stated here
+ * instead of pointed at.) Needed here because
  * SCPI_RunSessionStartClaimed is defined earlier in this file than the
  * definitions next to SCPI_StartStreaming's #861 guard, and must observe the
  * same stop-requested generation they do. */
@@ -3057,6 +3060,14 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context,
          * cause is also true -- same precedence the other two arms use, and
          * for the same reason: it is the one cause of the set that is an
          * explicit operator instruction rather than a consistency failure. */
+        /* log_budget: max=78 -- #1201 BRINGS THIS SITE UNDER THE CHECK. It
+         * was listed in tools/lint/log_budget-baseline.txt as an unresolvable
+         * %s, and the baseline matches by format-string TEXT, so the two
+         * longer strings #1201 adds here would have ridden that waiver
+         * unmeasured. They fit (78 + the 22-byte prefix = 100 of 125), but
+         * that was luck until it was bounded. The baseline entry is removed in
+         * the same change, which is what its own header asks for: it exists to
+         * stop the count growing AND to shrink as sites are fixed. */
         LOG_E("Throughput benchmark: %s",
               stopRequested
                       ? (stopInFlight
@@ -3687,6 +3698,11 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
      * dwell produced none. Spelled out because the discrepancy with the issue
      * is deliberate rather than an oversight. */
     if (stopAfterObs) {
+        /* log_budget: max=61 -- both candidate strings below are exactly 61
+         * bytes, and the prefix with a 10-digit uint32 freq is 49, so the
+         * worst case is 110 of Logger's 125. The remedy is written LAST in
+         * these messages, so an unbounded %s here would silently truncate
+         * away the thing a reader needs. */
         LOG_E("WIFI:FIND %u Hz: observation discarded - %s", (unsigned)freq,
               stopAfterObsInFlight
                   ? "a stop is still in flight on the other transport (#1201/#938)"
@@ -5102,9 +5118,12 @@ static volatile StreamingInterface gStreamIfaceLastSet = StreamingInterface_USB;
  * because a START that bumped this would refuse itself, every time.
  *
  * #938: the WiFi rate finder (FindMeasureStep, defined earlier in this file --
- * see its own pin and the tentative forward declarations at its definition,
- * needed because it is textually ahead of this initializer) now pins and
- * observes this the same way SCPI_StartStreamingClaimed does, once per step.
+ * see its own pin there) now pins and observes this the same way
+ * SCPI_StartStreamingClaimed does, once per step. (#1201: this used to also
+ * point at "the tentative forward declarations at its definition". Those are
+ * gone -- that function reads neither global now, it asks
+ * StopRequestedSince(), so there is nothing there to forward-declare and the
+ * pointer would have sent a reader looking for deleted code.)
  * A stop landing in a step's PRE-ARM window is refused as itself, with a
  * cause, instead of being lost the way it was here before -- lost silently,
  * note, not as a `!Running`: pre-arm the publish happens AFTER the stop, so
