@@ -159,6 +159,7 @@ SUSPEND_BIN := run_953_tests
 # block's `goto __exit;`, BEHAVIOURALLY rather than by noticing a token went
 # missing.
 FAILNEXT_BIN := run_981_tests
+ARMREFUSE_BIN := run_936_tests
 SD_MANAGER_SRC := ../../firmware/src/services/sd_card_services/sd_card_manager.c
 
 # #981 (post-audit): compiles and RUNS the ENTIRE real SDCardWrite() --
@@ -5088,12 +5089,85 @@ $(BUTTONLATCH_BIN): test_1092_button_poweroff_latch.c test_framework.h \
 	$(CC) $(CFLAGS) -o $(BUTTONLATCH_BIN) test_1092_button_poweroff_latch.c
 
 
+# #936: SYST:STOR:SD:BENCHmark must CHECK the arm's suspend-refusal. Like
+# $(BENCH_BIN) and $(SUSPEND_BIN), SCPIStorageSD.c is not host-compilable
+# (FreeRTOS + libscpi + Harmony + the board graph), so test_936 re-implements
+# the refusal branch's SHAPE against mocks and carries its own negative
+# control. A model is a COPY, so the model cannot be what makes this
+# two-sided -- these two greps are. They read the REAL source and fail the
+# BUILD, not just the test.
+#
+# ⛔ THE SYMBOL APPEARS IN THAT FUNCTION'S OWN PROSE, so a plain symbol grep
+# is a PROXY and would be defeated exactly as $(BIN970)'s pin v1 was. Measured
+# on this file: 4 raw matches at the pre-fix revision and 3 on main, against
+# ONE real call site in both. So the pins ask the COMPILER to strip comments
+# ($(CC) -fpreprocessed -E, which removes them without resolving any include)
+# and flatten newlines before matching, per the mechanism that replaced the
+# two hand-rolled regexes above.
+#
+#   1. The arm's return is NOT DISCARDED. A call site counts as discarded only
+#      when there is nothing but whitespace between the previous `;{}` and the
+#      call -- i.e. the statement IS the bare call. Requires ZERO. Measured:
+#      4e5e5c592^ (pre-fix) scores 1 and FAILS the build; main scores 0.
+#
+#      ⛔ THE FIRST VERSION OF THIS PIN ASKED WHETHER THE CALL WAS PRECEDED BY
+#      `=`, AND WOULD HAVE RED A CORRECT TREE. `if (!sd_card_manager_...(c))`
+#      checks the return perfectly well and has no `=`, so inlining the call --
+#      a legitimate refactor -- would have failed the build. Caught by asking
+#      "could a CORRECT change break this pin?" before shipping it. The
+#      whitespace-only form accepts all four shapes that check the return
+#      (local, const local, inlined `if`, `== false`) and reds only the bare
+#      statement, which is the actual defect.
+#
+#   2. The refusal is REPORTED. Pin 1 alone passes on a tree that checks the
+#      return and then does nothing operator-visible with it. This pin requires
+#      the refusal's log line to be present in the comment-stripped source.
+#      Measured: main 1, pre-fix 0 -- so this pin is independently two-sided.
+#
+#      It deliberately pins the user-facing MESSAGE rather than the local
+#      `benchArmed`. An earlier version counted references to that identifier
+#      and required two, which breaks on the inlined shape above (no local at
+#      all, zero references) -- the same false-alarm trap as pin 1 v1, one line
+#      apart. A log string is behaviour, and this one is the only channel an
+#      operator has for distinguishing "the SD task is not running" from "your
+#      card is incompatible", which is the entire point of #936.
+#
+$(ARMREFUSE_BIN): test_936_bench_arm_refusal.c test_framework.h $(SD_BENCH_SRC) $(RECIPES)
+	@discarded=`$(CC) -fpreprocessed -E $(SD_BENCH_SRC) 2>/dev/null \
+	   | tr '\n' ' ' \
+	   | grep -coE '[;{}][[:space:]]*sd_card_manager_UpdateSettingsForPlainWrite[[:space:]]*\(' \
+	   || true`; \
+	if [ "$$discarded" != "0" ]; then \
+	   echo "FAIL: #936 pin 1 -- SCPIStorageSD.c has $$discarded call site(s) of"; \
+	   echo "      sd_card_manager_UpdateSettingsForPlainWrite() reached as a BARE"; \
+	   echo "      STATEMENT, so its return is discarded. That is the pre-#936 shape:"; \
+	   echo "      the arm can be refused by the #589 suspend gate, and an unchecked"; \
+	   echo "      refusal falls into the file-ready wait loop, burns its whole"; \
+	   echo "      timeout, and then blames the CARD for an SD task that was never"; \
+	   echo "      running. Checking the return in an if() is fine; dropping it is not."; \
+	   echo "      test_936_bench_arm_refusal.c models the required shape; read both."; \
+	   exit 1; \
+	fi
+	@reported=`$(CC) -fpreprocessed -E $(SD_BENCH_SRC) 2>/dev/null \
+	   | grep -c 'SD:BENCH - could not arm the operation' || true`; \
+	if [ "$$reported" -lt 1 ]; then \
+	   echo "FAIL: #936 pin 2 -- the refused arm is no longer REPORTED."; \
+	   echo "      SCPIStorageSD.c has no \"SD:BENCH - could not arm the operation\""; \
+	   echo "      log line. Pin 1 only proves the return is not thrown away; this"; \
+	   echo "      one proves an operator can still tell \"the SD task is not"; \
+	   echo "      running\" from \"your card is incompatible\", which is what #936"; \
+	   echo "      exists to make distinguishable."; \
+	   exit 1; \
+	fi
+	$(CC) $(CFLAGS) -o $(ARMREFUSE_BIN) test_936_bench_arm_refusal.c
+
 run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) \
      $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) \
      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(CAP1202_BIN) $(ISRLOG1197_BIN) \
      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(USECALTYPE_BIN) $(ARM_BIN) $(NAME_BIN) \
      $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(FMT1156_BIN) check-1200-parity \
-     $(NVM1153_BIN)
+     $(NVM1153_BIN) $(ARMREFUSE_BIN)
+	./$(ARMREFUSE_BIN)
 	./$(NVM1153_BIN)
 	./$(SEQ908_BIN)
 	./$(APSTA1060_BIN)
@@ -5673,7 +5747,7 @@ clean:
 	      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(GEN_1125) $(CAP1202_BIN) $(GEN_1202) $(ISRLOG1197_BIN) $(GEN_1197) \
 	      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(SDLOG1029_GEN).tmp \
 	      $(USECALTYPE_BIN) $(NAME_BIN) $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(ARM_BIN) $(SCPIDAC_RAILGATE_BIN) \
-	      $(FORCEGATE_BIN) $(LOG1039_BIN) $(LOG1039_GEN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(FMT1156_BIN)
+	      $(FORCEGATE_BIN) $(LOG1039_BIN) $(LOG1039_GEN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(FMT1156_BIN) $(ARMREFUSE_BIN)
 
 # #1200: the three encoders must book the same loss for the same discard.
 # A source-derived check rather than a mock, because a model of the encoders
