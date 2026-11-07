@@ -119,6 +119,24 @@ void Button_Tasks( void );
 */
 void LED_Tasks( bool streamingFlag);
 
+/*!
+* @Function void UI_SetIdentify
+* @Summary Turns the identify pattern on or off
+* @Description While on, LED_Tasks overrides every other LED pattern and
+*          flashes both LEDs rapidly for ~1 s, then holds them off for ~1 s,
+*          repeating, so an operator can see which physical board a host is
+*          connected to. Driven by SYSTem:IDENtify. Not persisted; a reboot
+*          turns it off.
+* @param[in] enable true to start identifying, false to stop
+*/
+void UI_SetIdentify(bool enable);
+
+/*!
+* @Function bool UI_GetIdentify
+* @Summary Returns whether the identify pattern is currently on
+*/
+bool UI_GetIdentify(void);
+
     /* Provide C++ Compatibility */
 #ifdef __cplusplus
 }
