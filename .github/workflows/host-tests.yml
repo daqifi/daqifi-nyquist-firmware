@@ -471,6 +471,10 @@ on:
       # driver for the detect-force gate's shape, so a DRIVER-ONLY PR must run
       # the guard. Without this the pin existed and CI never reached it.
       - 'firmware/src/config/default/driver/sdspi/src/drv_sdspi.c'
+      # #1217: test_1217_abandoned_write.c compiles this driver for real, and
+      # test_1217_sd_crc.c its CRC header. Whole directory: the driver's headers
+      # are part of what gets compiled.
+      - 'firmware/src/config/default/driver/sdspi/**'
   push:
     branches: [main]
     paths:
@@ -597,6 +601,10 @@ on:
       # driver for the detect-force gate's shape, so a DRIVER-ONLY PR must run
       # the guard. Without this the pin existed and CI never reached it.
       - 'firmware/src/config/default/driver/sdspi/src/drv_sdspi.c'
+      # #1217: test_1217_abandoned_write.c compiles this driver for real, and
+      # test_1217_sd_crc.c its CRC header. Whole directory: the driver's headers
+      # are part of what gets compiled.
+      - 'firmware/src/config/default/driver/sdspi/**'
 
 permissions:
   contents: read   # checkout + gcc build + run only, no writes

@@ -1150,6 +1150,15 @@ itself were proven to turn the suite red (the post-fix shape not normalizing
 normalizing too, normalizing to the wrong constant, #1148's order reverted,
 and a rejection that erases first).
 
+### SD abandoned-write protection (#1217)
+
+| File | What it does |
+|---|---|
+| `test_1217_sd_crc.c` | `drv_sdspi_crc.h`'s CRC7 and CRC16 against published vectors, and the two CRC facts the resync depends on: its block's CRC16 is not `0xFFFF`, and a bit-level parser's ghost CMD63 fails its CRC7. |
+| `test_1217_abandoned_write.c` + `test_1217_driver_uut.c` | The **real** `drv_sdspi.c` and `drv_sdspi_driver_interface.c` against a model of DRV_SPI and of an SPI-mode card, with faults injected at the SPI layer. It asserts only on what the card did, so it also builds against the unfixed driver, where most of its cases fail. It shows the driver does the right thing to a card that behaves like the model. Whether a real card does is the bench's question: #1217's success criteria keep the fault-injection and soak runs. |
+
+The stubs are in `stubs/sdspi_1217/`, separate from `stubs/` because this test needs much more of Harmony's surface than the others.
+
 ## Framework
 
 `test_framework.h` is a ~90-line header-only harness — `TEST()` to define a

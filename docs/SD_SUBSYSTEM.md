@@ -48,6 +48,26 @@ makes a lost race visible instead of a false success — `FORmat`, `CRC` and
 `GET` all return OK without waiting, so an unchecked arm reports success having
 queued nothing.
 
+### Abandoned writes and CRC (#1217)
+
+An abandoned CMD24 or CMD25 leaves the card waiting for data, and it stores whatever is clocked next as that sector. `#1217` found FAT sectors full of SPI commands and WINC traffic this way. The driver now defends against it in three ways, all in `driver/sdspi/src/`:
+
+- **CRC is on.** Media init sends CMD59 with argument 1, every command frame carries a computed CRC7, and every data block a computed CRC16 (`drv_sdspi_crc.h`). A captured block fails its check and is not programmed.
+- **CS goes high on every abort**, before the exclusive lock is released, and in the completion handler before the aborted-transfer early return.
+- **A write in doubt is resynced before any other command.** `writeInDoubt` is set before the command frame is sent and cleared only once the card is provably out of the data phase. While it is set, `lDRV_SDSPI_CommandSend` runs `lDRV_SDSPI_WriteResyncTasks` instead of sending anything. It survives aborts and `DRV_SDSPI_ReleaseBus`. The function's comment covers what each card state does with the bytes.
+
+**What you will see:**
+
+- `SD: card rejected CRC enable (CMD59 R1=0x..)`: the card refused CRC and is deliberately not mounted, so SD commands report no usable card. Without CRC it is not protected, and the resync's all-`0xFF` block would be programmed.
+- `SD: write in doubt resynced (type=1 token=0x..)`: a write was abandoned and recovered. A token with low bits `0x0B` proves the card really was waiting. `0xFF` means it was not. Type 1 is CMD24, 2 is CMD25.
+- `SD: write in doubt resync failed (...)`: the attempt failed and the command in hand failed with it. The flag stays set, so the next command tries again. Commands, CMD0 included, are held back until one succeeds, so a card stuck busy reads as "no card" until it lets go or is power cycled.
+
+**A rejected block is an error, not a retry.** A bit error on the bus used to store a bad sector silently. Now it fails the write and takes the normal failed-write path, which today means #1031: ERROR, unmount, remount, and the log file reopened in truncate mode.
+
+**Read data CRC is still not checked.** The card sends it and the driver discards it.
+
+**Host coverage:** `tests/host/test_1217_abandoned_write.c` runs the real driver sources against a modelled card.
+
 ### SD Card File Splitting
 
 **Feature:** Automatic file splitting prevents FAT32 4GB file size limit issues during long logging sessions.
