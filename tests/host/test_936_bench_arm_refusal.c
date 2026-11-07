@@ -81,10 +81,20 @@
 #define TRACE_MAX 16
 static const char *trace[TRACE_MAX];
 static int trace_n;
+static bool trace_overflowed;
 
 static void record(const char *what) {
     if (trace_n < TRACE_MAX) {
         trace[trace_n++] = what;
+    } else {
+        /* A DROPPED ENTRY WOULD MAKE AN ORDERING ASSERTION VACUOUS rather than
+         * loud: trace_index() would return -1 for a step that did happen, and
+         * a `clear < release` test comparing -1 to a real index can pass for
+         * the wrong reason. The longest real trace here is 7 entries, so this
+         * is unreachable today -- which is exactly when a silent truncation
+         * gets added by a later edit and nobody notices. Recorded as a flag
+         * the ordering test asserts on. */
+        trace_overflowed = true;
     }
 }
 
@@ -97,7 +107,14 @@ static int trace_index(const char *what) {
     return -1;
 }
 
-/* Stands in for the runtime config's `mode` field. */
+/* Stands in for the runtime config's `mode` field.
+ *
+ * The values MIRROR the firmware (sd_card_manager.h's enum runs NONE, READ,
+ * WRITE, so NONE==0 and WRITE==2; SCPI_ERROR_EXECUTION_ERROR is -200 in
+ * libscpi's error.h) but nothing here DEPENDS on them: every use is an
+ * equality comparison against the same constant. Said explicitly so a future
+ * reader does not treat these as a copy that can drift -- if the enum gains a
+ * member before WRITE, this file keeps working and needs no edit. */
 #define MODE_NONE  0
 #define MODE_WRITE 2
 static int mock_mode;
@@ -126,9 +143,22 @@ static void mock_set_mode(int mode) {
 }
 
 /* Stands in for sd_card_manager_UpdateSettingsForPlainWrite(). The real one
- * resets `mode` itself before returning false (its own #589 gate); modelled,
- * because the production code's explicit clear is deliberately NOT allowed to
- * depend on that -- see the pin on the clear in the Makefile. */
+ * resets `mode` itself before returning false (its own #589 gate), and this
+ * mock does the same -- so the production code's own explicit clear is
+ * redundant with it, by construction, in both.
+ *
+ * That redundancy is deliberate in the firmware and worth keeping here: every
+ * OTHER SD-arming command in SCPIStorageSD.c clears `mode` itself after a
+ * refused arm, because the contract SD_ArmOrRefuse documents is that the
+ * CALLER clears it -- not that some callee happens to. Depending on the
+ * callee's internal gate instead would make this the one site where that
+ * invariant is not locally provable.
+ *
+ * ⚠ NOT pinned in the Makefile. An earlier revision of this comment pointed
+ * at "the pin on the clear", which does not exist -- see the Makefile's own
+ * note on why a static "statement A precedes statement B inside this block"
+ * regex was declined. The clear and its ORDER are asserted by this model
+ * only. */
 static bool mock_arm_plain_write(void) {
     record("arm");
     if (!mock_arm_succeeds) {
@@ -158,6 +188,7 @@ static void mock_enter_wait_loop(void) {
 
 static void reset_mocks(void) {
     trace_n = 0;
+    trace_overflowed = false;
     mock_mode = MODE_NONE;
     mock_claim_held = false;
     mock_arm_succeeds = true;
@@ -244,6 +275,7 @@ TEST(the_clear_happens_UNDER_the_claim_not_after_the_release) {
     reset_mocks();
     mock_arm_succeeds = false;
     ASSERT_FALSE(bench_arm_sequence());
+    ASSERT_FALSE(trace_overflowed);   /* else an index of -1 could "pass" */
     const int clear = trace_index("mode_none");
     const int release = trace_index("release");
     ASSERT_TRUE(clear >= 0);
