@@ -49,6 +49,16 @@ adding a comment hundreds of lines earlier would fail the build. That is a
 correct change breaking the pin, which is the one failure mode worth
 engineering out.
 
+⛔ AND IT DOES NOT EVALUATE `#if`, which is the r3 lesson. Exact text was
+still not enough, because the checker and the compiler were reading
+DIFFERENT COPIES of it: `-fpreprocessed` keeps both branches of a
+conditional, so wrapping the real body in `#if 0` and compiling a no-op
+`#else` left every pinned string present and passing. The fix is not a
+better comparison -- it is to make what this checker reads equal what the
+compiler compiles: each pinned function must be DEFINED EXACTLY ONCE, and
+every definition and table row must sit at conditional depth 0. See
+`depth_map`.
+
 Run: python3 tests/host/check_885_savecal_claim_guard.py
 """
 import difflib
@@ -136,6 +146,41 @@ def strip_comments(src, cc="cc"):
     return re.sub(r'(?m)^\s*#\s+\d+\s+".*"\s*$', "", out.stdout)
 
 
+def depth_map(text):
+    """Conditional-directive depth for every line.
+
+    ⛔ WHY THIS EXISTS. `cc -fpreprocessed -E` strips comments but does NOT
+    evaluate `#if`, so BOTH branches of a conditional survive as text. r2's
+    audit wrapped the real SCPI_ADCCalSave in `#if 0` and put a no-op in
+    `#else`: this checker read the first (inactive) definition and passed,
+    while the compiler built the no-op. Demonstrated in two lines --
+    `cc -E` keeps the `#if 0` branch 0 times, `cc -fpreprocessed -E` keeps
+    it once.
+
+    So the rule is that what this checker reads must be what the compiler
+    compiles: every pinned definition and table row has to sit at depth 0,
+    inside no conditional region at all.
+    """
+    depths, depth = [], 0
+    for line in text.split("\n"):
+        t = line.lstrip()
+        if re.match(r"#\s*(if|ifdef|ifndef)\b", t):
+            depths.append(depth)
+            depth += 1
+        elif re.match(r"#\s*endif\b", t):
+            depth = max(0, depth - 1)
+            depths.append(depth)
+        else:
+            # `#else` / `#elif` keep the depth they are already inside, which
+            # is >= 1 by construction, so an #else branch is never depth 0.
+            depths.append(depth)
+    return depths
+
+
+def depth_at(text, depths, offset):
+    return depths[text.count("\n", 0, offset)]
+
+
 def function_body(code, name):
     """The body of `name`, by brace matching. '' if not found."""
     m = re.search(r"\b%s\s*\([^;{]*\)\s*\{" % re.escape(name), code)
@@ -186,6 +231,44 @@ def main():
               "%s's registration changed\n"
               "         expected: [%s]\n"
               "         found:    %r" % (pattern, want, rows))
+
+    # ---- what the checker reads must be what the compiler compiles ----
+    adc_depths, iface_depths = depth_map(adc), depth_map(iface)
+    # Non-vacuity: if neither file contained a conditional, the depth checks
+    # below could not fail and would be decoration. Reported, not asserted --
+    # a file legitimately having none is not an error.
+    print("  [--] conditional depth: max %d in SCPIADC.c, max %d in "
+          "SCPIInterface.c -- the tracker has real structure to measure"
+          % (max(adc_depths), max(iface_depths)))
+
+    for name in EXPECTED_BODIES:
+        defs = list(re.finditer(r"\b%s\s*\([^;{]*\)\s*\{" % re.escape(name),
+                                adc))
+        check(len(defs) == 1,
+              "%s is defined exactly once (found %d) -- two definitions mean "
+              "the compiler picks one and this checker picks the other"
+              % (name, len(defs)))
+        if not defs:
+            continue
+        d = depth_at(adc, adc_depths, defs[0].start())
+        check(d == 0,
+              "%s's definition is at conditional depth 0" % name if d == 0 else
+              "%s's definition sits inside a #if/#else region (depth %d). "
+              "The compiler may discard it and build something else, while "
+              "this checker reads the text that is there" % (name, d))
+
+    for pattern in EXPECTED_REGISTRATIONS:
+        rows = list(re.finditer(
+            r'\{\s*\.pattern\s*=\s*"%s"\s*,[^}]*\}\s*,' % re.escape(pattern),
+            iface))
+        if not rows:
+            continue
+        d = depth_at(iface, iface_depths, rows[0].start())
+        check(d == 0,
+              "%s's table row is at conditional depth 0" % pattern if d == 0
+              else "%s's table row sits inside a #if/#else region (depth %d), "
+                   "so the command may not be registered in the real build"
+                   % (pattern, d))
 
     # ---- every body on the path, exactly -------------------------------
     for name, expected in EXPECTED_BODIES.items():
