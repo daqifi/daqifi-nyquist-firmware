@@ -5180,7 +5180,7 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
      $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) \
      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(CAP1202_BIN) $(ISRLOG1197_BIN) \
      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(USECALTYPE_BIN) $(ARM_BIN) $(NAME_BIN) \
-     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) check-1200-parity \
+     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) check-1200-parity check-885-savecal-claim \
      $(NVM1153_BIN) $(ARMREFUSE_BIN)
 	./$(ARMREFUSE_BIN)
 	./$(NVM1153_BIN)
@@ -5768,6 +5768,20 @@ clean:
 # #1200: the three encoders must book the same loss for the same discard.
 # A source-derived check rather than a mock, because a model of the encoders
 # is a COPY that drifts -- same reasoning as $(BENCH_BIN)'s constant greps.
+# #885: CONF:ADC:SAVEcal must stay behind the streaming claim guard. A static
+# pin, like check-1200-parity -- there is no model to compile, because what is
+# being held still is the guard's own text.
+#
+# ⛔ FUNCTION-SCOPED, and that is load-bearing rather than tidy. At
+# 61a631745^ Streaming_BeginConfigChange appears TEN times in SCPIADC.c
+# (other setters already used it) while CalSaveCommon did not exist at all,
+# so a file-scoped grep for the guard PASSES on the broken revision.
+.PHONY: check-885-savecal-claim
+check-885-savecal-claim: check_885_savecal_claim_guard.py \
+                   $(SCPIADC_SRC) $(SCPI_IFACE_SRC) $(RECIPES)
+	@python3 check_885_savecal_claim_guard.py >/dev/null \
+	  || { python3 check_885_savecal_claim_guard.py; exit 1; }
+
 .PHONY: check-1200-parity
 check-1200-parity: check_1200_eviction_loss_parity.py \
                    $(CSV_ENC_SRC) $(NANOPB_ENC_SRC) $(JSON_ENC_SRC) $(STREAMING_HDR) \
