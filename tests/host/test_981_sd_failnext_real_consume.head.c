@@ -167,7 +167,7 @@ typedef enum {
     SD_CARD_MANAGER_PROCESS_STATE_UNMOUNT_DISK,
 } sd_card_manager_processState_t;
 
-/* The five fields of sd_card_manager_context_t that SDCardWrite() touches,
+/* The six fields of sd_card_manager_context_t that SDCardWrite() touches,
  * with the real types (sd_card_manager.c's `typedef struct { ... }
  * sd_card_manager_context_t`). A field the function starts touching that is
  * missing here is a compile error, not a silent gap. */
@@ -177,6 +177,7 @@ static struct {
     uint8_t *writeBuffer;
     uint16_t sdCardWriteBufferOffset;
     size_t writeBufferLength;
+    bool sessionWriteIssued;     /* #1031 */
 } gSDCardData;
 
 /* Real backing store for gSDCardData.writeBuffer: the extracted code forms

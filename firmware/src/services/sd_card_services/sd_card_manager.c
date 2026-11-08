@@ -540,6 +540,11 @@ typedef struct {
     /* #1031: set by that unmount when it continued the session; consumed by
      * the next OPEN_FILE, which counts the bytes the failure stranded. */
     bool resumingAfterError;
+    /* #1031: a write of this session's data has been issued (SDCardWrite in
+     * WRITE_TO_FILE). Data exists only once the encoder has run, so this also
+     * means the streaming header cache belongs to THIS session. Cleared by
+     * DEINIT, which every session start and deliberate teardown passes. */
+    bool sessionWriteIssued;
 
     // Operation result tracking
     bool lastOperationSuccess;   // Result of last completed operation
@@ -751,6 +756,11 @@ static int SDCardWrite() {
     int writeLen = -1;
     if (gSDCardData.fileHandle == SYS_FS_HANDLE_INVALID) {
         goto __exit;
+    }
+    /* #1031: see sessionWriteIssued. */
+    if (gSDCardData.currentProcessState ==
+            SD_CARD_MANAGER_PROCESS_STATE_WRITE_TO_FILE) {
+        gSDCardData.sessionWriteIssued = true;
     }
 
     /* #981: test/bench hook -- see gFailNextWrite above. Consume the arm and
@@ -1489,6 +1499,7 @@ bool sd_card_manager_Init(sd_card_manager_settings_t *pSettings) {
         gSDCardData.fileSplittingEnabled = false;
         gSDCardData.errorRemountPending = false;
         gSDCardData.resumingAfterError = false;
+        gSDCardData.sessionWriteIssued = false;
     }
     return true;
 }
@@ -2241,16 +2252,21 @@ void sd_card_manager_ProcessState() {
                  * Keep the session's base name and continue in the next part,
                  * so a write failure costs the bytes in flight, not the file.
                  *
-                 * Only when the current part holds something: a failure before
-                 * anything landed (e.g. a mount that keeps failing) reopens the
-                 * same part, so repeated errors cannot run the counter up. A
-                 * deliberate teardown always clears errorRemountPending in
-                 * DEINIT first, so a new session still starts at its first
-                 * file, and still overwrites it as before. */
+                 * Only after this session has issued a write (sessionWriteIssued):
+                 * a failure before that -- a failed first open, a mount that
+                 * keeps failing -- is an ordinary restart of a session that
+                 * recorded nothing. The counter advances only when the current
+                 * part holds something, so repeated errors cannot run it up.
+                 * Keyed on the session, NOT on baseFilename being non-empty: a
+                 * name like ".csv" has an empty stem and still needs this
+                 * (#1224 audit r3; it continues as "-1.csv"). A deliberate
+                 * teardown always clears errorRemountPending in DEINIT first,
+                 * so a new session still starts at its first file, and still
+                 * overwrites it as before. */
                 bool continueSession = gSDCardData.errorRemountPending &&
+                        gSDCardData.sessionWriteIssued &&
                         gpSDCardSettings->enable &&
-                        gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE &&
-                        gSDCardData.baseFilename[0] != '\0';
+                        gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE;
                 gSDCardData.errorRemountPending = false;
                 if (continueSession) {
                     if (gSDCardData.currentFileBytes > 0) {
@@ -3244,22 +3260,17 @@ void sd_card_manager_ProcessState() {
                  * gSdRotating excludes the session's first file, and
                  * gWriteSessionIsStreamingLog excludes a NON-streaming write
                  * session entirely, rotations included (see its definition). */
-                /* #1031: a part opened to continue a session after a write
+                /* #1031: a file opened to continue a session after a write
                  * failure needs the header too -- the encoder sent it once, at
                  * session start, so without this the part cannot be decoded on
-                 * its own. Only a CONTINUATION part (fileCounter > 0), though:
-                 * that implies this session's data reached the card, so the
-                 * encoder has run and rebuilt the header cache. A resume that
-                 * reopens the FIRST file (a failure before anything landed,
-                 * e.g. a failed first open) may run before the encoder has
-                 * started, while the cache still holds the PREVIOUS session's
-                 * header -- a CSV header at the top of a protobuf file (#1224
-                 * audit r2). That file gets the encoder's own inline header,
-                 * exactly as an ordinary first open does. */
-                bool openNeedsStreamHeader =
-                        (gSdRotating ||
-                         (resumedAfterError && gSDCardData.fileCounter > 0u))
-                        && gWriteSessionIsStreamingLog;
+                 * its own. That includes a resumed FIRST file, whose inline
+                 * header went out in the very write that failed (#1224 audit
+                 * r3). The cache is current: a resume only follows an issued
+                 * write (sessionWriteIssued), and data exists only once the
+                 * encoder has run and rebuilt it -- so the previous session's
+                 * header cannot land here (#1224 audit r2). */
+                bool openNeedsStreamHeader = (gSdRotating || resumedAfterError)
+                                          && gWriteSessionIsStreamingLog;
                 if (!openAborted) {
                     gSdRotating = false;
                 }
@@ -4626,6 +4637,7 @@ void sd_card_manager_ProcessState() {
             /* #1031: a deliberate teardown ends the session; never continue it. */
             gSDCardData.errorRemountPending = false;
             gSDCardData.resumingAfterError = false;
+            gSDCardData.sessionWriteIssued = false;
             gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_UNMOUNT_DISK;
             break;
         case SD_CARD_MANAGER_PROCESS_STATE_ERROR:
