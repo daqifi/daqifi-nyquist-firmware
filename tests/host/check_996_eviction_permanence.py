@@ -50,6 +50,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 CSV = ROOT / "firmware/src/services/csv_encoder.c"
 
+# The two expressions this pin exists to hold still, verbatim from the source
+# with whitespace runs collapsed. Updating either is a deliberate act that
+# belongs in the same PR as the firmware change it describes.
+EXPECTED_CONDITION = "(hadAIN || hadDIO) && fullCapacityCall && rem == maxRoom"
+EXPECTED_FULLCAP = "(buffSize == (size_t) Streaming_GetEncoderBufferSize())"
+
 fails = []
 
 
@@ -72,23 +78,14 @@ def strip_comments(src, cc="cc"):
     return out.stdout
 
 
-def _split_top_level(text, op):
-    """`text` split on `op` only where parenthesis depth is zero."""
-    parts, depth, start, i = [], 0, 0, 0
-    while i < len(text):
-        ch = text[i]
-        if ch == "(":
-            depth += 1
-        elif ch == ")":
-            depth -= 1
-        elif depth == 0 and text.startswith(op, i):
-            parts.append(text[start:i])
-            i += len(op)
-            start = i
-            continue
-        i += 1
-    parts.append(text[start:])
-    return parts
+def _norm(text):
+    """Whitespace runs collapsed to one space, ends stripped.
+
+    So reflowing a long line, or re-indenting it, is not a failure -- and a
+    CRLF checkout normalises to the same string as an LF one, which matters
+    because CI is LF.
+    """
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def _eviction_condition(code):
@@ -146,77 +143,42 @@ def main():
           "than one means two places decide permanence and can disagree"
           % len(evict_sites))
 
-    # ---- the condition's STRUCTURE, not just its operands ----------------
-    # ⛔ r1 MEDIUM: an earlier version of this pin searched the condition for
-    # the operand STRINGS. That is blind to the operator joining them, so
+    # ---- the two expressions, pinned EXACTLY ----------------------------
+    # ⛔ THIS USED TO RECOGNISE STRUCTURE AND KEPT LOSING. Three audit rounds,
+    # same shape every time: the pin was taught the mutants it had been shown
+    # and the next round found the next one. Operand text missed `&&` -> `||`
+    # (r1). Structural matching missed `==` -> `!=` inside fullCapacityCall
+    # and an EXTRA `&& hadDIO` conjunct, which with DIO disabled restores the
+    # original #996 stall (r2). The mutant space for "recognise the shape" is
+    # open-ended, so recognition cannot win.
     #
-    #     if ((hadAIN || hadDIO) && fullCapacityCall || rem == maxRoom)
-    #
-    # passed every check while evicting a 100-byte row on a full-capacity
-    # call with 40 bytes left -- a row the next fresh buffer would have
-    # written. `&&` binds tighter than `||`, so that reads as
-    # `(peeked && fullCapacity) || (rem == maxRoom)` and the first arm alone
-    # is enough. The C model cannot see it either: it executes its own COPY
-    # of the condition. So the structure has to be pinned here.
-    cond_text = _eviction_condition(code)
+    # So these are EXACT compares against canonical text, whitespace
+    # normalised so reflowing a line is not a failure. Any other edit fails
+    # the build -- including a correct one, which is the point: a deliberate
+    # firmware change updates this string in the same PR, and that diff is
+    # the review moment. Do not relax this back into matching.
+    cond_text = _norm(_eviction_condition(code))
     check(bool(cond_text),
-          "the eviction condition was located (if its shape changed beyond "
-          "recognition, update the model and this pin together)")
-    top_or = _split_top_level(cond_text, "||")
-    check(len(top_or) == 1,
-          "the condition is a pure conjunction at the top level -- no `||` "
-          "outside parentheses. A top-level `||` makes any one arm "
-          "sufficient, which is how a row that would fit a later buffer "
-          "gets evicted (found %d top-level `||` arm(s))" % (len(top_or) - 1))
-    parts = [c.strip() for c in _split_top_level(cond_text, "&&")]
-    check(len(parts) >= 3,
-          "and joins at least three conjuncts with `&&` (found %d: %r)"
-          % (len(parts), parts))
-    check(any("hadAIN" in c and "hadDIO" in c for c in parts),
-          "one conjunct requires something to have been peeked "
-          "(hadAIN/hadDIO)")
-    check(any(re.fullmatch(r"\(*\s*fullCapacityCall\s*\)*", c) for c in parts),
-          "one conjunct is fullCapacityCall itself -- without it a caller "
-          "with its own small buffer evicts rows the streaming path would "
-          "have written")
-    check(any(re.fullmatch(r"\(*\s*rem\s*==\s*maxRoom\s*\)*", c)
-              for c in parts),
-          "and one is `rem == maxRoom` -- the literal claim that this "
-          "attempt already had the largest room any call will ever offer. "
-          "`>=`, `!=`, or dropping it turns 'never fits' into 'did not fit "
-          "this time', which discards rows that would have fitted")
+          "the eviction condition was located (paren-matched, so the whole "
+          "expression is compared and not a fragment)")
+    check(cond_text == EXPECTED_CONDITION,
+          "the eviction condition is EXACTLY the pinned expression"
+          if cond_text == EXPECTED_CONDITION else
+          "the eviction condition CHANGED\n"
+          "         expected: %s\n"
+          "         found:    %s" % (EXPECTED_CONDITION, cond_text or "<none>"))
 
-    # ---- fullCapacityCall is DERIVED, not a hardcoded size ---------------
     decl = re.search(r"fullCapacityCall\s*=([^;]+);", code)
-    decl_text = decl.group(1) if decl else ""
+    decl_text = _norm(decl.group(1)) if decl else ""
     check(bool(decl_text),
           "fullCapacityCall is declared at all -- the first thing that "
           "disappears if the permanence test is reverted")
-    # ⚠ BOTH ARMS GUARDED ON THE DECLARATION EXISTING. An earlier draft
-    # tested only "no hardcoded byte count in decl_text", which PASSES
-    # VACUOUSLY when there is no declaration: measured on the pre-fix
-    # revision, where decl_text is '' and the digit regex finds nothing. A
-    # check that cannot fail on the revision it exists to catch is noise.
-    # ⚠ AN INDIRECTION IS ACCEPTED, because a correct refactor may hoist the
-    # accessor into a local and compare against that. Requiring the call
-    # INSIDE the declaration would fail such a change while the behaviour is
-    # identical. What must not happen is the size becoming a constant.
-    via_local = False
-    if decl_text and "Streaming_GetEncoderBufferSize" not in decl_text:
-        for ident in set(re.findall(r"[A-Za-z_]\w*", decl_text)):
-            if re.search(r"\b%s\s*=[^;]*Streaming_GetEncoderBufferSize"
-                         % re.escape(ident), code):
-                via_local = True
-                break
-    check(bool(decl_text) and ("Streaming_GetEncoderBufferSize" in decl_text
-                               or via_local),
-          "and is derived from Streaming_GetEncoderBufferSize(), directly or "
-          "through a local assigned from it%s -- not compared against a "
-          "literal, which would stop being true the moment the configured "
-          "buffer size changed, and silently"
-          % (" (via a local)" if via_local else ""))
-    check(bool(decl_text) and re.search(r"\b\d{3,}\b", decl_text) is None,
-          "and compares against no hardcoded byte count (%r)" % decl_text.strip())
+    check(decl_text == EXPECTED_FULLCAP,
+          "its initialiser is EXACTLY the pinned expression"
+          if decl_text == EXPECTED_FULLCAP else
+          "the fullCapacityCall initialiser CHANGED\n"
+          "         expected: %s\n"
+          "         found:    %s" % (EXPECTED_FULLCAP, decl_text or "<none>"))
 
     # ---- the log that makes the eviction observable ----------------------
     check("LOG_SESSION_CSV_SAMPLE_TOO_LARGE" in code,
