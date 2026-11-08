@@ -192,13 +192,18 @@ extern "C" {
     void SCPI_ResponseBuf_Give(void);
 
     /**
-     * Stop a live stream and finalise its SD log before the board powers down.
-     * Called by the power task immediately before Power_Down(), the one place
-     * every power-off path (button, SYST:POW:STAT 0, low battery) converges.
-     * Runs the same teardown as SYST:STReam:STOP, including its bounded (~5 s)
-     * wait for the SD manager to close the file. No-op when not streaming.
+     * Stop a live stream and finalise its SD log before the rails drop.
+     * Called by the power task before every power-off: Power_Down() (button,
+     * SYST:POW:STAT 0) and the critical-battery shutdown. Runs the same
+     * teardown as SYST:STReam:STOP when streaming, then -- streaming or not --
+     * waits for any stop already in flight and for the SD manager to go idle,
+     * bounded by POWER_DOWN_SD_WAIT_MS.
+     *
+     * @return true when the SD log is finalised (or there was none); false if
+     *         the bound expired first. The caller still powers down -- on
+     *         battery it cannot wait indefinitely -- but must say so loudly.
      */
-    void SCPI_StopStreamingForPowerDown(void);
+    bool SCPI_StopStreamingForPowerDown(void);
 
     /*! Function pointer type for transport-level write (no SCPI context) */
     typedef size_t (*ScpiTransportWriteFn)(const char* data, size_t len);

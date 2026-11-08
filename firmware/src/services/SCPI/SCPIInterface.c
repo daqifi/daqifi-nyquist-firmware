@@ -7259,17 +7259,39 @@ static void SCPI_PerformStreamingStop(void) {
  * here, so this comment does not put a non-canonical form into new lines.
  * The disable form SYSTem:STReam:START 0 calls the same body from
  * SCPI_StartStreaming. */
-void SCPI_StopStreamingForPowerDown(void) {
+/* Upper bound on how long a power-off waits for the SD log to finalise, on top
+ * of the stop's own 5 s wait. Long enough for an ordinary close/unmount, short
+ * enough that a wedged card cannot hold a battery shutdown hostage. */
+#define POWER_DOWN_SD_WAIT_MS 10000u
+
+bool SCPI_StopStreamingForPowerDown(void) {
     StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
-    if (pRunTimeStreamConfig == NULL || !pRunTimeStreamConfig->IsEnabled) {
-        return;
-    }
     /* Without this the stream kept running in STANDBY with the analog rails
      * off, and the SD log was never closed: its tail was lost on USB power,
      * and on battery the card lost power mid-write. */
-    LOG_I("[POWER] stopping stream and closing SD log before power-down");
-    SCPI_PerformStreamingStop();
+    if (pRunTimeStreamConfig != NULL && pRunTimeStreamConfig->IsEnabled) {
+        LOG_I("[POWER] stopping stream and closing SD log before power-down");
+        SCPI_PerformStreamingStop();
+    }
+    /* IsEnabled == false proves sampling stopped, not that the log is closed:
+     * a stop on another transport clears it first and THEN waits for the SD
+     * manager, and a stop whose own wait timed out leaves the close pending.
+     * So wait for both, whoever started them (#1226 audit). */
+    const TickType_t start = xTaskGetTickCount();
+    for (;;) {
+        bool stopInFlight;
+        taskENTER_CRITICAL();
+        stopInFlight = (gStreamStopsActive != 0u);
+        taskEXIT_CRITICAL();
+        if (!stopInFlight && sd_card_manager_IsIdle()) {
+            return true;
+        }
+        if ((xTaskGetTickCount() - start) >= pdMS_TO_TICKS(POWER_DOWN_SD_WAIT_MS)) {
+            return false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
 }
 
 static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
