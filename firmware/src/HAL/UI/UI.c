@@ -23,6 +23,8 @@
  //!  ~1 second (+250 ms are required for power on sequence)                                                                   
 #define BUTTON_POWER_ON_TH (1000/UI_POWER_ON_TASK_CALLING_PRD)  
 #define BUTTON_POWER_OFF_TH (1000/UI_TASK_CALLING_PRD)  //  ~1 second
+//! Identify pattern: LEDs flash for this long, then stay off for as long
+#define IDENTIFY_HALF_PERIOD_MS 1000
 
 //! Pointer to the data structure where the UI configuration parameters
 // will be stored
@@ -31,6 +33,45 @@ static tUIConfig *gpConfig;
 static tUIReadVars *gpReadVariables;
 //! Pointer to the data structure where the UI Power Data will be stored
 static tPowerData *gpPowerData;
+//! Set by SCPI (SYSTem:IDENtify), read by LED_Tasks. A single aligned byte,
+// written by one task and read by another, so no lock is needed.
+static volatile bool gIdentifyActive = false;
+
+void UI_SetIdentify(bool enable)
+{
+    gIdentifyActive = enable;
+}
+
+bool UI_GetIdentify(void)
+{
+    return gIdentifyActive;
+}
+
+/*! Drives the identify pattern on both LEDs. The flash toggles once per
+ * LED_Tasks call (~100 ms), i.e. ~5 flashes in the 1 s on-phase; the phase
+ * itself is timed from the tick count so a slow Power_Tasks pass cannot
+ * stretch it.
+ * @param[in] restart true on the first call after identify was turned on
+ */
+static void LED_IdentifyTasks(bool restart)
+{
+    static TickType_t startTick = 0;
+    static bool flashOn = false;
+    TickType_t elapsed;
+
+    if (restart) {
+        startTick = xTaskGetTickCount();
+        flashOn = false;
+    }
+    elapsed = xTaskGetTickCount() - startTick;
+    if ((elapsed / pdMS_TO_TICKS(IDENTIFY_HALF_PERIOD_MS)) % 2 == 0) {
+        flashOn = !flashOn;
+    } else {
+        flashOn = false;
+    }
+    GPIO_PinWrite(gpConfig->LED1_Pin, flashOn);
+    GPIO_PinWrite(gpConfig->LED2_Pin, flashOn);
+}
 
 void UI_Init(
                 tUIConfig *pConfigInit,
@@ -192,6 +233,7 @@ void LED_Tasks(bool streamingFlag)
     static uint32_t periodCount = 1;    
     static bool errorDisplayPending = false;
     static bool begunErrorDisplay = false;
+    static bool wasIdentifying = false;
     
     volatile bool pluggedIn = false;
     volatile bool poweredOn = false;
@@ -353,6 +395,16 @@ void LED_Tasks(bool streamingFlag)
     if(gpConfig->LED2_Ind.period[currentPattern] > period)
     {
         period = gpConfig->LED2_Ind.period[currentPattern];
+    }
+
+    // Identify overrides whatever the state machine above just wrote; the
+    // state machine keeps running underneath so the normal pattern resumes
+    // when identify is turned off.
+    if (gIdentifyActive) {
+        LED_IdentifyTasks(!wasIdentifying);
+        wasIdentifying = true;
+    } else {
+        wasIdentifying = false;
     }
 
     // Update global LED values
