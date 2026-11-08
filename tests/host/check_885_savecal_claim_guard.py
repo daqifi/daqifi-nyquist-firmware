@@ -49,15 +49,57 @@ adding a comment hundreds of lines earlier would fail the build. That is a
 correct change breaking the pin, which is the one failure mode worth
 engineering out.
 
-⛔ AND IT DOES NOT EVALUATE `#if`, which is the r3 lesson. Exact text was
-still not enough, because the checker and the compiler were reading
-DIFFERENT COPIES of it: `-fpreprocessed` keeps both branches of a
-conditional, so wrapping the real body in `#if 0` and compiling a no-op
-`#else` left every pinned string present and passing. The fix is not a
-better comparison -- it is to make what this checker reads equal what the
-compiler compiles: each pinned function must be DEFINED EXACTLY ONCE, and
-every definition and table row must sit at conditional depth 0. See
-`depth_map`.
+⛔ AND IT NEITHER EVALUATES `#if` NOR EXPANDS MACROS, which rounds 3 and 4
+are both about. Exact text kept not being enough, because the checker and the
+compiler were reading different copies of it, or the same text with different
+meanings:
+
+  * r3: `-fpreprocessed` keeps BOTH branches of a conditional, so wrapping the
+    real body in `#if 0` and compiling a no-op `#else` left every pinned
+    string present and passing. Hence `depth_map` and defined-exactly-once.
+  * r4: it also DELETES `#define`/`#undef` without expanding the invocations,
+    so `#define Streaming_EndConfigChange() ((void)0)` inside CalSaveCommon,
+    or `#define CalSaveCommon(...) SCPI_RES_OK` around the wrappers, left the
+    bodies byte-identical while the build did something else. Hence
+    `blank_comments`, the directive scan, and `macro_sensitive_identifiers`.
+  * r4 also: a row can be exact, singular and at depth 0 and still not
+    dispatch, because it sits in an array nothing hands to SCPI_Init. Hence
+    `active_command_table`.
+
+⛔⛔ SO HERE IS THE BOUNDED CLAIM, replacing "this checker reads what the
+compiler compiles" -- a sentence every round so far has falsified, and which
+should not be written here again.
+
+WHAT THIS GUARANTEES, over the text of these TWO FILES ONLY:
+
+  * the three bodies on the path are byte-exact against the canonical strings;
+  * each of the three is defined exactly once, at conditional depth 0, and
+    contains no preprocessor directive;
+  * neither file `#define`s any identifier the canonical text names outside a
+    string literal;
+  * both table rows are byte-exact, singular, at conditional depth 0, and
+    inside the initialiser of the array that THIS file passes to SCPI_Init.
+
+WHAT IT DOES NOT COVER, and nobody should read it as covering:
+
+  * macros from INCLUDED HEADERS. This reads two .c files and no headers, so a
+    `#define Streaming_EndConfigChange() ((void)0)` in a header still passes
+    here. Closing that needs a real preprocess, which needs XC32 and the
+    project's include path and -D flags, and is a build-side check rather than
+    a host check.
+  * anything only a real preprocess would show: include order, conditional
+    compilation selected by build configuration, NQ1/NQ2/NQ3 variant defines.
+  * ANOTHER table row shadowing a short form of these commands --
+    `{.pattern = "CONF:ADC:SAVE", ...}` placed earlier dispatches instead,
+    because findCommandHeader takes the first match. That is NOT checked here
+    because it is already covered: the #907 gate in
+    `tools/lint/scpi_wiki_sync.py` rejects two registered patterns that accept
+    the same spelling, runs in CI on any `firmware/src/services/SCPI/**`
+    change, and was verified to fire on exactly this row -- rc=0 clean, rc=1
+    with it, naming `CONF:ADC:SAVE <-> CONFigure:ADC:SAVEcal`.
+  * anything outside these files: a different translation unit, link-time
+    substitution, or a callback pointer reassigned at runtime.
+  * whether the guarded code is CORRECT. This says only that it is UNCHANGED.
 
 Run: python3 tests/host/check_885_savecal_claim_guard.py
 """
@@ -146,6 +188,137 @@ def strip_comments(src, cc="cc"):
     return re.sub(r'(?m)^\s*#\s+\d+\s+".*"\s*$', "", out.stdout)
 
 
+def blank_comments(src):
+    """Comments replaced by spaces; every other byte and every offset kept.
+
+    A SECOND stripper, with a different job from `strip_comments`, and the
+    two are not interchangeable:
+
+      * `strip_comments` (the compiler) produces the text that gets COMPARED.
+        It also DELETES every preprocessor directive, which is exactly how the
+        r3 findings hid -- a `#define` that neuters a call vanishes from the
+        comparison while the call text stays put.
+      * this one produces the text that gets SCANNED for those directives. It
+        must therefore keep them, and it must keep byte offsets so a span
+        found here maps back to the real file.
+
+    ⛔ AND LINE GEOMETRY IS NOT PRESERVED BY THE FIRST ONE, measured: SCPIADC.c
+    is 2553 lines raw and 1271 after `strip_comments`. The `# <line> "<file>"`
+    markers ARE the resync mechanism, so removing them (which the canonical
+    text requires -- see above) collapses the mapping with it. Reading a
+    stripped-text line number as a raw line number is therefore wrong, and
+    was wrong in the first draft of this check. Hence a stripper that cannot
+    drift: same length, same newlines, verified on both files.
+
+    Written out rather than regexed because a naive comment regex eats pointer
+    dereferences and string contents; this tracks string and char literals and
+    their escapes, including a `//` comment continued by a trailing backslash.
+    """
+    out = list(src)
+    i, n = 0, len(src)
+    NORMAL, STR, CHR, LINE, BLOCK = range(5)
+    st = NORMAL
+    while i < n:
+        c = src[i]
+        nxt = src[i + 1] if i + 1 < n else ""
+        if st == NORMAL:
+            if c == "/" and nxt == "/":
+                st = LINE
+                out[i] = out[i + 1] = " "
+                i += 2
+                continue
+            if c == "/" and nxt == "*":
+                st = BLOCK
+                out[i] = out[i + 1] = " "
+                i += 2
+                continue
+            if c == '"':
+                st = STR
+            elif c == "'":
+                st = CHR
+        elif st in (STR, CHR):
+            if c == "\\":
+                i += 2
+                continue
+            if (st == STR and c == '"') or (st == CHR and c == "'"):
+                st = NORMAL
+        elif st == LINE:
+            if c == "\\" and nxt == "\n":
+                out[i] = " "
+                i += 2
+                continue
+            if c == "\n":
+                st = NORMAL
+            else:
+                out[i] = " "
+        elif st == BLOCK:
+            if c == "*" and nxt == "/":
+                out[i] = out[i + 1] = " "
+                st = NORMAL
+                i += 2
+                continue
+            if c != "\n":
+                out[i] = " "
+        i += 1
+    return "".join(out)
+
+
+def macro_sensitive_identifiers():
+    """Every identifier in the canonical text that a `#define` could change.
+
+    Derived from the canonical strings themselves rather than a hand-written
+    list, so adding a call to a pinned body extends this set automatically
+    instead of silently leaving the new callee unguarded.
+
+    String-literal contents are excluded: macros do not expand inside a string,
+    so `#define ADC ...` cannot alter `.pattern = "CONFigure:ADC:SAVEcal"`.
+    That is precision, not a relaxation.
+    """
+    names = set(EXPECTED_BODIES)
+    for text in list(EXPECTED_BODIES.values()) + list(
+            EXPECTED_REGISTRATIONS.values()):
+        outside = re.sub(r'"(?:[^"\\]|\\.)*"', " ", text)
+        names |= set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", outside))
+    return names
+
+
+def active_command_table(code):
+    """(name, start, end) of the array actually handed to SCPI_Init.
+
+    Extracted from the call rather than hardcoded, so renaming the table moves
+    this check with it instead of quietly pointing at nothing. Both "exactly
+    one" requirements are part of the check: several call sites or several
+    definitions of that name mean this function would have to guess which one
+    dispatches, and a guess here is the whole failure class.
+    """
+    calls = list(re.finditer(r"\bSCPI_Init\s*\(([^;]*?)\)\s*;", code, re.S))
+    if len(calls) != 1:
+        return None, "SCPI_Init is called %d times, expected exactly 1" % len(
+            calls)
+    args = [a.strip() for a in calls[0].group(1).split(",")]
+    if len(args) < 2 or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", args[1]):
+        return None, "SCPI_Init's 2nd argument is not a plain array name: %r" % (
+            args[1] if len(args) > 1 else None)
+    name = args[1]
+    defs = list(re.finditer(
+        r"\bscpi_command_t\s+%s\s*\[\s*\]\s*=\s*\{" % re.escape(name),
+        code))
+    if len(defs) != 1:
+        return None, "%r is defined %d times, expected exactly 1" % (
+            name, len(defs))
+    i = code.index("{", defs[0].start())
+    depth, j = 0, i
+    while j < len(code):
+        if code[j] == "{":
+            depth += 1
+        elif code[j] == "}":
+            depth -= 1
+            if depth == 0:
+                return (name, i, j), None
+        j += 1
+    return None, "%r's initialiser is unterminated" % name
+
+
 def depth_map(text):
     """Conditional-directive depth for every line.
 
@@ -181,11 +354,11 @@ def depth_at(text, depths, offset):
     return depths[text.count("\n", 0, offset)]
 
 
-def function_body(code, name):
-    """The body of `name`, by brace matching. '' if not found."""
+def body_span(code, name):
+    """(open-brace index, close-brace index) of `name`'s body, or None."""
     m = re.search(r"\b%s\s*\([^;{]*\)\s*\{" % re.escape(name), code)
     if not m:
-        return ""
+        return None
     i = code.index("{", m.start())
     depth, j = 0, i
     while j < len(code):
@@ -194,9 +367,15 @@ def function_body(code, name):
         elif code[j] == "}":
             depth -= 1
             if depth == 0:
-                return code[i + 1:j]
+                return (i, j)
         j += 1
-    return ""
+    return None
+
+
+def function_body(code, name):
+    """The body of `name`, by brace matching. '' if not found."""
+    sp = body_span(code, name)
+    return "" if sp is None else code[sp[0] + 1:sp[1]]
 
 
 def show_diff(name, expected, found):
@@ -217,8 +396,24 @@ def main():
             print("  [FAIL] missing: %s" % p)
             return 1
 
-    adc = strip_comments(ADC.read_text())
-    iface = strip_comments(IFACE.read_text())
+    adc_raw, iface_raw = ADC.read_text(), IFACE.read_text()
+    adc = strip_comments(adc_raw)
+    iface = strip_comments(iface_raw)
+
+    # The directive scan below maps spans back to the real file by OFFSET, so
+    # the blanker's invariant is load-bearing. Assert it rather than trust it:
+    # if it ever drifts, every directive check silently looks in the wrong
+    # place and passes.
+    adc_blank, iface_blank = blank_comments(adc_raw), blank_comments(iface_raw)
+    for label, raw, blank in (("SCPIADC.c", adc_raw, adc_blank),
+                              ("SCPIInterface.c", iface_raw, iface_blank)):
+        ok = len(raw) == len(blank) and raw.count("\n") == blank.count("\n")
+        check(ok, "%s: blank_comments preserved length and line count" % label
+              if ok else
+              "%s: blank_comments changed the file's geometry (%d->%d bytes, "
+              "%d->%d lines) -- every offset-based check below is unsound"
+              % (label, len(raw), len(blank), raw.count("\n"),
+                 blank.count("\n")))
 
     # ---- the command table rows, exactly -------------------------------
     for pattern, expected_row in sorted(EXPECTED_REGISTRATIONS.items()):
@@ -232,7 +427,7 @@ def main():
               "         expected: [%s]\n"
               "         found:    %r" % (pattern, want, rows))
 
-    # ---- what the checker reads must be what the compiler compiles ----
+    # ---- the text must not be one the build discards ------------------
     adc_depths, iface_depths = depth_map(adc), depth_map(iface)
     # Non-vacuity: if neither file contained a conditional, the depth checks
     # below could not fail and would be decoration. Reported, not asserted --
@@ -269,6 +464,70 @@ def main():
               else "%s's table row sits inside a #if/#else region (depth %d), "
                    "so the command may not be registered in the real build"
                    % (pattern, d))
+
+    # ---- directives the comparison cannot see --------------------------
+    # r3's HIGH: `#define Streaming_EndConfigChange() ((void)0)` placed inside
+    # CalSaveCommon passes the exact body compare, because `strip_comments`
+    # removes the directive without expanding the invocation. The release
+    # becomes a no-op and the claim is held forever. Measured on the real
+    # source first: all three bodies contain zero directives, so this forbids
+    # nothing the file does today.
+    for name in EXPECTED_BODIES:
+        sp = body_span(adc_blank, name)
+        if sp is None:
+            continue
+        found = re.findall(r"(?m)^[ \t]*#[ \t]*(\w+)", adc_blank[sp[0]:sp[1]])
+        check(not found,
+              "%s's body contains no preprocessor directive" % name
+              if not found else
+              "%s's body contains preprocessor directive(s) %s. The canonical "
+              "comparison cannot see these -- the compiler acts on them and "
+              "this checker does not" % (name, found))
+
+    # r3's second MEDIUM: the same trick one level out -- `#define
+    # CalSaveCommon(...) SCPI_RES_OK` before the wrappers, `#undef` after.
+    # The identifier set is DERIVED from the canonical text, so adding a call
+    # to a pinned body extends this automatically instead of leaving the new
+    # callee unguarded.
+    sensitive = macro_sensitive_identifiers()
+    for label, blank in (("SCPIADC.c", adc_blank),
+                         ("SCPIInterface.c", iface_blank)):
+        defined = set(re.findall(
+            r"(?m)^[ \t]*#[ \t]*define[ \t]+([A-Za-z_][A-Za-z0-9_]*)", blank))
+        clash = sorted(defined & sensitive)
+        check(not clash,
+              "%s defines no macro over a pinned identifier (%d #defines vs "
+              "%d identifiers)" % (label, len(defined), len(sensitive))
+              if not clash else
+              "%s #defines %s, which the canonical text names. A macro can "
+              "change what that text MEANS while leaving it byte-identical"
+              % (label, clash))
+
+    # ---- the rows must be in the table SCPI_Init is actually handed -----
+    # r3's third MEDIUM: both rows moved into a separate, unused
+    # `static const scpi_command_t` array pass every check above -- they are
+    # present, singular and at depth 0 -- while nothing registers them.
+    table, err = active_command_table(iface_blank)
+    check(table is not None,
+          "the active command table was located: %s"
+          % (table[0] if table else err) if table is not None else
+          "could not identify the command table SCPI_Init is handed: %s. "
+          "Without it, a row in ANY array satisfies the rows above" % err)
+    if table is not None:
+        tname, tstart, tend = table
+        for pattern in sorted(EXPECTED_REGISTRATIONS):
+            rows = list(re.finditer(
+                r'\{\s*\.pattern\s*=\s*"%s"\s*,[^}]*\}\s*,'
+                % re.escape(pattern), iface_blank))
+            if not rows:
+                continue
+            outside = [r for r in rows if not tstart < r.start() < tend]
+            check(not outside,
+                  "%s's row is inside %s, the array passed to SCPI_Init"
+                  % (pattern, tname) if not outside else
+                  "%s's row is NOT inside %s, the array SCPI_Init is handed, "
+                  "so the command is not registered in the real build"
+                  % (pattern, tname))
 
     # ---- every body on the path, exactly -------------------------------
     for name, expected in EXPECTED_BODIES.items():
