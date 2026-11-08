@@ -713,6 +713,11 @@ CALFINITE_BIN := run_1154_tests
 # this one.
 EMIT1199_BIN := run_1199_tests
 
+# #996: the eviction DECISION, modelled, with the real source pinned inside
+# the recipe below. Separate from check-1200-parity, which pins the BOOKING
+# for the same eviction and passes unchanged if the decision is weakened.
+EVICT996_BIN := run_996_tests
+
 # #1156: Util/DoubleFmt.h is header-only and dependency-free for the same
 # reason as FMT_BIN and EMIT1199_BIN -- no UUT copy, no stubs, and NOT
 # $(INCLUDES). -lm for nextafter/fabs in the test vectors.
@@ -1344,6 +1349,16 @@ $(FMT1156_BIN): test_1156_double_fmt.c test_framework.h $(FW_UTIL)/DoubleFmt.h c
 	@python3 check_1156_doublefmt_wiring.py >/dev/null \
 	  || { python3 check_1156_doublefmt_wiring.py; exit 1; }
 	$(CC) $(CFLAGS) -I$(FW_UTIL) -o $(FMT1156_BIN) test_1156_double_fmt.c -lm
+
+$(EVICT996_BIN): test_996_csv_eviction_permanence.c test_framework.h \
+                 check_996_eviction_permanence.py $(CSV_ENC_SRC) $(RECIPES)
+	@# The pin runs INSIDE this recipe, not as a sibling target: the model
+	@# being right and the model MATCHING THE SOURCE are two halves of one
+	@# claim, and a sibling target can be skipped on its own. Same shape as
+	@# $(EMIT1199_BIN) and $(FMT1156_BIN).
+	@python3 check_996_eviction_permanence.py >/dev/null \
+	  || { python3 check_996_eviction_permanence.py; exit 1; }
+	$(CC) $(CFLAGS) -o $(EVICT996_BIN) test_996_csv_eviction_permanence.c
 
 $(JSONESC_BIN): test_json_string_escape.c test_framework.h $(FW_SVC)/JSON_StringEscape.h $(RECIPES)
 	$(CC) $(CFLAGS) -I$(FW_SVC) -o $(JSONESC_BIN) test_json_string_escape.c
@@ -5165,7 +5180,7 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
      $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) \
      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(CAP1202_BIN) $(ISRLOG1197_BIN) \
      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(USECALTYPE_BIN) $(ARM_BIN) $(NAME_BIN) \
-     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(FMT1156_BIN) check-1200-parity \
+     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) check-1200-parity \
      $(NVM1153_BIN) $(ARMREFUSE_BIN)
 	./$(ARMREFUSE_BIN)
 	./$(NVM1153_BIN)
@@ -5177,6 +5192,7 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(EMIT1199_BIN)
+	./$(EVICT996_BIN)
 	./$(FMT1156_BIN)
 	./$(AD7609_BIN)
 	./$(BENCH_BIN)
@@ -5747,7 +5763,7 @@ clean:
 	      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(GEN_1125) $(CAP1202_BIN) $(GEN_1202) $(ISRLOG1197_BIN) $(GEN_1197) \
 	      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(SDLOG1029_GEN).tmp \
 	      $(USECALTYPE_BIN) $(NAME_BIN) $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(ARM_BIN) $(SCPIDAC_RAILGATE_BIN) \
-	      $(FORCEGATE_BIN) $(LOG1039_BIN) $(LOG1039_GEN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(FMT1156_BIN) $(ARMREFUSE_BIN)
+	      $(FORCEGATE_BIN) $(LOG1039_BIN) $(LOG1039_GEN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) $(ARMREFUSE_BIN)
 
 # #1200: the three encoders must book the same loss for the same discard.
 # A source-derived check rather than a mock, because a model of the encoders
