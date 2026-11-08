@@ -7259,6 +7259,19 @@ static void SCPI_PerformStreamingStop(void) {
  * here, so this comment does not put a non-canonical form into new lines.
  * The disable form SYSTem:STReam:START 0 calls the same body from
  * SCPI_StartStreaming. */
+void SCPI_StopStreamingForPowerDown(void) {
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+    if (pRunTimeStreamConfig == NULL || !pRunTimeStreamConfig->IsEnabled) {
+        return;
+    }
+    /* Without this the stream kept running in STANDBY with the analog rails
+     * off, and the SD log was never closed: its tail was lost on USB power,
+     * and on battery the card lost power mid-write. */
+    LOG_I("[POWER] stopping stream and closing SD log before power-down");
+    SCPI_PerformStreamingStop();
+}
+
 static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
     (void)context;
     SCPI_PerformStreamingStop();

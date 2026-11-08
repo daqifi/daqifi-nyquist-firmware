@@ -17,6 +17,7 @@
 #include "../../services/UsbCdc/UsbCdc.h"
 #include "../../services/daqifi_settings.h"  // #454: load autoPowerOnUsb from NVM
 #include "../../services/sd_card_services/sd_card_manager.h"
+#include "../../services/SCPI/SCPIInterface.h"  // SCPI_StopStreamingForPowerDown
 #include "driver/usb/usbhs/src/plib_usbhs_header.h"
 #include <xc.h>
 //typedef enum
@@ -886,6 +887,9 @@ static void Power_HandleStandbyState(void) {
      * shutdownNotified is set by UI task after LED warning sequence completes
      * This ensures user is notified before shutdown */
     if (pData->shutdownNotified == true) {
+        /* Stop streaming and close the SD log while the rails are still up.
+         * Blocks this task for at most the stop's bounded SD-idle wait. */
+        SCPI_StopStreamingForPowerDown();
         Power_Down();
         pData->shutdownNotified = false;  /* Clear flag to prevent repeated calls */
         
