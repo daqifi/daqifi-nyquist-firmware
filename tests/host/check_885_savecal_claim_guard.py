@@ -73,12 +73,29 @@ meanings:
     placed before the rows makes them unreachable because findCommandHeader
     stops there (parser.c:178). Hence the table name and `SCPI_Init` joining
     the sensitive set, and the terminator-order check.
+  * r6: the scans read PHYSICAL lines; the preprocessor reads LOGICAL ones. A
+    macro name split by a backslash-newline, or a directive with a multi-line
+    comment inside it, is one logical line to the compiler and two to a regex.
+    Fixed by performing translation phases 2 and 3 rather than anticipating
+    their results -- see `translation_phases`. r6 also: `{0},` IS a
+    NULL-pattern terminator in C, so terminators are now CLASSIFIED (does the
+    entry supply a non-NULL pattern?) instead of pattern-matched.
 
 ⛔⛔ SO HERE IS THE BOUNDED CLAIM, replacing "this checker reads what the
 compiler compiles" -- a sentence every round so far has falsified, and which
 should not be written here again.
 
-WHAT THIS GUARANTEES, over the text of these TWO FILES ONLY:
+⭐ AND THE SCOPE IS ORDINARY EDITS. This pin exists to catch a NORMAL change
+to the claim path -- a refactor, a reordering, a well-meant simplification,
+a re-route -- and to make a deliberate change show up as a diff in the
+canonical text. It is NOT an adversarial barrier, and five rounds of audit
+have now established that it cannot become one: each round closed a spelling
+and the next found another, because a text checker and a compiler are
+different readers. OBFUSCATED SPELLINGS ARE EXPLICITLY OUT OF SCOPE, and
+belong to #1033 (see below), not to a sixth scan here.
+
+WHAT THIS GUARANTEES, for ordinary edits, over the text of these TWO FILES
+ONLY:
 
   * the three bodies on the path are byte-exact against the canonical strings;
   * each of the three is defined exactly once, at conditional depth 0, and
@@ -88,7 +105,10 @@ WHAT THIS GUARANTEES, over the text of these TWO FILES ONLY:
   * both table rows are byte-exact, singular, at conditional depth 0, inside
     the initialiser of the array that THIS file passes to SCPI_Init, and
     BEFORE that array's first NULL-pattern terminator;
-  * no directive scan here can be evaded by spelling `#` as `%:` or `??=`.
+  * no directive scan here can be evaded by spelling `#` as `%:` or `??=`,
+    by splitting a name across a line splice, or by hiding the gap in a
+    multi-line comment -- translation phases 2 and 3 run first;
+  * a terminator is CLASSIFIED, not matched, so `{0},` counts as one.
 
 WHAT IT DOES NOT COVER, and nobody should read it as covering:
 
@@ -109,6 +129,12 @@ WHAT IT DOES NOT COVER, and nobody should read it as covering:
     makes them the same one. The structural fix -- proving these contracts
     against a REAL preprocess and compile -- belongs there. Do not try to
     close it by adding a sixth scan to this file.
+
+    ⭐ Concretely, that means these are KNOWN-UNCOVERED and are not defects in
+    this pin: a macro reaching the release from an included header, trigraph
+    spellings under -trigraphs, conditional compilation selected by build
+    configuration, and any further spelling that only a real preprocess would
+    resolve. Log them on #1033.
   * ANOTHER table row shadowing a short form of these commands --
     `{.pattern = "CONF:ADC:SAVE", ...}` placed earlier dispatches instead,
     because findCommandHeader takes the first match. That is NOT checked here
@@ -217,79 +243,129 @@ def strip_comments(src, cc="cc"):
     return re.sub(r'(?m)^\s*#\s+\d+\s+".*"\s*$', "", out.stdout)
 
 
-def blank_comments(src):
-    """Comments replaced by spaces; every other byte and every offset kept.
+def translation_phases(src):
+    """`src` after C translation phases 2 and 3: splicing, then comments.
 
-    A SECOND stripper, with a different job from `strip_comments`, and the
-    two are not interchangeable:
+    ⛔ PHASES, NOT ANOTHER REGEX, and that distinction is the r6 lesson.
+    Rounds 3-5 each closed a spelling and each time the next round found
+    another, because the scans read PHYSICAL lines while the preprocessor
+    reads LOGICAL ones. r5 fell to two consequences of that same gap:
 
-      * `strip_comments` (the compiler) produces the text that gets COMPARED.
-        It also DELETES every preprocessor directive, which is exactly how the
-        r3 findings hid -- a `#define` that neuters a call vanishes from the
-        comparison while the call text stays put.
-      * this one produces the text that gets SCANNED for those directives. It
-        must therefore keep them, and it must keep byte offsets so a span
-        found here maps back to the real file.
+      * `#define Streaming_EndConfig\\<newline>Change() ((void)0)` -- the macro
+        NAME split by a line splice, so the scan saw `Streaming_EndConfig`;
+      * `#define /* comment<newline> */ Streaming_EndConfigChange() ...` -- a
+        multi-line comment inside the directive, so the `define` and the name
+        landed on different physical lines.
 
-    ⛔ AND LINE GEOMETRY IS NOT PRESERVED BY THE FIRST ONE, measured: SCPIADC.c
-    is 2553 lines raw and 1271 after `strip_comments`. The `# <line> "<file>"`
-    markers ARE the resync mechanism, so removing them (which the canonical
-    text requires -- see above) collapses the mapping with it. Reading a
-    stripped-text line number as a raw line number is therefore wrong, and
-    was wrong in the first draft of this check. Hence a stripper that cannot
-    drift: same length, same newlines, verified on both files.
+    Neither is a new spelling of `#`. Both are the preprocessor doing what the
+    standard says before any directive is recognised, so the fix is to do the
+    same thing rather than to anticipate its results.
 
-    Written out rather than regexed because a naive comment regex eats pointer
-    dereferences and string contents; this tracks string and char literals and
-    their escapes, including a `//` comment continued by a trailing backslash.
+    ⚠ PHASE 1 IS DELIBERATELY NOT PERFORMED. Phase 1 replaces trigraphs, and
+    gcc -- which XC32 is -- has them OFF unless -trigraphs is passed. Applying
+    it here would make this checker see a directive THE COMPILER DOES NOT,
+    which is a false positive, not a closed hole. `??=` stays in `DIRECTIVE` as
+    cheap fail-closed defence and is documented as unreachable in the real
+    build rather than claimed as coverage.
+
+    Offsets and line numbers do NOT survive this, by construction -- joining
+    lines and collapsing comments is the point. So every check that uses this
+    text finds its spans IN this text; nothing maps back to raw coordinates.
+    An earlier round got that wrong in the other direction, reading a
+    stripped-text line number as a raw one.
     """
-    out = list(src)
-    i, n = 0, len(src)
+    # Phase 2: backslash-newline is deleted and the lines become one. Trailing
+    # whitespace before the newline is tolerated, because gcc tolerates it
+    # (with a warning) and splices anyway -- matching the compiler matters
+    # more here than matching the strict grammar.
+    spliced = re.sub(r"\\[ \t]*\n", "", src)
+
+    # Phase 3: each comment becomes ONE space. A block comment spanning
+    # newlines therefore collapses onto a single line, which is exactly what
+    # rejoins `#define /* ... */ NAME` into one logical directive.
     NORMAL, STR, CHR, LINE, BLOCK = range(5)
-    st = NORMAL
+    out, i, n, st = [], 0, len(spliced), NORMAL
     while i < n:
-        c = src[i]
-        nxt = src[i + 1] if i + 1 < n else ""
+        c = spliced[i]
+        nxt = spliced[i + 1] if i + 1 < n else ""
         if st == NORMAL:
             if c == "/" and nxt == "/":
                 st = LINE
-                out[i] = out[i + 1] = " "
+                out.append(" ")
                 i += 2
                 continue
             if c == "/" and nxt == "*":
                 st = BLOCK
-                out[i] = out[i + 1] = " "
+                out.append(" ")
                 i += 2
                 continue
             if c == '"':
                 st = STR
             elif c == "'":
                 st = CHR
+            out.append(c)
+            i += 1
         elif st in (STR, CHR):
             if c == "\\":
+                out.append(spliced[i:i + 2])
                 i += 2
                 continue
             if (st == STR and c == '"') or (st == CHR and c == "'"):
                 st = NORMAL
+            out.append(c)
+            i += 1
         elif st == LINE:
-            if c == "\\" and nxt == "\n":
-                out[i] = " "
-                i += 2
-                continue
             if c == "\n":
                 st = NORMAL
-            else:
-                out[i] = " "
-        elif st == BLOCK:
+                out.append(c)
+            i += 1
+        else:                                    # BLOCK
             if c == "*" and nxt == "/":
-                out[i] = out[i + 1] = " "
                 st = NORMAL
                 i += 2
                 continue
-            if c != "\n":
-                out[i] = " "
-        i += 1
+            i += 1
     return "".join(out)
+
+
+def table_entries(body):
+    """Every top-level brace initialiser in an array body, in order."""
+    out, depth, start = [], 0, None
+    for i, c in enumerate(body):
+        if c == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0 and start is not None:
+                out.append((start, i + 1, body[start:i + 1]))
+    return out
+
+
+def is_terminator(entry):
+    """Does this table entry stop findCommandHeader?
+
+    ⛔ `{0},` IS A TERMINATOR. It zero-initialises every member, `pattern`
+    included, so findCommandHeader's `cmdlist[i].pattern != NULL` stops there
+    (libscpi/src/parser.c:178). r5 recognised only `.pattern = NULL` and
+    SCPI_CMD_LIST_END, so `{0},` placed before the rows walked straight past
+    this check -- and past the #907 gate too, which sees no `.pattern` to
+    extract.
+
+    So the test is not "does it look like the terminator we know", which is
+    the recognise-a-shape mistake these five rounds keep punishing. It is:
+    does this entry supply a NON-NULL pattern? An entry with no `.pattern`
+    member at all either zero-initialises it or initialises positionally, and
+    either way this checker cannot show it is non-NULL -- so it counts as a
+    stop. Measured first: all 298 entries in the real table carry an explicit
+    `.pattern =`, so this forbids nothing the file does today.
+    """
+    if "SCPI_CMD_LIST_END" in entry:
+        return True
+    if re.search(r"\.pattern\s*=\s*NULL\b", entry):
+        return True
+    return not re.search(r"\.pattern\s*=", entry)
 
 
 def macro_sensitive_identifiers(extra=()):
@@ -435,20 +511,26 @@ def main():
     adc = strip_comments(adc_raw)
     iface = strip_comments(iface_raw)
 
-    # The directive scan below maps spans back to the real file by OFFSET, so
-    # the blanker's invariant is load-bearing. Assert it rather than trust it:
-    # if it ever drifts, every directive check silently looks in the wrong
-    # place and passes.
-    adc_blank, iface_blank = blank_comments(adc_raw), blank_comments(iface_raw)
-    for label, raw, blank in (("SCPIADC.c", adc_raw, adc_blank),
-                              ("SCPIInterface.c", iface_raw, iface_blank)):
-        ok = len(raw) == len(blank) and raw.count("\n") == blank.count("\n")
-        check(ok, "%s: blank_comments preserved length and line count" % label
-              if ok else
-              "%s: blank_comments changed the file's geometry (%d->%d bytes, "
-              "%d->%d lines) -- every offset-based check below is unsound"
-              % (label, len(raw), len(blank), raw.count("\n"),
-                 blank.count("\n")))
+    # Phases 2 and 3, then every directive and table check works in THIS
+    # text. Both post-conditions are asserted rather than assumed: a splice
+    # left behind means a macro name could still straddle two lines, and a
+    # phase that removed nothing means it silently did not run.
+    adc_phased = translation_phases(adc_raw)
+    iface_phased = translation_phases(iface_raw)
+    for label, raw, phased in (("SCPIADC.c", adc_raw, adc_phased),
+                               ("SCPIInterface.c", iface_raw, iface_phased)):
+        left = re.search(r"\\[ \t]*\n", phased)
+        check(left is None,
+              "%s: no line splice survives phase 2" % label if left is None
+              else "%s: a backslash-newline survived phase 2, so a macro name "
+                   "can still straddle two physical lines" % label)
+        shrank = len(phased) < len(raw)
+        check(shrank,
+              "%s: phase 3 removed %d bytes of comment"
+              % (label, len(raw) - len(phased)) if shrank else
+              "%s: phase 3 removed nothing (%d bytes in and out) -- it cannot "
+              "have run, and every scan below is reading unprocessed text"
+              % (label, len(raw)))
 
     # ---- the command table rows, exactly -------------------------------
     for pattern, expected_row in sorted(EXPECTED_REGISTRATIONS.items()):
@@ -509,11 +591,11 @@ def main():
     # Measured on the real source first: all three bodies contain zero
     # directives in any spelling, so this forbids nothing the file does today.
     for name in EXPECTED_BODIES:
-        sp = body_span(adc_blank, name)
+        sp = body_span(adc_phased, name)
         if sp is None:
             continue
         found = re.findall(r"(?m)^[ \t]*" + DIRECTIVE + r"[ \t]*(\w+)",
-                           adc_blank[sp[0]:sp[1]])
+                           adc_phased[sp[0]:sp[1]])
         check(not found,
               "%s's body contains no preprocessor directive (any spelling)"
               % name if not found else
@@ -527,7 +609,7 @@ def main():
     # argument unexpanded, so `#define scpi_commands empty_commands`
     # redirected the real call while this checker resolved the array by the
     # pre-macro name, found both rows inside it, and passed.
-    table, err = active_command_table(iface_blank)
+    table, err = active_command_table(iface_phased)
     check(table is not None,
           "the active command table was located: %s"
           % (table[0] if table else err) if table is not None else
@@ -541,8 +623,8 @@ def main():
     # leaving the new callee unguarded.
     extra = ("SCPI_Init",) + ((table[0],) if table else ())
     sensitive = macro_sensitive_identifiers(extra)
-    for label, blank in (("SCPIADC.c", adc_blank),
-                         ("SCPIInterface.c", iface_blank)):
+    for label, blank in (("SCPIADC.c", adc_phased),
+                         ("SCPIInterface.c", iface_phased)):
         defined = set(re.findall(
             r"(?m)^[ \t]*" + DIRECTIVE + r"[ \t]*define[ \t]+"
             r"([A-Za-z_][A-Za-z0-9_]*)", blank))
@@ -557,26 +639,30 @@ def main():
 
     if table is not None:
         tname, tstart, tend = table
-        body = iface_blank[tstart:tend]
+        # +1 to step INSIDE the array's own opening brace. Without it the
+        # whole initialiser parses as a single top-level entry, no entry
+        # classifies as a terminator, and the check fails -- which is how
+        # this off-by-one was found, rather than by it passing quietly.
+        body_start = tstart + 1
+        body = iface_phased[body_start:tend]
         # ⛔ findCommandHeader iterates `cmdlist[i].pattern != NULL`
         # (libscpi/src/parser.c:178), so it STOPS at the first terminator.
         # r4's second MEDIUM: a terminator placed before these rows leaves
         # both commands unreachable while every other check here passes.
         # Being inside the array is therefore not sufficient -- being inside
         # the REACHABLE PART of it is the actual requirement.
-        terms = list(re.finditer(
-            r'\{\s*\.pattern\s*=\s*NULL\s*,[^}]*\}\s*,'
-            r'|\bSCPI_CMD_LIST_END\b', body))
+        entries = table_entries(body)
+        terms = [e for e in entries if is_terminator(e[2])]
         check(bool(terms),
-              "%s is terminated (%d terminator(s))" % (tname, len(terms))
-              if terms else
-              "%s has no NULL-pattern terminator at all, so the reachable "
-              "extent of the table cannot be established" % tname)
-        first_term = terms[0].start() if terms else len(body)
+              "%s is terminated (%d of %d entries terminate)"
+              % (tname, len(terms), len(entries)) if terms else
+              "%s has no terminating entry at all, so the reachable extent "
+              "of the table cannot be established" % tname)
+        first_term = terms[0][0] if terms else len(body)
         for pattern in sorted(EXPECTED_REGISTRATIONS):
             rows = list(re.finditer(
                 r'\{\s*\.pattern\s*=\s*"%s"\s*,[^}]*\}\s*,'
-                % re.escape(pattern), iface_blank))
+                % re.escape(pattern), iface_phased))
             if not rows:
                 continue
             outside = [r for r in rows if not tstart < r.start() < tend]
@@ -588,7 +674,7 @@ def main():
                   % (pattern, tname))
             if outside:
                 continue
-            late = [r for r in rows if (r.start() - tstart) > first_term]
+            late = [r for r in rows if (r.start() - body_start) > first_term]
             check(not late,
                   "%s's row precedes %s's terminator, so dispatch reaches it"
                   % (pattern, tname) if not late else
