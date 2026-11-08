@@ -2531,12 +2531,17 @@ static void lDRV_SDSPI_BufferIOTasks
 
         case DRV_SDSPI_TASK_WRITE_DATA:
 
-            /* #1217: computed before the block goes out, from what is about to
-             * be sent. buffer advances per block, so this covers CMD25 too. */
-            dObj->writeBlockCrc16 = DRV_SDSPI_Crc16(currentBufObj->buffer, DRV_SDSPI_MEDIA_BLOCK_SIZE);
-
             if (DRV_SDSPI_SPIWrite(dObj, currentBufObj->buffer, 512) == true)
             {
+                /* #1217: the block's CRC16, computed from the very bytes now
+                 * being sent, WHILE the DMA sends them: it is first needed in
+                 * DRV_SDSPI_TASK_WRITE_CRC_BYTES, after this transfer
+                 * completes. Computing it before queuing the write added it
+                 * serially to every block -- measured ~9% SD write throughput.
+                 * Both the CPU and the DMA only READ the buffer here, so
+                 * overlapping them is safe. buffer advances per block, so this
+                 * covers CMD25 too. */
+                dObj->writeBlockCrc16 = DRV_SDSPI_Crc16(currentBufObj->buffer, DRV_SDSPI_MEDIA_BLOCK_SIZE);
                 dObj->nextTaskState = DRV_SDSPI_TASK_WRITE_CRC_BYTES;
                 dObj->taskBufferIOState = DRV_SDSPI_TASK_SPI_STATUS;
             }
