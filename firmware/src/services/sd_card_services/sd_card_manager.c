@@ -3246,10 +3246,20 @@ void sd_card_manager_ProcessState() {
                  * session entirely, rotations included (see its definition). */
                 /* #1031: a part opened to continue a session after a write
                  * failure needs the header too -- the encoder sent it once, at
-                 * session start, so without this the part (or the re-created
-                 * first file) cannot be decoded on its own. */
-                bool openNeedsStreamHeader = (gSdRotating || resumedAfterError)
-                                          && gWriteSessionIsStreamingLog;
+                 * session start, so without this the part cannot be decoded on
+                 * its own. Only a CONTINUATION part (fileCounter > 0), though:
+                 * that implies this session's data reached the card, so the
+                 * encoder has run and rebuilt the header cache. A resume that
+                 * reopens the FIRST file (a failure before anything landed,
+                 * e.g. a failed first open) may run before the encoder has
+                 * started, while the cache still holds the PREVIOUS session's
+                 * header -- a CSV header at the top of a protobuf file (#1224
+                 * audit r2). That file gets the encoder's own inline header,
+                 * exactly as an ordinary first open does. */
+                bool openNeedsStreamHeader =
+                        (gSdRotating ||
+                         (resumedAfterError && gSDCardData.fileCounter > 0u))
+                        && gWriteSessionIsStreamingLog;
                 if (!openAborted) {
                     gSdRotating = false;
                 }
