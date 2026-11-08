@@ -619,7 +619,9 @@ scpi_result_t SCPI_StorageSDEnableGet(scpi_t * context){
  * pre-existing ERROR -> UNMOUNT_DISK -> INIT -> OPEN_FILE(WRITE_PLUS) path
  * then re-opens the SAME base filename with fileCounter reset to 0, which
  * TRUNCATES it -- destroying already-recorded data, not merely ending the
- * session. Letting an SCPI-armable, network-reachable command trigger that on
+ * session. (#1031 since made that remount continue the session in its next
+ * file part instead; the gate is unchanged, and `FAILNext 2` arms the
+ * live-session sites separately -- see gFailNextSessionWrite.) Letting an SCPI-armable, network-reachable command trigger that on
  * a shipped device is the thing the gate exists to prevent. The full argument,
  * the per-call-site table and the coverage this gate gives up (the rotation
  * drains' #825/#838 twins, which stay source-review-only) are in
@@ -701,17 +703,23 @@ scpi_result_t SCPI_StorageSDFailNextSet(scpi_t * context) {
     /* Range-checked rather than the usual "non-zero means true", because a
      * typo in a test script that silently armed a write failure is a worse
      * outcome here than an error the script can see. */
-    if (param1 < 0 || param1 > 1) {
+    if (param1 < 0 || param1 > 2) {
         SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
         return SCPI_RES_ERR;
     }
-    sd_card_manager_SetFailNextWrite(param1 != 0);
+    /* #1031: 2 arms the live-session one-shot instead. Each value leaves
+     * exactly one arm outstanding; 0 disarms both. */
+    sd_card_manager_SetFailNextWrite(param1 == 1);
+    sd_card_manager_SetFailNextSessionWrite(param1 == 2);
     /* Log BOTH edges. Logging only the arm would leave an arm-then-disarm
      * sequence reading, in SYST:LOG?, as a device that is still armed -- which
      * is the scarier half of the truth and the half a support engineer would
      * act on. LOG_E (not LOG_E_ONCE/LOG_E_SESSION) on purpose: this appearing
      * in a field log at all is the signal, and must never be deduplicated. */
-    if (param1 != 0) {
+    if (param1 == 2) {
+        LOG_E("[SD] TEST HOOK SYST:STOR:SD:FAILNext 2 ARMED - the next "
+              "session write will be forced to fail. Bench use only.");
+    } else if (param1 != 0) {
         /* 121 bytes, 4 under Logger's 125-byte ceiling. Was 135 and therefore
          * truncated with no error and no marker, losing "use only." -- the
          * bench-only caveat, i.e. the remedy. Kept short per #1025/#1039:
@@ -730,7 +738,9 @@ scpi_result_t SCPI_StorageSDFailNextSet(scpi_t * context) {
  * consumed it (or it was never armed) -- so a test can confirm the injection
  * fired instead of inferring it from downstream counters. */
 scpi_result_t SCPI_StorageSDFailNextGet(scpi_t * context) {
-    SCPI_ResultInt32(context, sd_card_manager_FailNextWriteArmed() ? 1 : 0);
+    /* #1031: reports WHICH arm is outstanding, 2 = live-session write. */
+    SCPI_ResultInt32(context, sd_card_manager_FailNextSessionWriteArmed() ? 2 :
+                              sd_card_manager_FailNextWriteArmed() ? 1 : 0);
     return SCPI_RES_OK;
 }
 

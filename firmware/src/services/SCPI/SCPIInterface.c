@@ -18,6 +18,7 @@
 //// 3rd Party
 //#include "HAL/NVM/DaqifiSettings.h"
 #include "HAL/Power/PowerApi.h"
+#include "HAL/UI/UI.h"
 #include "services/DaqifiPB/DaqifiOutMessage.pb.h"
 #include "services/DaqifiPB/NanoPB_Encoder.h"
 //#include "Util/StringFormatters.h"
@@ -7726,6 +7727,26 @@ static scpi_result_t SCPI_GetEcho(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+/* SYSTem:IDENtify <0|1>: flash both LEDs (~1 s fast flash, ~1 s off,
+ * repeating) so an operator can see which board a host is talking to. */
+static scpi_result_t SCPI_SetIdentify(scpi_t * context) {
+    int param1;
+    if (!SCPI_ParamInt32(context, &param1, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (param1 < 0 || param1 > 1) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+    UI_SetIdentify(param1 == 1);
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_GetIdentify(scpi_t * context) {
+    SCPI_ResultInt32(context, UI_GetIdentify() ? 1 : 0);
+    return SCPI_RES_OK;
+}
+
 static scpi_result_t SCPI_SetEcho(scpi_t * context) {
     int param1;
     microrl_t* console;
@@ -9892,6 +9913,8 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:LOG:CMDHistory?", .callback = SCPI_GetCommandHistory,},
     {.pattern = "SYSTem:ECHO", .callback = SCPI_SetEcho,},
     {.pattern = "SYSTem:ECHO?", .callback = SCPI_GetEcho,},
+    {.pattern = "SYSTem:IDENtify", .callback = SCPI_SetIdentify,},
+    {.pattern = "SYSTem:IDENtify?", .callback = SCPI_GetIdentify,},
     //    {.pattern = "SYSTem:NVMRead?", .callback = SCPI_NVMRead, },  
     //    {.pattern = "SYSTem:NVMWrite", .callback = SCPI_NVMWrite, }, 
     //    {.pattern = "SYSTem:NVMErasePage", .callback = SCPI_NVMErasePage, },

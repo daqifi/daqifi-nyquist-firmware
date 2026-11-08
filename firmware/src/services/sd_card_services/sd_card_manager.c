@@ -346,6 +346,13 @@ static volatile bool gWriteSessionIsStreamingLog = false; /* latched at arm */
  * exist. "Recoverable" is true only of the SESSION (SYST:STOR:SD:ENAble re-arms
  * logging); the bytes are gone.
  *
+ * ⚠ #1031 UPDATE: the remount described here no longer truncates. An
+ * ERROR-driven unmount of a still-enabled write session now keeps the session's
+ * split state and reopens in its NEXT part, so a failed write costs the bytes
+ * in flight (counted in SdDroppedBytes), not the file. This gate is kept as-is
+ * so FAILNext 1 behaves exactly as before; FAILNext 2 is the arm for the
+ * live-session sites (gFailNextSessionWrite).
+ *
  * That truncate-on-remount is PRE-EXISTING behaviour -- reachable today by a
  * real transient SYS_FS_FileWrite failure with no hook in the tree, and worth
  * its own ticket rather than a drive-by change here. What an ungated hook adds
@@ -423,6 +430,17 @@ static volatile bool gWriteSessionIsStreamingLog = false; /* latched at arm */
  * critical section -- same reasoning as the gWriteSessionIsStreamingLog latch
  * above. volatile because the writing and reading contexts differ. */
 static volatile bool gFailNextWrite = false;
+
+/* #1031: SYST:STOR:SD:FAILNext 2 -- a second, separate one-shot that fails the
+ * next write of a LIVE session (state WRITE_TO_FILE: the ordinary write or a
+ * rotation drain). gFailNextWrite above is gated away from exactly those sites
+ * because their failure used to truncate the log; #1031 made that failure
+ * continue the session in its next part instead, which is what this arm exists
+ * to regression-test. Kept as its own flag so gFailNextWrite's consume site,
+ * which tests/host pins by shape, is untouched. Same rails: one-shot
+ * test-and-clear under a critical section, scrubbed on every reset, USB-only
+ * to arm, LOG_E on arm, disarm and fire. */
+static volatile bool gFailNextSessionWrite = false;
 
 /* #824: what a sd_UpdateSettingsImpl() caller is doing. See the three public
  * wrappers in sd_card_manager.h for why this is a parameter and not something
@@ -513,6 +531,20 @@ typedef struct {
     uint32_t fileCounter;        // Current file number (1, 2, 3, ...)
     uint64_t currentFileBytes;   // Bytes written to current file
     bool fileSplittingEnabled;   // True if maxFileSizeBytes > 0
+    /* #1031: set when the ERROR state sends a write session to UNMOUNT,
+     * consumed by that unmount. Tells it to keep the session's split state and
+     * move to the next part instead of re-deriving (and truncating) the file
+     * that already holds the session's data. Cleared by DEINIT, which every
+     * deliberate teardown passes through. */
+    bool errorRemountPending;
+    /* #1031: set by that unmount when it continued the session; consumed by
+     * the next OPEN_FILE, which counts the bytes the failure stranded. */
+    bool resumingAfterError;
+    /* #1031: a write of this session's data has been issued (SDCardWrite in
+     * WRITE_TO_FILE). Data exists only once the encoder has run, so this also
+     * means the streaming header cache belongs to THIS session. Cleared by
+     * DEINIT, which every session start and deliberate teardown passes. */
+    bool sessionWriteIssued;
 
     // Operation result tracking
     bool lastOperationSuccess;   // Result of last completed operation
@@ -725,6 +757,11 @@ static int SDCardWrite() {
     if (gSDCardData.fileHandle == SYS_FS_HANDLE_INVALID) {
         goto __exit;
     }
+    /* #1031: see sessionWriteIssued. */
+    if (gSDCardData.currentProcessState ==
+            SD_CARD_MANAGER_PROCESS_STATE_WRITE_TO_FILE) {
+        gSDCardData.sessionWriteIssued = true;
+    }
 
     /* #981: test/bench hook -- see gFailNextWrite above. Consume the arm and
      * fail, WITHOUT issuing the real write: the point is to exercise the
@@ -787,7 +824,7 @@ static int SDCardWrite() {
      * what this comment is a correction of: it guarantees the hook cannot
      * CAUSE a truncating teardown, not that no truncation can accompany one.
      * An UNMOUNT_DISK reached from a REAL error while `mode` is still WRITE
-     * remounts and truncates on the pre-existing path regardless -- that was
+     * remounts (and, before #1031, truncated) on that path regardless -- that was
      * already in motion before the arm was taken, and the arm neither started
      * it nor changed its outcome. On the ordinary stop this test uses, SCPI
      * has cleared `mode`, so INIT does not remount and nothing is truncated.
@@ -811,6 +848,7 @@ static int SDCardWrite() {
      * SYS_FS_FileWrite itself reports a real failure with, and accounts for
      * nothing on its own -- the callers' accounting IS the thing under test. */
     bool injectWriteFailure = false;
+    bool injectSessionWriteFailure = false;
     taskENTER_CRITICAL();
     if (gFailNextWrite &&
             gSDCardData.currentProcessState ==
@@ -818,7 +856,20 @@ static int SDCardWrite() {
         gFailNextWrite = false;
         injectWriteFailure = true;
     }
+    if (!injectWriteFailure && gFailNextSessionWrite &&
+            gSDCardData.currentProcessState ==
+                    SD_CARD_MANAGER_PROCESS_STATE_WRITE_TO_FILE) {
+        gFailNextSessionWrite = false;
+        injectSessionWriteFailure = true;
+    }
     taskEXIT_CRITICAL();
+    if (injectSessionWriteFailure) {
+        LOG_E("[SD] TEST HOOK SYST:STOR:SD:FAILNext 2 consumed - %u-byte "
+              "session write forced to FAIL. NOT a card fault.",
+              (unsigned)gSDCardData.writeBufferLength);
+        writeLen = -1;
+        goto __exit;
+    }
     if (injectWriteFailure) {
         /* Worst case 118 bytes (108 literal + 10 for an unbounded %u), 7 under
          * Logger's 125-byte ceiling. Was 174 worst case and truncated MID-WORD
@@ -1403,6 +1454,7 @@ bool sd_card_manager_Init(sd_card_manager_settings_t *pSettings) {
      * can always reach depending on where the linker happened to place the
      * flag. Scrubbed here, a reset of any kind disarms it. */
     gFailNextWrite = false;
+    gFailNextSessionWrite = false;  /* #1031: same #409 scrub */
 
     static bool isInitDone = false;
     if (!isInitDone) {
@@ -1445,6 +1497,9 @@ bool sd_card_manager_Init(sd_card_manager_settings_t *pSettings) {
         gSDCardData.fileCounter = 0;
         gSDCardData.currentFileBytes = 0;
         gSDCardData.fileSplittingEnabled = false;
+        gSDCardData.errorRemountPending = false;
+        gSDCardData.resumingAfterError = false;
+        gSDCardData.sessionWriteIssued = false;
     }
     return true;
 }
@@ -2189,6 +2244,41 @@ void sd_card_manager_ProcessState() {
                 gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_UNMOUNT_DISK;
             } else {
                 gSDCardData.unmountRetryCount = 0;
+                /* #1031: an ERROR-driven unmount of a write session that is
+                 * still enabled is NOT the end of the session -- INIT below
+                 * remounts and reopens straight away. Resetting the split state
+                 * here sent that reopen back to the session's FIRST filename,
+                 * opened WRITE_PLUS, which truncated everything recorded so far.
+                 * Keep the session's base name and continue in the next part,
+                 * so a write failure costs the bytes in flight, not the file.
+                 *
+                 * Only after this session has issued a write (sessionWriteIssued):
+                 * a failure before that -- a failed first open, a mount that
+                 * keeps failing -- is an ordinary restart of a session that
+                 * recorded nothing. The counter advances only when the current
+                 * part holds something, so repeated errors cannot run it up.
+                 * Keyed on the session, NOT on baseFilename being non-empty: a
+                 * name like ".csv" has an empty stem and still needs this
+                 * (#1224 audit r3; it continues as "-1.csv"). A deliberate
+                 * teardown always clears errorRemountPending in DEINIT first,
+                 * so a new session still starts at its first file, and still
+                 * overwrites it as before. */
+                bool continueSession = gSDCardData.errorRemountPending &&
+                        gSDCardData.sessionWriteIssued &&
+                        gpSDCardSettings->enable &&
+                        gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE;
+                gSDCardData.errorRemountPending = false;
+                if (continueSession) {
+                    if (gSDCardData.currentFileBytes > 0) {
+                        gSDCardData.fileCounter++;
+                    }
+                    gSDCardData.currentFileBytes = 0;
+                    gSDCardData.resumingAfterError = true;
+                    LOG_E("[SD] write failed - session continues in part %u, earlier data kept",
+                          (unsigned)gSDCardData.fileCounter);
+                    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_INIT;
+                    break;
+                }
                 // Reset file splitting state for next session
                 /* #689: curBucket/bucketPath are left alone here, and that is
                  * harmless rather than deliberate -- resetting fileCounter is
@@ -3058,6 +3148,26 @@ void sd_card_manager_ProcessState() {
                  * is gone -- the header is written straight into the file
                  * below, so there is no ordering to arrange through the
                  * buffer and nothing to reset. */
+                /* #1031: resuming after a write failure. What is still pending
+                 * in the write buffer is the write that failed, and the ring
+                 * holds what the encoder accepted during the remount; both are
+                 * dropped below. Count them, so the gap the failure leaves in
+                 * the recording is visible in SdDroppedBytes. The pending
+                 * write may have partly landed before it failed, so this is
+                 * an upper bound. */
+                const bool resumedAfterError = gSDCardData.resumingAfterError;
+                if (resumedAfterError) {
+                    gSDCardData.resumingAfterError = false;
+                    size_t stranded;
+                    SD_TakeMutexDebug(gSDCardData.wMutex, "resume_count_stranded");
+                    stranded = (gSDCardData.sdCardWritePending ?
+                                gSDCardData.writeBufferLength : 0u) +
+                               CircularBuf_NumBytesAvailable(&gSDCardData.wCirbuf);
+                    xSemaphoreGive(gSDCardData.wMutex);
+                    if (stranded > 0u) {
+                        Streaming_ReportSdDiscard(stranded);
+                    }
+                }
                 if (!gSdRotating) {
                     /* #757: reset the buffer's BOOKKEEPING, not its bytes.
                      *
@@ -3150,7 +3260,16 @@ void sd_card_manager_ProcessState() {
                  * gSdRotating excludes the session's first file, and
                  * gWriteSessionIsStreamingLog excludes a NON-streaming write
                  * session entirely, rotations included (see its definition). */
-                bool openNeedsStreamHeader = gSdRotating
+                /* #1031: a file opened to continue a session after a write
+                 * failure needs the header too -- the encoder sent it once, at
+                 * session start, so without this the part cannot be decoded on
+                 * its own. That includes a resumed FIRST file, whose inline
+                 * header went out in the very write that failed (#1224 audit
+                 * r3). The cache is current: a resume only follows an issued
+                 * write (sessionWriteIssued), and data exists only once the
+                 * encoder has run and rebuilt it -- so the previous session's
+                 * header cannot land here (#1224 audit r2). */
+                bool openNeedsStreamHeader = (gSdRotating || resumedAfterError)
                                           && gWriteSessionIsStreamingLog;
                 if (!openAborted) {
                     gSdRotating = false;
@@ -4515,9 +4634,15 @@ void sd_card_manager_ProcessState() {
 
             break;
         case SD_CARD_MANAGER_PROCESS_STATE_DEINIT:
+            /* #1031: a deliberate teardown ends the session; never continue it. */
+            gSDCardData.errorRemountPending = false;
+            gSDCardData.resumingAfterError = false;
+            gSDCardData.sessionWriteIssued = false;
             gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_UNMOUNT_DISK;
             break;
         case SD_CARD_MANAGER_PROCESS_STATE_ERROR:
+            gSDCardData.errorRemountPending =
+                    (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE);
             gSDCardData.lastOperationSuccess = false;
             xSemaphoreGive(gSDCardData.opCompleteSemaphore);
             gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_UNMOUNT_DISK;
@@ -5052,6 +5177,14 @@ void sd_card_manager_SetFailNextWrite(bool arm) {
      * Same shape as sd_card_manager_ClearStartupDirFull above; a critical
      * section here would buy nothing and cost interrupt latency. */
     gFailNextWrite = arm;
+}
+
+void sd_card_manager_SetFailNextSessionWrite(bool arm) {
+    gFailNextSessionWrite = arm;
+}
+
+bool sd_card_manager_FailNextSessionWriteArmed(void) {
+    return gFailNextSessionWrite;
 }
 
 bool sd_card_manager_FailNextWriteArmed(void) {
