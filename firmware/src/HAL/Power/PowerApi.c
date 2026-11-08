@@ -1040,7 +1040,12 @@ static void Power_HandlePoweredUpExtDownState(void) {
               pData->BQ24297Data.status.vsysStat, pData->chargePct);
 
         /* #1226: this path does not go through Power_Down(), so finish the
-         * stream and its SD log here too, while the rails are still up. */
+         * stream and its SD log here too, while the rails are still up.
+         * STANDBY is published FIRST, as the button/SCPI path does before its
+         * own call: a START that has not pinned its stop generation yet then
+         * fails its entry power check, and one that has is cancelled by the
+         * generation bump inside the stop (#1226 audit r2). */
+        pData->powerState = STANDBY;
         Power_FinishStreamingBeforeRailsOff();
 
         /* Explicitly disable all external rails before shutdown */

@@ -7273,6 +7273,17 @@ bool SCPI_StopStreamingForPowerDown(void) {
     if (pRunTimeStreamConfig != NULL && pRunTimeStreamConfig->IsEnabled) {
         LOG_I("[POWER] stopping stream and closing SD log before power-down");
         SCPI_PerformStreamingStop();
+    } else {
+        /* IsEnabled == false can also mean a START has passed its power check
+         * but not yet published (#1226 audit r2). Advance the stop generation
+         * as a real stop would: every arm site re-checks it in the critical
+         * section that publishes IsEnabled, so that START refuses instead of
+         * arming in STANDBY. A START that pins the generation after this
+         * already sees powerState == STANDBY at its own entry check -- every
+         * caller sets STANDBY before calling here. */
+        taskENTER_CRITICAL();
+        gStreamStopGen++;
+        taskEXIT_CRITICAL();
     }
     /* IsEnabled == false proves sampling stopped, not that the log is closed:
      * a stop on another transport clears it first and THEN waits for the SD
