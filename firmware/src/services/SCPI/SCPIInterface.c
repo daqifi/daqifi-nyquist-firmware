@@ -2772,19 +2772,13 @@ static scpi_result_t SCPI_RunSessionStartClaimed(scpi_t * context,
 static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context,
                                                     uint32_t stopGenPinned,
                                                     bool stopActivePinned) {
-    /* #1120: the pin arrives as a parameter and is DELIBERATELY NOT ACTED ON
-     * here. Whether THRoughput should gain a stop-race guard is the gap
-     * recorded next to gStreamStopGen's definition, and it is #1201's
-     * decision, not this refactor's -- this change makes the values
-     * AVAILABLE, which is the whole point of threading them through the
-     * runner instead of giving one command a private mailbox.
-     *
-     * Cast to void rather than left bare: the build is -Werror, and while
-     * -Wall alone does not warn on an unused parameter, saying "unused on
-     * purpose" in code is better than relying on which warnings happen to be
-     * enabled. */
-    (void) stopGenPinned;
-    (void) stopActivePinned;
+    /* #1120 threaded the stop pin through to here; #1226 acts on it. A
+     * power-off advances gStreamStopGen to cancel any arm still in its setup
+     * window, and this arm is checked against it in the same critical section
+     * that publishes IsEnabled, exactly as START's is -- otherwise a benchmark
+     * in setup when the button is pressed arms in STANDBY with the rails off
+     * and samples for up to 60 s. (#1201 / PR #1215 generalises the same check
+     * into one StopRequestedSince() predicate.) */
 
     int32_t freq, duration;
     if (!SCPI_ParamInt32(context, &freq, TRUE)) return SCPI_RES_ERR;
@@ -2906,7 +2900,10 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context,
      * do, and with no session running it can only discard stale samples. */
     bool cfgBusy;
     bool mappingMoved = false;
+    bool stopRequested;
     taskENTER_CRITICAL();
+    stopRequested = stopActivePinned || (gStreamStopsActive != 0u) ||
+                    (gStreamStopGen != stopGenPinned);
     cfgBusy = Streaming_ConfigChangeInProgress();
     if (!cfgBusy) {
         /* #868: the enabled-channel set moved after this command built its
@@ -2955,18 +2952,18 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context,
                                 pBoardConfig, (const AInRuntimeArray*)pRtAin)
                         != mappingSelAtBuild);
     }
-    if (!cfgBusy && !mappingMoved) {
+    if (!cfgBusy && !mappingMoved && !stopRequested) {
         pStreamCfg->ClockPeriod = periodCycles - 1;
         pStreamCfg->Frequency = (uint64_t)freq;
         pStreamCfg->IsEnabled = true;
     }
     taskEXIT_CRITICAL();
 
-    /* #868: this call armed nothing -- neither refusal reason reaches the
-     * writes above -- so every "did WE arm it?" test below is this, not
-     * cfgBusy alone.  Getting that wrong would disarm a concurrent session's
+    /* #868: this call armed nothing -- no refusal reason reaches the writes
+     * above -- so every "did WE arm it?" test below is this, not cfgBusy
+     * alone.  Getting that wrong would disarm a concurrent session's
      * IsEnabled on the mapping-moved path. */
-    const bool armRefused = cfgBusy || mappingMoved;
+    const bool armRefused = cfgBusy || mappingMoved || stopRequested;
 
     /* Only pump the state machine if we actually armed. On the refused path
      * Streaming_UpdateState() would call Streaming_Stop(), and if a concurrent
@@ -2982,7 +2979,8 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context,
      * its own and stop it after the dwell (Qodo). */
     if (armRefused || !pStreamCfg->Running) {
         LOG_E("Throughput benchmark: %s",
-              cfgBusy ? "refused, a streaming config change is in flight (#847)"
+              stopRequested ? "refused, a stop or power-off happened during setup (#1226)"
+                      : cfgBusy ? "refused, a streaming config change is in flight (#847)"
                       : mappingMoved
                       ? "refused, the enabled-channel set moved after the mapping was built (#868)"
                       : "streaming failed to start");
@@ -7036,6 +7034,26 @@ static void SCPI_PerformStreamingStop(void) {
         taskEXIT_CRITICAL();
     }
 
+    /* #1227: let the encoder finish the iteration it is in before the
+     * teardown below. Streaming_UpdateState() -> Streaming_Start() zeroes the
+     * shared encoder buffer, and a stop running above the Stream task's
+     * priority could do that between the encoder building a packet and
+     * writing it, which sent the final packet as zeros. The encoder re-checks
+     * IsEnabled after raising its in-critical flag, so once it is quiescent it
+     * will not start another packet. Bounded, like the START path's identical
+     * wait: on timeout the teardown proceeds as it always did, and says so. */
+    {
+        const TickType_t qStart = xTaskGetTickCount();
+        while (!Streaming_TasksAreQuiescent()) {
+            if ((xTaskGetTickCount() - qStart) > pdMS_TO_TICKS(200)) {
+                LOG_E("Streaming stop: encoder not quiescent after 200 ms - "
+                      "tearing down anyway (#1227)");
+                break;
+            }
+            vTaskDelay(1);
+        }
+    }
+
     Streaming_UpdateState();
 
     // Flush any remaining USB CDC data so the host receives all streamed bytes.
@@ -7279,18 +7297,16 @@ bool SCPI_StopStreamingForPowerDown(void) {
      * generation after this bump sees powerState == STANDBY at its own entry
      * check: every caller publishes STANDBY before calling here.
      *
-     * KNOWN RESIDUALS, both narrow and both shared with SYST:STReam:STOP, not
-     * introduced here (#1226 audit r4):
-     *   - The ordinary teardown inherits the Streaming_Start/Streaming_Stop
-     *     race: a Streaming_Start preempted between its IsEnabled check and
-     *     setting Running is skipped by Streaming_Stop (which sees
-     *     Running == false) and then sets Running with IsEnabled already
-     *     false. So "published, therefore stopped" holds only outside that
-     *     window.
-     *   - SYST:STReam:THRoughput's arm ignores the pinned generation
-     *     (SCPI_RunThroughputBenchClaimed), so a benchmark in its setup window
-     *     is not cancelled. #1201 / PR #1215 adds the generation check at that
-     *     site (StopRequestedSince); left to that PR rather than duplicated. */
+     * The throughput benchmark's arm checks the generation too (#1226; it
+     * used to ignore its pin), and the shared teardown waits for the encoder
+     * to finish its iteration before clearing its buffer (#1227).
+     *
+     * KNOWN RESIDUAL, narrow and shared with SYST:STReam:STOP, not introduced
+     * here (#1226 audit r4): the ordinary teardown inherits the
+     * Streaming_Start/Streaming_Stop race -- a Streaming_Start preempted
+     * between its IsEnabled check and setting Running is skipped by
+     * Streaming_Stop (which sees Running == false) and then sets Running with
+     * IsEnabled already false. */
     taskENTER_CRITICAL();
     gStreamStopGen++;
     taskEXIT_CRITICAL();
