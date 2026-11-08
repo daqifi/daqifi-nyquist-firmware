@@ -3139,7 +3139,8 @@ void sd_card_manager_ProcessState() {
                  * the recording is visible in SdDroppedBytes. The pending
                  * write may have partly landed before it failed, so this is
                  * an upper bound. */
-                if (gSDCardData.resumingAfterError) {
+                const bool resumedAfterError = gSDCardData.resumingAfterError;
+                if (resumedAfterError) {
                     gSDCardData.resumingAfterError = false;
                     size_t stranded;
                     SD_TakeMutexDebug(gSDCardData.wMutex, "resume_count_stranded");
@@ -3243,7 +3244,11 @@ void sd_card_manager_ProcessState() {
                  * gSdRotating excludes the session's first file, and
                  * gWriteSessionIsStreamingLog excludes a NON-streaming write
                  * session entirely, rotations included (see its definition). */
-                bool openNeedsStreamHeader = gSdRotating
+                /* #1031: a part opened to continue a session after a write
+                 * failure needs the header too -- the encoder sent it once, at
+                 * session start, so without this the part (or the re-created
+                 * first file) cannot be decoded on its own. */
+                bool openNeedsStreamHeader = (gSdRotating || resumedAfterError)
                                           && gWriteSessionIsStreamingLog;
                 if (!openAborted) {
                     gSdRotating = false;
