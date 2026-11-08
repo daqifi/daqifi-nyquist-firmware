@@ -521,7 +521,10 @@ static void lDRV_SDSPI_WriteResyncEnd(DRV_SDSPI_OBJ* dObj, bool resolved)
     {
         /* resyncToken low bits 0x0B mean the card rejected the block, which
          * proves it really was waiting: the RCA's step 2, seen in the field. */
-        LOG_E_ONCE(LOG_ONCE_SD_WRITE_RESYNC, "SD: write in doubt resynced (type=%u token=0x%02X)",
+        /* LOG_E, not LOG_E_ONCE: the _ONCE macros take a static string only
+         * (their ISR branch drops the arguments, Logger.h), and every resync
+         * after a fault should be visible in SYST:LOG?, not just the first. */
+        LOG_E("SD: write in doubt resynced (type=%u token=0x%02X)",
                 (unsigned)dObj->writeInDoubt, (unsigned)dObj->resyncToken);
         dObj->writeInDoubt = DRV_SDSPI_WRITE_IN_DOUBT_NONE;
         (void) DRV_SDSPI_SPIExclusiveAccess(dObj, false);
@@ -529,8 +532,9 @@ static void lDRV_SDSPI_WriteResyncEnd(DRV_SDSPI_OBJ* dObj, bool resolved)
     }
     else
     {
-        LOG_E_ONCE(LOG_ONCE_SD_WRITE_RESYNC_FAIL, "SD: write in doubt resync failed (type=%u stage=%u); retrying",
-                (unsigned)dObj->writeInDoubt, (unsigned)dObj->resyncStage);
+        /* One-shot, static string: a stuck-busy card retries this on every
+         * command, which LOG_E would turn into a flood. */
+        LOG_E_ONCE(LOG_ONCE_SD_WRITE_RESYNC_FAIL, "SD: write in doubt resync failed; retrying (#1217)");
         /* Raises CS and releases the lock taken in RESYNC_START. */
         dObj->cmdState = DRV_SDSPI_CMD_CONFIRM_EXEC_ERROR;
     }
@@ -1886,8 +1890,9 @@ static void lDRV_SDSPI_MediaInitialize ( SYS_MODULE_OBJ object )
                      * block would be programmed. So it is reported as an
                      * unusable card and never mounted; the detect FSM retries
                      * init about once a second, as for any card that fails. */
-                    LOG_E_ONCE(LOG_ONCE_SD_CMD59_REJECTED, "SD: card rejected CRC enable (CMD59 R1=0x%02X); not mounted, cannot protect it (#1217)",
-                            (unsigned)dObj->cmdResponse.response1.byte);
+                    /* Static string: LOG_E_ONCE drops arguments (Logger.h),
+                     * and this path repeats about once a second. */
+                    LOG_E_ONCE(LOG_ONCE_SD_CMD59_REJECTED, "SD: card rejected CRC enable (CMD59); not mounted, cannot protect it (#1217)");
                     dObj->mediaInitState = DRV_SDSPI_INIT_ERROR;
                 }
             }
