@@ -7270,20 +7270,25 @@ bool SCPI_StopStreamingForPowerDown(void) {
     /* Without this the stream kept running in STANDBY with the analog rails
      * off, and the SD log was never closed: its tail was lost on USB power,
      * and on battery the card lost power mid-write. */
+    /* Advance the stop generation FIRST, then look at IsEnabled (#1226 audit
+     * r2/r3). A START that published IsEnabled before this bump is seen below
+     * and stopped; one that has not published yet re-checks the generation in
+     * the critical section that publishes it and refuses. Reading IsEnabled
+     * first left a gap between the read and the bump for a START to publish
+     * through. A START that pins the generation after this bump sees
+     * powerState == STANDBY at its own entry check: every caller publishes
+     * STANDBY before calling here.
+     *
+     * NOT YET COVERED: SYST:STReam:THRoughput's arm ignores the pinned
+     * generation (SCPI_RunThroughputBenchClaimed), so a benchmark in its setup
+     * window is not cancelled by this. #1201 / PR #1215 wires the generation
+     * check into that site; it is left to that PR rather than duplicated. */
+    taskENTER_CRITICAL();
+    gStreamStopGen++;
+    taskEXIT_CRITICAL();
     if (pRunTimeStreamConfig != NULL && pRunTimeStreamConfig->IsEnabled) {
         LOG_I("[POWER] stopping stream and closing SD log before power-down");
         SCPI_PerformStreamingStop();
-    } else {
-        /* IsEnabled == false can also mean a START has passed its power check
-         * but not yet published (#1226 audit r2). Advance the stop generation
-         * as a real stop would: every arm site re-checks it in the critical
-         * section that publishes IsEnabled, so that START refuses instead of
-         * arming in STANDBY. A START that pins the generation after this
-         * already sees powerState == STANDBY at its own entry check -- every
-         * caller sets STANDBY before calling here. */
-        taskENTER_CRITICAL();
-        gStreamStopGen++;
-        taskEXIT_CRITICAL();
     }
     /* IsEnabled == false proves sampling stopped, not that the log is closed:
      * a stop on another transport clears it first and THEN waits for the SD
