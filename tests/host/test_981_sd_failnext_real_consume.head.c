@@ -148,6 +148,11 @@ static void SD_CheckFsOpDuration(TickType_t startTick, const char *operation,
  * cross-context-visibility qualifier and this binary has no other context. */
 static bool gFailNextWrite = false;
 
+/* #1031: mirrors `static volatile bool gFailNextSessionWrite = false;` -- the
+ * separate FAILNext 2 one-shot, whose consume is gated on WRITE_TO_FILE (the
+ * live-session sites) instead of UNMOUNT_DISK. */
+static bool gFailNextSessionWrite = false;
+
 /* The real consume gates on `gSDCardData.currentProcessState ==
  * SD_CARD_MANAGER_PROCESS_STATE_UNMOUNT_DISK` -- the arm may only be taken by
  * a write issued while the manager is ALREADY tearing down, never by an
