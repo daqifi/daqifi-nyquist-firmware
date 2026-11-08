@@ -65,6 +65,14 @@ meanings:
   * r4 also: a row can be exact, singular and at depth 0 and still not
     dispatch, because it sits in an array nothing hands to SCPI_Init. Hence
     `active_command_table`.
+  * r5: `#` is not the only spelling. `%:` is the C DIGRAPH for `#`, always
+    active in C99, and `%:define` put r4's own HIGH straight back. Hence
+    `DIRECTIVE`, which every scan here uses and none may bypass. r5 also:
+    SCPI_Init's ARGUMENT is itself macro-redirectable
+    (`#define scpi_commands empty_commands`), and a NULL-pattern terminator
+    placed before the rows makes them unreachable because findCommandHeader
+    stops there (parser.c:178). Hence the table name and `SCPI_Init` joining
+    the sensitive set, and the terminator-order check.
 
 ⛔⛔ SO HERE IS THE BOUNDED CLAIM, replacing "this checker reads what the
 compiler compiles" -- a sentence every round so far has falsified, and which
@@ -77,8 +85,10 @@ WHAT THIS GUARANTEES, over the text of these TWO FILES ONLY:
     contains no preprocessor directive;
   * neither file `#define`s any identifier the canonical text names outside a
     string literal;
-  * both table rows are byte-exact, singular, at conditional depth 0, and
-    inside the initialiser of the array that THIS file passes to SCPI_Init.
+  * both table rows are byte-exact, singular, at conditional depth 0, inside
+    the initialiser of the array that THIS file passes to SCPI_Init, and
+    BEFORE that array's first NULL-pattern terminator;
+  * no directive scan here can be evaded by spelling `#` as `%:` or `??=`.
 
 WHAT IT DOES NOT COVER, and nobody should read it as covering:
 
@@ -89,6 +99,16 @@ WHAT IT DOES NOT COVER, and nobody should read it as covering:
     a host check.
   * anything only a real preprocess would show: include order, conditional
     compilation selected by build configuration, NQ1/NQ2/NQ3 variant defines.
+
+    ⛔ THAT RESIDUAL CLASS HAS AN OWNER: #1033, "tests/host proves firmware
+    contracts by splicing and grepping, and three audit rounds each found a
+    different mutation it cannot catch". This pin is a fifth data point for
+    it, not a counter-example to it. Five rounds here found five more
+    spellings of the same gap, which is the argument #1033 makes: a text
+    checker and a compiler are different readers, and no amount of scanning
+    makes them the same one. The structural fix -- proving these contracts
+    against a REAL preprocess and compile -- belongs there. Do not try to
+    close it by adding a sixth scan to this file.
   * ANOTHER table row shadowing a short form of these commands --
     `{.pattern = "CONF:ADC:SAVE", ...}` placed earlier dispatches instead,
     because findCommandHeader takes the first match. That is NOT checked here
@@ -151,6 +171,15 @@ EXPECTED_BODIES = {
         return result;
     """,
 }
+
+# ⛔ EVERY DIRECTIVE SCAN BELOW USES THIS, and none may spell `#` itself.
+# `%:` is the C DIGRAPH for `#` and is always active in C99 -- no flag needed,
+# unlike the `??=` trigraph, which needs -trigraphs. r4's scans recognised only
+# `#`, so `%:define Streaming_EndConfigChange() ((void)0)` put r4's own HIGH
+# straight back. Demonstrated in three lines: real `cc -E` turns the call into
+# `0`, while `cc -fpreprocessed -E` leaves the call text intact, so the
+# canonical comparison sees an unchanged body.
+DIRECTIVE = r"(?:\#|%:|\?\?=)"
 
 fails = []
 
@@ -263,7 +292,7 @@ def blank_comments(src):
     return "".join(out)
 
 
-def macro_sensitive_identifiers():
+def macro_sensitive_identifiers(extra=()):
     """Every identifier in the canonical text that a `#define` could change.
 
     Derived from the canonical strings themselves rather than a hand-written
@@ -273,8 +302,14 @@ def macro_sensitive_identifiers():
     String-literal contents are excluded: macros do not expand inside a string,
     so `#define ADC ...` cannot alter `.pattern = "CONFigure:ADC:SAVEcal"`.
     That is precision, not a relaxation.
+
+    `extra` carries the names that are only known at run time -- the active
+    table's own identifier and `SCPI_Init`. r4 read SCPI_Init's argument
+    UNEXPANDED, so `#define scpi_commands empty_commands` redirected the real
+    call while this checker resolved the array by the pre-macro name, found
+    both rows inside it, and passed.
     """
-    names = set(EXPECTED_BODIES)
+    names = set(EXPECTED_BODIES) | set(extra)
     for text in list(EXPECTED_BODIES.values()) + list(
             EXPECTED_REGISTRATIONS.values()):
         outside = re.sub(r'"(?:[^"\\]|\\.)*"', " ", text)
@@ -337,10 +372,10 @@ def depth_map(text):
     depths, depth = [], 0
     for line in text.split("\n"):
         t = line.lstrip()
-        if re.match(r"#\s*(if|ifdef|ifndef)\b", t):
+        if re.match(DIRECTIVE + r"\s*(if|ifdef|ifndef)\b", t):
             depths.append(depth)
             depth += 1
-        elif re.match(r"#\s*endif\b", t):
+        elif re.match(DIRECTIVE + r"\s*endif\b", t):
             depth = max(0, depth - 1)
             depths.append(depth)
         else:
@@ -469,52 +504,75 @@ def main():
     # r3's HIGH: `#define Streaming_EndConfigChange() ((void)0)` placed inside
     # CalSaveCommon passes the exact body compare, because `strip_comments`
     # removes the directive without expanding the invocation. The release
-    # becomes a no-op and the claim is held forever. Measured on the real
-    # source first: all three bodies contain zero directives, so this forbids
-    # nothing the file does today.
+    # becomes a no-op and the claim is held forever. r4's HIGH was the same
+    # thing spelled `%:define` -- hence DIRECTIVE rather than a literal '#'.
+    # Measured on the real source first: all three bodies contain zero
+    # directives in any spelling, so this forbids nothing the file does today.
     for name in EXPECTED_BODIES:
         sp = body_span(adc_blank, name)
         if sp is None:
             continue
-        found = re.findall(r"(?m)^[ \t]*#[ \t]*(\w+)", adc_blank[sp[0]:sp[1]])
+        found = re.findall(r"(?m)^[ \t]*" + DIRECTIVE + r"[ \t]*(\w+)",
+                           adc_blank[sp[0]:sp[1]])
         check(not found,
-              "%s's body contains no preprocessor directive" % name
-              if not found else
+              "%s's body contains no preprocessor directive (any spelling)"
+              % name if not found else
               "%s's body contains preprocessor directive(s) %s. The canonical "
               "comparison cannot see these -- the compiler acts on them and "
               "this checker does not" % (name, found))
 
-    # r3's second MEDIUM: the same trick one level out -- `#define
-    # CalSaveCommon(...) SCPI_RES_OK` before the wrappers, `#undef` after.
-    # The identifier set is DERIVED from the canonical text, so adding a call
-    # to a pinned body extends this automatically instead of leaving the new
-    # callee unguarded.
-    sensitive = macro_sensitive_identifiers()
-    for label, blank in (("SCPIADC.c", adc_blank),
-                         ("SCPIInterface.c", iface_blank)):
-        defined = set(re.findall(
-            r"(?m)^[ \t]*#[ \t]*define[ \t]+([A-Za-z_][A-Za-z0-9_]*)", blank))
-        clash = sorted(defined & sensitive)
-        check(not clash,
-              "%s defines no macro over a pinned identifier (%d #defines vs "
-              "%d identifiers)" % (label, len(defined), len(sensitive))
-              if not clash else
-              "%s #defines %s, which the canonical text names. A macro can "
-              "change what that text MEANS while leaving it byte-identical"
-              % (label, clash))
-
     # ---- the rows must be in the table SCPI_Init is actually handed -----
-    # r3's third MEDIUM: both rows moved into a separate, unused
-    # `static const scpi_command_t` array pass every check above -- they are
-    # present, singular and at depth 0 -- while nothing registers them.
+    # Resolved BEFORE the macro check below, because the table's own name is
+    # one of the identifiers that has to be protected: r4 read SCPI_Init's
+    # argument unexpanded, so `#define scpi_commands empty_commands`
+    # redirected the real call while this checker resolved the array by the
+    # pre-macro name, found both rows inside it, and passed.
     table, err = active_command_table(iface_blank)
     check(table is not None,
           "the active command table was located: %s"
           % (table[0] if table else err) if table is not None else
           "could not identify the command table SCPI_Init is handed: %s. "
           "Without it, a row in ANY array satisfies the rows above" % err)
+
+    # ---- macros that change what the canonical text MEANS ---------------
+    # r3's second MEDIUM: `#define CalSaveCommon(...) SCPI_RES_OK` around the
+    # wrappers. The identifier set is DERIVED from the canonical text, so
+    # adding a call to a pinned body extends this automatically instead of
+    # leaving the new callee unguarded.
+    extra = ("SCPI_Init",) + ((table[0],) if table else ())
+    sensitive = macro_sensitive_identifiers(extra)
+    for label, blank in (("SCPIADC.c", adc_blank),
+                         ("SCPIInterface.c", iface_blank)):
+        defined = set(re.findall(
+            r"(?m)^[ \t]*" + DIRECTIVE + r"[ \t]*define[ \t]+"
+            r"([A-Za-z_][A-Za-z0-9_]*)", blank))
+        clash = sorted(defined & sensitive)
+        check(not clash,
+              "%s defines no macro over a pinned identifier (%d #defines vs "
+              "%d identifiers)" % (label, len(defined), len(sensitive))
+              if not clash else
+              "%s #defines %s, which the canonical text or the dispatch path "
+              "names. A macro can change what that text MEANS while leaving "
+              "it byte-identical" % (label, clash))
+
     if table is not None:
         tname, tstart, tend = table
+        body = iface_blank[tstart:tend]
+        # ⛔ findCommandHeader iterates `cmdlist[i].pattern != NULL`
+        # (libscpi/src/parser.c:178), so it STOPS at the first terminator.
+        # r4's second MEDIUM: a terminator placed before these rows leaves
+        # both commands unreachable while every other check here passes.
+        # Being inside the array is therefore not sufficient -- being inside
+        # the REACHABLE PART of it is the actual requirement.
+        terms = list(re.finditer(
+            r'\{\s*\.pattern\s*=\s*NULL\s*,[^}]*\}\s*,'
+            r'|\bSCPI_CMD_LIST_END\b', body))
+        check(bool(terms),
+              "%s is terminated (%d terminator(s))" % (tname, len(terms))
+              if terms else
+              "%s has no NULL-pattern terminator at all, so the reachable "
+              "extent of the table cannot be established" % tname)
+        first_term = terms[0].start() if terms else len(body)
         for pattern in sorted(EXPECTED_REGISTRATIONS):
             rows = list(re.finditer(
                 r'\{\s*\.pattern\s*=\s*"%s"\s*,[^}]*\}\s*,'
@@ -527,6 +585,16 @@ def main():
                   % (pattern, tname) if not outside else
                   "%s's row is NOT inside %s, the array SCPI_Init is handed, "
                   "so the command is not registered in the real build"
+                  % (pattern, tname))
+            if outside:
+                continue
+            late = [r for r in rows if (r.start() - tstart) > first_term]
+            check(not late,
+                  "%s's row precedes %s's terminator, so dispatch reaches it"
+                  % (pattern, tname) if not late else
+                  "%s's row sits AFTER a NULL-pattern terminator in %s. "
+                  "findCommandHeader stops at the terminator, so the command "
+                  "is unreachable however correct the row is"
                   % (pattern, tname))
 
     # ---- every body on the path, exactly -------------------------------
