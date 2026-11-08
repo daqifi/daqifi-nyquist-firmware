@@ -972,6 +972,10 @@ bool DRV_SDSPI_IsAttached(const DRV_HANDLE handle);
    client handle; diagnostics have none). */
 bool DRV_SDSPI_IsCardAttached(SYS_MODULE_OBJ object);
 
+/* #1217: whether the mounted card accepted CRC checking (CMD59), and how many
+   abandoned writes have been resynced since boot. */
+void DRV_SDSPI_GetCrcStats(SYS_MODULE_OBJ object, bool* crcEnabled, uint32_t* resyncs);
+
 /* #589 P1: reset the detect-poll backoff (expected insertion). */
 void DRV_SDSPI_DetectPollKick(SYS_MODULE_OBJ object);
 

@@ -3288,12 +3288,19 @@ scpi_result_t SCPI_StorageSDInfo(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    /* #1217: two trailing fields -- whether the card is running with CRC
+     * checking on (1/0), and how many abandoned writes the driver has
+     * resynced since boot. Appended, so existing fields keep their places. */
+    bool crcOn = false;
+    uint32_t resyncs = 0U;
+    DRV_SDSPI_GetCrcStats(0, &crcOn, &resyncs);
     int len = snprintf(result, SCPI_RESPONSE_BUF_SIZE,
-                       "%u,\"%s\",\"%s\",%u.%u,%lu,%u-%02u",
+                       "%u,\"%s\",\"%s\",%u.%u,%lu,%u-%02u,%u,%lu",
                        mid, oid, pnm,
                        prv_major, prv_minor,
                        (unsigned long)psn,
-                       mdt_year, mdt_month);
+                       mdt_year, mdt_month,
+                       crcOn ? 1u : 0u, (unsigned long)resyncs);
 
     if (len < 0 || (size_t)len >= SCPI_RESPONSE_BUF_SIZE) {
         /* Released before the log/push: nothing below reads `result`, and

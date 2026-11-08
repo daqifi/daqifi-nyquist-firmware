@@ -519,6 +519,7 @@ static void lDRV_SDSPI_WriteResyncEnd(DRV_SDSPI_OBJ* dObj, bool resolved)
 
     if (resolved)
     {
+        dObj->resyncCount++;
         /* resyncToken low bits 0x0B mean the card rejected the block, which
          * proves it really was waiting: the RCA's step 2, seen in the field. */
         /* LOG_E, not LOG_E_ONCE: the _ONCE macros take a static string only
@@ -1446,6 +1447,7 @@ static void lDRV_SDSPI_MediaInitialize ( SYS_MODULE_OBJ object )
 
             dObj->discCapacity = 0;
             dObj->sdCardType = DRV_SDSPI_MODE_NORMAL;
+            dObj->crcEnabled = false;
 
 
             dObj->mediaInitState = DRV_SDSPI_INIT_RAMP_TIME;
@@ -1881,6 +1883,7 @@ static void lDRV_SDSPI_MediaInitialize ( SYS_MODULE_OBJ object )
             {
                 if (dObj->cmdResponse.response1.byte == 0x00U)
                 {
+                    dObj->crcEnabled = true;
                     dObj->mediaInitState = DRV_SDSPI_INIT_SET_BLOCKLEN;
                 }
                 else
@@ -3407,6 +3410,27 @@ void DRV_SDSPI_EventHandlerSet (
 }
 /* #589: module-level card-presence query (DRV_SDSPI_IsAttached needs an open
    CLIENT handle; diagnostics like the WiFi jam advisory have none). */
+/* #1217: CRC state and resync count for SYST:STOR:SD:INFO?. Both are single
+   aligned words written only by the SD task, so a plain read is consistent. */
+void DRV_SDSPI_GetCrcStats(SYS_MODULE_OBJ object, bool* crcEnabled, uint32_t* resyncs)
+{
+    bool on = false;
+    uint32_t count = 0U;
+    if (object < DRV_SDSPI_INSTANCES_NUMBER)
+    {
+        on = gDrvSDSPIObj[object].crcEnabled;
+        count = gDrvSDSPIObj[object].resyncCount;
+    }
+    if (crcEnabled != NULL)
+    {
+        *crcEnabled = on;
+    }
+    if (resyncs != NULL)
+    {
+        *resyncs = count;
+    }
+}
+
 bool DRV_SDSPI_IsCardAttached(SYS_MODULE_OBJ object)
 {
     if (object >= DRV_SDSPI_INSTANCES_NUMBER)

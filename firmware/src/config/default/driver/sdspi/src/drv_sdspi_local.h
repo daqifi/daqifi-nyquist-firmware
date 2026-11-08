@@ -1675,6 +1675,13 @@ typedef struct
     /* SDCARD driver media geomtery table. */
     SYS_MEDIA_REGION_GEOMETRY                       mediaGeometryTable[3];
 
+    /* #1217: observability, reported by SYST:STOR:SD:INFO?. crcEnabled is
+       set when the card accepts CMD59 and cleared at the start of every media
+       init; resyncCount counts writes in doubt that were resynced, i.e. how
+       often the protection actually fired since boot. */
+    bool                                            crcEnabled;
+    uint32_t                                        resyncCount;
+
 } DRV_SDSPI_OBJ;
 
 #endif //#ifndef DRV_SDSPI_LOCAL_H
