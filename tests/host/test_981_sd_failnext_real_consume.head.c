@@ -148,6 +148,11 @@ static void SD_CheckFsOpDuration(TickType_t startTick, const char *operation,
  * cross-context-visibility qualifier and this binary has no other context. */
 static bool gFailNextWrite = false;
 
+/* #1031: mirrors `static volatile bool gFailNextSessionWrite = false;` -- the
+ * separate FAILNext 2 one-shot, whose consume is gated on WRITE_TO_FILE (the
+ * live-session sites) instead of UNMOUNT_DISK. */
+static bool gFailNextSessionWrite = false;
+
 /* The real consume gates on `gSDCardData.currentProcessState ==
  * SD_CARD_MANAGER_PROCESS_STATE_UNMOUNT_DISK` -- the arm may only be taken by
  * a write issued while the manager is ALREADY tearing down, never by an
@@ -162,7 +167,7 @@ typedef enum {
     SD_CARD_MANAGER_PROCESS_STATE_UNMOUNT_DISK,
 } sd_card_manager_processState_t;
 
-/* The five fields of sd_card_manager_context_t that SDCardWrite() touches,
+/* The six fields of sd_card_manager_context_t that SDCardWrite() touches,
  * with the real types (sd_card_manager.c's `typedef struct { ... }
  * sd_card_manager_context_t`). A field the function starts touching that is
  * missing here is a compile error, not a silent gap. */
@@ -172,6 +177,7 @@ static struct {
     uint8_t *writeBuffer;
     uint16_t sdCardWriteBufferOffset;
     size_t writeBufferLength;
+    bool sessionWriteIssued;     /* #1031 */
 } gSDCardData;
 
 /* Real backing store for gSDCardData.writeBuffer: the extracted code forms
