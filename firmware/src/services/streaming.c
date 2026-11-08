@@ -2405,9 +2405,28 @@ static void Streaming_Start(void) {
             // could otherwise observe Running=0 for a few cycles while
             // the timer is already ticking, producing inconsistent
             // hardware-state reads.
-            gpRuntimeConfigStream->Running = 1;
-            TimerApi_InterruptEnable(gpStreamingConfig->TimerIndex);
-            TimerApi_Start(gpStreamingConfig->TimerIndex);
+            //
+            // #1226 audit r6: a stop can clear IsEnabled after the check
+            // above. Its Streaming_Stop() then sees Running == false and
+            // tears nothing down, so publishing Running unconditionally left
+            // the hardware armed for a session nobody owns ("already
+            // streaming" after the next power-up). Re-check and commit in one
+            // critical section: a stop that cleared IsEnabled first is
+            // honoured here; one that clears it after sees Running and tears
+            // down. Register writes only, so the section is short.
+            bool committed = false;
+            taskENTER_CRITICAL();
+            if (gpRuntimeConfigStream->IsEnabled) {
+                gpRuntimeConfigStream->Running = 1;
+                TimerApi_InterruptEnable(gpStreamingConfig->TimerIndex);
+                TimerApi_Start(gpStreamingConfig->TimerIndex);
+                committed = true;
+            }
+            taskEXIT_CRITICAL();
+            if (!committed) {
+                MC12b_ConfigureHardwareTrigger(false, false);
+                MC12b_RestoreIdleScanList();
+            }
         }
     }
 }

@@ -7310,7 +7310,16 @@ bool SCPI_StopStreamingForPowerDown(void) {
     taskENTER_CRITICAL();
     gStreamStopGen++;
     taskEXIT_CRITICAL();
-    if (pRunTimeStreamConfig != NULL && pRunTimeStreamConfig->IsEnabled) {
+    /* Stop on SD-log ownership too, not just IsEnabled (#1226 audit r6): a
+     * transport-loss auto-stop clears IsEnabled and stops sampling but leaves
+     * the streaming log's SD session in WRITE with its file open, and the
+     * sub-sector tail is only written by the close this teardown requests. */
+    const sd_card_manager_settings_t* pSdCfg = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_SD_CARD_SETTINGS);
+    const bool streamingLogOpen = (pSdCfg != NULL) &&
+            SCPI_SdWriteIsStreamingLog(pSdCfg);
+    if ((pRunTimeStreamConfig != NULL && pRunTimeStreamConfig->IsEnabled) ||
+        streamingLogOpen) {
         LOG_I("[POWER] stopping stream and closing SD log before power-down");
         SCPI_PerformStreamingStop();
     }
