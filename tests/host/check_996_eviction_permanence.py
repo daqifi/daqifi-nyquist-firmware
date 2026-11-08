@@ -72,6 +72,49 @@ def strip_comments(src, cc="cc"):
     return out.stdout
 
 
+def _split_top_level(text, op):
+    """`text` split on `op` only where parenthesis depth is zero."""
+    parts, depth, start, i = [], 0, 0, 0
+    while i < len(text):
+        ch = text[i]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        elif depth == 0 and text.startswith(op, i):
+            parts.append(text[start:i])
+            i += len(op)
+            start = i
+            continue
+        i += 1
+    parts.append(text[start:])
+    return parts
+
+
+def _eviction_condition(code):
+    """The eviction `if`'s condition text, by paren matching.
+
+    ⚠ NOT a regex. `[^)]*` cannot express "up to the matching paren", and an
+    earlier version of this pin used it -- so the condition it examined
+    stopped at the first `)`, which is the one closing `(hadAIN || hadDIO)`.
+    It was reading a fragment and calling it the condition.
+    """
+    m = re.search(r"if\s*\(\s*\(\s*hadAIN\s*\|\|\s*hadDIO\s*\)", code)
+    if not m:
+        return ""
+    i = code.index("(", m.start())      # the `if`'s own open paren
+    depth, j = 0, i
+    while j < len(code):
+        if code[j] == "(":
+            depth += 1
+        elif code[j] == ")":
+            depth -= 1
+            if depth == 0:
+                return code[i + 1:j]
+        j += 1
+    return ""
+
+
 def main():
     if not CSV.exists():
         print("  [FAIL] missing: %s" % CSV)
@@ -103,16 +146,42 @@ def main():
           "than one means two places decide permanence and can disagree"
           % len(evict_sites))
 
-    # ---- all three conjuncts, in the one condition -----------------------
-    cond = re.search(
-        r"if\s*\(\s*\(\s*hadAIN\s*\|\|\s*hadDIO\s*\)([^)]*\)[^{]*)\{", code)
-    cond_text = cond.group(1) if cond else ""
-    check("fullCapacityCall" in cond_text,
-          "the eviction condition requires fullCapacityCall -- without it a "
-          "caller with its own small buffer evicts rows the streaming path "
-          "would have written")
-    check(re.search(r"rem\s*==\s*maxRoom", cond_text) is not None,
-          "and requires `rem == maxRoom` -- the literal claim that this "
+    # ---- the condition's STRUCTURE, not just its operands ----------------
+    # ⛔ r1 MEDIUM: an earlier version of this pin searched the condition for
+    # the operand STRINGS. That is blind to the operator joining them, so
+    #
+    #     if ((hadAIN || hadDIO) && fullCapacityCall || rem == maxRoom)
+    #
+    # passed every check while evicting a 100-byte row on a full-capacity
+    # call with 40 bytes left -- a row the next fresh buffer would have
+    # written. `&&` binds tighter than `||`, so that reads as
+    # `(peeked && fullCapacity) || (rem == maxRoom)` and the first arm alone
+    # is enough. The C model cannot see it either: it executes its own COPY
+    # of the condition. So the structure has to be pinned here.
+    cond_text = _eviction_condition(code)
+    check(bool(cond_text),
+          "the eviction condition was located (if its shape changed beyond "
+          "recognition, update the model and this pin together)")
+    top_or = _split_top_level(cond_text, "||")
+    check(len(top_or) == 1,
+          "the condition is a pure conjunction at the top level -- no `||` "
+          "outside parentheses. A top-level `||` makes any one arm "
+          "sufficient, which is how a row that would fit a later buffer "
+          "gets evicted (found %d top-level `||` arm(s))" % (len(top_or) - 1))
+    parts = [c.strip() for c in _split_top_level(cond_text, "&&")]
+    check(len(parts) >= 3,
+          "and joins at least three conjuncts with `&&` (found %d: %r)"
+          % (len(parts), parts))
+    check(any("hadAIN" in c and "hadDIO" in c for c in parts),
+          "one conjunct requires something to have been peeked "
+          "(hadAIN/hadDIO)")
+    check(any(re.fullmatch(r"\(*\s*fullCapacityCall\s*\)*", c) for c in parts),
+          "one conjunct is fullCapacityCall itself -- without it a caller "
+          "with its own small buffer evicts rows the streaming path would "
+          "have written")
+    check(any(re.fullmatch(r"\(*\s*rem\s*==\s*maxRoom\s*\)*", c)
+              for c in parts),
+          "and one is `rem == maxRoom` -- the literal claim that this "
           "attempt already had the largest room any call will ever offer. "
           "`>=`, `!=`, or dropping it turns 'never fits' into 'did not fit "
           "this time', which discards rows that would have fitted")

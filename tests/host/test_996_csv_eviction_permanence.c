@@ -7,6 +7,17 @@
  * that has drifted from the source fails the BUILD rather than passing
  * quietly. The two files are halves of one claim.
  *
+ * ⛔ WHAT THIS FILE CANNOT SEE, stated so nobody mistakes a green run here
+ * for agreement with the firmware: should_evict() below is a COPY of the
+ * condition. Change an operator in csv_encoder.c -- `&&` to `||` -- and
+ * every test here still passes, because they execute this copy. That was an
+ * r1 MEDIUM on this PR: the pin was searching the real condition for the
+ * operand STRINGS and was equally blind, so the pair agreed with each other
+ * while disagreeing with the source. The pin now checks the real
+ * condition's STRUCTURE (top-level `&&`, each conjunct required); the
+ * division of labour is that this file says what the decision should be and
+ * only the pin can say the firmware still computes it.
+ *
  * ⛔ THE DECISION HAS TWO FAILURE DIRECTIONS AND THEY ARE NOT SYMMETRIC.
  *
  *   evict too late  -> the row sits at the head of a FIFO forever, re-peeked
