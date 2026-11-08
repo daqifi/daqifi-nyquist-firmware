@@ -2,34 +2,56 @@
 """Pin that CONF:ADC:SAVEcal stays behind the streaming claim guard (#885).
 
 #885 converted five ADC setters that mutated live conversion inputs with no
-guard. Its pre-merge audit then found SAVEcal / SAVEFcal: the read side of
-the same cal store, and the last commands that MUTATE PERSISTENT STATE from
-CalM/CalB with no claim at all. Both now route through CalSaveCommon, which
-takes the claim, uses its verdict, and releases it on the single path out.
+guard. Its own pre-merge audit then found SAVEcal / SAVEFcal: the read side
+of the same cal store, and the last commands that MUTATE PERSISTENT STATE
+from CalM/CalB with no claim at all. Both route through CalSaveCommon, which
+takes the claim, uses its verdict, and releases it once on the single path
+out.
 
-This replaces the device leg deleted from ts#504 by ruling FT A.
+Replaces the device leg deleted from ts#504 by ruling FT A.
 
-⛔ WHY THIS MUST BE FUNCTION-SCOPED, measured rather than assumed. At
-61a631745^ -- the revision before the #885 fix -- `Streaming_BeginConfigChange`
-appears TEN times in SCPIADC.c, because other setters already used it, while
-CalSaveCommon's own body contained NONE. So a file-scoped grep for the guard
-PASSES ON THE BROKEN REVISION and proves nothing about this command. The
-guard has to be found inside the body that SAVEcal actually reaches.
+⛔ WHOLE BODIES, NOT FRAGMENTS, and this is round 3 of learning that lesson.
+An earlier version of this pin compared exact FRAGMENTS -- the claim
+statement, the verdict text, the rejection call, the release count -- and
+r1's audit found four defects living in the control flow BETWEEN them, all
+passing with every fragment intact:
 
-⛔ AND WHY THE EXPRESSIONS ARE PINNED EXACTLY, not recognised. fw#1221 spent
-three audit rounds on the other shape: a pin that recognises structure is
-taught the mutants it is shown and the next round finds the next one --
-operand text missed an operator, structural matching missed a comparison
-inside an operand and an added conjunct. "Recognise the shape" has an
-open-ended mutant space. So the claim, its verdict test and its rejection are
-compared EXACTLY against canonical text, whitespace normalised.
+  * `if (type == DaqifiSettings_UserAInCalParams)` inserted before the reject
+    return, so SAVEFcal writes NVM unclaimed while streaming;
+  * `if (claim != STREAM_CFG_CLAIM_OK); {` -- a stray semicolon making the
+    rejection unconditional and the claim never released;
+  * `return result;` moved ABOVE the release, leaving it unreachable and the
+    claim held forever (counting the release text does not establish the
+    path);
+  * `return SCPI_RES_OK;` at the top of SCPI_ADCCalSave, reporting success
+    without saving, with the helper's name still present below it.
 
-Any other edit fails the build, INCLUDING A CORRECT ONE. That is the point: a
-deliberate change to this guard updates the canonical strings in the same PR,
-and that diff is the review moment. Do not relax this into matching.
+fw#1221 learned the same thing one level down: recognising a shape loses to
+an open-ended mutant space, so it pinned expressions exactly. Fragments have
+the same problem one level up -- the connective tissue is unpinned. So the
+unit of pinning here is the unit of behaviour: THE ENTIRE BODY of each
+function on the path, compared exactly.
+
+Any edit to these functions fails the build, INCLUDING A CORRECT ONE. That is
+the point: a deliberate change updates the canonical text in the same PR, and
+that diff is the review moment. Do not relax this into matching.
+
+⛔ WHY FUNCTION-SCOPED, measured rather than assumed. At 61a631745^ -- the
+revision before the #885 fix -- `Streaming_BeginConfigChange` appears TEN
+times in SCPIADC.c, because other setters already used it, while
+CalSaveCommon did not exist at all. So a file-scoped grep for the guard
+PASSES ON THE BROKEN REVISION and says nothing about this command.
+
+⚠ PREPROCESSOR LINE DIRECTIVES ARE STRIPPED. `cc -fpreprocessed -E` emits
+`# <line> "<file>"` markers where comments were removed -- 47 of them in this
+file. Leaving them in would embed LINE NUMBERS in the canonical text, so
+adding a comment hundreds of lines earlier would fail the build. That is a
+correct change breaking the pin, which is the one failure mode worth
+engineering out.
 
 Run: python3 tests/host/check_885_savecal_claim_guard.py
 """
+import difflib
 import re
 import subprocess
 import sys
@@ -39,21 +61,44 @@ ROOT = Path(__file__).resolve().parents[2]
 ADC = ROOT / "firmware/src/services/SCPI/SCPIADC.c"
 IFACE = ROOT / "firmware/src/services/SCPI/SCPIInterface.c"
 
-# Verbatim from the source, whitespace runs collapsed.
-EXPECTED_CLAIM = "StreamingCfgClaim claim = Streaming_BeginConfigChange();"
-EXPECTED_VERDICT = "claim != STREAM_CFG_CLAIM_OK"
-EXPECTED_REJECT = ("return SCPI_RejectCfgClaim(context, "
-                   "claim == STREAM_CFG_CLAIM_BUSY, what);")
-RELEASE = "Streaming_EndConfigChange();"
-
-# The commands that must reach the guarded body, and the callback each is
-# registered with. SAVEFcal shares CalSaveCommon, so one body check covers
-# the pair -- and the #885 follow-up names both as having been unguarded.
-COMMANDS = {
-    "CONFigure:ADC:SAVEcal": "SCPI_ADCCalSave",
-    "CONFigure:ADC:SAVEFcal": "SCPI_ADCCalFSave",
+# The command table rows that must route to the guarded path.
+EXPECTED_REGISTRATIONS = {
+    "CONFigure:ADC:SAVEcal":
+        '{.pattern = "CONFigure:ADC:SAVEcal", .callback = SCPI_ADCCalSave,},',
+    "CONFigure:ADC:SAVEFcal":
+        '{.pattern = "CONFigure:ADC:SAVEFcal", .callback = SCPI_ADCCalFSave,},',
 }
-GUARDED_BODY = "CalSaveCommon"
+
+# The entire body of every function on the path, verbatim with whitespace
+# runs collapsed. Updating one of these is a deliberate act that belongs in
+# the same PR as the firmware change it describes.
+EXPECTED_BODIES = {
+    "SCPI_ADCCalSave": """
+        return CalSaveCommon(context, DaqifiSettings_UserAInCalParams,
+        "CONF:ADC:SAVEcal");
+    """,
+    "SCPI_ADCCalFSave": """
+        return CalSaveCommon(context, DaqifiSettings_FactAInCalParams,
+        "CONF:ADC:SAVEFcal");
+    """,
+    "CalSaveCommon": """
+        StreamingCfgClaim claim = Streaming_BeginConfigChange();
+        if (claim != STREAM_CFG_CLAIM_OK) {
+            return SCPI_RejectCfgClaim(context,
+                claim == STREAM_CFG_CLAIM_BUSY, what);
+        }
+        AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(
+            BOARDRUNTIMECONFIG_AIN_CHANNELS);
+        bool saved = daqifi_settings_SaveADCCalSettings(type,
+            pRuntimeAInChannels);
+        if (type == DaqifiSettings_FactAInCalParams) {
+            RefreshFactoryCalPresence();
+        }
+        scpi_result_t result = saved ? SCPI_RES_OK : SCPI_RES_ERR;
+        Streaming_EndConfigChange();
+        return result;
+    """,
+}
 
 fails = []
 
@@ -74,12 +119,12 @@ def norm(text):
 
 
 def strip_comments(src, cc="cc"):
-    """The file's own text with comments gone, includes unchased.
+    """The file's own text with comments and line directives gone.
 
-    Mandatory, not cosmetic: SCPIADC.c's prose discusses the claim, the
-    rejected alternatives and SAVEcal by name at length, so a raw scan finds
-    the shapes it is looking for inside the explanations. Done with the
-    compiler rather than a regex -- a regex stripper eats pointer
+    Comment stripping is mandatory, not cosmetic: SCPIADC.c's prose discusses
+    the claim, the rejected alternatives and SAVEcal by name at length, so a
+    raw scan finds the shapes it is looking for inside the explanations. Done
+    with the compiler rather than a regex -- a regex stripper eats pointer
     dereferences, and this file is full of them.
     """
     out = subprocess.run([cc, "-fpreprocessed", "-E", "-"],
@@ -87,7 +132,8 @@ def strip_comments(src, cc="cc"):
     if out.returncode != 0:
         raise RuntimeError("%s -fpreprocessed -E failed: %s"
                            % (cc, out.stderr.strip()[:200]))
-    return out.stdout
+    # See the module docstring: these carry line numbers.
+    return re.sub(r'(?m)^\s*#\s+\d+\s+".*"\s*$', "", out.stdout)
 
 
 def function_body(code, name):
@@ -108,87 +154,66 @@ def function_body(code, name):
     return ""
 
 
+def show_diff(name, expected, found):
+    """Statement-level diff, so a reviewer sees WHAT moved."""
+    exp = [s.strip() + ";" for s in expected.split(";") if s.strip()]
+    got = [s.strip() + ";" for s in found.split(";") if s.strip()]
+    print("         --- expected %s" % name)
+    print("         +++ found    %s" % name)
+    for line in difflib.unified_diff(exp, got, lineterm="", n=1):
+        if line.startswith(("---", "+++", "@@")):
+            continue
+        print("         %s" % line)
+
+
 def main():
     for p in (ADC, IFACE):
         if not p.exists():
             print("  [FAIL] missing: %s" % p)
             return 1
 
-    adc_raw = ADC.read_text()
-    adc = strip_comments(adc_raw)
+    adc = strip_comments(ADC.read_text())
     iface = strip_comments(IFACE.read_text())
 
-    # ---- routing: each command reaches the guarded body ------------------
-    for pattern, callback in sorted(COMMANDS.items()):
-        reg = re.search(
-            r'\{\s*\.pattern\s*=\s*"%s"\s*,\s*\.callback\s*=\s*(\w+)\s*,?\s*\}'
-            % re.escape(pattern), iface)
-        found_cb = reg.group(1) if reg else None
-        check(found_cb == callback,
-              "%s is registered to %s (found %s)"
-              % (pattern, callback, found_cb or "no registration"))
-        body = function_body(adc, callback)
-        check(GUARDED_BODY in body,
-              "and %s delegates to %s, the body that holds the claim"
-              % (callback, GUARDED_BODY))
+    # ---- the command table rows, exactly -------------------------------
+    for pattern, expected_row in sorted(EXPECTED_REGISTRATIONS.items()):
+        rows = [norm(m) for m in re.findall(
+            r'\{\s*\.pattern\s*=\s*"%s"\s*,[^}]*\}\s*,' % re.escape(pattern),
+            iface)]
+        want = norm(expected_row)
+        ok = rows == [want]
+        check(ok, "%s is registered exactly as pinned" % pattern if ok else
+              "%s's registration changed\n"
+              "         expected: [%s]\n"
+              "         found:    %r" % (pattern, want, rows))
 
-    # ---- the guard itself, inside the body SAVEcal reaches ---------------
-    guarded = function_body(adc, GUARDED_BODY)
-    check(bool(guarded), "%s's body was located" % GUARDED_BODY)
-    if not guarded:
-        print("\nFAILED: %d check(s)" % len(fails))
-        return 1
-
-    statements = [norm(s) + ";" for s in guarded.split(";") if norm(s)]
-    first = statements[0] if statements else ""
-    # ⛔ FIRST, not merely present. The #885 class is "mutates live
-    # conversion inputs with no guard": a claim taken after the first
-    # mutation is not a guard, it is a decoration.
-    check(first == EXPECTED_CLAIM,
-          "the claim is the FIRST statement in %s" % GUARDED_BODY
-          if first == EXPECTED_CLAIM else
-          "the FIRST statement in %s is not the pinned claim\n"
-          "         expected: %s\n"
-          "         found:    %s" % (GUARDED_BODY, EXPECTED_CLAIM, first))
-
-    verdicts = [norm(m) for m in re.findall(r"if\s*\(([^)]*)\)", guarded)]
-    check(EXPECTED_VERDICT in verdicts,
-          "the claim's verdict is tested exactly as `%s`" % EXPECTED_VERDICT
-          if EXPECTED_VERDICT in verdicts else
-          "the pinned verdict test is absent\n"
-          "         expected: %s\n"
-          "         found:    %r" % (EXPECTED_VERDICT, verdicts))
-
-    # ⚠ Anchored on the `return`, not on a ';' split. Splitting the body on
-    # ';' hands back the enclosing `if (...) {` along with the statement,
-    # which is what the first version of this check compared and failed on.
-    rejects = [norm(m) for m in re.findall(
-        r"return\s+SCPI_RejectCfgClaim\s*\([^;]*\);", guarded)]
-    check(rejects == [EXPECTED_REJECT],
-          "a refused claim returns exactly the pinned rejection"
-          if rejects == [EXPECTED_REJECT] else
-          "the rejection changed\n"
-          "         expected: [%s]\n"
-          "         found:    %r" % (EXPECTED_REJECT, rejects))
-
-    releases = guarded.count(RELEASE)
-    check(releases == 1,
-          "the claim is released exactly once, on the single path out "
-          "(found %d). Two releases mean a path that double-releases; none "
-          "means a claim held forever, which wedges every later config "
-          "change" % releases)
+    # ---- every body on the path, exactly -------------------------------
+    for name, expected in EXPECTED_BODIES.items():
+        found = norm(function_body(adc, name))
+        want = norm(expected)
+        if not found:
+            check(False, "%s's body was not found at all" % name)
+            continue
+        ok = found == want
+        check(ok, "%s's body is EXACTLY as pinned (%d chars)"
+              % (name, len(want)) if ok else
+              "%s's body CHANGED -- any edit here is a deliberate act and "
+              "updates this pin in the same PR" % name)
+        if not ok:
+            show_diff(name, want, found)
 
     print()
     if fails:
         print("FAILED: %d check(s)" % len(fails))
-        print("If this guard was changed deliberately, update the canonical "
-              "strings at the top of this file in the SAME PR -- that diff is "
-              "the review point. Do not relax them into pattern matching: "
-              "fw#1221 spent three audit rounds learning that recognising a "
-              "shape cannot converge.")
+        print("If this path was changed deliberately, paste the new body into "
+              "EXPECTED_BODIES in this file, in the SAME PR -- that diff is "
+              "the review point. Do not relax these into fragment or pattern "
+              "matching: fw#1221 and this PR's r1 both established that "
+              "anything less than the whole unit leaves the control flow "
+              "between the fragments unpinned.")
         return 1
-    print("OK: CONF:ADC:SAVEcal and SAVEFcal reach the claim-guarded body, "
-          "and the guard is byte-for-byte what it was pinned as")
+    print("OK: SAVEcal and SAVEFcal route to the claim-guarded body, and "
+          "every body on that path is byte-for-byte what it was pinned as")
     return 0
 
 
