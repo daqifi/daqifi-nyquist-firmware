@@ -46,6 +46,7 @@ typedef enum {
     CARD_WAIT_MULTI,     /* CMD25 taken, waiting for a token */
     CARD_MULTI_TOKEN2,   /* saw the 0 of 0b1111110x, next bit says start or stop */
     CARD_CAPTURE,        /* taking a block */
+    CARD_DEAD,           /* drives nothing, parses nothing, until power-cycled */
 } CardState;
 
 static struct {
@@ -74,6 +75,11 @@ static struct {
     /* test knobs */
     bool ignoresCs;         /* #1217's second hypothesis: it clocks with CS high */
     bool rejectCmd59;
+    /* #1217, measured on the bench SanDisk SP32G: a CRC-rejected block inside
+     * a CMD25 left the card answering nothing, CMD0 included, until its power
+     * was cut, whatever ended the write (flush + stop token, stop token with
+     * CS held, CMD12). Set by resetAll(): the model is that card. */
+    bool diesOnMultiReject;
     int nextWriteR1;        /* >= 0: answer the next CMD24/25 with this, no data phase */
     unsigned programBusy;   /* busy bytes after a block is accepted */
 
@@ -282,6 +288,13 @@ static void cardBlockDone(void)
     const uint16_t got = (uint16_t)(((uint16_t)card.capture[BLOCK] << 8) | card.capture[BLOCK + 1U]);
     const bool crcBad = card.crcOn && (modelCrc16(card.capture, BLOCK) != got);
 
+    if (crcBad && card.isMulti && card.diesOnMultiReject)
+    {
+        cardEvent(EV_BLOCK_REJECTED);
+        cardOut(0xEBU);
+        card.state = CARD_DEAD;
+        return;
+    }
     if (crcBad || card.multiRejected)
     {
         cardEvent(EV_BLOCK_REJECTED);
@@ -334,6 +347,9 @@ static void cardBit(unsigned bit)
                 cardCommand(cmd, arg, crc);
             }
             break;
+
+        case CARD_DEAD:
+            return;
 
         case CARD_WAIT_SINGLE:
             if (bit == 0U)
@@ -773,6 +789,7 @@ static void resetAll(void)
     memset(&card, 0, sizeof(card));
     card.nextWriteR1 = -1;
     card.programBusy = 3U;
+    card.diesOnMultiReject = true;
     for (unsigned s = 0U; s < SECTORS; s++)
     {
         memset(card.sector[s], (int)(0xA0U + s), BLOCK);
@@ -948,6 +965,10 @@ TEST(normal_single_and_multi_writes_are_accepted)
     ASSERT_EQ(cmdCount(EV_BAD_CRC7), 0);
     ASSERT_EQ(card.state, CARD_READY);
     ASSERT_EQ(gLockDepth, 0);
+
+    /* #1217: with CRC on, the 3-block request went out as three CMD24s. */
+    ASSERT_EQ(cmdCount(25), 0);
+    ASSERT_EQ(cmdCount(24), 6);
 }
 
 TEST(detect_polling_works_with_crc_on)
@@ -1183,27 +1204,6 @@ TEST(single_block_abandoned_after_data_is_flushed_and_not_programmed)
 
 /* Just after the token, so the card is at the start of the capture: the whole
  * 514-byte flush is what ends it. Stop-token-only would be swallowed as data. */
-TEST(multi_block_abandoned_at_start_of_data_is_flushed_then_stopped)
-{
-    uint8_t data[2U * BLOCK];
-
-    bootCard();
-    fill(data, sizeof(data), 0x34U);
-    gFault.action = FAULT_REJECT;
-    gFault.isRead = 0;
-    gFault.len = 512;
-    gFault.afterCmd = 25;
-    ASSERT_EQ(writeBlocks(60U, data, 2U), DRV_SDSPI_EVENT_COMMAND_ERROR);
-    ASSERT_EQ(card.state, CARD_CAPTURE);
-
-    const unsigned mark = card.eventCount;
-    assertCardHealthy(62U);
-    ASSERT_EQ(firstOf(mark, EV_BLOCK_REJECTED, 24, -1), EV_BLOCK_REJECTED);
-    ASSERT_EQ(firstOf(mark, EV_STOP_TOKEN, 24, -1), EV_STOP_TOKEN);
-    ASSERT_TRUE(sectorUntouched(60U));
-    ASSERT_TRUE(sectorUntouched(61U));
-}
-
 TEST(single_block_abandoned_at_start_of_data_is_flushed)
 {
     uint8_t data[BLOCK];
@@ -1221,51 +1221,6 @@ TEST(single_block_abandoned_at_start_of_data_is_flushed)
     assertCardHealthy(38U);
     ASSERT_EQ(firstOf(mark, EV_BLOCK_REJECTED, 24, -1), EV_BLOCK_REJECTED);
     ASSERT_TRUE(sectorUntouched(63U));
-}
-
-TEST(multi_block_abandoned_between_blocks_gets_a_stop_token)
-{
-    uint8_t data[3U * BLOCK];
-
-    bootCard();
-    card.programBusy = 200U; /* the resync has to wait out the stop token's busy */
-    fill(data, sizeof(data), 0x2AU);
-    gFault.action = FAULT_REJECT;
-    gFault.isRead = 0;
-    gFault.len = 1;
-    gFault.firstByte = 0xFC;
-    gFault.afterCmd = 25;
-    gFault.skip = 1U; /* the first block goes through */
-    ASSERT_EQ(writeBlocks(33U, data, 3U), DRV_SDSPI_EVENT_COMMAND_ERROR);
-    ASSERT_EQ(card.state, CARD_WAIT_MULTI);
-    ASSERT_TRUE(sectorIs(33U, &data[0U]));
-
-    const unsigned mark = card.eventCount;
-    assertCardHealthy(40U);
-    ASSERT_EQ(firstOf(mark, EV_STOP_TOKEN, 24, EV_BAD_CRC7), EV_STOP_TOKEN);
-    ASSERT_TRUE(sectorUntouched(34U));
-    ASSERT_TRUE(sectorUntouched(35U));
-}
-
-TEST(multi_block_abandoned_mid_block_is_flushed_then_stopped)
-{
-    uint8_t data[2U * BLOCK];
-
-    bootCard();
-    fill(data, sizeof(data), 0x2BU);
-    gFault.action = FAULT_REJECT;
-    gFault.isRead = 0;
-    gFault.len = 2;
-    gFault.afterCmd = 25;
-    ASSERT_EQ(writeBlocks(41U, data, 2U), DRV_SDSPI_EVENT_COMMAND_ERROR);
-    ASSERT_EQ(card.state, CARD_CAPTURE); /* a stop token alone would just be data */
-
-    const unsigned mark = card.eventCount;
-    assertCardHealthy(43U);
-    ASSERT_EQ(firstOf(mark, EV_BLOCK_REJECTED, 24, -1), EV_BLOCK_REJECTED);
-    ASSERT_EQ(firstOf(mark, EV_STOP_TOKEN, 24, -1), EV_STOP_TOKEN);
-    ASSERT_TRUE(sectorUntouched(41U));
-    ASSERT_TRUE(sectorUntouched(42U));
 }
 
 /* ---- the card rejects a block ---------------------------------------------- */
@@ -1288,25 +1243,6 @@ TEST(crc_reject_is_reported_once_and_not_retried)
     assertCardHealthy(45U);
 }
 
-TEST(multi_block_crc_reject_still_gets_a_stop_token)
-{
-    uint8_t data[2U * BLOCK];
-
-    bootCard();
-    fill(data, sizeof(data), 0x2DU);
-    gFault.action = FAULT_CORRUPT;
-    gFault.isRead = 0;
-    gFault.len = 512;
-    ASSERT_EQ(writeBlocks(46U, data, 2U), DRV_SDSPI_EVENT_COMMAND_ERROR);
-    ASSERT_EQ(card.state, CARD_WAIT_MULTI);
-
-    const unsigned mark = card.eventCount;
-    assertCardHealthy(48U);
-    ASSERT_EQ(firstOf(mark, EV_STOP_TOKEN, 24, -1), EV_STOP_TOKEN);
-    ASSERT_TRUE(sectorUntouched(46U));
-    ASSERT_TRUE(sectorUntouched(47U));
-}
-
 /* ---- resync on a card that was not waiting ---------------------------------- */
 
 TEST(resync_is_harmless_when_cmd24_was_refused)
@@ -1325,7 +1261,7 @@ TEST(resync_is_harmless_when_cmd24_was_refused)
     ASSERT_TRUE(DRV_SDSPI_IsAttached(gHandle));
 }
 
-TEST(resync_is_harmless_when_cmd25_was_refused)
+TEST(resync_is_harmless_when_a_two_block_write_is_refused)
 {
     uint8_t data[2U * BLOCK];
 
@@ -1341,6 +1277,137 @@ TEST(resync_is_harmless_when_cmd25_was_refused)
     ASSERT_EQ(cmdCount(EV_BLOCK_PROGRAMMED), 1);
     ASSERT_EQ(cmdCount(EV_STOP_TOKEN), 0);
     ASSERT_TRUE(DRV_SDSPI_IsAttached(gHandle));
+}
+
+/* ---- a multi-block request with CRC on (SD:PROTect 1) ----------------------- */
+
+/* The bench card dies on a CRC reject inside a CMD25 (diesOnMultiReject). With
+ * every block a CMD24, the reject costs that block and nothing else. */
+TEST(multi_block_crc_reject_leaves_the_card_working)
+{
+    uint8_t data[3U * BLOCK];
+
+    bootCard();
+    fill(data, sizeof(data), 0x2DU);
+    gFault.action = FAULT_CORRUPT;
+    gFault.isRead = 0;
+    gFault.len = 512;
+    gFault.skip = 1U; /* the first block goes through, the second is corrupted */
+    ASSERT_EQ(writeBlocks(46U, data, 3U), DRV_SDSPI_EVENT_COMMAND_ERROR);
+
+    ASSERT_TRUE(card.state != CARD_DEAD);
+    ASSERT_EQ(cmdCount(25), 0);
+    ASSERT_EQ(cmdCount(EV_BLOCK_REJECTED), 1);
+    ASSERT_TRUE(sectorIs(46U, &data[0U]));
+    ASSERT_TRUE(sectorUntouched(47U));
+    ASSERT_TRUE(sectorUntouched(48U));
+    assertCardHealthy(49U);
+}
+
+/* A request abandoned between blocks leaves one CMD24 in doubt, and the
+ * single-block resync ends it. */
+TEST(multi_block_request_abandoned_between_blocks_is_resynced)
+{
+    uint8_t data[3U * BLOCK];
+
+    bootCard();
+    fill(data, sizeof(data), 0x2AU);
+    gFault.action = FAULT_REJECT;
+    gFault.isRead = 0;
+    gFault.len = 1;
+    gFault.firstByte = 0xFE;
+    gFault.afterCmd = 24;
+    gFault.skip = 1U; /* the first block's token goes through */
+    ASSERT_EQ(writeBlocks(33U, data, 3U), DRV_SDSPI_EVENT_COMMAND_ERROR);
+    ASSERT_EQ(card.state, CARD_WAIT_SINGLE);
+    ASSERT_TRUE(sectorIs(33U, &data[0U]));
+
+    const unsigned mark = card.eventCount;
+    assertCardHealthy(40U);
+    ASSERT_EQ(firstOf(mark, EV_BLOCK_REJECTED, 24, -1), EV_BLOCK_REJECTED);
+    ASSERT_TRUE(sectorUntouched(34U));
+    ASSERT_TRUE(sectorUntouched(35U));
+    ASSERT_EQ(cmdCount(25), 0);
+}
+
+/* ---- SD:PROTect 0 ------------------------------------------------------------ */
+
+/* DRV_SDSPI_SetCrcMode re-runs media init on an attached card, as a
+ * reinsertion would. Returns once the card is attached again. */
+static void switchCrcMode(bool protect)
+{
+    const unsigned cmd0Before = cmdCount(0);
+    DRV_SDSPI_SetCrcMode(0, protect);
+    for (unsigned i = 0U; i < 40000U; i++)
+    {
+        pass();
+        if ((cmdCount(0) > cmd0Before) && DRV_SDSPI_IsAttached(gHandle) &&
+                (cmdCount(16) > 0U) && (card.state == CARD_READY) &&
+                (card.events[(card.eventCount - 1U) % EVENT_LOG] == 16))
+        {
+            break;
+        }
+    }
+    ASSERT_TRUE(cmdCount(0) > cmd0Before);
+    ASSERT_TRUE(DRV_SDSPI_IsAttached(gHandle));
+}
+
+TEST(fast_mode_reinits_without_crc_and_writes_with_cmd25)
+{
+    uint8_t data[3U * BLOCK];
+    bool crcOn = true;
+    uint32_t resyncs = 99U;
+
+    bootCard();
+    ASSERT_EQ(cmdCount(59), 1);
+    switchCrcMode(false);
+    ASSERT_FALSE(card.crcOn);
+    ASSERT_EQ(cmdCount(59), 1); /* not sent again */
+    DRV_SDSPI_GetCrcStats(0, &crcOn, &resyncs);
+    ASSERT_FALSE(crcOn);
+
+    fill(data, sizeof(data), 0x41U);
+    ASSERT_EQ(writeBlocks(20U, data, 3U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+    ASSERT_EQ(cmdCount(25), 1);
+    ASSERT_TRUE(sectorIs(20U, &data[0U]));
+    ASSERT_TRUE(sectorIs(22U, &data[2U * BLOCK]));
+
+    switchCrcMode(true);
+    ASSERT_TRUE(card.crcOn);
+    ASSERT_EQ(cmdCount(59), 2);
+    assertCardHealthy(25U);
+}
+
+/* With CRC off the resync's 0xFF block would be PROGRAMMED by a waiting card,
+ * so fast mode must never start one. */
+TEST(fast_mode_abort_does_not_resync)
+{
+    uint8_t data[BLOCK];
+    bool crcOn = true;
+    uint32_t resyncs = 99U;
+
+    bootCard();
+    switchCrcMode(false);
+    fill(data, sizeof(data), 0x42U);
+    gFault.action = FAULT_REJECT;
+    gFault.isRead = 0;
+    gFault.len = 1;
+    gFault.firstByte = 0xFE;
+    gFault.afterCmd = 24;
+    ASSERT_EQ(writeBlocks(30U, data, 1U), DRV_SDSPI_EVENT_COMMAND_ERROR);
+    ASSERT_EQ(card.state, CARD_WAIT_SINGLE);
+
+    /* The next command is where a resync would run. With CRC off the waiting
+     * card captures this CMD24 instead -- the hazard SD:PROTect 0 accepts --
+     * so its outcome is not asserted, only that no filler block went out. */
+    (void) writeBlocks(31U, data, 1U);
+
+    DRV_SDSPI_GetCrcStats(0, &crcOn, &resyncs);
+    ASSERT_EQ(resyncs, 0U);
+    for (unsigned i = 0U; i < 4U; i++)
+    {
+        ASSERT_FALSE(card.sector[30U][i] == 0xFFU); /* no 0xFF filler block */
+    }
 }
 
 /* ---- bounded ---------------------------------------------------------------- */
@@ -1441,14 +1508,14 @@ int main(void)
     RUN(write_in_doubt_is_recorded_before_the_r1_is_read);
     RUN(write_in_doubt_survives_release_bus);
     RUN(single_block_abandoned_after_data_is_flushed_and_not_programmed);
-    RUN(multi_block_abandoned_at_start_of_data_is_flushed_then_stopped);
     RUN(single_block_abandoned_at_start_of_data_is_flushed);
-    RUN(multi_block_abandoned_between_blocks_gets_a_stop_token);
-    RUN(multi_block_abandoned_mid_block_is_flushed_then_stopped);
     RUN(crc_reject_is_reported_once_and_not_retried);
-    RUN(multi_block_crc_reject_still_gets_a_stop_token);
     RUN(resync_is_harmless_when_cmd24_was_refused);
-    RUN(resync_is_harmless_when_cmd25_was_refused);
+    RUN(resync_is_harmless_when_a_two_block_write_is_refused);
+    RUN(multi_block_crc_reject_leaves_the_card_working);
+    RUN(multi_block_request_abandoned_between_blocks_is_resynced);
+    RUN(fast_mode_reinits_without_crc_and_writes_with_cmd25);
+    RUN(fast_mode_abort_does_not_resync);
     RUN(stuck_busy_card_gets_no_commands_and_never_pins_the_bus);
     RUN(resync_with_a_lost_completion_fails_and_retries);
     RUN(card_that_rejects_cmd59_is_not_mounted_and_says_so);

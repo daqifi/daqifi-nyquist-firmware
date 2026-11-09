@@ -483,25 +483,26 @@ static uint32_t lDRV_SDSPI_ProcessCSD(uint8_t* csdPtr)
  *
  * What the card is doing decides what it needs, and we cannot know which:
  *
- *  - Waiting for a CMD24 token: 0xFE + 512 x 0xFF + 0xFF 0xFF is a complete
+ * Only a CMD24 can be in doubt (see DRV_SDSPI_WRITE_IN_DOUBT_NONE). There is
+ * deliberately no CMD25 resync: a CRC-rejected block inside a CMD25 left the
+ * bench SanDisk card unresponsive, CMD0 included, until power-cycled, whatever
+ * ended the write (stop token after a flush, stop token at once with CS held,
+ * CMD12), so with CRC on the driver never issues CMD25.
+ *
+ *  - Waiting for the CMD24 token: 0xFE + 512 x 0xFF + 0xFF 0xFF is a complete
  *    block with a guaranteed-bad CRC (CRC16 of 512 x 0xFF is 0x7FA1). The card
  *    answers 0x0B, programs nothing, and returns to ready.
- *  - Waiting for a CMD25 token: 0xFF is idle there, so the flush does nothing
- *    and the 0xFD stop token ends the write. The stop token must not be the only
- *    thing sent, because of the next case.
- *  - Part-way through capturing a block: the token would be taken as data, so
- *    both sequences first clock at least the 514 bytes that end the block. The
- *    last two are 0xFF 0xFF as its CRC, so it fails unless the block happens to
- *    hash to 0xFFFF (about 1 in 65,536, on a sector whose write had failed
- *    anyway). Multi-block cards that reject a block still need the stop token.
+ *  - Part-way through capturing a block: the 0xFE is taken as data, and the
+ *    sequence clocks at least the 514 bytes that end the block. The last two
+ *    are 0xFF 0xFF as its CRC, so it fails unless the block happens to hash to
+ *    0xFFFF (about 1 in 65,536, on a sector whose write had failed anyway).
  *  - Busy programming: it ignores the bus, and we wait it out first. A token
  *    sent into that busy would be lost.
- *  - Not in a write at all: 0xFE and 0xFD have a leading 1, so a byte-aligned
- *    command parser ignores them. A bit-level parser sees start bit 0 and
- *    transmit bit 1, then all ones: CMD63 with a bad CRC7 (host test pins this),
- *    which it rejects. It answers with an R1 that nobody reads, and later 0xFF
- *    bytes are idle. The 0xFD is followed by 15 x 0xFF so that a bit-level frame
- *    cannot swallow the start of the next real command.
+ *  - Not in a write at all: 0xFE has a leading 1, so a byte-aligned command
+ *    parser ignores it. A bit-level parser sees start bit 0 and transmit bit 1,
+ *    then all ones: CMD63 with a bad CRC7 (host test pins this), which it
+ *    rejects. It answers with an R1 that nobody reads, and later 0xFF bytes are
+ *    idle.
  *
  * Only safe with CRC checking on: with it off, a waiting card would PROGRAM the
  * 0xFF block. So writeInDoubt is only ever set while crcEnabled is true
@@ -651,27 +652,8 @@ static void lDRV_SDSPI_WriteResyncTasks(DRV_SDSPI_OBJ* dObj)
             {
                 dObj->resyncFlushLeft = (uint16_t)(DRV_SDSPI_MEDIA_BLOCK_SIZE + 2U);
                 dObj->cmdState = DRV_SDSPI_CMD_RESYNC_FLUSH;
-                if (dObj->writeInDoubt == DRV_SDSPI_WRITE_IN_DOUBT_SINGLE)
-                {
-                    dObj->pCmdResp[0] = DRV_SDSPI_DATA_START_TOKEN;
-                    if (DRV_SDSPI_SPIWrite(dObj, dObj->pCmdResp, 1) == false)
-                    {
-                        lDRV_SDSPI_WriteResyncEnd(dObj, false);
-                    }
-                }
-            }
-            else if ((dObj->resyncStage == DRV_SDSPI_RESYNC_STAGE_AFTER_BLOCK) &&
-                    (dObj->writeInDoubt == DRV_SDSPI_WRITE_IN_DOUBT_MULTI))
-            {
-                (void) memset(dObj->pCmdResp, 0xFF, DRV_SDSPI_RESYNC_STOP_FRAME_SIZE);
-                dObj->pCmdResp[0] = DRV_SDSPI_DATA_STOP_TRAN_TOKEN;
-                if (DRV_SDSPI_SPIWrite(dObj, dObj->pCmdResp, DRV_SDSPI_RESYNC_STOP_FRAME_SIZE) == true)
-                {
-                    dObj->resyncIdleReads = 0U;
-                    dObj->resyncStage = DRV_SDSPI_RESYNC_STAGE_AFTER_STOP;
-                    dObj->cmdState = DRV_SDSPI_CMD_RESYNC_STOP_SENT;
-                }
-                else
+                dObj->pCmdResp[0] = DRV_SDSPI_DATA_START_TOKEN;
+                if (DRV_SDSPI_SPIWrite(dObj, dObj->pCmdResp, 1) == false)
                 {
                     lDRV_SDSPI_WriteResyncEnd(dObj, false);
                 }
@@ -682,11 +664,6 @@ static void lDRV_SDSPI_WriteResyncTasks(DRV_SDSPI_OBJ* dObj)
                  * is not busy, so it cannot still be in the data phase. */
                 lDRV_SDSPI_WriteResyncEnd(dObj, true);
             }
-            break;
-
-        case DRV_SDSPI_CMD_RESYNC_STOP_SENT:
-
-            lDRV_SDSPI_WriteResyncBusyRead(dObj);
             break;
 
         default:
@@ -808,10 +785,6 @@ static void lDRV_SDSPI_CommandSend
             else if (command == DRV_SDSPI_WRITE_SINGLE_BLOCK)
             {
                 dObj->writeInDoubt = DRV_SDSPI_WRITE_IN_DOUBT_SINGLE;
-            }
-            else if (command == DRV_SDSPI_WRITE_MULTI_BLOCK)
-            {
-                dObj->writeInDoubt = DRV_SDSPI_WRITE_IN_DOUBT_MULTI;
             }
             else
             {
@@ -1154,7 +1127,6 @@ static void lDRV_SDSPI_CommandSend
         case DRV_SDSPI_CMD_RESYNC_START:
         case DRV_SDSPI_CMD_RESYNC_FLUSH:
         case DRV_SDSPI_CMD_RESYNC_BUSY_CHECK:
-        case DRV_SDSPI_CMD_RESYNC_STOP_SENT:
             lDRV_SDSPI_WriteResyncTasks(dObj);
             break;
 
@@ -2625,8 +2597,8 @@ static void lDRV_SDSPI_BufferIOTasks
             if ((dObj->pCmdResp[0] & DRV_SDSPI_WRITE_RESPONSE_TOKEN_MASK) != DRV_SDSPI_DATA_ACCEPTED)
             {
                 /* Something went wrong, a CRC reject (0x0B) included: reported
-                 * as an error, never retried here. writeInDoubt stays set; a
-                 * CMD25 card must still be sent its stop token. */
+                 * as an error, never retried here. With CRC on this is a CMD24,
+                 * writeInDoubt stays set and the next command resyncs first. */
                 dObj->taskBufferIOState = DRV_SDSPI_TASK_READ_WRITE_ABORT;
             }
             else
@@ -2812,8 +2784,6 @@ static void lDRV_SDSPI_BufferIOTasks
                 /* The card is out of the busy state. Stop the timer */
                 (void) DRV_SDSPI_TimerStop(dObj);
                 dObj->timerFlag = false;
-                /* #1217: stop token taken and card no longer busy. */
-                dObj->writeInDoubt = DRV_SDSPI_WRITE_IN_DOUBT_NONE;
                 dObj->taskBufferIOState = DRV_SDSPI_TASK_PROCESS_NEXT;
             }
             break;

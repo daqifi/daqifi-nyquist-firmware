@@ -118,18 +118,15 @@
 
 #define DRV_SDSPI_COMMAND_RESPONSE_TRIES          (10)
 
-/* #1217: resync's stop token plus trailing 0xFF. Must fit pCmdResp. */
-#define DRV_SDSPI_RESYNC_STOP_FRAME_SIZE          (16U)
-
-/* #1217: what kind of write is in doubt (DRV_SDSPI_OBJ.writeInDoubt). */
+/* #1217: what kind of write is in doubt (DRV_SDSPI_OBJ.writeInDoubt). Only a
+ * CMD24 can be: with CRC on every block is its own CMD24, and with CRC off
+ * (SD:PROTect 0) there is no resync, so nothing is ever recorded. */
 #define DRV_SDSPI_WRITE_IN_DOUBT_NONE             (0U)
 #define DRV_SDSPI_WRITE_IN_DOUBT_SINGLE           (1U)
-#define DRV_SDSPI_WRITE_IN_DOUBT_MULTI            (2U)
 
 /* #1217: which busy wait a resync is in (DRV_SDSPI_OBJ.resyncStage). */
 #define DRV_SDSPI_RESYNC_STAGE_BEFORE_BLOCK       (0U)
 #define DRV_SDSPI_RESYNC_STAGE_AFTER_BLOCK        (1U)
-#define DRV_SDSPI_RESYNC_STAGE_AFTER_STOP         (2U)
 
 // *****************************************************************************
 // *****************************************************************************
@@ -841,7 +838,6 @@ typedef enum
     DRV_SDSPI_CMD_RESYNC_START,
     DRV_SDSPI_CMD_RESYNC_FLUSH,
     DRV_SDSPI_CMD_RESYNC_BUSY_CHECK,
-    DRV_SDSPI_CMD_RESYNC_STOP_SENT,
 
 }DRV_SDSPI_CMD_STATES;
 
