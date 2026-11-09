@@ -62,3 +62,19 @@ run_*
 !run_*.h
 !run_*.py
 run_904_tests
+
+# ⛔ #1231: PATTERN, for the same reason the run_* block above gives. Every
+# gen_*.h was added here individually, so a new spliced-source test had to
+# remember to come back -- and #1231's gen_1231_clamp_latch.h arrived
+# UNIGNORED, which is how this was noticed. Committing a generated header
+# reintroduces exactly the stale-hand-copy failure the generators exist to
+# prevent: the splice would stop tracking the firmware and the test would
+# measure text the device no longer has.
+#
+# Generators are *.py and sources are *.c, so nothing legitimate matches
+# gen_*.h -- the negations are belt-and-braces in case that convention
+# changes, exactly as above.
+gen_*.h
+gen_*.h.tmp
+!gen_*.c
+!gen_*.py

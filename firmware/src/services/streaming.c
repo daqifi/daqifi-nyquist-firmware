@@ -3039,10 +3039,58 @@ static void Streaming_EmitSessionSummaryImpl(bool recordDying) {
               (unsigned)snap.usbDroppedBytesSteady,
               (unsigned)snap.wifiDroppedBytesSteady,
               (unsigned)snap.sdDroppedBytesSteady);
-        LOG_E("Stream end (post-grace) samples lost: encFail=%u encDrop=%u dioDrop=%u",
-              (unsigned)snap.encoderFailuresSteady,
+        /* ⛔ #1018: encFail IS NOT A LOSS, and printing it under this heading
+         * said it was. It is the SAME DEFECT the #1055 comment above describes
+         * for eos -- one line further down, and left behind by the fix that
+         * identified the class: a quantity this function deliberately EXCLUDES
+         * from totalSampleLoss must not appear beneath a "samples lost"
+         * heading, because it contradicts the arithmetic three lines above it.
+         *
+         * V, and the firmware already says it twice. totalSampleLoss (above)
+         * sums queueDropped + encoderDropped + dioDropped + scanStale --
+         * encoderFailures is NOT a term. Streaming_ReportEncoderSampleLoss's
+         * contract: "the batch loop books only the EVENT (encoderFailures) and
+         * an encoder that knows it destroyed a sample books the sample here",
+         * and "A site that merely RETAINS a sample (buffer full this tick,
+         * re-encoded next call) must NOT: nothing was lost." Under #520
+         * backpressure the encoder HOLDS samples while the WiFi ring is full,
+         * so a large encFail on a healthy run is the EXPECTED state.
+         *
+         * E, measured on an NQ1: a cleanly completing 5 s run at 5 kHz printed
+         *     lost 0/24999 samples (0%)
+         *     samples lost: encFail=10001 encDrop=0 dioDrop=0
+         * consecutively -- ~40% of the run announced as lost by a run that
+         * lost nothing. Identical across three runs on each of two images.
+         *
+         * It is not cosmetic. #371's rule is that numbers from a
+         * mis-accounting tool are unreliable FULL STOP, not "the baseline
+         * minus a bug", so a cap or threshold fitted while reading this line
+         * is fitted to a mislabel. And it destroys a real diagnostic: #539
+         * records that its defect "surfaces as ~100% EncoderFailures", which
+         * is unreadable once a healthy run already shows ~40%.
+         *
+         * A FOURTH LINE rather than a longer one, deliberately: the comment
+         * above records that this print was split into three because a single
+         * message was 212 bytes against Logger's 125-byte ceiling and Logger
+         * truncates the TAIL. Worst cases here are 75 and 75 of 125.
+         *
+         * ⚠ NOT FIXED HERE, and still open: #1018 also observes that
+         * scanStaleDropped is inside totalSampleLoss while being described as
+         * "(all post-grace)", and that queueDropped and scanStale are in the
+         * total but absent from this breakdown. Both are about which
+         * quantities the TOTAL should contain; this change is only about which
+         * heading encFail sits under, and widening it would be a different
+         * argument needing a different decision. */
+        LOG_E("Stream end (post-grace) samples lost: encDrop=%u dioDrop=%u",
               (unsigned)snap.encoderDroppedSamplesSteady,
               (unsigned)snap.dioDroppedSamplesSteady);
+        /* ⚠ THE LABEL STAYS `encFail=`. Only the HEADING was wrong, so
+         * renaming the token would be a gratuitous break for anything that
+         * greps the log for it -- and test_1055 already asserts every label
+         * from the pre-split message survives somewhere, which is what
+         * caught the rename. Worst case 78 of Logger's 125. */
+        LOG_E("Stream end (post-grace) encoder events: encFail=%u (retried, not lost)",
+              (unsigned)snap.encoderFailuresSteady);
     }
 }
 

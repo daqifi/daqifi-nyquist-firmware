@@ -54,6 +54,50 @@ static int16_t freeHead = -1;
 static int16_t* nextFree = NULL;
 
 static SemaphoreHandle_t poolMutex = NULL;
+
+/* #1231: the `needed` of the last REPORTED resize-skip, so the LOG_E marks the
+ * transition rather than firing on every stream start. 0 means "no clamp
+ * currently reported". Guarded by poolMutex like the rest of this state.
+ *
+ * ⭐ WHERE IT IS RESET, stated because a reader should not have to derive it:
+ *   - at BOOT, by this static initializer -- so the FIRST clamp after a reset
+ *     always reports;
+ *   - whenever a grow SUCCEEDS (ClampReportDue with clamped=false), so a clamp
+ *     that stops and later returns reports again as a fresh event;
+ *   - NOT when no grow is ATTEMPTED (maxSize <= queueSize). That case is not
+ *     evidence the heap recovered -- nothing was asked of it -- so clearing
+ *     there would re-report an unchanged clamp after any session that happened
+ *     not to grow. Deliberate, and the host test pins it.
+ * There is no other writer: the pool can be re-partitioned many times without
+ * a reboot, and that is exactly the repetition this latch exists to quieten. */
+static size_t sLastClampNeeded = 0u;
+
+/* #1231: should THIS clamp be reported? Updates *pLastReported.
+ *
+ * Extracted rather than left inline for one reason: the property is a
+ * SEQUENCE over calls -- report once, re-report when the request changes,
+ * re-report after the clamp lifts -- and a sequence inline in a 120-line
+ * FreeRTOS-dependent function is reachable only from a bench run. As six
+ * lines over one caller-owned size_t with no includes of its own it is
+ * host-testable AS ITSELF, so tests/host splices it verbatim instead of
+ * modelling it. (Same arrangement as #1201's StopRequestedSince.)
+ *
+ *   clamped == false            the heap stretched, so forget any clamp
+ *   needed  == *pLastReported   the same clamp we already reported: quiet
+ *   otherwise                   a new or changed clamp: report it once
+ */
+static inline bool ClampReportDue(size_t needed, bool clamped,
+                                  size_t *pLastReported) {
+    if (!clamped) {
+        *pLastReported = 0u;
+        return false;
+    }
+    if (needed == *pLastReported) {
+        return false;
+    }
+    *pLastReported = needed;
+    return true;
+}
 static volatile bool poolActive = false;
 static bool poolOwnsMemory = false;  // false = external (StreamingBufferPool)
 
@@ -257,17 +301,75 @@ void AInSampleList_InitializeExternal(void* poolMem, int16_t* freeMem,
             // Drain — old pool memory is being replaced
         }
 
-        // Reuse existing queue when new size fits (avoids runtime malloc).
-        // Only recreate if new size exceeds current capacity — this can only
-        // happen via explicit SYST:MEM:SAMP:POOL > boot default.
+        /* Reuse the existing queue when the new size fits (avoids a runtime
+         * malloc); only recreate it when the new size exceeds the current
+         * capacity.
+         *
+         * ⛔ #1231: THIS COMMENT USED TO SAY the grow "can only happen via
+         * explicit SYST:MEM:SAMP:POOL > boot default", AND THAT WAS FALSE.
+         * StreamingBufferPool_Partition carves as many slots as the pool fits
+         * (samplePoolCount == 0 means MAXIMIZE) and then calls us, so EVERY
+         * STREAM START reaches this branch with no SCPI command involved --
+         * which is what SCPIInterface.c's own #828 comment at the MEM:FREE?
+         * reporting site has always said. Measured on an NQ1 that had just
+         * been flashed and rebooted, driving only SYST:STR:THRoughput: the
+         * skip below fired on every run, with neither SYST:MEM:SAMP:POOL nor
+         * MEM:AUTO issued at any point.
+         *
+         * The two comments had drifted apart, and the wrong one was the one
+         * sitting AT the branch -- so a reader who trusted it concluded the
+         * log line meant somebody had set a pool size, and went looking for a
+         * command that was never sent. */
         if (maxSize > queueSize) {
             size_t needed = maxSize * sizeof(AInPublicSampleList_t*) + 80;
             size_t freeHeap = xPortGetFreeHeapSize();
             if (freeHeap < needed + 1024) {
-                LOG_E("Sample queue resize skipped: need %u, heap free %u",
-                      (unsigned)needed, (unsigned)freeHeap);
+                /* ⛔ #1231: EMITTED ONLY WHEN THE CLAMP CHANGES.
+                 *
+                 * This used to fire on EVERY stream start on a healthy device
+                 * -- the partition asks to maximize, the heap will not stretch
+                 * that far, and the pool is clamped to the queue it already
+                 * has. Measured: present on every SYST:STR:THRoughput run
+                 * across two firmware images, while the same runs reported
+                 * QueueDropped=0 and the full sample count. Nothing was denied
+                 * that anybody asked for.
+                 *
+                 * An error that fires on every healthy run is saturated: it
+                 * says nothing on the day capacity really IS denied, which is
+                 * the same objection #1164 raises about SamplePoolClampedSlots.
+                 * And per this project's stated principle the operator reads
+                 * SYSTem:LOG? to learn what went wrong, so an unconditional
+                 * entry there is actively misleading.
+                 *
+                 * ⚠ DEMOTING TO LOG_I WOULD HAVE DELETED IT, which is why the
+                 * fix is this and not that. This file sets
+                 *     #define LOG_LVL LOG_LEVEL_ERROR
+                 * at the top, deliberately -- "LOG_D/LOG_I stripped from the
+                 * binary (per-sample hot path)" -- so LOG_I here compiles to
+                 * NOTHING and no runtime SYSTem:LOG:LEVel could bring it back.
+                 * The transition is the actionable event anyway: that the
+                 * clamp exists is already queryable through #828's
+                 * SamplePoolPartitioned/SamplePoolClampedSlots in
+                 * SYSTem:MEMory:FREE?, whereas a CHANGE in it is not.
+                 *
+                 * `needed` is the key because it is what the partition asked
+                 * for: constant while the channel configuration is, so a
+                 * steady setup reports once and then stays quiet, and a
+                 * reconfiguration that clamps differently reports again. The
+                 * else-arm below clears it so a clamp that stops and later
+                 * returns is reported as a fresh event rather than swallowed.
+                 *
+                 * The static is written under poolMutex, taken above before
+                 * this block, so it needs no critical section of its own. */
+                if (ClampReportDue(needed, true, &sLastClampNeeded)) {
+                    LOG_E("Sample queue resize skipped: need %u, heap free %u",
+                          (unsigned)needed, (unsigned)freeHeap);
+                }
                 maxSize = queueSize;  // Keep old queue, clamp pool to fit
             } else {
+                /* #1231: the grow SUCCEEDED, so forget any reported clamp -- one
+                 * that returns later is a new event and must report again. */
+                (void)ClampReportDue(0u, false, &sLastClampNeeded);
                 LOG_I("Sample queue resize: %u -> %u slots (heap free %u)",
                       (unsigned)queueSize, (unsigned)maxSize, (unsigned)freeHeap);
                 vQueueDelete(analogInputsQueue);
