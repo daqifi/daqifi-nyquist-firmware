@@ -597,6 +597,48 @@ scpi_result_t SCPI_StorageSDEnableSet(scpi_t * context){
 __exit_point:
     return result;
 }
+/* #1217: SYSTem:STORage:SD:PROTect <0|1>
+ *
+ * 1 (default): the card runs with CRC checking on and every block is written
+ * as its own CMD24. A block the card captured from bus traffic fails its CRC
+ * and is refused; an abandoned write is resynced. Costs about two thirds of
+ * the SD write throughput (CMD25 cannot be used: a CRC reject inside it left
+ * the bench card unresponsive until power-cycled).
+ * 0: CRC off and CMD25 multi-block writes, as before #1217. Fast, but a stray
+ * block is programmed over its target sector.
+ *
+ * Only while SD is disabled and idle: the driver applies it by
+ * re-initializing the card, which a mounted volume would lose. Runtime only,
+ * like the other SD settings. */
+scpi_result_t SCPI_StorageSDProtectSet(scpi_t * context){
+    int32_t param1;
+    sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+
+    if (!SCPI_ParamInt32(context, &param1, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if ((param1 != 0) && (param1 != 1)) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+    if (pSDCardRuntimeConfig->enable || !sd_card_manager_IsIdle()) {
+        LOG_E("SD:PROTect - disable SD first (SD:ENAble 0)");
+        SCPI_ErrorPush(context, SCPI_ERROR_SETTINGS_CONFLICT);
+        return SCPI_RES_ERR;
+    }
+    if (pSDCardRuntimeConfig->crcProtect != (param1 == 1)) {
+        pSDCardRuntimeConfig->crcProtect = (param1 == 1);
+        DRV_SDSPI_SetCrcMode(0, pSDCardRuntimeConfig->crcProtect);
+    }
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_StorageSDProtectGet(scpi_t * context){
+    sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    SCPI_ResultInt32(context, pSDCardRuntimeConfig->crcProtect ? 1 : 0);
+    return SCPI_RES_OK;
+}
+
 scpi_result_t SCPI_StorageSDEnableGet(scpi_t * context){
     sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
     SCPI_ResultInt32(context, pSDCardRuntimeConfig->enable ? 1 : 0);

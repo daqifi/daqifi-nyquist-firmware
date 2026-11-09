@@ -1681,6 +1681,12 @@ typedef struct
        often the protection actually fired since boot. */
     bool                                            crcEnabled;
     uint32_t                                        resyncCount;
+    /* #1217: SD:PROTect. Read only at media init (DRV_SDSPI_INIT_TURN_ON_CRC);
+     * crcEnabled is what the card actually runs with. */
+    bool                                            crcRequested;
+    /* Set by DRV_SDSPI_SetCrcMode from another task; consumed by the detect
+     * verdict in DRV_SDSPI_Tasks, which then re-runs media init. */
+    volatile bool                                   reinitRequested;
 
 } DRV_SDSPI_OBJ;
 

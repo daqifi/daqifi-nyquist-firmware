@@ -63,6 +63,8 @@ scpi_result_t SCPI_StorageSDFormat(scpi_t * context);
 // SD Card File Splitting Commands
 scpi_result_t SCPI_StorageSDMaxSizeSet(scpi_t * context);
 scpi_result_t SCPI_StorageSDMaxSizeGet(scpi_t * context);
+scpi_result_t SCPI_StorageSDProtectSet(scpi_t * context);
+scpi_result_t SCPI_StorageSDProtectGet(scpi_t * context);
 
 // SD Working Directory (#799) - the folder logging writes into, and the one
 // SD:GET / SD:DELete / SD:CRC resolve a bare filename against.
