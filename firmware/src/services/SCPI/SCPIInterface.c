@@ -3114,6 +3114,41 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context,
     // Wait for duration
     vTaskDelay(pdMS_TO_TICKS(duration * 1000));
 
+    /* #1201: did a stop land DURING THE DWELL? Read here -- after the dwell,
+     * before the first teardown statement -- for the same reason the finder's
+     * post-observation read sits where it does: a read taken after the
+     * teardown could not tell an operator's stop apart from this function's
+     * own, and a read taken before the dwell is the arm check, which has
+     * already passed.
+     *
+     * ⭐ IT CANNOT SELF-TRIGGER, and that is a property of the teardown
+     * below, not of this placement. Only SCPI_PerformStreamingStop() and the
+     * power-down path advance gStreamStopGen; this function's teardown pokes
+     * IsEnabled and calls Streaming_UpdateState() directly and reaches
+     * neither, which is the same reason a START's own teardown of a previous
+     * session does not refuse itself. Reading before the teardown makes the
+     * placement robust to that changing, rather than relying on it.
+     *
+     * One critical section, for the pair, and that is ALL it is for -- the
+     * same note the finder's site carries: there is no publish of IsEnabled
+     * here to make the answer actionable, because this is judging a run that
+     * has already finished rather than deciding whether to arm.
+     *
+     * The pinnedActive term is NECESSARILY FALSE here -- a stop already
+     * running at this command's entry is caught by the arm check above, which
+     * refuses -- so of the three terms only the live count and the generation
+     * delta can fire. Unlike pinnedActive, the LIVE COUNT genuinely can: a
+     * stop issued during the dwell and still parked in its SD close is in
+     * flight at this moment, which is why the message below distinguishes the
+     * two. Noted so a reader does not conclude the first term is doing work it
+     * cannot do. */
+    bool dwellStopInFlight = false;
+    bool dwellStopped;
+    taskENTER_CRITICAL();
+    dwellStopped = StopRequestedSince(stopGenPinned, stopActivePinned,
+                                      &dwellStopInFlight);
+    taskEXIT_CRITICAL();
+
     // Stop
     pStreamCfg->IsEnabled = false;
     Streaming_UpdateState();
@@ -3163,6 +3198,48 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context,
     pStreamCfg->ClockPeriod = savedClockPeriod;
     Streaming_RestoreRateConfigured(savedRateConfigured);   /* #730 */
     RestoreSdMode(savedSdMode);
+
+    /* #1201: a stop during the dwell DISCARDS the measurement instead of
+     * reporting it as a completed run.
+     *
+     * ⛔ WHAT WAS WRONG. The stop executed -- sampling really did end -- and
+     * this command printed its whole result block and returned OK anyway, so
+     * the numbers described a run the operator had cancelled. Measured on this
+     * lane's board (#1201 image, crc32 BD809517, 12/12 attempts): the reply
+     * was always a result block with no wire error, carrying TotalSamples
+     * 333-393 and SamplesPerSec 66-78, against a matched unraced baseline on
+     * the same image of 24999 / 4999. About 1.4% of the requested samples
+     * survived and the command still called it a success. A client has no way
+     * to tell that from a device that is simply slow, which is the whole
+     * defect: a cancelled benchmark reads as a catastrophic one.
+     *
+     * Placed AFTER the teardown and the restore above, so every exit from
+     * this function still restores the same six things and the stop is
+     * honoured rather than raced -- and BEFORE Streaming_GetStats() below,
+     * which is the computation that must not happen, not merely a print that
+     * must not be made. There is nothing to suppress downstream because
+     * nothing downstream runs.
+     *
+     * An ERROR, not a zeroed result block: #861's rule is that a refusal must
+     * be distinguishable from a measurement, and a result block of zeroes is
+     * exactly the thing a client cannot distinguish. THRoughput's error channel
+     * is the WIRE (it pushes on the live context, unlike WIFI:FINd?, whose
+     * push is queue-only to protect its five-field reply -- #965), so this
+     * reaches the caller as **ERROR: -200 and the result block is absent. */
+    if (dwellStopped) {
+        /* log_budget: max=62 -- both candidate strings below are exactly 62
+         * bytes and the fixed prefix is 41, so the worst case is 103 of
+         * Logger's 125. Bounded rather than left as a bare %s for the reason
+         * this gate exists: the remedy is written last in these messages, so
+         * a truncation eats the actionable half and the line still reads as
+         * complete. */
+        LOG_E("Throughput benchmark: result discarded - %s",
+              dwellStopInFlight
+                  ? "a stop is still in flight on the other transport (#1201/#1226)"
+                  : "a stop was issued and completed during the dwell (#1201/#1226)");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
 
     // Collect and report results
     StreamingStats s;

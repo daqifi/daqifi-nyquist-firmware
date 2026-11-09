@@ -57,7 +57,7 @@ PREDICATE_SIG = "static inline bool StopRequestedSince("
 # function-signature prefix (must start at column 0) -> expected number of
 # StopRequestedSince() calls in that function.
 CALL_SITES = {
-    "static scpi_result_t SCPI_RunThroughputBenchClaimed(": 1,
+    "static scpi_result_t SCPI_RunThroughputBenchClaimed(": 2,
     "static bool FindMeasureStep(": 2,
     "static scpi_result_t SCPI_StartStreamingClaimed(": 1,
 }
@@ -181,8 +181,9 @@ def check(src_text):
         got = fn.count(PREDICATE + "(")
         if got != want:
             bad.append(
-                "'%s...' calls %s() %d time(s), expected %d. The two added by "
-                "#1201 are THRoughput's arm and the finder's post-observation "
+                "'%s...' calls %s() %d time(s), expected %d. The four added "
+                "by #1201 are THRoughput's arm, THRoughput's post-dwell "
+                "discard, the finder's arm and the finder's post-observation "
                 "check; a dropped call silently restores the defect."
                 % (sig, PREDICATE, got, want))
         for g in GLOBALS:
@@ -238,6 +239,9 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context,
                                                     uint32_t g, bool a) {
     taskENTER_CRITICAL();
     stopRequested = StopRequestedSince(g, a, &stopInFlight);
+    taskEXIT_CRITICAL();
+    taskENTER_CRITICAL();
+    dwellStopped = StopRequestedSince(g, a, &dwellInFlight);
     taskEXIT_CRITICAL();
     return SCPI_RES_OK;
 }
@@ -297,15 +301,13 @@ def self_test():
         GOOD.replace(
             "    stopRequested = StopRequestedSince(g, a, &stopInFlight);\n"
             "    taskEXIT_CRITICAL();\n"
-            "    return SCPI_RES_OK;\n"
-            "}\n\n"
-            "static bool FindMeasureStep",
+            "    taskENTER_CRITICAL();\n"
+            "    dwellStopped = StopRequestedSince(g, a, &dwellInFlight);\n",
             "    stopInFlight = a || (gStreamStopsActive != 0u);\n"
             "    stopRequested = stopInFlight || (gStreamStopGen != g);\n"
             "    taskEXIT_CRITICAL();\n"
-            "    return SCPI_RES_OK;\n"
-            "}\n\n"
-            "static bool FindMeasureStep"),
+            "    taskENTER_CRITICAL();\n"
+            "    dwellStopped = StopRequestedSince(g, a, &dwellInFlight);\n"),
         False, "DIRECTLY"))
 
     # --- the finder's SECOND call dropped: #1201's own finder half reverted
@@ -363,6 +365,19 @@ def self_test():
             "    /* StopRequestedSince(b->g, b->a, &obsInFlight) belongs here */\n"),
         False, "expected 2"))
 
+    # --- the GD half reverted: THRoughput measures a cancelled run and
+    #     reports it as a completed one. Behaviourally invisible to the host
+    #     tests (they exercise the predicate, which is still correct), so the
+    #     count at this site is the only thing that can see it.
+    cases.append((
+        "M10 THRoughput's post-dwell discard call is dropped",
+        GOOD.replace(
+            "    taskENTER_CRITICAL();\n"
+            "    dwellStopped = StopRequestedSince(g, a, &dwellInFlight);\n"
+            "    taskEXIT_CRITICAL();\n",
+            ""),
+        False, "expected 2"))
+
     # --- the stripper must NOT corrupt a source whose strings contain comment
     #     markers; otherwise it invents failures in correct files
     cases.append((
@@ -374,6 +389,20 @@ def self_test():
 
     failed = 0
     for label, text, expect_ok, must_mention in cases:
+        # ⛔ A MUTANT THAT DID NOT MUTATE IS NOT A CONTROL. Every arm here is
+        # a GOOD.replace(), and a replace whose anchor has rotted returns GOOD
+        # UNCHANGED -- silently. The expect_ok=False arms fail loudly when that
+        # happens, but the expect_ok=True arms (the stripper controls) would
+        # ACCEPT GOOD and report a pass while testing nothing at all. That is
+        # the permissive direction, so it is asserted rather than hoped for:
+        # found while adding M10, when editing the fixture for #1201's GD half
+        # broke M2's anchor and would have left M9 inert.
+        if label != "the good source" and text == GOOD:
+            failed += 1
+            print("  FAIL %s: the mutation did not LAND -- its anchor no "
+                  "longer matches the fixture, so this arm tested nothing."
+                  % label)
+            continue
         bad = check(text)
         ok = not bad
         if ok != expect_ok:
@@ -421,7 +450,7 @@ def main():
             print("  - %s" % b)
         return 1
     print("#1201 predicate wiring OK: one critical-section-free predicate, "
-          "4 calls across 3 sites, 0 re-inlined copies, both pins intact.")
+          "5 calls across 3 sites, 0 re-inlined copies, both pins intact.")
     return 0
 
 
