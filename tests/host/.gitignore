@@ -63,17 +63,22 @@ run_*
 !run_*.py
 run_904_tests
 
-# ⛔ #1231: PATTERN, for the same reason the run_* block above gives. Every
-# gen_*.h was added here individually, so a new spliced-source test had to
-# remember to come back -- and #1231's gen_1231_clamp_latch.h arrived
-# UNIGNORED, which is how this was noticed. Committing a generated header
-# reintroduces exactly the stale-hand-copy failure the generators exist to
-# prevent: the splice would stop tracking the firmware and the test would
-# measure text the device no longer has.
+# ⛔ #1201 and #1231 BOTH ADDED THIS PATTERN INDEPENDENTLY, which is the
+# strongest evidence it was needed: every gen_*.h had been listed here
+# individually, so each new spliced-source test had to remember to come back,
+# and #1231's gen_1231_clamp_latch.h arrived UNIGNORED -- which is how one of
+# them noticed. Same reason the run_* block above gives.
 #
-# Generators are *.py and sources are *.c, so nothing legitimate matches
-# gen_*.h -- the negations are belt-and-braces in case that convention
-# changes, exactly as above.
+# Why it matters more for a spliced header than for a binary: a committed
+# generated header still COMPILES, and make then sees a file that looks up to
+# date and SKIPS the recipe that would have regenerated it. So the test goes on
+# passing against code the firmware no longer contains -- precisely the failure
+# the generator exists to prevent.
+#
+# Sources are test_*.c and generators are gen_*.py, so nothing legitimate
+# matches gen_*.h -- verified: `git ls-files tests/host | grep gen_` returns
+# only the .py generators. The negations are belt-and-braces in case that
+# convention ever changes, exactly as above.
 gen_*.h
 gen_*.h.tmp
 !gen_*.c

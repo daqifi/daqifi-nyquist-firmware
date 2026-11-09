@@ -2709,15 +2709,67 @@ static scpi_result_t SCPI_RefuseSessionStartBusy(scpi_t * context,
  * one. Same reasoning, and the same statement of it, as SCPI_MemRunClaimed.
  */
 /* #1120: tentative (no-initializer) forward declarations, so the runner below
- * can take the stop pin itself. Same idiom and same justification the #938
- * block further down states in full: a file-scope static may have any number
- * of declarations without an initializer, and they all name the same object
- * as the one initialized definition. Needed here because
+ * can take the stop pin itself. This is legal C: a file-scope static may have
+ * any number of declarations without an initializer, and they all name the
+ * same object as the one initialized definition. (#1201: this used to defer
+ * the argument to "the #938 block further down", which was FindMeasureStep's
+ * own copy of these declarations -- #1201 deleted that block, because the
+ * function no longer reads either global, so the argument is stated here
+ * instead of pointed at.) Needed here because
  * SCPI_RunSessionStartClaimed is defined earlier in this file than the
  * definitions next to SCPI_StartStreaming's #861 guard, and must observe the
  * same stop-requested generation they do. */
 static volatile uint32_t gStreamStopGen;
 static volatile uint32_t gStreamStopsActive;
+
+/* #1201: "has a stop been requested since this command pinned?" -- the ONE
+ * implementation of the three-term test.
+ *
+ * It existed TWICE before this, copy-pasted: in SCPI_StartStreamingClaimed off
+ * its pinned locals, and in FindMeasureStep off the sweep's basis. Both are
+ * replaced by a call to this. Two sites that had NO copy gain one -- the
+ * SYSTem:STReam:THRoughput arm, and the finder's post-observation check -- and
+ * those two facts are related rather than coincidental: a test that has to be
+ * re-typed to be reused is a test that does not get reused. Writing it once is
+ * most of why the two missing sites are cheap to add.
+ *
+ * Returns THE ANSWER, and through *outStopInFlight the one refinement both
+ * existing callers need: whether the stop is still RUNNING, as opposed to
+ * having begun and finished inside the window. Only the log message
+ * distinguishes those, so it is an out-param while the predicate's answer is
+ * the return value -- the same split FindMeasureStep's own *outStopRequested
+ * already uses, and it keeps the call reading as the predicate it is.
+ *
+ * ⛔ CALL IT WITH A CRITICAL SECTION ALREADY HELD. It deliberately does not
+ * take one itself, and that is the one property this factoring must not
+ * "tidy": at the arm sites the reads have to be inside the SAME section that
+ * publishes IsEnabled, which is what makes the answer USABLE rather than
+ * merely atomic -- a stop cannot then slip between the test and the publish. A
+ * section acquired in here would make each call atomic and reopen precisely
+ * that window, so a caller holding none gets a correct value of a useless
+ * instant. Each load is individually atomic on PIC32MZ anyway
+ * (docs/MCU_REFERENCE.md, "Atomicity & Concurrency Rules", first bullet); the
+ * section exists to make the PAIR describe ONE INSTANT, which is #969's fix.
+ *
+ * The three terms, each covering a case the other two cannot -- the full
+ * argument lives at gStreamStopsActive's definition and is not restated here:
+ *   pinnedActive        a stop was ALREADY RUNNING when this command pinned,
+ *                       and finished before this check. The other two miss it:
+ *                       the count is back to zero and the generation was
+ *                       bumped BEFORE the pin, so it compares equal.
+ *   gStreamStopsActive  a stop is running RIGHT NOW, so it will clear
+ *                       IsEnabled after we publish it.
+ *   gStreamStopGen      a stop began and ended entirely inside the window --
+ *                       the original #861 case.
+ * Term order and short-circuiting are kept exactly as both copies had them, so
+ * this is a textual no-op at the two existing sites rather than a rewrite that
+ * happens to agree. */
+static inline bool StopRequestedSince(uint32_t pinnedGen, bool pinnedActive,
+                                      bool *outStopInFlight) {
+    const bool inFlight = pinnedActive || (gStreamStopsActive != 0u);
+    *outStopInFlight = inFlight;
+    return inFlight || (gStreamStopGen != pinnedGen);
+}
 
 static scpi_result_t SCPI_RunSessionStartClaimed(scpi_t * context,
                                                  scpi_result_t (*body)(scpi_t *,
@@ -2772,13 +2824,43 @@ static scpi_result_t SCPI_RunSessionStartClaimed(scpi_t * context,
 static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context,
                                                     uint32_t stopGenPinned,
                                                     bool stopActivePinned) {
-    /* #1120 threaded the stop pin through to here; #1226 acts on it. A
-     * power-off advances gStreamStopGen to cancel any arm still in its setup
-     * window, and this arm is checked against it in the same critical section
-     * that publishes IsEnabled, exactly as START's is -- otherwise a benchmark
-     * in setup when the button is pressed arms in STANDBY with the rails off
-     * and samples for up to 60 s. (#1201 / PR #1215 generalises the same check
-     * into one StopRequestedSince() predicate.) */
+    /* #1201 + #1226: the pin #1120 made available is ACTED ON at this
+     * command's arm, through the shared StopRequestedSince() predicate.
+     *
+     * TWO ISSUES CONVERGED HERE and both reasons are kept, because they are
+     * different hazards that happen to need the same test:
+     *   #1226  a POWER-OFF advances gStreamStopGen to cancel any arm still in
+     *          its setup window. Without this check a benchmark that was in
+     *          setup when the button was pressed arms in STANDBY with the
+     *          rails off and samples for up to 60 s.
+     *   #1201  a SYST:STR:STOP that completes in the same window was lost, so
+     *          the bench streamed for up to its full duration after the
+     *          operator asked it to stop, and the command returned OK.
+     * #1226 implemented the three terms inline here, which was the THIRD
+     * copy of them in this file; main's own comment anticipated that "#1201 /
+     * PR #1215 generalises the same check into one StopRequestedSince()
+     * predicate", and that is what this is. The predicate is unchanged by the
+     * merge -- only this call site stops carrying its own copy.
+     *
+     * ⭐ THIS IS A BEHAVIOUR CHANGE AT THIS COMMAND'S ARM, taken on purpose,
+     * and this file already contains the rule for when that is allowed. The
+     * #868/#891/#895 comment at the arm below declines to inherit the finder's
+     * inputs-present test and the finder's split refusal token "by symmetry",
+     * on the ground that each would be a NEW refusal on a command that has
+     * always accepted the case, and so belongs at this command's own front
+     * door as a deliberate change. That rule is honoured, not bypassed: this
+     * IS that deliberate change, made because a stop is categorically unlike
+     * the other two.
+     *
+     * Why categorically. #891 was declined here because this command's output
+     * is the sample and byte count it measured, which stays TRUE of a run with
+     * nothing enabled -- empty, not wrong. A stop is not a consistency
+     * failure, it is an explicit operator instruction, and the failure it
+     * leaves is not an empty measurement: the bench goes on to stream AFTER
+     * the operator asked it to stop. No reading of "the counts are still true"
+     * excuses that. So the symmetry argument that declined #891 does not reach
+     * this, which is exactly why this one is taken and those two stay
+     * declined. */
 
     int32_t freq, duration;
     if (!SCPI_ParamInt32(context, &freq, TRUE)) return SCPI_RES_ERR;
@@ -2900,10 +2982,20 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context,
      * do, and with no session running it can only discard stale samples. */
     bool cfgBusy;
     bool mappingMoved = false;
-    bool stopRequested;
+    bool stopInFlight = false;
+    bool stopRequested = false;
     taskENTER_CRITICAL();
-    stopRequested = stopActivePinned || (gStreamStopsActive != 0u) ||
-                    (gStreamStopGen != stopGenPinned);
+    /* #1201/#1226: computed FIRST, ahead of cfgBusy, matching the ordering
+     * both other arms use -- so a stop or power-off that landed anywhere in
+     * this command's window is reported as itself rather than folded into
+     * whichever consistency check also happens to be true at the time. Inside
+     * this section, not before it, for the reason StopRequestedSince states:
+     * the answer is only usable if nothing can slip between the test and the
+     * publish below. #1226's inline three-term copy is replaced by the
+     * predicate; the terms and their order are identical, so this is a
+     * textual change at this site and not a behavioural one. */
+    stopRequested = StopRequestedSince(stopGenPinned, stopActivePinned,
+                                       &stopInFlight);
     cfgBusy = Streaming_ConfigChangeInProgress();
     if (!cfgBusy) {
         /* #868: the enabled-channel set moved after this command built its
@@ -2978,8 +3070,23 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context,
      * leaves Running true, and the benchmark would then adopt that session as
      * its own and stop it after the dwell (Qodo). */
     if (armRefused || !pStreamCfg->Running) {
+        /* #1201: stopRequested is named FIRST when it fired, even if another
+         * cause is also true -- same precedence the other two arms use, and
+         * for the same reason: it is the one cause of the set that is an
+         * explicit operator instruction rather than a consistency failure. */
+        /* log_budget: max=78 -- #1201 BRINGS THIS SITE UNDER THE CHECK. It
+         * was listed in tools/lint/log_budget-baseline.txt as an unresolvable
+         * %s, and the baseline matches by format-string TEXT, so the two
+         * longer strings #1201 adds here would have ridden that waiver
+         * unmeasured. They fit (78 + the 22-byte prefix = 100 of 125), but
+         * that was luck until it was bounded. The baseline entry is removed in
+         * the same change, which is what its own header asks for: it exists to
+         * stop the count growing AND to shrink as sites are fixed. */
         LOG_E("Throughput benchmark: %s",
-              stopRequested ? "refused, a stop or power-off happened during setup (#1226)"
+              stopRequested
+                      ? (stopInFlight
+                         ? "refused, a stop/power-off is in flight (#1201/#1226)"
+                         : "refused, a stop/power-off completed in setup (#1201/#1226)")
                       : cfgBusy ? "refused, a streaming config change is in flight (#847)"
                       : mappingMoved
                       ? "refused, the enabled-channel set moved after the mapping was built (#868)"
@@ -3006,6 +3113,41 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context,
 
     // Wait for duration
     vTaskDelay(pdMS_TO_TICKS(duration * 1000));
+
+    /* #1201: did a stop land DURING THE DWELL? Read here -- after the dwell,
+     * before the first teardown statement -- for the same reason the finder's
+     * post-observation read sits where it does: a read taken after the
+     * teardown could not tell an operator's stop apart from this function's
+     * own, and a read taken before the dwell is the arm check, which has
+     * already passed.
+     *
+     * ⭐ IT CANNOT SELF-TRIGGER, and that is a property of the teardown
+     * below, not of this placement. Only SCPI_PerformStreamingStop() and the
+     * power-down path advance gStreamStopGen; this function's teardown pokes
+     * IsEnabled and calls Streaming_UpdateState() directly and reaches
+     * neither, which is the same reason a START's own teardown of a previous
+     * session does not refuse itself. Reading before the teardown makes the
+     * placement robust to that changing, rather than relying on it.
+     *
+     * One critical section, for the pair, and that is ALL it is for -- the
+     * same note the finder's site carries: there is no publish of IsEnabled
+     * here to make the answer actionable, because this is judging a run that
+     * has already finished rather than deciding whether to arm.
+     *
+     * The pinnedActive term is NECESSARILY FALSE here -- a stop already
+     * running at this command's entry is caught by the arm check above, which
+     * refuses -- so of the three terms only the live count and the generation
+     * delta can fire. Unlike pinnedActive, the LIVE COUNT genuinely can: a
+     * stop issued during the dwell and still parked in its SD close is in
+     * flight at this moment, which is why the message below distinguishes the
+     * two. Noted so a reader does not conclude the first term is doing work it
+     * cannot do. */
+    bool dwellStopInFlight = false;
+    bool dwellStopped;
+    taskENTER_CRITICAL();
+    dwellStopped = StopRequestedSince(stopGenPinned, stopActivePinned,
+                                      &dwellStopInFlight);
+    taskEXIT_CRITICAL();
 
     // Stop
     pStreamCfg->IsEnabled = false;
@@ -3056,6 +3198,65 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context,
     pStreamCfg->ClockPeriod = savedClockPeriod;
     Streaming_RestoreRateConfigured(savedRateConfigured);   /* #730 */
     RestoreSdMode(savedSdMode);
+
+    /* #1201: a stop during the dwell DISCARDS the measurement instead of
+     * reporting it as a completed run.
+     *
+     * ⛔ WHAT WAS WRONG. The stop executed -- sampling really did end -- and
+     * this command printed its whole result block and returned OK anyway, so
+     * the numbers described a run the operator had cancelled. Measured on this
+     * lane's board (#1201 image, crc32 BD809517, 12/12 attempts): the reply
+     * was always a result block with no wire error, carrying TotalSamples
+     * 333-393 and SamplesPerSec 66-78, against a matched unraced baseline on
+     * the same image of 24999 / 4999. About 1.4% of the requested samples
+     * survived and the command still called it a success. A client has no way
+     * to tell that from a device that is simply slow, which is the whole
+     * defect: a cancelled benchmark reads as a catastrophic one.
+     *
+     * Placed AFTER the teardown and the restore above, so every exit from
+     * this function still restores the same six things and the stop is
+     * honoured rather than raced -- and BEFORE Streaming_GetStats() below,
+     * which is the computation that must not happen, not merely a print that
+     * must not be made. There is nothing to suppress downstream because
+     * nothing downstream runs.
+     *
+     * An ERROR, not a zeroed result block: #861's rule is that a refusal must
+     * be distinguishable from a measurement, and a result block of zeroes is
+     * exactly the thing a client cannot distinguish. THRoughput's error channel
+     * is the WIRE (it pushes on the live context, unlike WIFI:FINd?, whose
+     * push is queue-only to protect its five-field reply -- #965), so this
+     * reaches the caller as **ERROR: -200 and the result block is absent. */
+    if (dwellStopped) {
+        /* ⛔ ITS OWN MARKER (#1230), DISTINCT FROM THE ARM'S (#1226) ABOVE.
+         * These issue pairs are a CROSS-REPO CONTRACT, not decoration: the
+         * companion test in daqifi-python-test-suite decides WHICH window
+         * caught a stop by matching them, and its own comment says the
+         * surrounding sentence may be reworded while the marker may not.
+         *
+         * This is written down because the merge that produced this function
+         * broke it twice over, silently and invisibly to any firmware-only
+         * review -- the expectation that broke lives in the other repo.
+         * Folding #1226 into the predicate rewrote the ARM's marker from
+         * (#1201/#861) to (#1201/#1226), which (a) removed (#1201/#861) from
+         * this file entirely, so the companion's MARK_THR_ARM matched nothing
+         * and the arm refusal became undetectable, and (b) left this new site
+         * reusing (#1201/#1226), so the arm and the dwell reported as one
+         * window. The guard below is what makes that a BUILD failure instead
+         * of a test that quietly stops discriminating.
+         */
+        /* log_budget: max=62 -- both candidate strings below are exactly 62
+         * bytes and the fixed prefix is 41, so the worst case is 103 of
+         * Logger's 125. Bounded rather than left as a bare %s for the reason
+         * this gate exists: the remedy is written last in these messages, so
+         * a truncation eats the actionable half and the line still reads as
+         * complete. */
+        LOG_E("Throughput benchmark: result discarded - %s",
+              dwellStopInFlight
+                  ? "a stop is still in flight on the other transport (#1201/#1230)"
+                  : "a stop was issued and completed during the dwell (#1201/#1230)");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
 
     // Collect and report results
     StreamingStats s;
@@ -3202,17 +3403,15 @@ typedef struct {
     bool                   stopActiveAtBuild;
 } FindStepBasis;
 
-/* #938: tentative (no-initializer) forward declarations. The full definitions,
- * with the mechanism's rationale, live later in this file next to
- * SCPI_StartStreaming's own #861 guard -- read them there. This is legal C: a
- * file-scope static may have any number of declarations without an
- * initializer, and they all name the same object as the one initialized
- * definition. Needed only because FindMeasureStep (below) is defined earlier
- * in the file than SCPI_StartStreaming and must observe the same
- * stop-requested generation it does -- the same "forward-declared here
- * because" shape already used for SCPI_PerformStreamingStop further down. */
-static volatile uint32_t gStreamStopGen;
-static volatile uint32_t gStreamStopsActive;
+/* #1201: FindMeasureStep's own tentative forward declarations of
+ * gStreamStopGen/gStreamStopsActive USED TO BE HERE, and are gone because it
+ * no longer touches either global: it asks StopRequestedSince() instead, which
+ * is declared with the runner near the top of this file and carries the only
+ * copy of the three-term test. The declarations the runner needs are still
+ * there, next to it. Removed rather than left harmless -- a declaration whose
+ * comment says it is "needed because FindMeasureStep must observe the same
+ * generation" would be a false statement about this function once it stopped
+ * doing so. */
 
 // One measurement cycle for SCPI_WifiFindRate: start streaming at `freq`, dwell,
 // observe the sample-pool high-water mark (the last-to-fill buffer — see header),
@@ -3220,14 +3419,18 @@ static volatile uint32_t gStreamStopsActive;
 // Returns false on start failure (NOT "saturated") — that case is signaled via
 // *outStartFailed, which callers must check first.
 // Outputs the measured wire KB/s.  *outStartFailed is set if the stream never
-// went Running, or if the arm was refused (caller aborts).  Factored (#520,
+// went Running, if the arm was refused, or (#1201) if a stop landed during the
+// dwell, which makes the observation unscoreable rather than clean (caller
+// aborts in all three cases).  Factored (#520,
 // 2026-05-31) so the coarse AIMD climb and the binary-search refinement share
 // one code path.  wRingCap is used only for the diagnostic log line.
 // `basis` is the sweep's #868 channel-mapping provenance and is required --
 // the sole caller passes the address of its own local, so it is never NULL and
 // is not tested for it.
-// *outStopRequested (#965) is set true only when the refusal's cause was
-// specifically the #938 stopRequested pin -- never for cfgBusy/mappingMoved/
+// *outStopRequested (#965) is set true only when the failure's cause was
+// specifically a stop -- the #938 pin at the arm, or (#1201) the same test
+// repeated at the end of the observation, which discards a measurement a stop
+// cut short instead of scoring it clean. Never for cfgBusy/mappingMoved/
 // inputsGone, and never on the "armed but never ran" or freq==0 producers.
 // It is how the caller learns WHICH cause fired without widening this
 // function's return shape: *outStartFailed alone (pre-existing) tells the
@@ -3332,8 +3535,9 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
      * matching that function's ordering, so a stop that landed anywhere in
      * this sweep is reported as itself and not folded into whichever
      * consistency check also happens to be true. */
-    stopInFlight = basis->stopActiveAtBuild || (gStreamStopsActive != 0u);
-    stopRequested = stopInFlight || (gStreamStopGen != basis->stopGenAtBuild);
+    stopRequested = StopRequestedSince(basis->stopGenAtBuild,
+                                       basis->stopActiveAtBuild,
+                                       &stopInFlight);
     cfgBusy = Streaming_ConfigChangeInProgress();
     if (!cfgBusy) {
         /* #868: the enabled-channel set moved since the sweep built its
@@ -3509,6 +3713,50 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
     StreamingStats s;
     Streaming_GetStats(&s);
 
+    /* #1201: THE SECOND HALF OF THE STOP CHECK -- taken HERE, at the end of
+     * the observed window, because until now this step checked for a stop only
+     * at its arm and a stop landing after that was not merely unreported, it
+     * read as a CLEAN measurement.
+     *
+     * The mechanism: a stop clears IsEnabled, the session ends, and every
+     * metric the verdict below is computed from then stays at zero -- no pool
+     * high-water, no dropped samples, no window loss. `tripped` comes out
+     * false, which this function returns as "this rate is sustainable". On the
+     * final soak step that sets soakClean, so the whole query answers OK and
+     * recommends a rate derived from a measurement that was cancelled partway
+     * through. Clean-looking output that is entirely wrong, which is the shape
+     * this family of fixes exists to stop.
+     *
+     * PLACED AT THE END OF THE OBSERVATION, NOT AFTER THE TEARDOWN, and the
+     * difference matters. The window this must cover is exactly the span over
+     * which the numbers in `s` were accumulated; a stop arriving during our
+     * OWN teardown, after the data was collected, invalidates nothing and must
+     * not fail a measurement that completed. So the read goes between the last
+     * statistic and the first teardown statement.
+     *
+     * One critical section, for the pair, and that is ALL it is for here --
+     * stated because the other two call sites' sections do more. There they
+     * also contain the publish of IsEnabled, which is what makes the answer
+     * actionable; there is no publish here, because this step is judging data
+     * it already holds rather than deciding whether to arm. Do not read this
+     * site as carrying the stronger property.
+     *
+     * The predicate's pinnedActive term is NECESSARILY FALSE by the time we
+     * get here -- a stop already running at the sweep's pin would have been
+     * caught by the arm check above, which refuses -- so of the three terms
+     * only the live count and the generation delta can fire at this site. The
+     * shared predicate is still the right thing to call: the degenerate term
+     * costs one test, and a hand-written two-term copy here is exactly the
+     * duplication #1201 is removing. Noted so a reader does not conclude the
+     * third term is doing work it cannot do. */
+    bool stopAfterObsInFlight = false;
+    bool stopAfterObs;
+    taskENTER_CRITICAL();
+    stopAfterObs = StopRequestedSince(basis->stopGenAtBuild,
+                                      basis->stopActiveAtBuild,
+                                      &stopAfterObsInFlight);
+    taskEXIT_CRITICAL();
+
     // Clean teardown BEFORE evaluating / changing rate (WINC dislikes mid-
     // stream transitions — #425/#467/#517).
     cfg->IsEnabled = false;
@@ -3535,6 +3783,43 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
      * path also arms by poking IsEnabled, never sets OPER_MEASURING, and is
      * not interlocked against a STOP parked in the SD close. */
     SCPI_ClearStreamingOperBits(cfg);
+
+    /* #1201: a stop during the dwell discards the measurement instead of
+     * scoring it. Placed AFTER the teardown above so the session is torn down
+     * and the OPER bits repaired exactly as on every other path out of this
+     * function -- the stop is honoured, not raced -- and before the verdict
+     * below, which is the thing that must not be computed from these numbers.
+     *
+     * NO NEW REPORTING PATH IS ADDED, which is most of why this fix is small.
+     * *outStartFailed and *outStopRequested already exist, all three call
+     * sites already break on them, and #965's machinery already turns
+     * *outStopRequested into a queued -200 without corrupting this query's
+     * five-field reply. This site only has to raise the two flags the sweep
+     * already knows how to read.
+     *
+     * WHICH TOKEN THE SWEEP THEN REPORTS is #895's rule, unchanged and not
+     * overridden here: START_FAIL when an earlier step had measured
+     * something, START_REFUSED when none had. The issue text says "the
+     * existing START_FAIL path", and on the FIRST step it is actually
+     * START_REFUSED -- correctly, because #895's token says whether the sweep
+     * produced data the reply reports, and a sweep stopped during its first
+     * dwell produced none. Spelled out because the discrepancy with the issue
+     * is deliberate rather than an oversight. */
+    if (stopAfterObs) {
+        /* log_budget: max=61 -- both candidate strings below are exactly 61
+         * bytes, and the prefix with a 10-digit uint32 freq is 49, so the
+         * worst case is 110 of Logger's 125. The remedy is written LAST in
+         * these messages, so an unbounded %s here would silently truncate
+         * away the thing a reader needs. */
+        LOG_E("WIFI:FIND %u Hz: observation discarded - %s", (unsigned)freq,
+              stopAfterObsInFlight
+                  ? "a stop is still in flight on the other transport (#1201/#938)"
+                  : "a stop was issued and completed during the dwell (#1201/#938)");
+        *outStopRequested = true;
+        *outStartFailed = true;
+        *outKBps = 0;
+        return false;   // not "saturated" -- see *outStartFailed
+    }
 
     // Primary trip: the SAMPLE POOL high-water reached ~full (>= FIND_BUF_FULL_PCT
     // of capacity).  After the #520 backpressure fix (streaming.c, solo WiFi/USB
@@ -4941,9 +5226,12 @@ static volatile StreamingInterface gStreamIfaceLastSet = StreamingInterface_USB;
  * because a START that bumped this would refuse itself, every time.
  *
  * #938: the WiFi rate finder (FindMeasureStep, defined earlier in this file --
- * see its own pin and the tentative forward declarations at its definition,
- * needed because it is textually ahead of this initializer) now pins and
- * observes this the same way SCPI_StartStreamingClaimed does, once per step.
+ * see its own pin there) now pins and observes this the same way
+ * SCPI_StartStreamingClaimed does, once per step. (#1201: this used to also
+ * point at "the tentative forward declarations at its definition". Those are
+ * gone -- that function reads neither global now, it asks
+ * StopRequestedSince(), so there is nothing there to forward-declare and the
+ * pointer would have sent a reader looking for deleted code.)
  * A stop landing in a step's PRE-ARM window is refused as itself, with a
  * cause, instead of being lost the way it was here before -- lost silently,
  * note, not as a `!Running`: pre-arm the publish happens AFTER the stop, so
@@ -4961,12 +5249,24 @@ static volatile StreamingInterface gStreamIfaceLastSet = StreamingInterface_USB;
  * cause. It still reports one; it now says so in the log. Both halves are
  * #938, and only one of them is a guard.
  *
- * SYSTem:STReam:THRoughput (SCPI_RunThroughputBenchClaimed) still does NOT
- * pin or observe it, so a stop racing ITS pre-arm window is still lost. It is
- * a bench/diagnostic path and lands on the same WINC-delicate territory that
- * wants its own bench run; tracked as its own gap rather than folded in here
- * (#938's scope is the finder only) so it is a recorded line rather than
- * something to rediscover. */
+ * #1201: SYSTem:STReam:THRoughput (SCPI_RunThroughputBenchClaimed) NOW pins
+ * and observes it too, at its arm, through the shared StopRequestedSince()
+ * predicate. This paragraph used to record the opposite -- that the command
+ * did not observe it and a stop racing its pre-arm window was "still lost",
+ * tracked as its own gap so it would be a recorded line rather than something
+ * to rediscover. That gap is the one #1201 closed, and the record is updated
+ * here rather than left asserting a hazard that is now guarded. A stop racing
+ * that command's pre-arm window refuses the arm, logs its cause, and answers
+ * -200, exactly as it does for a START.
+ *
+ * What is still NOT guarded there, so it is not rediscovered as a finding: a
+ * stop arriving during the bench's DWELL. The stop itself ends the session, so
+ * the device does not keep acquiring -- the operator's instruction is carried
+ * out -- but the command still prints the counts of a truncated run, and its
+ * per-second figures divide those counts by the full requested duration. That
+ * is a reply-shape question (this command has no refusal token to report it
+ * with, which is the #895 argument two screens up), deliberately left to its
+ * own ticket rather than folded in here. */
 static volatile uint32_t gStreamStopGen = 0;
 
 /* #861 (Qodo, importance 9): stops CURRENTLY IN FLIGHT, not stops completed.
@@ -6275,8 +6575,8 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
      *                     IsEnabled after we publish it.
      *   gStreamStopGen    a stop began and ended entirely inside this start's
      *                     window: the original #861 case. */
-    stopInFlight = stopActivePinned || (gStreamStopsActive != 0u);
-    stopRequested = stopInFlight || (gStreamStopGen != stopGenPinned);
+    stopRequested = StopRequestedSince(stopGenPinned, stopActivePinned,
+                                       &stopInFlight);
     /* The interface must still be the one everything above was set up for.
      * The rate check alone does not catch this, because the new interface's
      * cap can be perfectly happy with the requested rate: a WiFi START whose

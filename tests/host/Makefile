@@ -5184,6 +5184,74 @@ $(BUTTONLATCH_BIN): test_1092_button_poweroff_latch.c test_framework.h \
 	$(CC) $(CFLAGS) -o $(BUTTONLATCH_BIN) test_1092_button_poweroff_latch.c
 
 
+# =====================================================================
+# #1201: StopRequestedSince() -- the ONE stop-request predicate.
+#
+# TWO INSTRUMENTS, because the property splits in two and one tool cannot do
+# both halves honestly:
+#
+#   $(STOP1201_BIN)  compiles the REAL predicate, spliced verbatim out of
+#                    SCPIInterface.c, and tests its LOGIC -- in particular the
+#                    claim that each of its three terms covers a case the other
+#                    two cannot, which until #1201 was asserted in prose in
+#                    three separate places because the test was copy-pasted.
+#                    ⭐ Not a model. Almost every other SCPIInterface.c test
+#                    here has to be one (the file is 10,000+ lines and pulls in
+#                    FreeRTOS, Harmony, the WINC driver, nanopb and libscpi, so
+#                    it is not host-includable); this predicate is six lines
+#                    over two file-scope globals with no includes of its own, so
+#                    it escapes that and is tested as itself.
+#
+#   $(PIN1201)       checks the WIRING, which no host test can see: that the
+#                    predicate takes no critical section of its own, that all
+#                    four call sites ask it rather than re-typing the three
+#                    terms, and -- the complement, because it is the easy wrong
+#                    fix -- that the two PIN sites still read the globals
+#                    directly, since pinning is not the predicate.
+#
+# Its own --self-test runs FIRST, so a pin that has stopped working cannot
+# report a pass. Ten arms, three of which exist only to prove the comment
+# stripper is not the weak link: the source prose around this fix names every
+# identifier the checks look for, so a raw grep would be satisfied by the
+# paragraphs EXPLAINING the fix rather than by the fix. That is the failure mode
+# this directory has hit most often.
+#
+# $(RECIPES) is in the prerequisites because a guard re-run only when its
+# SUBJECT changes is not re-run when the GUARD changes.
+STOP1201_BIN := run_1201_tests
+STOP1201_GEN := gen_1201_stop_predicate.h
+STOP1201_SRC := ../../firmware/src/services/SCPI/SCPIInterface.c
+PIN1201      := check_1201_predicate_wiring.py
+
+$(STOP1201_BIN): test_1201_stop_requested_since.c test_framework.h \
+                 $(STOP1201_SRC) $(PIN1201) $(RECIPES)
+	@$(PYTHON) $(PIN1201) --self-test >/dev/null \
+	  || { echo "ERROR: $(PIN1201) --self-test FAILED, so its verdict on the"; \
+	       echo "       firmware below would be meaningless. Fix the pin"; \
+	       echo "       before reading anything it says about #1201."; \
+	       $(PYTHON) $(PIN1201) --self-test; exit 1; }
+	@$(PYTHON) $(PIN1201) --src $(STOP1201_SRC)
+	@# Splice the REAL predicate. The range is its signature line through the
+	@# next line starting in column 0 with '}', i.e. the whole function. The
+	@# bound is deliberately LOOSE: a tight line count would fail the BUILD on
+	@# the very source changes this binary is meant to catch by RUNNING the
+	@# code, turning a behavioural verdict back into a text-shape one (the
+	@# #981 lesson, which cost two review rounds there).
+	@sed -n '/^static inline bool StopRequestedSince(uint32_t pinnedGen, bool pinnedActive,/,/^}/p' \
+	     $(STOP1201_SRC) | tr -d '\r' > $(STOP1201_GEN)
+	@lines=`wc -l < $(STOP1201_GEN) | tr -d ' '`; \
+	 last=`tail -1 $(STOP1201_GEN) | tr -d '[:space:]'`; \
+	 test "$$lines" -ge 4 && test "$$lines" -le 40 && test "$$last" = "}" \
+	  || { echo "ERROR: could not splice StopRequestedSince() out of"; \
+	       echo "       $(STOP1201_SRC): got $$lines line(s) ending in '$$last'."; \
+	       echo "       0 lines means the signature was reworded or is no"; \
+	       echo "       longer at column 0; a run to EOF means its closing"; \
+	       echo "       brace left column 0. Either way"; \
+	       echo "       test_1201_stop_requested_since.c would compile against"; \
+	       echo "       nothing, and a test that tests nothing must not pass."; \
+	       rm -f $(STOP1201_GEN); exit 1; }
+	$(CC) $(CFLAGS) -o $(STOP1201_BIN) test_1201_stop_requested_since.c
+
 # #936: SYST:STOR:SD:BENCHmark must CHECK the arm's suspend-refusal. Like
 # $(BENCH_BIN) and $(SUSPEND_BIN), SCPIStorageSD.c is not host-compilable
 # (FreeRTOS + libscpi + Harmony + the board graph), so test_936 re-implements
@@ -5258,9 +5326,9 @@ $(ARMREFUSE_BIN): test_936_bench_arm_refusal.c test_framework.h $(SD_BENCH_SRC) 
 
 run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) \
      $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) \
-     $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(CAP1202_BIN) $(ISRLOG1197_BIN) $(CLAMP1231_BIN) \
+     $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(CAP1202_BIN) $(ISRLOG1197_BIN) $(STOP1201_BIN) $(CLAMP1231_BIN) \
      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(USECALTYPE_BIN) $(ARM_BIN) $(NAME_BIN) \
-     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) check-1200-parity \
+     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) check-1200-parity check-885-savecal-claim \
      $(NVM1153_BIN) $(ARMREFUSE_BIN)
 	./$(ARMREFUSE_BIN)
 	./$(NVM1153_BIN)
@@ -5295,6 +5363,7 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
 	./$(REPLYBUF_BIN)
 	./$(HEXWIN_BIN)
 	./$(LOGONCE_BIN)
+	./$(STOP1201_BIN)
 	./$(CLAMP1231_BIN)
 	./$(CAP1202_BIN)
 	./$(ISRLOG1197_BIN)
@@ -5843,7 +5912,7 @@ clean:
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
 	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) \
 	      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(GEN_1125) $(CAP1202_BIN) $(GEN_1202) $(ISRLOG1197_BIN) $(GEN_1197) \
-	      $(CLAMP1231_BIN) $(CLAMP1231_GEN) \
+	      $(STOP1201_BIN) $(STOP1201_GEN) $(CLAMP1231_BIN) $(CLAMP1231_GEN) \
 	      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(SDLOG1029_GEN).tmp \
 	      $(USECALTYPE_BIN) $(NAME_BIN) $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(ARM_BIN) $(SCPIDAC_RAILGATE_BIN) \
 	      $(FORCEGATE_BIN) $(LOG1039_BIN) $(LOG1039_GEN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) $(ARMREFUSE_BIN)
@@ -5851,6 +5920,20 @@ clean:
 # #1200: the three encoders must book the same loss for the same discard.
 # A source-derived check rather than a mock, because a model of the encoders
 # is a COPY that drifts -- same reasoning as $(BENCH_BIN)'s constant greps.
+# #885: CONF:ADC:SAVEcal must stay behind the streaming claim guard. A static
+# pin, like check-1200-parity -- there is no model to compile, because what is
+# being held still is the guard's own text.
+#
+# ⛔ FUNCTION-SCOPED, and that is load-bearing rather than tidy. At
+# 61a631745^ Streaming_BeginConfigChange appears TEN times in SCPIADC.c
+# (other setters already used it) while CalSaveCommon did not exist at all,
+# so a file-scoped grep for the guard PASSES on the broken revision.
+.PHONY: check-885-savecal-claim
+check-885-savecal-claim: check_885_savecal_claim_guard.py \
+                   $(SCPIADC_SRC) $(SCPI_IFACE_SRC) $(RECIPES)
+	@python3 check_885_savecal_claim_guard.py >/dev/null \
+	  || { python3 check_885_savecal_claim_guard.py; exit 1; }
+
 .PHONY: check-1200-parity
 check-1200-parity: check_1200_eviction_loss_parity.py \
                    $(CSV_ENC_SRC) $(NANOPB_ENC_SRC) $(JSON_ENC_SRC) $(STREAMING_HDR) \
