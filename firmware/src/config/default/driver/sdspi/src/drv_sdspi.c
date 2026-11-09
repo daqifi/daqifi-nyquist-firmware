@@ -2912,7 +2912,11 @@ SYS_MODULE_OBJ DRV_SDSPI_Initialize
     dObj->detectForceAck        = 0U;
     dObj->detectForceAt         = 0U;
     dObj->detectForceEver       = false;
-    dObj->crcRequested          = true;   /* #1217: protected by default */
+    /* #1217: fast mode by default, matching sd_card_manager_settings_t's
+     * .crcProtect default (CommonRuntimeDefaults.h); SD:PROTect 1 opts in.
+     * Protected mode is not the default because its per-sector bus lock
+     * starves a WiFi control session during SD logging (#1234). */
+    dObj->crcRequested          = false;
     dObj->reinitRequested       = false;
     dObj->sdspiTokenCount       = 1;
 

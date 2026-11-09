@@ -784,6 +784,11 @@ static void passes(unsigned n)
     }
 }
 
+/* Most tests exercise protected mode, which SD:PROTect 1 selects; the driver's
+ * own default is fast mode. startDriver() opts in unless a test asks for the
+ * default. Applied before the first media init, so no reinit happens. */
+static bool gUseDriverDefault;
+
 static void resetAll(void)
 {
     memset(&card, 0, sizeof(card));
@@ -810,6 +815,7 @@ static void resetAll(void)
     gLastEvent = -1;
     gEventsSeen = 0U;
     gTest1217LogE = 0U;
+    gUseDriverDefault = false;
     memset(gClients, 0, sizeof(gClients));
     memset(gBuffers, 0, sizeof(gBuffers));
     test1217_DriverReset();
@@ -829,6 +835,10 @@ static void startDriver(void)
     init.pollingIntervalMs = 1000U;
     init.isFsEnabled = false;
     (void) DRV_SDSPI_Initialize(0, (const SYS_MODULE_INIT*)&init);
+    if (!gUseDriverDefault)
+    {
+        DRV_SDSPI_SetCrcMode(0, true);
+    }
     gHandle = DRV_SDSPI_Open(0, DRV_IO_INTENT_READWRITE);
     DRV_SDSPI_EventHandlerSet(gHandle, (const void*)onEvent, 0U);
 }
@@ -940,6 +950,23 @@ TEST(init_turns_crc_on_with_valid_frames)
     ASSERT_TRUE(card.crcOn);
     ASSERT_EQ(cmdCount(EV_BAD_CRC7), 0);
     ASSERT_EQ(cmdCount(59), 1);
+}
+
+TEST(driver_default_is_fast_mode)
+{
+    uint8_t data[3U * BLOCK];
+
+    resetAll();
+    gUseDriverDefault = true;
+    startDriver();
+    ASSERT_TRUE(runUntilAttached(20000U));
+    ASSERT_EQ(cmdCount(59), 0);
+    ASSERT_TRUE(!card.crcOn);
+
+    fill(data, sizeof(data), 0x5AU);
+    ASSERT_EQ(writeBlocks(10U, data, 3U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+    ASSERT_TRUE(sectorIs(12U, &data[2U * BLOCK]));
+    ASSERT_EQ(cmdCount(25), 1);
 }
 
 TEST(normal_single_and_multi_writes_are_accepted)
@@ -1496,6 +1523,7 @@ TEST(card_that_rejects_cmd59_is_not_mounted_and_says_so)
 int main(void)
 {
     RUN(init_turns_crc_on_with_valid_frames);
+    RUN(driver_default_is_fast_mode);
     RUN(normal_single_and_multi_writes_are_accepted);
     RUN(detect_polling_works_with_crc_on);
     RUN(abandoned_write_next_write_does_not_store_its_own_command);
