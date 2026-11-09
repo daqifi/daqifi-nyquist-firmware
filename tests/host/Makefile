@@ -1591,9 +1591,15 @@ $(FORCEGATE_BIN): test_756_detect_force_rate_limit.c test_framework.h $(SDSPI_DR
 $(SDCRC_BIN): test_1217_sd_crc.c test_framework.h $(SDSPI_CRC_HDR) $(RECIPES)
 	$(CC) $(CFLAGS) -I$(SDSPI_SRC_DIR) -o $(SDCRC_BIN) test_1217_sd_crc.c
 
+# #1217 audit (PR #1228 round 2): no SD mount may start while an SD:PROTect
+# change is pending. The exclusion lives in three SCPI handlers that are not
+# host-compilable, so check_1217_mount_gate.py reads the REAL source and fails
+# the build if any handler loses its half. Read its docstring before editing.
 $(SDWRITE_BIN): test_1217_abandoned_write.c test_1217_driver_uut.c test_framework.h \
                 $(SDSPI_DRV_SRC) $(SDSPI_IFACE_SRC) $(SDSPI_CRC_HDR) $(SDSPI_LOCAL_HDR) $(SDSPI_PUBLIC_HDR) \
-                $(SDWRITE_STUBS) $(RECIPES)
+                $(SDWRITE_STUBS) check_1217_mount_gate.py $(SD_BENCH_SRC) $(RECIPES)
+	@python3 check_1217_mount_gate.py --source $(SD_BENCH_SRC) >/dev/null \
+	  || { python3 check_1217_mount_gate.py --source $(SD_BENCH_SRC); exit 1; }
 	$(CC) -std=c11 -w -O0 -g $(SDWRITE_INCLUDES) -I$(SDSPI_SRC_DIR) -c test_1217_driver_uut.c -o $(SDWRITE_UUT_OBJ)
 	$(CC) $(CFLAGS) $(SDWRITE_INCLUDES) -o $(SDWRITE_BIN) test_1217_abandoned_write.c $(SDWRITE_UUT_OBJ)
 

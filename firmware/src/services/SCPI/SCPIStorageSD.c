@@ -569,12 +569,38 @@ scpi_result_t SCPI_StorageSDEnableSet(scpi_t * context){
     if (param1 != 0) {
         // Enable SD card
         LOG_D("SD:ENAble - Enabling SD card manager\r\n");
-        pSDCardRuntimeConfig->enable = true;
         // #589: manual re-enable clears a bus-jam quarantine (user has
-        // presumably reseated or replaced the card).
+        // presumably reseated or replaced the card). First: the SD task does
+        // not run the driver while quarantined, and the #1217 wait below needs
+        // it to.
         if (SpiBusHealth_IsSdQuarantined()) {
             SpiBusHealth_SetSdQuarantine(false);
             Streaming_QuesExternalClear(STREAMING_QUES_SPI_BUS_FAULT);
+        }
+        /* #1217: never mount while an SD:PROTect change is pending, or the
+         * driver's re-init lands under the mounted volume at its next quiet
+         * poll. Checked and set under the same exclusion SD:PROTect uses. */
+        for (uint32_t waited = 0U; ; waited += 10U) {
+            bool enabled = false;
+            taskENTER_CRITICAL();
+            if (!DRV_SDSPI_CrcModePending(0)) {
+                pSDCardRuntimeConfig->enable = true;
+                enabled = true;
+            }
+            taskEXIT_CRITICAL();
+            if (enabled) {
+                break;
+            }
+            if (waited >= SCPI_SD_PROTECT_APPLY_MS) {
+                LOG_E("SD:ENAble - SD:PROTect change not yet applied; power up, stop WiFi stream, retry");
+                SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+                result = SCPI_RES_ERR;
+                goto __exit_point;
+            }
+            if (waited == 0U) {
+                DRV_SDSPI_DetectPollExpireNow(0);
+            }
+            vTaskDelay(pdMS_TO_TICKS(10));
         }
     } else {
         // Disable SD card - check if busy first to prevent data loss
@@ -626,20 +652,36 @@ scpi_result_t SCPI_StorageSDProtectSet(scpi_t * context){
         SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
         return SCPI_RES_ERR;
     }
-    if (pSDCardRuntimeConfig->enable || !sd_card_manager_IsIdle()) {
-        LOG_E("SD:PROTect - disable SD first (SD:ENAble 0)");
+    /* Never let the card be mounted with a re-init still queued behind it.
+     * There are two mount paths, and two transports (USB, TCP) can race them:
+     *  - SD:ENAble 1 sets `enable` only inside a critical section and only with
+     *    no request pending; the enable check and the request below share that
+     *    exclusion, so whichever lands first, the other refuses or waits.
+     *  - SD:SPACe? mounts with SD disabled. It holds the manager claim while it
+     *    checks for a pending request and arms; this holds the claim while it
+     *    makes one, so the two cannot interleave. */
+    bool conflict = !sd_card_manager_IsIdle() || !sd_card_manager_TryClaim();
+    if (!conflict) {
+        taskENTER_CRITICAL();
+        if (pSDCardRuntimeConfig->enable) {
+            conflict = true;
+        } else if (pSDCardRuntimeConfig->crcProtect != (param1 == 1)) {
+            pSDCardRuntimeConfig->crcProtect = (param1 == 1);
+            DRV_SDSPI_SetCrcMode(0, pSDCardRuntimeConfig->crcProtect);
+        }
+        taskEXIT_CRITICAL();
+        sd_card_manager_ReleaseClaim();
+    }
+    if (conflict) {
+        LOG_E("SD:PROTect - disable SD first (SD:ENAble 0) and let it go idle");
         SCPI_ErrorPush(context, SCPI_ERROR_SETTINGS_CONFLICT);
         return SCPI_RES_ERR;
     }
-    if (pSDCardRuntimeConfig->crcProtect != (param1 == 1)) {
-        pSDCardRuntimeConfig->crcProtect = (param1 == 1);
-        DRV_SDSPI_SetCrcMode(0, pSDCardRuntimeConfig->crcProtect);
-    }
     /* Return only once the driver has dropped the card for re-init: from then
-     * on any mount, a following SD:ENAble 1 included, goes through a media init
-     * that applies the new mode. The driver does that at its first detect poll
-     * with no I/O in progress; the kick makes that the next pass. Checked even when the value did not change: an earlier
-     * request may still be pending. */
+     * on any mount goes through a media init that applies the new mode. The
+     * driver does that at its first detect poll with no I/O in progress; the
+     * kick makes that the next pass. Checked even when the value did not
+     * change: an earlier request may still be pending. */
     DRV_SDSPI_DetectPollExpireNow(0);
     for (uint32_t waited = 0U;
          DRV_SDSPI_CrcModePending(0) && (waited < SCPI_SD_PROTECT_APPLY_MS);
@@ -3219,6 +3261,16 @@ scpi_result_t SCPI_StorageSDSpaceGet(scpi_t * context) {
     /* #829: atomic claim -- the plain assignment could race a second caller
      * that had already passed the IsBusy() fast path above. */
     if (!SD_ClaimOrRefuse(context, "SPACe")) {
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+    /* #1217: this mounts even with SD disabled, so it must not run while an
+     * SD:PROTect change is pending: the re-init would land under the mount.
+     * Checked under the claim, which SD:PROTect also takes to make a request. */
+    if (DRV_SDSPI_CrcModePending(0)) {
+        sd_card_manager_ReleaseClaim();
+        LOG_E("SD:SPACe - SD:PROTect change not yet applied; retry");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         result = SCPI_RES_ERR;
         goto __exit_point;
     }

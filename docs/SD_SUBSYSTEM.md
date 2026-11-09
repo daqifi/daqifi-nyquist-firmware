@@ -52,7 +52,15 @@ queued nothing.
 
 An abandoned CMD24 or CMD25 leaves the card waiting for data, and it stores whatever is clocked next as that sector. `#1217` found FAT sectors full of SPI commands and WINC traffic this way. The trigger is still unknown.
 
-**Protection is opt-in: `SYST:STOR:SD:PROTect 1`.** The default, `0`, runs as before #1217: CRC off and CMD25 multi-block writes. Protected mode costs about two thirds of the SD write throughput, and its per-sector bus lock starves a WiFi control session during SD logging (#1234), so it is not the default. The setting changes only while SD is disabled (`-221` otherwise), takes effect by re-initializing the card, and resets to `0` at boot. `SYST:STOR:SD:INFO?` reports whether the card is running with CRC on and how many resyncs have fired since boot, as its last two fields.
+**Protection is opt-in: `SYST:STOR:SD:PROTect 1`.** The default, `0`, runs as before #1217: CRC off and CMD25 multi-block writes. Protected mode costs about two thirds of the SD write throughput, and its per-sector bus lock starves a WiFi control session during SD logging (#1234), so it is not the default. The setting changes only while SD is disabled (`-221` otherwise), takes effect by re-initializing the card, and resets to `0` at boot.
+
+**No mount may start while a change is pending**, or the driver's re-init lands under the mounted volume. The driver drops the card at its first detect poll with no I/O in progress or queued (`DRV_SDSPI_CrcModePending` is true until then), and three SCPI handlers keep the rest:
+
+- `SD:PROTect` takes the manager claim and, in one critical section, checks `enable` and makes the request. It then waits (2 s cap) until the driver has dropped the card, or returns `-200` if the SD task is not running the driver (standby, WiFi streaming).
+- `SD:ENAble 1` sets `enable` only inside a critical section and only with no change pending. If one is pending, it waits up to 2 s and then returns `-200`. This keeps the two commands safe when they arrive on different transports (USB and TCP).
+- `SD:SPACe?`, the one mount that runs with SD disabled, refuses with `-200` if a change is pending when it holds the claim.
+
+`tests/host/check_1217_mount_gate.py` pins all three in the real source. `SYST:STOR:SD:INFO?` reports whether the card is running with CRC on and how many resyncs have fired since boot, as its last two fields.
 
 With `PROTect 1` the driver defends in two ways, both in `driver/sdspi/src/`:
 
