@@ -652,13 +652,24 @@ def main():
         # Being inside the array is therefore not sufficient -- being inside
         # the REACHABLE PART of it is the actual requirement.
         entries = table_entries(body)
-        terms = [e for e in entries if is_terminator(e[2])]
+        # ⛔ A BARE `SCPI_CMD_LIST_END,` IS A TERMINATOR AND IS NOT AN ENTRY.
+        # r6's MEDIUM: `table_entries` collects top-level BRACE initialisers,
+        # so the macro spelled as a bare token is not an entry at all and
+        # `is_terminator` never sees it -- a guard whose input could not
+        # contain the thing it tested for. It is ordinary library-macro use,
+        # it expands to a NULL-pattern entry, and findCommandHeader stops
+        # there (parser.c:178). So terminator offsets come from BOTH shapes
+        # and the earliest one wins.
+        term_offsets = [e[0] for e in entries if is_terminator(e[2])]
+        term_offsets += [m.start() for m
+                         in re.finditer(r"\bSCPI_CMD_LIST_END\b", body)]
+        terms = sorted(set(term_offsets))
         check(bool(terms),
-              "%s is terminated (%d of %d entries terminate)"
+              "%s is terminated (%d terminator(s) among %d entries)"
               % (tname, len(terms), len(entries)) if terms else
               "%s has no terminating entry at all, so the reachable extent "
               "of the table cannot be established" % tname)
-        first_term = terms[0][0] if terms else len(body)
+        first_term = terms[0] if terms else len(body)
         for pattern in sorted(EXPECTED_REGISTRATIONS):
             rows = list(re.finditer(
                 r'\{\s*\.pattern\s*=\s*"%s"\s*,[^}]*\}\s*,'
@@ -684,8 +695,29 @@ def main():
                   % (pattern, tname))
 
     # ---- every body on the path, exactly -------------------------------
+    # ⛔ COMPARED AGAINST THE PHASED TEXT, NOT THE COMPILER-STRIPPED ONE, and
+    # this was r6's HIGH. `strip_comments` removes comments WITHOUT first
+    # splicing, so a `//` comment whose line ends in a backslash still looks
+    # like an ordinary comment to it -- while real `cc -E` performs phase 2
+    # first, joins the lines, and the comment then swallows the code that
+    # followed. Measured on `// release below\` placed above the release
+    # inside CalSaveCommon:
+    #
+    #   strip_comments  -> release present, body 524 chars -> MATCHED the pin
+    #   phases 2+3      -> release GONE,    body 495 chars -> what is built
+    #
+    # So the release was compiled away and the exact-body compare passed. A
+    # trailing backslash on a `//` comment is an ordinary C accident, not an
+    # obfuscation, and it is the one case where phase ORDER changes which
+    # code exists rather than how it is spelled.
+    #
+    # ⚠ This changes no canonical string. Measured on clean source, all three
+    # bodies normalise identically in both texts (83 / 84 / 524 chars),
+    # because phase 3 collapses a comment to one space where strip_comments
+    # deletes it and `norm` folds both to the same thing. The constants above
+    # are the same constants.
     for name, expected in EXPECTED_BODIES.items():
-        found = norm(function_body(adc, name))
+        found = norm(function_body(adc_phased, name))
         want = norm(expected)
         if not found:
             check(False, "%s's body was not found at all" % name)
