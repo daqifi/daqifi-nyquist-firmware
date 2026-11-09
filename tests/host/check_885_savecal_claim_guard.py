@@ -115,13 +115,29 @@ ONLY:
     contains no preprocessor directive;
   * neither file `#define`s any identifier the canonical text names outside a
     string literal;
-  * both table rows are byte-exact, singular, at conditional depth 0, inside
-    the initialiser of the array that THIS file passes to SCPI_Init, and
-    BEFORE that array's first NULL-pattern terminator;
   * no directive scan here can be evaded by spelling `#` as `%:` or `??=`,
     by splitting a name across a line splice, or by hiding the gap in a
-    multi-line comment -- translation phases 2 and 3 run first;
-  * a terminator is CLASSIFIED, not matched, so `{0},` counts as one.
+    multi-line comment -- translation phases 2 and 3 run first.
+
+⛔⛔ AND THE TABLE CLAIM IS EXACTLY THIS SENTENCE, narrowed after r8 and not
+to be widened again:
+
+    the pinned rows are byte-exact and singular, at conditional depth 0, and
+    they PRECEDE THE FIRST NON-STRING-LITERAL `.pattern` -- in a table that
+    contains NO ARRAY DESIGNATORS, whose identifier has exactly ONE
+    file-scope declaration, and which is the array this file passes to
+    SCPI_Init.
+
+⚠ THAT IS NOT "DISPATCH REACHABILITY", and earlier rounds said it was. The
+three qualifications are REFUSALS, not analysis: a designator, a second
+declaration of the name, or a `.pattern` that is not a string literal each
+make this checker FAIL rather than reason about what the compiler would do.
+Rounds 3 to 8 each answered a finding by modelling one more C construct --
+conditionals, macros, digraphs, line splices, comment placement, spellings
+of zero -- and each time the next round found the next feature. A textual
+checker can always be beaten by one more C feature, so "reachability in
+general" is not a claim this file can make, and claiming it is what kept
+inviting the next round.
 
 WHAT IT DOES NOT COVER, and nobody should read it as covering:
 
@@ -397,6 +413,34 @@ def macro_sensitive_identifiers(extra=()):
     return names
 
 
+def brace_depth_at(code, offset):
+    """Unmatched `{` before `offset`, ignoring string and char literals.
+
+    String literals are preserved by `translation_phases` (they are code),
+    and a brace inside one would otherwise shift every later depth.
+    """
+    depth = 0
+    i, n = 0, min(offset, len(code))
+    while i < n:
+        c = code[i]
+        if c in '"\'':
+            quote = c
+            i += 1
+            while i < n:
+                if code[i] == "\\":
+                    i += 2
+                    continue
+                if code[i] == quote:
+                    break
+                i += 1
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+        i += 1
+    return depth
+
+
 def active_command_table(code):
     """(name, start, end) of the array actually handed to SCPI_Init.
 
@@ -658,8 +702,58 @@ def main():
               "names. A macro can change what that text MEANS while leaving "
               "it byte-identical" % (label, clash))
 
+    # ---- refuse the constructs this checker will not model -------------
+    # ⛔ A CHANGE OF APPROACH, ruled after r8. Rounds 3-8 each answered a
+    # finding by modelling one more C construct -- conditionals, macros,
+    # digraphs, splices, comment placement, zero spellings -- and the next
+    # round found the next feature. A textual checker can always be beaten by
+    # one more C feature, so adding models has no end; it is the
+    # capability-nobody-asked-for trap, in a file whose job is to notice an
+    # ORDINARY edit.
+    #
+    # So these two are REFUSED rather than understood. Both were measured on
+    # the real file first and forbid nothing it does.
     if table is not None:
         tname, tstart, tend = table
+
+        # (a) Array designators. `[300] =` on the SAVEcal entry zero-fills
+        # every index before it and dispatch stops at the first of them;
+        # `[1] =` on the FIRST entry zero-fills index 0 and dispatch stops
+        # immediately. Both leave the rows textually present, in order, at
+        # depth 0, inside the right array. Reading array indices is modelling
+        # C initialiser semantics, which is the thing being given up.
+        # Measured: zero `[...] =` inside scpi_commands on main.
+        designators = [m.group(0) for m in re.finditer(
+            r"\[[^\]\n]*\]\s*=", iface_phased[tstart:tend])]
+        check(not designators,
+              "%s uses no array designators, so textual order is index order"
+              % tname if not designators else
+              "%s contains array designator(s) %s. This checker reads TEXTUAL "
+              "ORDER, and a designator makes index order differ from it -- "
+              "zero-filling every skipped index, each of which stops dispatch. "
+              "Refused rather than modelled: see the note above"
+              % (tname, designators[:3]))
+
+        # (b) One declaration of the table identifier, at file scope. A local
+        # `const scpi_command_t *scpi_commands = no_commands;` inside
+        # CreateSCPIContext wins name lookup at the SCPI_Init call while this
+        # checker resolves the global -- two bindings for one name, which is
+        # the two-views defect in the C namespace rather than in the text.
+        # Measured: declared exactly once on main.
+        decls = [m for m in re.finditer(
+            r"\bscpi_command_t\s*\**\s*\b%s\b" % re.escape(tname),
+            iface_phased)]
+        file_scope = [m for m in decls
+                      if brace_depth_at(iface_phased, m.start()) == 0]
+        ok_decl = len(decls) == 1 and len(file_scope) == 1
+        check(ok_decl,
+              "%s is declared exactly once, at file scope" % tname
+              if ok_decl else
+              "%s has %d declaration(s), %d at file scope. Exactly one is "
+              "required: another binding -- a local, a pointer, a parameter "
+              "-- can win name lookup where SCPI_Init is called while this "
+              "checker resolves the file-scope array"
+              % (tname, len(decls), len(file_scope)))
         # +1 to step INSIDE the array's own opening brace. Without it the
         # whole initialiser parses as a single top-level entry, no entry
         # classifies as a terminator, and the check fails -- which is how
