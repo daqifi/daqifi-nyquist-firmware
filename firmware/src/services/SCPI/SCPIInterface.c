@@ -18,6 +18,7 @@
 //// 3rd Party
 //#include "HAL/NVM/DaqifiSettings.h"
 #include "HAL/Power/PowerApi.h"
+#include "HAL/UI/UI.h"
 #include "services/DaqifiPB/DaqifiOutMessage.pb.h"
 #include "services/DaqifiPB/NanoPB_Encoder.h"
 //#include "Util/StringFormatters.h"
@@ -2823,12 +2824,23 @@ static scpi_result_t SCPI_RunSessionStartClaimed(scpi_t * context,
 static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context,
                                                     uint32_t stopGenPinned,
                                                     bool stopActivePinned) {
-    /* #1201: the pin #1120 made available is now ACTED ON, at this command's
-     * arm. It was the gap recorded next to gStreamStopGen's definition, where
-     * the recorded line said a stop racing this command's pre-arm window was
-     * "still lost"; #1201 is the deliberate decision that record was waiting
-     * for, and that line is updated rather than left describing the old
-     * behaviour.
+    /* #1201 + #1226: the pin #1120 made available is ACTED ON at this
+     * command's arm, through the shared StopRequestedSince() predicate.
+     *
+     * TWO ISSUES CONVERGED HERE and both reasons are kept, because they are
+     * different hazards that happen to need the same test:
+     *   #1226  a POWER-OFF advances gStreamStopGen to cancel any arm still in
+     *          its setup window. Without this check a benchmark that was in
+     *          setup when the button was pressed arms in STANDBY with the
+     *          rails off and samples for up to 60 s.
+     *   #1201  a SYST:STR:STOP that completes in the same window was lost, so
+     *          the bench streamed for up to its full duration after the
+     *          operator asked it to stop, and the command returned OK.
+     * #1226 implemented the three terms inline here, which was the THIRD
+     * copy of them in this file; main's own comment anticipated that "#1201 /
+     * PR #1215 generalises the same check into one StopRequestedSince()
+     * predicate", and that is what this is. The predicate is unchanged by the
+     * merge -- only this call site stops carrying its own copy.
      *
      * ⭐ THIS IS A BEHAVIOUR CHANGE AT THIS COMMAND'S ARM, taken on purpose,
      * and this file already contains the rule for when that is allowed. The
@@ -2844,11 +2856,11 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context,
      * is the sample and byte count it measured, which stays TRUE of a run with
      * nothing enabled -- empty, not wrong. A stop is not a consistency
      * failure, it is an explicit operator instruction, and the failure it
-     * leaves is not an empty measurement: the bench goes on to stream for up
-     * to its full 60 s duration AFTER the operator asked it to stop. No
-     * reading of "the counts are still true" excuses that. So the symmetry
-     * argument that declined #891 does not reach this, which is exactly why
-     * this one is taken and those two stay declined. */
+     * leaves is not an empty measurement: the bench goes on to stream AFTER
+     * the operator asked it to stop. No reading of "the counts are still true"
+     * excuses that. So the symmetry argument that declined #891 does not reach
+     * this, which is exactly why this one is taken and those two stay
+     * declined. */
 
     int32_t freq, duration;
     if (!SCPI_ParamInt32(context, &freq, TRUE)) return SCPI_RES_ERR;
@@ -2973,13 +2985,15 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context,
     bool stopInFlight = false;
     bool stopRequested = false;
     taskENTER_CRITICAL();
-    /* #1201: computed FIRST, ahead of cfgBusy, matching the ordering both
-     * other arms use -- so a stop that landed anywhere in this command's
-     * window is reported as itself rather than folded into whichever
-     * consistency check also happens to be true at the time. Inside this
-     * section, not before it, for the reason StopRequestedSince states: the
-     * answer is only usable if no stop can slip between the test and the
-     * publish below. */
+    /* #1201/#1226: computed FIRST, ahead of cfgBusy, matching the ordering
+     * both other arms use -- so a stop or power-off that landed anywhere in
+     * this command's window is reported as itself rather than folded into
+     * whichever consistency check also happens to be true at the time. Inside
+     * this section, not before it, for the reason StopRequestedSince states:
+     * the answer is only usable if nothing can slip between the test and the
+     * publish below. #1226's inline three-term copy is replaced by the
+     * predicate; the terms and their order are identical, so this is a
+     * textual change at this site and not a behavioural one. */
     stopRequested = StopRequestedSince(stopGenPinned, stopActivePinned,
                                        &stopInFlight);
     cfgBusy = Streaming_ConfigChangeInProgress();
@@ -3037,9 +3051,9 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context,
     }
     taskEXIT_CRITICAL();
 
-    /* #868: this call armed nothing -- neither refusal reason reaches the
-     * writes above -- so every "did WE arm it?" test below is this, not
-     * cfgBusy alone.  Getting that wrong would disarm a concurrent session's
+    /* #868: this call armed nothing -- no refusal reason reaches the writes
+     * above -- so every "did WE arm it?" test below is this, not cfgBusy
+     * alone.  Getting that wrong would disarm a concurrent session's
      * IsEnabled on the mapping-moved path. */
     const bool armRefused = cfgBusy || mappingMoved || stopRequested;
 
@@ -3071,8 +3085,8 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context,
         LOG_E("Throughput benchmark: %s",
               stopRequested
                       ? (stopInFlight
-                         ? "refused, a stop is still in flight on the other transport (#1201/#861)"
-                         : "refused, a stop was issued and completed after this command began (#1201/#861)")
+                         ? "refused, a stop/power-off is in flight (#1201/#1226)"
+                         : "refused, a stop/power-off completed in setup (#1201/#1226)")
                       : cfgBusy ? "refused, a streaming config change is in flight (#847)"
                       : mappingMoved
                       ? "refused, the enabled-channel set moved after the mapping was built (#868)"
@@ -7226,6 +7240,26 @@ static void SCPI_PerformStreamingStop(void) {
         taskEXIT_CRITICAL();
     }
 
+    /* #1227: let the encoder finish the iteration it is in before the
+     * teardown below. Streaming_UpdateState() -> Streaming_Start() zeroes the
+     * shared encoder buffer, and a stop running above the Stream task's
+     * priority could do that between the encoder building a packet and
+     * writing it, which sent the final packet as zeros. The encoder re-checks
+     * IsEnabled after raising its in-critical flag, so once it is quiescent it
+     * will not start another packet. Bounded, like the START path's identical
+     * wait: on timeout the teardown proceeds as it always did, and says so. */
+    {
+        const TickType_t qStart = xTaskGetTickCount();
+        while (!Streaming_TasksAreQuiescent()) {
+            if ((xTaskGetTickCount() - qStart) > pdMS_TO_TICKS(200)) {
+                LOG_E("Streaming stop: encoder not quiescent after 200 ms - "
+                      "tearing down anyway (#1227)");
+                break;
+            }
+            vTaskDelay(1);
+        }
+    }
+
     Streaming_UpdateState();
 
     // Flush any remaining USB CDC data so the host receives all streamed bytes.
@@ -7449,6 +7483,72 @@ static void SCPI_PerformStreamingStop(void) {
  * here, so this comment does not put a non-canonical form into new lines.
  * The disable form SYSTem:STReam:START 0 calls the same body from
  * SCPI_StartStreaming. */
+/* Upper bound on how long a power-off waits for the SD log to finalise, on top
+ * of the stop's own 5 s wait. Long enough for an ordinary close/unmount, short
+ * enough that a wedged card cannot hold a battery shutdown hostage. */
+#define POWER_DOWN_SD_WAIT_MS 10000u
+
+bool SCPI_StopStreamingForPowerDown(void) {
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+    /* Without this the stream kept running in STANDBY with the analog rails
+     * off, and the SD log was never closed: its tail was lost on USB power,
+     * and on battery the card lost power mid-write. */
+    /* Advance the stop generation FIRST, then look at IsEnabled (#1226 audit
+     * r2/r3). A START that has not published IsEnabled yet re-checks the
+     * generation in the critical section that publishes it and refuses; one
+     * that already published is seen below and goes through the ordinary
+     * SYST:STReam:STOP teardown. Reading IsEnabled first left a gap between the
+     * read and the bump for a START to publish through. A START that pins the
+     * generation after this bump sees powerState == STANDBY at its own entry
+     * check: every caller publishes STANDBY before calling here.
+     *
+     * The throughput benchmark's arm checks the generation too (#1226; it
+     * used to ignore its pin), and the shared teardown waits for the encoder
+     * to finish its iteration before clearing its buffer (#1227).
+     *
+     * KNOWN RESIDUAL, narrow and shared with SYST:STReam:STOP, not introduced
+     * here (#1226 audit r4): the ordinary teardown inherits the
+     * Streaming_Start/Streaming_Stop race -- a Streaming_Start preempted
+     * between its IsEnabled check and setting Running is skipped by
+     * Streaming_Stop (which sees Running == false) and then sets Running with
+     * IsEnabled already false. */
+    taskENTER_CRITICAL();
+    gStreamStopGen++;
+    taskEXIT_CRITICAL();
+    /* Stop on SD-log ownership too, not just IsEnabled (#1226 audit r6): a
+     * transport-loss auto-stop clears IsEnabled and stops sampling but leaves
+     * the streaming log's SD session in WRITE with its file open, and the
+     * sub-sector tail is only written by the close this teardown requests. */
+    const sd_card_manager_settings_t* pSdCfg = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_SD_CARD_SETTINGS);
+    const bool streamingLogOpen = (pSdCfg != NULL) &&
+            SCPI_SdWriteIsStreamingLog(pSdCfg);
+    if ((pRunTimeStreamConfig != NULL && pRunTimeStreamConfig->IsEnabled) ||
+        streamingLogOpen) {
+        LOG_I("[POWER] stopping stream and closing SD log before power-down");
+        SCPI_PerformStreamingStop();
+    }
+    /* IsEnabled == false proves sampling stopped, not that the log is closed:
+     * a stop on another transport clears it first and THEN waits for the SD
+     * manager, and a stop whose own wait timed out leaves the close pending.
+     * So wait for both, whoever started them (#1226 audit). */
+    const TickType_t start = xTaskGetTickCount();
+    for (;;) {
+        bool stopInFlight;
+        taskENTER_CRITICAL();
+        stopInFlight = (gStreamStopsActive != 0u);
+        taskEXIT_CRITICAL();
+        if (!stopInFlight && sd_card_manager_IsIdle()) {
+            return true;
+        }
+        if ((xTaskGetTickCount() - start) >= pdMS_TO_TICKS(POWER_DOWN_SD_WAIT_MS)) {
+            return false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
 static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
     (void)context;
     SCPI_PerformStreamingStop();
@@ -7914,6 +8014,26 @@ static scpi_result_t SCPI_GetEcho(scpi_t * context) {
     microrl_t* console;
     console = SCPI_GetMicroRLClient(context);
     SCPI_ResultInt32(context, (int) console->echoOn);
+    return SCPI_RES_OK;
+}
+
+/* SYSTem:IDENtify <0|1>: flash both LEDs (~1 s fast flash, ~1 s off,
+ * repeating) so an operator can see which board a host is talking to. */
+static scpi_result_t SCPI_SetIdentify(scpi_t * context) {
+    int param1;
+    if (!SCPI_ParamInt32(context, &param1, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (param1 < 0 || param1 > 1) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+    UI_SetIdentify(param1 == 1);
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_GetIdentify(scpi_t * context) {
+    SCPI_ResultInt32(context, UI_GetIdentify() ? 1 : 0);
     return SCPI_RES_OK;
 }
 
@@ -10083,6 +10203,8 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:LOG:CMDHistory?", .callback = SCPI_GetCommandHistory,},
     {.pattern = "SYSTem:ECHO", .callback = SCPI_SetEcho,},
     {.pattern = "SYSTem:ECHO?", .callback = SCPI_GetEcho,},
+    {.pattern = "SYSTem:IDENtify", .callback = SCPI_SetIdentify,},
+    {.pattern = "SYSTem:IDENtify?", .callback = SCPI_GetIdentify,},
     //    {.pattern = "SYSTem:NVMRead?", .callback = SCPI_NVMRead, },  
     //    {.pattern = "SYSTem:NVMWrite", .callback = SCPI_NVMWrite, }, 
     //    {.pattern = "SYSTem:NVMErasePage", .callback = SCPI_NVMErasePage, },

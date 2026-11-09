@@ -228,11 +228,70 @@ int main(void) {
         return 12;
     }
 
+    /* #1031 CASES 8-11 -- FAILNext 2, the live-session one-shot. Its gate is
+     * the mirror image of gFailNextWrite's: WRITE_TO_FILE only. */
+
+    /* CASE 8 -- armed in WRITE_TO_FILE: inject -1, skip the write, clear. */
+    gFailNextWrite = false;
+    gFailNextSessionWrite = true;
+    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_WRITE_TO_FILE;
+    ret = RunWrite(&writes);
+    if (ret != -1 || writes != 0u || gFailNextSessionWrite) {
+        fprintf(stderr,
+            "FAIL: FAILNext 2 armed in WRITE_TO_FILE did not inject exactly "
+            "one skipped write (ret=%d expected=-1, writes=%u expected=0, "
+            "still armed=%d expected=0).\n",
+            ret, writes, (int)gFailNextSessionWrite);
+        return 13;
+    }
+
+    /* CASE 9 -- armed, but in UNMOUNT_DISK: must not fire, must survive. A
+     * session arm taken by a teardown drain would test the wrong path. */
+    gFailNextSessionWrite = true;
+    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_UNMOUNT_DISK;
+    ret = RunWrite(&writes);
+    if (ret != (int)MOCK_FS_WRITE_RETURN || writes != 1u || !gFailNextSessionWrite) {
+        fprintf(stderr,
+            "FAIL: FAILNext 2 fired or was burned in UNMOUNT_DISK (ret=%d "
+            "expected=%d, writes=%u expected=1, still armed=%d expected=1).\n",
+            ret, (int)MOCK_FS_WRITE_RETURN, writes, (int)gFailNextSessionWrite);
+        return 14;
+    }
+
+    /* CASE 10 -- that surviving arm fires at the next live-session write. */
+    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_WRITE_TO_FILE;
+    ret = RunWrite(&writes);
+    if (ret != -1 || writes != 0u || gFailNextSessionWrite) {
+        fprintf(stderr,
+            "FAIL: a FAILNext 2 arm that survived UNMOUNT_DISK did not fire at "
+            "the next WRITE_TO_FILE write (ret=%d, writes=%u, armed=%d).\n",
+            ret, writes, (int)gFailNextSessionWrite);
+        return 15;
+    }
+
+    /* CASE 11 -- the two arms are independent: with both set in UNMOUNT_DISK
+     * only the teardown arm is taken, and the session arm is left intact. */
+    gFailNextWrite = true;
+    gFailNextSessionWrite = true;
+    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_UNMOUNT_DISK;
+    ret = RunWrite(&writes);
+    if (ret != -1 || writes != 0u || gFailNextWrite || !gFailNextSessionWrite) {
+        fprintf(stderr,
+            "FAIL: with both arms set in UNMOUNT_DISK, expected the teardown "
+            "arm consumed and the session arm kept (ret=%d, writes=%u, "
+            "teardown armed=%d expected=0, session armed=%d expected=1).\n",
+            ret, writes, (int)gFailNextWrite, (int)gFailNextSessionWrite);
+        return 16;
+    }
+    gFailNextSessionWrite = false;
+
     printf("PASS: the REAL (not modeled) SDCardWrite() -- whole function, "
            "spliced verbatim -- injects -1 with ZERO filesystem writes when "
            "armed in UNMOUNT_DISK, performs the write and returns its byte "
            "count in every other case, is one-shot, survives a refused "
            "attempt to fire at its next opportunity, and does NOT burn the "
-           "arm on a call with no open file.\n");
+           "arm on a call with no open file. #1031: FAILNext 2 fires only "
+           "in WRITE_TO_FILE, survives UNMOUNT_DISK, and is independent of "
+           "the teardown arm.\n");
     return 0;
 }
