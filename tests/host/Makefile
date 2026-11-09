@@ -12,6 +12,21 @@
 
 CC       ?= gcc
 CFLAGS   ?= -std=c11 -Wall -Wextra -O0 -g
+
+# ⛔ AN UNREGISTERED TEST IS AN UNUSED STATIC FUNCTION, so make it a BUILD
+# ERROR (#1233 r1). TEST(name) expands to `static void name(void)`, so a TEST
+# that main() never RUNs is exactly what -Wunused-function reports -- and a
+# defined-but-never-run test is not a test: #1018's property test was added
+# without its RUN line and the suite stayed green at 8 tests, its assertions
+# AND its negative control never executing while the run reported "0 failed".
+# An audit found that, not the suite.
+#
+# Measured before enabling: a full clean build of this directory emits ZERO
+# unused-function warnings today, so this promotes nothing that currently
+# exists. `+=` rather than editing the line above, so the flag survives a
+# CFLAGS override from the environment -- the guard should not be the thing a
+# caller can switch off by accident.
+CFLAGS += -Werror=unused-function
 FW_UTIL  := ../../firmware/src/Util
 
 # #1055 (operator ruling 5->A): the session-end loss summary was ONE 212-byte
@@ -5309,7 +5324,7 @@ $(SUMBUDGET_BIN): test_1055_stream_end_summary_budget.c test_framework.h \
 	@for s in 'Stream end (post-grace): lost %u/%llu samples (%u%%); ' \
 	          'Stream end (post-grace) bytes lost: USB=%u WiFi=%u SD=%u' \
 	          'Stream end (post-grace) samples lost: encDrop=%u dioDrop=%u' \
-	          'Stream end (post-grace) encoder events: encFail=%u (retried, not lost)' \
+	          'Stream end (post-grace) encoder events: encFail=%u (drops already counted in loss above)' \
 	          'eos=%u stale not lost' \
 	          'Stream end (post-grace): SD teardown incomplete after %u ms; ' \
 	          'SD discards not included'; do \

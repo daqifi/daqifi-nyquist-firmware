@@ -73,7 +73,7 @@
 #define FMT_SAMPLES \
     "Stream end (post-grace) samples lost: encDrop=%u dioDrop=%u"
 #define FMT_ENCODER_EVENTS \
-    "Stream end (post-grace) encoder events: encFail=%u (retried, not lost)"
+    "Stream end (post-grace) encoder events: encFail=%u (drops already counted in loss above)"
 /* The pre-#1018 loss line. Kept ONLY as a negative control, so this suite
  * shows it would have REJECTED the old wording rather than merely accepting
  * the new one. */
@@ -261,7 +261,7 @@ TEST(each_summary_line_fits_the_logger_ceiling)
     ASSERT_EQ(worst_case_len(FMT_HEADLINE), 114u);
     ASSERT_EQ(worst_case_len(FMT_BYTES), 80u);
     ASSERT_EQ(worst_case_len(FMT_SAMPLES), 75u);          /* #1018: was 94 */
-    ASSERT_EQ(worst_case_len(FMT_ENCODER_EVENTS), 78u);   /* #1018: the new line */
+    ASSERT_EQ(worst_case_len(FMT_ENCODER_EVENTS), 96u);   /* #1018; #1233 r1 reworded */
     ASSERT_EQ(worst_case_len(FMT_SD_INCOMPLETE), 93u);   /* #1055 r6 */
 }
 
@@ -297,7 +297,14 @@ TEST(the_loss_heading_covers_only_quantities_the_total_includes)
      * halves matter: deleting encFail would also satisfy the line above. */
     ASSERT_TRUE(strstr(FMT_ENCODER_EVENTS, "encFail=") != NULL);
     ASSERT_TRUE(strstr(FMT_ENCODER_EVENTS, "samples lost") == NULL);
-    ASSERT_TRUE(strstr(FMT_ENCODER_EVENTS, "not lost") != NULL);
+    /* ⛔ #1233 r1: it must NOT claim the events were retried. encFail mixes
+     * retry events with JSON_Encoder's destructive DROP arm, which books
+     * Streaming_ReportEncoderSampleLoss(1) and returns 0 -- so the zero return
+     * increments encoderFailures for a sample that really was lost. The line
+     * says where those drops ARE counted instead of mischaracterising the
+     * counter, and this pins that it does not go back. */
+    ASSERT_TRUE(strstr(FMT_ENCODER_EVENTS, "retried") == NULL);
+    ASSERT_TRUE(strstr(FMT_ENCODER_EVENTS, "counted in loss") != NULL);
 
     /* ⛔ THE NEGATIVE CONTROL. Without it this test passes on any wording that
      * happens to omit the substring, and would have passed just as happily
@@ -450,8 +457,15 @@ int main(void)
     RUN(the_length_model_is_itself_correct);
     RUN(the_pre_split_line_did_not_fit);
     RUN(each_summary_line_fits_the_logger_ceiling);
+    RUN(the_loss_heading_covers_only_quantities_the_total_includes);
     RUN(the_split_lost_none_of_the_ten_quantities);
     RUN(eos_is_not_reported_as_a_lost_sample);
+    /* ⛔ A TEST THAT IS DEFINED BUT NOT RUN IS NOT A TEST. #1018's property
+     * test was added without this line and the suite stayed green on 8 tests:
+     * its assertions AND its negative control never executed, and the run
+     * still reported "0 failed". Caught by the fw#1233 r1 audit, not by the
+     * suite. The TEMPORARY-FAILING-ASSERT check (put one in, watch the suite
+     * go red, take it out) is the only thing that proves a RUN line works. */
     RUN(every_line_says_post_grace_on_its_own);
     RUN(the_incomplete_teardown_line_reports_only_the_wait);
     RUN(the_sd_hold_covers_usb_plus_sd_logging_not_just_the_sd_interface);
