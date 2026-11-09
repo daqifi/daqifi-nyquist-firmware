@@ -983,6 +983,13 @@ void DRV_SDSPI_GetCrcStats(SYS_MODULE_OBJ object, bool* crcEnabled, uint32_t* re
    Call only while the card is not mounted. */
 void DRV_SDSPI_SetCrcMode(SYS_MODULE_OBJ object, bool protect);
 
+/* #1217: true while an attached card has not yet been dropped for re-init
+   after the last SetCrcMode. The drop happens at the first detect poll that
+   finds the driver quiet (no command in progress or queued); every mount after
+   it goes through a media init in the new mode, so a caller about to mount
+   must wait for this to clear first. */
+bool DRV_SDSPI_CrcModePending(SYS_MODULE_OBJ object);
+
 /* #589 P1: reset the detect-poll backoff (expected insertion). */
 void DRV_SDSPI_DetectPollKick(SYS_MODULE_OBJ object);
 

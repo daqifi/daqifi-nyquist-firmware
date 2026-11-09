@@ -102,7 +102,7 @@ extern "C" {
         /* #1217: SD:PROTect. true = CRC checking on and every block written
          * as its own CMD24 (a stray block is refused, ~1/3 the throughput);
          * false = CRC off, CMD25 multi-block (fast, a stray block is
-         * programmed). Applied by the driver at media init. Default true. */
+         * programmed). Applied by the driver at media init. Default false (#1234). */
         bool crcProtect;
     } sd_card_manager_settings_t;
 

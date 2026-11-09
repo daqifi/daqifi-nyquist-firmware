@@ -50,19 +50,24 @@ queued nothing.
 
 ### Abandoned writes and CRC (#1217)
 
-An abandoned CMD24 or CMD25 leaves the card waiting for data, and it stores whatever is clocked next as that sector. `#1217` found FAT sectors full of SPI commands and WINC traffic this way. The driver now defends against it in three ways, all in `driver/sdspi/src/`:
+An abandoned CMD24 or CMD25 leaves the card waiting for data, and it stores whatever is clocked next as that sector. `#1217` found FAT sectors full of SPI commands and WINC traffic this way. The trigger is still unknown.
 
-- **CRC is on.** Media init sends CMD59 with argument 1, every command frame carries a computed CRC7, and every data block a computed CRC16 (`drv_sdspi_crc.h`). A captured block fails its check and is not programmed.
-- **CS goes high on every abort**, before the exclusive lock is released, and in the completion handler before the aborted-transfer early return.
-- **A write in doubt is resynced before any other command.** `writeInDoubt` is set before the command frame is sent and cleared only once the card is provably out of the data phase. While it is set, `lDRV_SDSPI_CommandSend` runs `lDRV_SDSPI_WriteResyncTasks` instead of sending anything. It survives aborts and `DRV_SDSPI_ReleaseBus`. The function's comment covers what each card state does with the bytes.
+**Protection is opt-in: `SYST:STOR:SD:PROTect 1`.** The default, `0`, runs as before #1217: CRC off and CMD25 multi-block writes. Protected mode costs about two thirds of the SD write throughput, and its per-sector bus lock starves a WiFi control session during SD logging (#1234), so it is not the default. The setting changes only while SD is disabled (`-221` otherwise), takes effect by re-initializing the card, and resets to `0` at boot. `SYST:STOR:SD:INFO?` reports whether the card is running with CRC on and how many resyncs have fired since boot, as its last two fields.
 
-**What you will see:**
+With `PROTect 1` the driver defends in two ways, both in `driver/sdspi/src/`:
 
-- `SD: card rejected CRC enable (CMD59 R1=0x..)`: the card refused CRC and is deliberately not mounted, so SD commands report no usable card. Without CRC it is not protected, and the resync's all-`0xFF` block would be programmed.
-- `SD: write in doubt resynced (type=1 token=0x..)`: a write was abandoned and recovered. A token with low bits `0x0B` proves the card really was waiting. `0xFF` means it was not. Type 1 is CMD24, 2 is CMD25.
-- `SD: write in doubt resync failed (...)`: the attempt failed and the command in hand failed with it. The flag stays set, so the next command tries again. Commands, CMD0 included, are held back until one succeeds, so a card stuck busy reads as "no card" until it lets go or is power cycled.
+- **CRC is on.** Media init sends CMD59 with argument 1, every command frame carries a computed CRC7, and every data block a computed CRC16 (`drv_sdspi_crc.h`). A captured block fails its check and is not programmed. Every block is written as its own CMD24: a CRC-rejected block inside a CMD25 left the bench card unresponsive until power-cycled.
+- **A write in doubt is resynced before any other command.** `writeInDoubt` is set before a CMD24's command frame is sent and cleared only once the card is provably out of the data phase. While it is set, `lDRV_SDSPI_CommandSend` runs `lDRV_SDSPI_WriteResyncTasks` instead of sending anything. It survives aborts and `DRV_SDSPI_ReleaseBus`. The function's comment covers what each card state does with the bytes.
 
-**A rejected block is an error, not a retry.** A bit error on the bus used to store a bad sector silently. Now it fails the write and takes the normal failed-write path, which today means #1031: ERROR, unmount, remount, and the log file reopened in truncate mode.
+In both modes, **CS goes high on every abort**, before the exclusive lock is released, and in the completion handler before the aborted-transfer early return.
+
+**What you will see (`PROTect 1` only):**
+
+- `SD: card rejected CRC enable (CMD59); not mounted, cannot protect it (#1217)`: the card refused CRC and is deliberately not mounted, so SD commands report no usable card. Without CRC it is not protected, and the resync's all-`0xFF` block would be programmed. Logged once until `SYST:LOG?` or `SYST:LOG:CLEar` re-arms it.
+- `SD: write in doubt resynced (type=1 token=0x..)`: a write was abandoned and recovered. A token with low bits `0x0B` proves the card really was waiting. `0xFF` means it was not. Type 1 is CMD24, the only type.
+- `SD: write in doubt resync failed; retrying (#1217)`: the attempt failed and the command in hand failed with it. The flag stays set, so the next command tries again. Commands, CMD0 included, are held back until one succeeds, so a card stuck busy reads as "no card" until it lets go or is power cycled. Logged once until `SYST:LOG?` or `SYST:LOG:CLEar` re-arms it.
+
+**A rejected block is an error, not a retry (`PROTect 1`).** A bit error on the bus used to store a bad sector silently. Now it fails the write and takes the normal failed-write path, which today means #1031: ERROR, unmount, remount, and the log file reopened in truncate mode.
 
 **Read data CRC is still not checked.** The card sends it and the driver discards it.
 

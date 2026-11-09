@@ -54,6 +54,9 @@ bool __attribute__((weak)) DRV_SDSPI_GetCID(uint8_t* cidBuffer, size_t bufLen) {
 #define SCPI_SD_DELETE_TIMEOUT_MS 5000
 #define SCPI_SD_FORMAT_TIMEOUT_MS 30000
 #define SCPI_SD_SPACE_TIMEOUT_MS 10000
+/* #1217: SD:PROTect waits this long for the driver to drop the card for
+ * re-init (one detect poll on a quiet driver, a few ms). */
+#define SCPI_SD_PROTECT_APPLY_MS 2000U
 
 /* #943: the two numbers that bound SYST:STOR:SD:BENCHmark's per-chunk write
  * loop. STALL_TIMEOUT_MS is now measured as ELAPSED TICKS since the last byte
@@ -599,13 +602,15 @@ __exit_point:
 }
 /* #1217: SYSTem:STORage:SD:PROTect <0|1>
  *
- * 1 (default): the card runs with CRC checking on and every block is written
- * as its own CMD24. A block the card captured from bus traffic fails its CRC
- * and is refused; an abandoned write is resynced. Costs about two thirds of
- * the SD write throughput (CMD25 cannot be used: a CRC reject inside it left
- * the bench card unresponsive until power-cycled).
- * 0: CRC off and CMD25 multi-block writes, as before #1217. Fast, but a stray
- * block is programmed over its target sector.
+ * 0 (default): CRC off and CMD25 multi-block writes, as before #1217. Fast,
+ * but a stray block is programmed over its target sector.
+ * 1: the card runs with CRC checking on and every block is written as its own
+ * CMD24. A block the card captured from bus traffic fails its CRC and is
+ * refused; an abandoned write is resynced. Costs about two thirds of the SD
+ * write throughput (CMD25 cannot be used: a CRC reject inside it left the
+ * bench card unresponsive until power-cycled), and its per-sector bus lock
+ * starves a WiFi control session during SD logging (#1234), which is why it
+ * is not the default.
  *
  * Only while SD is disabled and idle: the driver applies it by
  * re-initializing the card, which a mounted volume would lose. Runtime only,
@@ -629,6 +634,24 @@ scpi_result_t SCPI_StorageSDProtectSet(scpi_t * context){
     if (pSDCardRuntimeConfig->crcProtect != (param1 == 1)) {
         pSDCardRuntimeConfig->crcProtect = (param1 == 1);
         DRV_SDSPI_SetCrcMode(0, pSDCardRuntimeConfig->crcProtect);
+    }
+    /* Return only once the driver has dropped the card for re-init: from then
+     * on any mount, a following SD:ENAble 1 included, goes through a media init
+     * that applies the new mode. The driver does that at its first detect poll
+     * with no I/O in progress; the kick makes that the next pass. Checked even when the value did not change: an earlier
+     * request may still be pending. */
+    DRV_SDSPI_DetectPollExpireNow(0);
+    for (uint32_t waited = 0U;
+         DRV_SDSPI_CrcModePending(0) && (waited < SCPI_SD_PROTECT_APPLY_MS);
+         waited += 10U) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    if (DRV_SDSPI_CrcModePending(0)) {
+        /* The SD task is not running the driver: standby, or SPI handed to
+         * WiFi streaming. The setting stands and applies when it next runs. */
+        LOG_E("SD:PROTect - set, not yet applied; power up, stop WiFi stream, retry");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
     }
     return SCPI_RES_OK;
 }

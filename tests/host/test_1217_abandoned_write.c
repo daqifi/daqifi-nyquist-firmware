@@ -1439,6 +1439,66 @@ TEST(fast_mode_abort_does_not_resync)
 
 /* ---- bounded ---------------------------------------------------------------- */
 
+/* Audit finding (codex, 2026-11-09): a mode change pending when I/O starts
+ * must not tear the card down under that I/O. The forced detach frees every
+ * buffer object, and BufferIOTasks would then run on a freed request (NULL
+ * dereference in the harness). The request has to wait for a quiet poll, and
+ * CrcModePending must say so until then. */
+TEST(mode_change_pending_during_io_waits_for_a_quiet_poll)
+{
+    static uint8_t data[8U * BLOCK];
+    DRV_SDSPI_COMMAND_HANDLE h = DRV_SDSPI_COMMAND_HANDLE_INVALID;
+    const unsigned cmd0Before = (bootCard(), cmdCount(0));
+    const unsigned seen = gEventsSeen;
+
+    fill(data, sizeof(data), 0x6EU);
+    DRV_SDSPI_SetCrcMode(0, false);
+    ASSERT_TRUE(DRV_SDSPI_CrcModePending(0));
+    DRV_SDSPI_AsyncWrite(gHandle, &h, data, 30U, 8U);
+    ASSERT_TRUE(h != DRV_SDSPI_COMMAND_HANDLE_INVALID);
+    /* Lands the detect poll inside the write, not after it. */
+    DRV_SDSPI_DetectPollExpireNow(0);
+
+    for (unsigned i = 0U; (i < 20000U) && (gEventsSeen == seen); i++)
+    {
+        pass();
+        if (gEventsSeen == seen)
+        {
+            /* Still writing: the old mode, and still pending. */
+            ASSERT_EQ(cmdCount(0), cmd0Before);
+            ASSERT_TRUE(DRV_SDSPI_CrcModePending(0));
+        }
+    }
+    ASSERT_EQ(gLastEvent, DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+    ASSERT_TRUE(sectorIs(30U, &data[0U]));
+    ASSERT_TRUE(sectorIs(37U, &data[7U * BLOCK]));
+    ASSERT_EQ(cmdCount(25), 0); /* written as CMD24s: CRC was still on */
+
+    /* Quiet now: the next poll drops the card and re-inits it in fast mode. */
+    DRV_SDSPI_DetectPollExpireNow(0);
+    for (unsigned i = 0U; (i < 40000U) && DRV_SDSPI_CrcModePending(0); i++)
+    {
+        pass();
+    }
+    ASSERT_FALSE(DRV_SDSPI_CrcModePending(0));
+    ASSERT_TRUE(runUntilAttached(40000U));
+    ASSERT_TRUE(cmdCount(0) > cmd0Before);
+    ASSERT_FALSE(card.crcOn);
+}
+
+/* No card attached yet (startDriver calls SetCrcMode before the first pass):
+ * nothing to wait for, and the first init applies the mode. */
+TEST(mode_change_is_not_pending_without_a_card)
+{
+    resetAll();
+    startDriver();
+    ASSERT_FALSE(DRV_SDSPI_CrcModePending(0));
+    ASSERT_TRUE(runUntilAttached(20000U));
+    ASSERT_FALSE(DRV_SDSPI_CrcModePending(0));
+    ASSERT_TRUE(card.crcOn);
+    ASSERT_EQ(cmdCount(59), 1); /* one protected init, no extra re-init */
+}
+
 TEST(stuck_busy_card_gets_no_commands_and_never_pins_the_bus)
 {
     uint8_t data[BLOCK];
@@ -1544,6 +1604,8 @@ int main(void)
     RUN(multi_block_request_abandoned_between_blocks_is_resynced);
     RUN(fast_mode_reinits_without_crc_and_writes_with_cmd25);
     RUN(fast_mode_abort_does_not_resync);
+    RUN(mode_change_pending_during_io_waits_for_a_quiet_poll);
+    RUN(mode_change_is_not_pending_without_a_card);
     RUN(stuck_busy_card_gets_no_commands_and_never_pins_the_bus);
     RUN(resync_with_a_lost_completion_fails_and_retries);
     RUN(card_that_rejects_cmd59_is_not_mounted_and_says_so);

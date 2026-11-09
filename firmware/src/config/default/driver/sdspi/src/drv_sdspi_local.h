@@ -1503,15 +1503,16 @@ typedef struct
     /* Counter to keep track of retries to get command's response from the SD Card */
     uint8_t                                         ncrTries;
 
-    /* #1217: DRV_SDSPI_WRITE_IN_DOUBT_*. Set before CMD24/CMD25 is sent, cleared
-       only when the card has provably left the data phase. Survives an abort,
-       DRV_SDSPI_ReleaseBus and the detect FSM. Only touched under transferMutex
-       on the SD task.
+    /* #1217: DRV_SDSPI_WRITE_IN_DOUBT_*. Set before a CMD24 is sent with CRC
+       on (the only write that can be resynced), cleared only when the card has
+       provably left the data phase. Survives an abort, DRV_SDSPI_ReleaseBus
+       and the detect FSM. Only touched under transferMutex on the SD task.
 
-       The #1217 fields are all placed in existing alignment holes (this one,
-       writeBlockCrc16, the three after detectForceEver, and resyncFlushLeft), so
-       sizeof(DRV_SDSPI_OBJ) is unchanged. BSS growth has to be paid for by
-       trimming the streaming pool, see docs/MEMORY_ARCHITECTURE.md. */
+       The #1217 fields are placed in existing alignment holes where one exists
+       (this one, writeBlockCrc16, the three after detectForceEver, and
+       resyncFlushLeft); the rest grew gDrvSDSPIObj from 264 to 280 bytes
+       (linker map, 2026-11-09). BSS growth has to be paid for by trimming the
+       streaming pool, see docs/MEMORY_ARCHITECTURE.md. */
     uint8_t                                         writeInDoubt;
 
     /* Pointer to the buffer used during sending commands and receiving responses

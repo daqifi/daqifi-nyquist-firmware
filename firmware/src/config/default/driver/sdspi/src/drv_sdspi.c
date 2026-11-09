@@ -2088,8 +2088,18 @@ static void lDRV_SDSPI_AttachDetachTasks
             }
             /* #1217: SD:PROTect changed. Report one detach, so the next poll
              * re-initializes the card exactly as a reinsertion would, and the
-             * new CRC mode is applied at DRV_SDSPI_INIT_TURN_ON_CRC. */
+             * new CRC mode is applied at DRV_SDSPI_INIT_TURN_ON_CRC.
+             *
+             * Only while the driver is quiet: no command in progress and none
+             * queued. The detach path below frees every buffer object, and
+             * CMD_DETECT_CHK_FOR_DETCH reports ATTACHED during a card command
+             * precisely so detection never pulls a live request; forcing the
+             * verdict there would free the buffer BufferIOTasks is still
+             * working on. A request made during I/O waits for the next quiet
+             * poll (DRV_SDSPI_CrcModePending says so meanwhile). */
             if ((dObj->reinitRequested == true) &&
+                    (dObj->sdState == TASK_STATE_IDLE) &&
+                    (dObj->bufferObjList == 0U) &&
                     (dObj->isAttached == DRV_SDSPI_IS_ATTACHED) &&
                     (dObj->isAttachedLastStatus == DRV_SDSPI_IS_ATTACHED))
             {
@@ -3432,10 +3442,7 @@ void DRV_SDSPI_EventHandlerSet (
         clientObj->context = context;
     }
 }
-/* #589: module-level card-presence query (DRV_SDSPI_IsAttached needs an open
-   CLIENT handle; diagnostics like the WiFi jam advisory have none). */
-/* #1217: CRC state and resync count for SYST:STOR:SD:INFO?. Both are single
-   aligned words written only by the SD task, so a plain read is consistent. */
+/* #1217: SD:PROTect, called from the SCPI task while SD is disabled. */
 void DRV_SDSPI_SetCrcMode(SYS_MODULE_OBJ object, bool protect)
 {
     if (object >= DRV_SDSPI_INSTANCES_NUMBER)
@@ -3448,6 +3455,21 @@ void DRV_SDSPI_SetCrcMode(SYS_MODULE_OBJ object, bool protect)
     gDrvSDSPIObj[object].reinitRequested = true;
 }
 
+/* #1217: a SetCrcMode request an attached card has not yet been re-initialized
+   for. A detached card needs nothing: its next init applies the new mode. Both
+   reads are single aligned words. */
+bool DRV_SDSPI_CrcModePending(SYS_MODULE_OBJ object)
+{
+    if (object >= DRV_SDSPI_INSTANCES_NUMBER)
+    {
+        return false;
+    }
+    return (gDrvSDSPIObj[object].reinitRequested == true) &&
+            (gDrvSDSPIObj[object].isAttachedLastStatus == DRV_SDSPI_IS_ATTACHED);
+}
+
+/* #1217: CRC state and resync count for SYST:STOR:SD:INFO?. Both are single
+   aligned words written only by the SD task, so a plain read is consistent. */
 void DRV_SDSPI_GetCrcStats(SYS_MODULE_OBJ object, bool* crcEnabled, uint32_t* resyncs)
 {
     bool on = false;
@@ -3467,6 +3489,8 @@ void DRV_SDSPI_GetCrcStats(SYS_MODULE_OBJ object, bool* crcEnabled, uint32_t* re
     }
 }
 
+/* #589: module-level card-presence query (DRV_SDSPI_IsAttached needs an open
+   CLIENT handle; diagnostics like the WiFi jam advisory have none). */
 bool DRV_SDSPI_IsCardAttached(SYS_MODULE_OBJ object)
 {
     if (object >= DRV_SDSPI_INSTANCES_NUMBER)
