@@ -42,12 +42,25 @@ times in SCPIADC.c, because other setters already used it, while
 CalSaveCommon did not exist at all. So a file-scoped grep for the guard
 PASSES ON THE BROKEN REVISION and says nothing about this command.
 
-⚠ PREPROCESSOR LINE DIRECTIVES ARE STRIPPED. `cc -fpreprocessed -E` emits
-`# <line> "<file>"` markers where comments were removed -- 47 of them in this
-file. Leaving them in would embed LINE NUMBERS in the canonical text, so
-adding a comment hundreds of lines earlier would fail the build. That is a
-correct change breaking the pin, which is the one failure mode worth
-engineering out.
+⛔ AND THERE IS NOW EXACTLY ONE VIEW OF EACH FILE, which is the r8 lesson and
+the reason `cc -fpreprocessed -E` is gone from this file entirely.
+
+Rounds 3 to 7 all used TWO views: the compiler-stripped text and (from r6) the
+translation-phased text. Every one of r6's and r7's findings was the same
+defect -- a check reading the view that is not what gets built:
+
+  r6 HIGH  the BODY COMPARE read the stripped text, so a `//` comment ending
+           in a backslash hid a release the compiler had swallowed.
+  r7 #1    the REGISTRATION CHECK still read the stripped text after r6 moved
+           the body compare. I fixed one of two call sites and reported the
+           class closed.
+
+So the stripped view is not fixed, it is DELETED. Every check -- bodies,
+definitions, conditional depth, registrations, the table -- reads
+`translation_phases` output, and the depth maps are built from it too, so
+there is no second view left for a future check to pick by mistake. If a
+reader is tempted to reintroduce `cc -fpreprocessed -E` for anything: it does
+not splice, so it answers a question about text the compiler never sees.
 
 ⛔ AND IT NEITHER EVALUATES `#if` NOR EXPANDS MACROS, which rounds 3 and 4
 are both about. Exact text kept not being enough, because the checker and the
@@ -151,7 +164,6 @@ Run: python3 tests/host/check_885_savecal_claim_guard.py
 """
 import difflib
 import re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -223,24 +235,6 @@ def norm(text):
     normalises to the same string as an LF one -- CI is LF.
     """
     return re.sub(r"\s+", " ", text).strip()
-
-
-def strip_comments(src, cc="cc"):
-    """The file's own text with comments and line directives gone.
-
-    Comment stripping is mandatory, not cosmetic: SCPIADC.c's prose discusses
-    the claim, the rejected alternatives and SAVEcal by name at length, so a
-    raw scan finds the shapes it is looking for inside the explanations. Done
-    with the compiler rather than a regex -- a regex stripper eats pointer
-    dereferences, and this file is full of them.
-    """
-    out = subprocess.run([cc, "-fpreprocessed", "-E", "-"],
-                         input=src, capture_output=True, text=True)
-    if out.returncode != 0:
-        raise RuntimeError("%s -fpreprocessed -E failed: %s"
-                           % (cc, out.stderr.strip()[:200]))
-    # See the module docstring: these carry line numbers.
-    return re.sub(r'(?m)^\s*#\s+\d+\s+".*"\s*$', "", out.stdout)
 
 
 def translation_phases(src):
@@ -363,9 +357,19 @@ def is_terminator(entry):
     """
     if "SCPI_CMD_LIST_END" in entry:
         return True
-    if re.search(r"\.pattern\s*=\s*NULL\b", entry):
-        return True
-    return not re.search(r"\.pattern\s*=", entry)
+    # ⛔ CLASSIFY FAIL-CLOSED: reachable ONLY if `.pattern` is a STRING
+    # LITERAL. r7's audit defeated the previous rule with
+    # `{.pattern = 0, .callback = 0},` -- valid C99, a null pointer that
+    # findCommandHeader stops at, and not the literal `NULL` the old check
+    # looked for. Enumerating the spellings of zero is the losing game this
+    # pin has already lost five times (NULL, 0, (void*)0, a cast, a macro,
+    # `'\0'`...). So the question is inverted: a row is reachable when it
+    # SUPPLIES a pattern, and anything that is not a string literal -- any
+    # spelling of zero, any macro, any absence -- counts as a stop.
+    #
+    # Measured before relying on it: all 300 entries in the real table carry
+    # a string-literal `.pattern`, so this forbids nothing the file does.
+    return re.search(r'\.pattern\s*=\s*"(?:[^"\\]|\\.)*"', entry) is None
 
 
 def macro_sensitive_identifiers(extra=()):
@@ -508,8 +512,6 @@ def main():
             return 1
 
     adc_raw, iface_raw = ADC.read_text(), IFACE.read_text()
-    adc = strip_comments(adc_raw)
-    iface = strip_comments(iface_raw)
 
     # Phases 2 and 3, then every directive and table check works in THIS
     # text. Both post-conditions are asserted rather than assumed: a splice
@@ -533,19 +535,28 @@ def main():
               % (label, len(raw)))
 
     # ---- the command table rows, exactly -------------------------------
+    # ⛔ READ FROM THE PHASED TEXT, like the body compare. r7 moved the BODY
+    # comparison onto the phased text and left this one on the
+    # compiler-stripped text -- two views of one file again, which is the
+    # defect r7's own HIGH was about, and r7 fixed it in one place out of two.
+    # A `//` comment ending in a backslash directly above a registration row
+    # makes phase 2 splice the lines and phase 3 eat the row, so the command
+    # answers -113 while the unspliced text still shows it.
     for pattern, expected_row in sorted(EXPECTED_REGISTRATIONS.items()):
         rows = [norm(m) for m in re.findall(
             r'\{\s*\.pattern\s*=\s*"%s"\s*,[^}]*\}\s*,' % re.escape(pattern),
-            iface)]
+            iface_phased)]
         want = norm(expected_row)
         ok = rows == [want]
         check(ok, "%s is registered exactly as pinned" % pattern if ok else
-              "%s's registration changed\n"
+              "%s's registration changed or is absent from the text the "
+              "compiler sees\n"
               "         expected: [%s]\n"
               "         found:    %r" % (pattern, want, rows))
 
     # ---- the text must not be one the build discards ------------------
-    adc_depths, iface_depths = depth_map(adc), depth_map(iface)
+    adc_depths = depth_map(adc_phased)
+    iface_depths = depth_map(iface_phased)
     # Non-vacuity: if neither file contained a conditional, the depth checks
     # below could not fail and would be decoration. Reported, not asserted --
     # a file legitimately having none is not an error.
@@ -555,14 +566,14 @@ def main():
 
     for name in EXPECTED_BODIES:
         defs = list(re.finditer(r"\b%s\s*\([^;{]*\)\s*\{" % re.escape(name),
-                                adc))
+                                adc_phased))
         check(len(defs) == 1,
               "%s is defined exactly once (found %d) -- two definitions mean "
               "the compiler picks one and this checker picks the other"
               % (name, len(defs)))
         if not defs:
             continue
-        d = depth_at(adc, adc_depths, defs[0].start())
+        d = depth_at(adc_phased, adc_depths, defs[0].start())
         check(d == 0,
               "%s's definition is at conditional depth 0" % name if d == 0 else
               "%s's definition sits inside a #if/#else region (depth %d). "
@@ -572,10 +583,20 @@ def main():
     for pattern in EXPECTED_REGISTRATIONS:
         rows = list(re.finditer(
             r'\{\s*\.pattern\s*=\s*"%s"\s*,[^}]*\}\s*,' % re.escape(pattern),
-            iface))
+            iface_phased))
+        # ⛔ NOT A SKIP. r7's audit: the row missing from the phased text is
+        # the DEFECT (a spliced comment ate it), and `continue` reported
+        # nothing at all. An absent row is a failure here, always.
+        check(bool(rows),
+              "%s's row is present in the text the compiler sees" % pattern
+              if rows else
+              "%s's row is ABSENT from the text the compiler sees. It may be "
+              "present in the raw file and removed by translation -- a `//` "
+              "comment ending in a backslash above it splices the lines and "
+              "eats the row, so the command answers -113" % pattern)
         if not rows:
             continue
-        d = depth_at(iface, iface_depths, rows[0].start())
+        d = depth_at(iface_phased, iface_depths, rows[0].start())
         check(d == 0,
               "%s's table row is at conditional depth 0" % pattern if d == 0
               else "%s's table row sits inside a #if/#else region (depth %d), "
@@ -675,6 +696,7 @@ def main():
                 r'\{\s*\.pattern\s*=\s*"%s"\s*,[^}]*\}\s*,'
                 % re.escape(pattern), iface_phased))
             if not rows:
+                # Already reported as absent above; nothing further to say.
                 continue
             outside = [r for r in rows if not tstart < r.start() < tend]
             check(not outside,
