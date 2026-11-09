@@ -46,6 +46,7 @@ Usage:
     check_1201_predicate_wiring.py --self-test
 """
 import argparse
+import re
 import sys
 
 PREDICATE = "StopRequestedSince"
@@ -61,6 +62,39 @@ CALL_SITES = {
     "static bool FindMeasureStep(": 2,
     "static scpi_result_t SCPI_StartStreamingClaimed(": 1,
 }
+
+# ⛔ THE CAUSE MARKERS ARE A CROSS-REPO CONTRACT, pinned here because the
+# string lives here. The companion test in daqifi-python-test-suite decides
+# WHICH window caught a stop by matching these issue pairs out of the device's
+# log, and its own comment says the surrounding sentence may be reworded while
+# the marker may not. Nothing pinned them, and the merge that folded #1226 into
+# this predicate broke the contract twice over in one edit:
+#
+#   * it rewrote the ARM's marker from (#1201/#861) to (#1201/#1226), which
+#     removed (#1201/#861) from the firmware entirely -- so the companion's
+#     MARK_THR_ARM matched nothing and the arm refusal became UNDETECTABLE;
+#   * the new post-dwell site then reused (#1201/#1226), so the arm and the
+#     dwell reported as the SAME window.
+#
+# Neither is visible to a firmware-only review: the expectation that broke is
+# in the other repo. So this is checked as a SET per site, which catches both
+# shapes -- a marker that went missing, and two sites sharing one.
+#
+# ⚠️ Measured against comment-STRIPPED source, and that is not optional here:
+# the prose explaining this fix names (#1201/#861) and (#1201/#1226) twice
+# over, so a raw grep of this file is satisfied by the paragraphs ABOUT the
+# markers rather than by the markers. Exactly the M7 failure mode.
+SITE_MARKERS = {
+    "static scpi_result_t SCPI_RunThroughputBenchClaimed(": frozenset({
+        "(#1201/#1226)",    # the ARM refused -- a stop or power-off in setup
+        "(#1201/#1230)",    # the DWELL's result DISCARDED
+    }),
+    "static bool FindMeasureStep(": frozenset({
+        "(#1201/#938)",     # the finder discarded a dwell-raced observation
+    }),
+}
+
+MARKER_RE = re.compile(r"\(#1201/#\d+\)")
 
 # Functions that legitimately read the globals directly: they PIN, they do not
 # ask. Each must contain both reads.
@@ -196,6 +230,35 @@ def check(src_text):
                     % (sig, g, PREDICATE))
 
     # ---- 3. the complement: the pin sites still read the globals themselves
+    # ---- 2b. each site carries its OWN cause markers, and no two share one
+    seen = {}
+    for sig, want in SITE_MARKERS.items():
+        fn = extract_function(s, sig)
+        if fn is None:
+            bad.append(
+                "could not extract '%s...' to check its cause markers. The "
+                "companion test matches those markers to decide which window "
+                "caught a stop, so an unverifiable site is an unverifiable "
+                "contract." % sig)
+            continue
+        got = frozenset(MARKER_RE.findall(fn))
+        if got != want:
+            bad.append(
+                "'%s...' carries cause markers %s, expected %s. MISSING a "
+                "marker makes that window undetectable to the companion test; "
+                "an EXTRA or SHARED one makes two windows report as the same "
+                "one. Both are silent -- the expectation lives in "
+                "daqifi-python-test-suite, so nothing here fails without this "
+                "check." % (sig, sorted(got) or "none", sorted(want)))
+        for m in got:
+            if m in seen and seen[m] != sig:
+                bad.append(
+                    "cause marker %s appears in BOTH '%s...' and '%s...'. A "
+                    "marker identifies ONE window; shared, it tells the "
+                    "companion test that a stop caught in one place was "
+                    "caught in the other." % (m, seen[m], sig))
+            seen[m] = sig
+
     for sig in PIN_SITES:
         fn = extract_function(s, sig)
         if fn is None:
@@ -243,6 +306,8 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context,
     taskENTER_CRITICAL();
     dwellStopped = StopRequestedSince(g, a, &dwellInFlight);
     taskEXIT_CRITICAL();
+    LOG_E("arm: %s", "refused (#1201/#1226)");
+    LOG_E("dwell: %s", "discarded (#1201/#1230)");
     return SCPI_RES_OK;
 }
 
@@ -253,6 +318,7 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg) {
     taskENTER_CRITICAL();
     stopAfterObs = StopRequestedSince(b->g, b->a, &obsInFlight);
     taskEXIT_CRITICAL();
+    LOG_E("obs: %s", "discarded (#1201/#938)");
     return false;
 }
 
@@ -378,6 +444,32 @@ def self_test():
             ""),
         False, "expected 2"))
 
+    # --- M11: THE EXACT MERGE DEFECT. The dwell site reuses the arm's marker,
+    #     so the companion test cannot tell the two windows apart. Every other
+    #     check in this file passes on it: the predicate is correct, all five
+    #     calls are present, no copy is re-inlined. Only the marker set sees it.
+    cases.append((
+        "M11 the dwell reuses the arm's cause marker",
+        GOOD.replace('"discarded (#1201/#1230)"', '"discarded (#1201/#1226)"'),
+        False, "SHARED"))
+
+    # --- M12: a marker simply GONE -- what folding #1226 in actually did to
+    #     (#1201/#861). The window stops being detectable; nothing else moves.
+    cases.append((
+        "M12 a cause marker is removed entirely",
+        GOOD.replace('"refused (#1201/#1226)"', '"refused"'),
+        False, "MISSING"))
+
+    # --- M13: the marker present ONLY IN PROSE. This file's own explanation of
+    #     the fix names these markers repeatedly, so a check that did not strip
+    #     comments would be satisfied by the paragraphs about them. The
+    #     complement of M7, for the marker check specifically.
+    cases.append((
+        "M13 a cause marker in a COMMENT does not satisfy the contract",
+        GOOD.replace('    LOG_E("dwell: %s", "discarded (#1201/#1230)");',
+                     '    /* the dwell marker (#1201/#1230) belongs here */'),
+        False, "MISSING"))
+
     # --- the stripper must NOT corrupt a source whose strings contain comment
     #     markers; otherwise it invents failures in correct files
     cases.append((
@@ -450,7 +542,8 @@ def main():
             print("  - %s" % b)
         return 1
     print("#1201 predicate wiring OK: one critical-section-free predicate, "
-          "5 calls across 3 sites, 0 re-inlined copies, both pins intact.")
+          "5 calls across 3 sites, 0 re-inlined copies, both pins intact, "
+          "3 distinct cause markers across 2 sites.")
     return 0
 
 

@@ -3227,6 +3227,23 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context,
      * push is queue-only to protect its five-field reply -- #965), so this
      * reaches the caller as **ERROR: -200 and the result block is absent. */
     if (dwellStopped) {
+        /* ⛔ ITS OWN MARKER (#1230), DISTINCT FROM THE ARM'S (#1226) ABOVE.
+         * These issue pairs are a CROSS-REPO CONTRACT, not decoration: the
+         * companion test in daqifi-python-test-suite decides WHICH window
+         * caught a stop by matching them, and its own comment says the
+         * surrounding sentence may be reworded while the marker may not.
+         *
+         * This is written down because the merge that produced this function
+         * broke it twice over, silently and invisibly to any firmware-only
+         * review -- the expectation that broke lives in the other repo.
+         * Folding #1226 into the predicate rewrote the ARM's marker from
+         * (#1201/#861) to (#1201/#1226), which (a) removed (#1201/#861) from
+         * this file entirely, so the companion's MARK_THR_ARM matched nothing
+         * and the arm refusal became undetectable, and (b) left this new site
+         * reusing (#1201/#1226), so the arm and the dwell reported as one
+         * window. The guard below is what makes that a BUILD failure instead
+         * of a test that quietly stops discriminating.
+         */
         /* log_budget: max=62 -- both candidate strings below are exactly 62
          * bytes and the fixed prefix is 41, so the worst case is 103 of
          * Logger's 125. Bounded rather than left as a bare %s for the reason
@@ -3235,8 +3252,8 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context,
          * complete. */
         LOG_E("Throughput benchmark: result discarded - %s",
               dwellStopInFlight
-                  ? "a stop is still in flight on the other transport (#1201/#1226)"
-                  : "a stop was issued and completed during the dwell (#1201/#1226)");
+                  ? "a stop is still in flight on the other transport (#1201/#1230)"
+                  : "a stop was issued and completed during the dwell (#1201/#1230)");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         return SCPI_RES_ERR;
     }
