@@ -1803,9 +1803,13 @@ TEST(fast_mode_cmd25_abandoned_between_blocks_resends_the_rest)
 }
 
 /* Every block was programmed and only the stop token was lost. Nothing is left
- * to re-send; the resync ends the write, and in particular programs nothing
- * past the request (a 0xFE filler there would be a sector nobody asked for). */
-TEST(fast_mode_cmd25_abandoned_at_the_stop_token_writes_nothing_past_the_request)
+ * to re-send, so the request sends the stop token again and completes. Bench,
+ * 2026-11-10: reporting this as an error made the #1031 path split the
+ * benchmark file, and when it landed in the unmount flush the file lost its
+ * last 64 KB although every block was on the card. Nothing may be programmed
+ * past the request either (a 0xFE filler there would be a sector nobody asked
+ * for). */
+TEST(fast_mode_cmd25_abandoned_at_the_stop_token_completes_and_writes_nothing_past_it)
 {
     uint8_t data[3U * BLOCK];
 
@@ -1817,6 +1821,37 @@ TEST(fast_mode_cmd25_abandoned_at_the_stop_token_writes_nothing_past_the_request
     gFault.len = 1;
     gFault.firstByte = 0xFD;
     gFault.afterCmd = 25;
+    gFault.exceptResync = true;
+    const unsigned stops = cmdCount(EV_STOP_TOKEN);
+    const unsigned cmd25 = cmdCount(25);
+    ASSERT_EQ(writeBlocks(40U, data, 3U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+    ASSERT_EQ(gFault.action, FAULT_NONE);
+    ASSERT_EQ(cmdCount(EV_STOP_TOKEN) - stops, 1);
+    ASSERT_EQ(cmdCount(25) - cmd25, 1); /* no data re-sent */
+    ASSERT_EQ(test1217_WriteRetries(), 1U);
+    ASSERT_EQ(card.state, CARD_READY);
+    ASSERT_TRUE(sectorIs(40U, &data[0U]));
+    ASSERT_TRUE(sectorIs(42U, &data[2U * BLOCK]));
+    ASSERT_TRUE(sectorUntouched(43U));
+    ASSERT_TRUE(sectorUntouched(44U));
+    assertCardHealthy(45U);
+}
+
+/* Every stop token lost: the request fails, and the next command's resync ends
+ * the write. Still nothing past the request. */
+TEST(fast_mode_cmd25_stop_token_lost_every_try_is_ended_by_the_resync)
+{
+    uint8_t data[3U * BLOCK];
+
+    bootCard();
+    switchCrcMode(false);
+    fill(data, sizeof(data), 0x68U);
+    gFault.action = FAULT_REJECT;
+    gFault.isRead = 0;
+    gFault.len = 1;
+    gFault.firstByte = 0xFD;
+    gFault.afterCmd = 25;
+    gFault.times = 1U + test1217_RetryLimit();
     gFault.exceptResync = true;
     ASSERT_EQ(writeBlocks(40U, data, 3U), DRV_SDSPI_EVENT_COMMAND_ERROR);
     ASSERT_EQ(gFault.action, FAULT_NONE);
@@ -2238,7 +2273,8 @@ int main(void)
     RUN(abort_cause_is_named_in_the_failure_log);
     RUN(fast_mode_cmd25_abandoned_before_the_first_block_is_retried_and_lands);
     RUN(fast_mode_cmd25_abandoned_between_blocks_resends_the_rest);
-    RUN(fast_mode_cmd25_abandoned_at_the_stop_token_writes_nothing_past_the_request);
+    RUN(fast_mode_cmd25_abandoned_at_the_stop_token_completes_and_writes_nothing_past_it);
+    RUN(fast_mode_cmd25_stop_token_lost_every_try_is_ended_by_the_resync);
     RUN(fast_mode_cmd25_abandon_on_every_try_stores_no_bus_traffic);
     RUN(fast_mode_cmd25_abandon_with_winc_traffic_stores_the_data);
     return TEST_SUMMARY();
