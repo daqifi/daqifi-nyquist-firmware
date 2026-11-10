@@ -125,6 +125,11 @@
 #define DRV_SDSPI_WRITE_IN_DOUBT_NONE             (0U)
 #define DRV_SDSPI_WRITE_IN_DOUBT_SINGLE           (1U)
 #define DRV_SDSPI_WRITE_IN_DOUBT_MULTI            (2U)
+/* A CMD25 whose block the card rejected (CRC or write error token), until the
+ * CMD12 that ends it (SD Physical Layer Simplified Specification v6.00,
+ * 7.3.3.1) and the busy after that CMD12 are done. CMD12 goes out without a
+ * resync; any other command resyncs it as a CMD25. */
+#define DRV_SDSPI_WRITE_IN_DOUBT_REJECTED         (3U)
 
 /* #1217: how many times one write request re-sends a CMD24 whose write was
  * in doubt, after the resync, before it is reported as failed. Each attempt is
@@ -148,10 +153,11 @@
 #define DRV_SDSPI_ABORT_TIMER                     (4U) /* a SYS_TIME timer could not be started */
 #define DRV_SDSPI_ABORT_R1                        (5U) /* the card answered the write command with an error R1 */
 #define DRV_SDSPI_ABORT_CMD                       (6U) /* the write command did not complete (no R1, bus error, failed resync) */
-#define DRV_SDSPI_ABORT_TOKEN                     (7U) /* the card did not accept the block (CRC or write error) */
+#define DRV_SDSPI_ABORT_TOKEN                     (7U) /* no valid data-response token came back */
 #define DRV_SDSPI_ABORT_BUSY                      (8U) /* the card stayed busy past DRV_SDSPI_WRITE_TIMEOUT_IN_MS */
 #define DRV_SDSPI_ABORT_RELEASE                   (9U) /* DRV_SDSPI_ReleaseBus ended the request */
-#define DRV_SDSPI_ABORT_CAUSES                    (10U)
+#define DRV_SDSPI_ABORT_REJECT                    (10U) /* the card rejected the block: CRC error or write error token */
+#define DRV_SDSPI_ABORT_CAUSES                    (11U)
 
 // *****************************************************************************
 // *****************************************************************************
@@ -596,6 +602,9 @@ typedef enum
 
     /* Send the stop transmission token for multi block writes. */
     DRV_SDSPI_TASK_WRITE_STOP_TRAN_TOKEN,
+
+    /* #1217: a CMD25 block was rejected; end the write with CMD12. */
+    DRV_SDSPI_TASK_WRITE_REJECT_STOP,
 
     /* Send 8 clock pulses post stop tran token. */
     DRV_SDSPI_TASK_WR_STP_TRN_DUMMY_PLS,
@@ -1712,6 +1721,12 @@ typedef struct
     /* #1217: DRV_SDSPI_ABORT_*, see there. Sits in the alignment hole after
        crcEnabled, so it costs no RAM (gDrvSDSPIObj stays 280 B, linker map). */
     uint8_t                                         ioAbortCause;
+    /* #1217: blocks of the current CMD25 attempt that got past their busy. A
+       re-send rewinds by this many and writes the whole request again. A
+       request is bounded by its buffer, which is in RAM (< 1024 blocks), so
+       16 bits cannot overflow. Fills the rest of the alignment hole after
+       crcEnabled, so it costs no RAM either. */
+    uint16_t                                        cmd25BlocksDone;
     uint32_t                                        resyncCount;
     /* #1217: SD:PROTect. Read only at media init (DRV_SDSPI_INIT_TURN_ON_CRC);
      * crcEnabled is what the card actually runs with. */
