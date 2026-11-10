@@ -463,6 +463,12 @@ on:
       # tests/host/Makefile) for the Timestamp field the fix adds; no entry
       # above matches firmware/src/state/data/.
       - 'firmware/src/state/data/AOutSample.h'
+      # #1231: test_1231_clamp_report_latch.c's Makefile target SPLICES
+      # ClampReportDue() out of this file and grep-guards that the resize-skip
+      # LOG_E is still behind it. Without this entry a change to the predicate
+      # or its call site would not trigger this job, and the gate guarding them
+      # would never run -- "a green gate constrains only what the gate runs".
+      - 'firmware/src/state/data/AInSample.c'
       - 'firmware/src/services/streaming.c'
       - 'firmware/src/services/DaqifiPB/NanoPB_Encoder.c'
       - 'firmware/src/services/streaming.h'
@@ -589,6 +595,8 @@ on:
       - 'firmware/src/Util/CRC32.h'
       # #1034: see the matching entry under pull_request above.
       - 'firmware/src/state/data/AOutSample.h'
+      # #1231: see the matching entry under pull_request above.
+      - 'firmware/src/state/data/AInSample.c'
       - 'firmware/src/services/streaming.c'
       - 'firmware/src/services/DaqifiPB/NanoPB_Encoder.c'
       - 'firmware/src/services/streaming.h'

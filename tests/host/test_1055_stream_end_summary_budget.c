@@ -63,7 +63,21 @@
     "eos=%u stale not lost"
 #define FMT_BYTES \
     "Stream end (post-grace) bytes lost: USB=%u WiFi=%u SD=%u"
+/* ⛔ #1018: encFail MOVED OUT of the loss line. It is not a loss --
+ * totalSampleLoss sums queueDropped + encoderDropped + dioDropped + scanStale
+ * and encoderFailures is not a term -- and printing it beneath "samples lost"
+ * said it was. Exactly the defect the #1055 r1 review fixed for eos, one line
+ * further down and left behind by that fix. Measured on hardware: a cleanly
+ * completing 5 s run at 5 kHz printed "lost 0/24999 samples (0%)" immediately
+ * above "samples lost: encFail=10001 encDrop=0 dioDrop=0". */
 #define FMT_SAMPLES \
+    "Stream end (post-grace) samples lost: encDrop=%u dioDrop=%u"
+#define FMT_ENCODER_EVENTS \
+    "Stream end (post-grace) encoder events: encFail=%u (drops already counted in loss above)"
+/* The pre-#1018 loss line. Kept ONLY as a negative control, so this suite
+ * shows it would have REJECTED the old wording rather than merely accepting
+ * the new one. */
+#define FMT_SAMPLES_PRE_1018 \
     "Stream end (post-grace) samples lost: encFail=%u encDrop=%u dioDrop=%u"
 /* ------------------------------------------------------------------ *
  * #1055 r7: the SD-hold predicate, modelled.
@@ -230,7 +244,7 @@ TEST(the_pre_split_line_did_not_fit)
 TEST(each_summary_line_fits_the_logger_ceiling)
 {
     const char *const fmts[] = { FMT_HEADLINE, FMT_BYTES, FMT_SAMPLES,
-                                 FMT_SD_INCOMPLETE };
+                                 FMT_ENCODER_EVENTS, FMT_SD_INCOMPLETE };
     size_t i;
 
     for (i = 0u; i < sizeof(fmts) / sizeof(fmts[0]); i++) {
@@ -242,10 +256,12 @@ TEST(each_summary_line_fits_the_logger_ceiling)
     /* The measured numbers, pinned exactly rather than "<= 125": a future edit
      * that eats the headroom should have to look at it. Two lines could only
      * be made to fit by cutting the labels to encF/encD/dioD for 3 bytes of
-     * margin, which is why this is three. */
+     * margin, which is why this was three -- and FOUR since #1018 moved encFail
+     * onto its own line rather than lengthening one. */
     ASSERT_EQ(worst_case_len(FMT_HEADLINE), 114u);
     ASSERT_EQ(worst_case_len(FMT_BYTES), 80u);
-    ASSERT_EQ(worst_case_len(FMT_SAMPLES), 94u);
+    ASSERT_EQ(worst_case_len(FMT_SAMPLES), 75u);          /* #1018: was 94 */
+    ASSERT_EQ(worst_case_len(FMT_ENCODER_EVENTS), 96u);   /* #1018; #1233 r1 reworded */
     ASSERT_EQ(worst_case_len(FMT_SD_INCOMPLETE), 93u);   /* #1055 r6 */
 }
 
@@ -263,6 +279,47 @@ TEST(the_incomplete_teardown_line_reports_only_the_wait)
     ASSERT_TRUE(strstr(FMT_SD_INCOMPLETE, "(post-grace)") != NULL);
 }
 
+/* #1018: a quantity EXCLUDED from totalSampleLoss must not sit under the
+ * "samples lost" heading. This is the property, asserted directly rather than
+ * inferred from the lengths above -- a reword that kept encFail on the loss
+ * line but shortened it would pass every budget assertion in this file. */
+TEST(the_loss_heading_covers_only_quantities_the_total_includes)
+{
+    /* totalSampleLoss = queueDropped + encoderDropped + dioDropped +
+     * scanStale. encoderFailures is NOT a term, so it must not appear under
+     * a heading that says those numbers were lost. */
+    ASSERT_TRUE(strstr(FMT_SAMPLES, "samples lost:") != NULL);
+    ASSERT_TRUE(strstr(FMT_SAMPLES, "encFail") == NULL);
+    ASSERT_TRUE(strstr(FMT_SAMPLES, "encDrop=") != NULL);
+    ASSERT_TRUE(strstr(FMT_SAMPLES, "dioDrop=") != NULL);
+
+    /* ...and it is reported, on a line that does not call it a loss. Both
+     * halves matter: deleting encFail would also satisfy the line above. */
+    ASSERT_TRUE(strstr(FMT_ENCODER_EVENTS, "encFail=") != NULL);
+    ASSERT_TRUE(strstr(FMT_ENCODER_EVENTS, "samples lost") == NULL);
+    /* ⛔ #1233 r1: it must NOT claim the events were retried. encFail mixes
+     * retry events with JSON_Encoder's destructive DROP arm, which books
+     * Streaming_ReportEncoderSampleLoss(1) and returns 0 -- so the zero return
+     * increments encoderFailures for a sample that really was lost. The line
+     * says where those drops ARE counted instead of mischaracterising the
+     * counter, and this pins that it does not go back. */
+    ASSERT_TRUE(strstr(FMT_ENCODER_EVENTS, "retried") == NULL);
+    ASSERT_TRUE(strstr(FMT_ENCODER_EVENTS, "counted in loss") != NULL);
+
+    /* ⛔ THE NEGATIVE CONTROL. Without it this test passes on any wording that
+     * happens to omit the substring, and would have passed just as happily
+     * before #1018 if the heading had been phrased differently. The pre-#1018
+     * line really did carry encFail under "samples lost", so the check above
+     * demonstrably REJECTS it. */
+    ASSERT_TRUE(strstr(FMT_SAMPLES_PRE_1018, "samples lost:") != NULL);
+    ASSERT_TRUE(strstr(FMT_SAMPLES_PRE_1018, "encFail=") != NULL);
+
+    /* The same rule the #1055 r1 review applied to eos, which is why that
+     * quantity is on the headline with its own words rather than here. */
+    ASSERT_TRUE(strstr(FMT_HEADLINE, "stale not lost") != NULL);
+    ASSERT_TRUE(strstr(FMT_HEADLINE, "samples lost") == NULL);
+}
+
 TEST(the_split_lost_none_of_the_ten_quantities)
 {
     /* ⛔ The hazard a pure length check cannot see: splitting a message is
@@ -275,10 +332,15 @@ TEST(the_split_lost_none_of_the_ten_quantities)
 
     ASSERT_EQ(conversion_count(FMT_HEADLINE), 4u);   /* loss/attempted/pct/eos */
     ASSERT_EQ(conversion_count(FMT_BYTES), 3u);      /* USB/WiFi/SD            */
-    ASSERT_EQ(conversion_count(FMT_SAMPLES), 3u);    /* encFail/encDrop/dioDrop*/
+    ASSERT_EQ(conversion_count(FMT_SAMPLES), 2u);    /* #1018: encDrop/dioDrop */
+    ASSERT_EQ(conversion_count(FMT_ENCODER_EVENTS), 1u);  /* #1018: encFail     */
+    /* ⛔ The accounting is what stops #1018's move from DROPPING a quantity:
+     * encFail had to land somewhere, and a reword that merely deleted it from
+     * the loss line would satisfy every length assertion above. */
     ASSERT_EQ(conversion_count(FMT_HEADLINE)
               + conversion_count(FMT_BYTES)
-              + conversion_count(FMT_SAMPLES), 10u);
+              + conversion_count(FMT_SAMPLES)
+              + conversion_count(FMT_ENCODER_EVENTS), 10u);
 
     /* and the one 64-bit field stayed 64-bit: totalAttempted is a uint64
      * sample count, and demoting it to %u in a reword would silently wrap
@@ -286,7 +348,10 @@ TEST(the_split_lost_none_of_the_ten_quantities)
     ASSERT_TRUE(strstr(FMT_HEADLINE, "%llu") != NULL);
     ASSERT_EQ(conversion_count(FMT_HEADLINE), 4u);
 
-    /* every label from the original survives somewhere in the three */
+    /* every label from the original survives somewhere in the FOUR.
+     * ⭐ This is the assertion that caught #1018's first draft renaming
+     * `encFail=` to `fail=` -- the heading was the defect, so changing the
+     * token too would have been a gratuitous break for anything grepping it. */
     {
         const char *const labels[] = { "USB=", "WiFi=", "SD=", "encFail=",
                                        "encDrop=", "dioDrop=", "eos=" };
@@ -295,7 +360,8 @@ TEST(the_split_lost_none_of_the_ten_quantities)
             const bool present =
                 strstr(FMT_HEADLINE, labels[i]) != NULL ||
                 strstr(FMT_BYTES, labels[i]) != NULL ||
-                strstr(FMT_SAMPLES, labels[i]) != NULL;
+                strstr(FMT_SAMPLES, labels[i]) != NULL ||
+                strstr(FMT_ENCODER_EVENTS, labels[i]) != NULL;
             ASSERT_TRUE(present);
             /* and it was in the original, so this is a SURVIVAL claim and not
              * a tautology over labels the split invented */
@@ -314,9 +380,21 @@ TEST(eos_is_not_reported_as_a_lost_sample)
     ASSERT_TRUE(strstr(FMT_SAMPLES, "eos") == NULL);
     ASSERT_TRUE(strstr(FMT_HEADLINE, "eos=") != NULL);
     ASSERT_TRUE(strstr(FMT_HEADLINE, "stale not lost") != NULL);
-    /* and the "samples lost" line still carries only genuine losses */
+    /* and the "samples lost" line still carries only genuine losses.
+     *
+     * ⭐ #1018 REDUCED THIS FROM 3 TO 2, and the reduction is the point: eos
+     * was the first quantity moved out from under this heading for being
+     * excluded from totalSampleLoss, and encFail was the second -- the same
+     * rule, one line further down, left behind by the fix that stated it.
+     * The count is pinned rather than written `<= 3` so that a quantity
+     * ARRIVING here has to be argued for. */
     ASSERT_TRUE(strstr(FMT_SAMPLES, "samples lost") != NULL);
-    ASSERT_EQ(conversion_count(FMT_SAMPLES), 3u);
+    ASSERT_EQ(conversion_count(FMT_SAMPLES), 2u);
+    /* Both excluded quantities are now off this line, and both are still
+     * reported somewhere -- the pairing that makes this a MOVE and not a
+     * deletion. */
+    ASSERT_TRUE(strstr(FMT_SAMPLES, "encFail") == NULL);
+    ASSERT_TRUE(strstr(FMT_ENCODER_EVENTS, "encFail=") != NULL);
 }
 
 TEST(every_line_says_post_grace_on_its_own)
@@ -328,7 +406,10 @@ TEST(every_line_says_post_grace_on_its_own)
     ASSERT_TRUE(strstr(FMT_HEADLINE, "(post-grace)") != NULL);
     ASSERT_TRUE(strstr(FMT_BYTES, "(post-grace)") != NULL);
     ASSERT_TRUE(strstr(FMT_SAMPLES, "(post-grace)") != NULL);
-    /* #1055 r6: and the fourth. It is the line MOST likely to arrive alone --
+    /* #1018: and the encoder-events line, for the same reason -- it can
+     * arrive alone and its number is a steady-window count too. */
+    ASSERT_TRUE(strstr(FMT_ENCODER_EVENTS, "(post-grace)") != NULL);
+    /* #1055 r6: and the fifth. It is the line MOST likely to arrive alone --
      * it prints outside the hadDrops gate -- so it needs the qualifier most. */
     ASSERT_TRUE(strstr(FMT_SD_INCOMPLETE, "(post-grace)") != NULL);
 
@@ -376,8 +457,15 @@ int main(void)
     RUN(the_length_model_is_itself_correct);
     RUN(the_pre_split_line_did_not_fit);
     RUN(each_summary_line_fits_the_logger_ceiling);
+    RUN(the_loss_heading_covers_only_quantities_the_total_includes);
     RUN(the_split_lost_none_of_the_ten_quantities);
     RUN(eos_is_not_reported_as_a_lost_sample);
+    /* ⛔ A TEST THAT IS DEFINED BUT NOT RUN IS NOT A TEST. #1018's property
+     * test was added without this line and the suite stayed green on 8 tests:
+     * its assertions AND its negative control never executed, and the run
+     * still reported "0 failed". Caught by the fw#1233 r1 audit, not by the
+     * suite. The TEMPORARY-FAILING-ASSERT check (put one in, watch the suite
+     * go red, take it out) is the only thing that proves a RUN line works. */
     RUN(every_line_says_post_grace_on_its_own);
     RUN(the_incomplete_teardown_line_reports_only_the_wait);
     RUN(the_sd_hold_covers_usb_plus_sd_logging_not_just_the_sd_interface);

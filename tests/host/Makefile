@@ -12,6 +12,21 @@
 
 CC       ?= gcc
 CFLAGS   ?= -std=c11 -Wall -Wextra -O0 -g
+
+# ⛔ AN UNREGISTERED TEST IS AN UNUSED STATIC FUNCTION, so make it a BUILD
+# ERROR (#1233 r1). TEST(name) expands to `static void name(void)`, so a TEST
+# that main() never RUNs is exactly what -Wunused-function reports -- and a
+# defined-but-never-run test is not a test: #1018's property test was added
+# without its RUN line and the suite stayed green at 8 tests, its assertions
+# AND its negative control never executing while the run reported "0 failed".
+# An audit found that, not the suite.
+#
+# Measured before enabling: a full clean build of this directory emits ZERO
+# unused-function warnings today, so this promotes nothing that currently
+# exists. `+=` rather than editing the line above, so the flag survives a
+# CFLAGS override from the environment -- the guard should not be the thing a
+# caller can switch off by accident.
+CFLAGS += -Werror=unused-function
 FW_UTIL  := ../../firmware/src/Util
 
 # #1055 (operator ruling 5->A): the session-end loss summary was ONE 212-byte
@@ -505,6 +520,7 @@ FW_LOG_C  := $(FW_UTIL)/Logger.c
 # they cannot be extracted) and exist to prove the test can fail.
 SDLOG1029_BIN := run_1029_tests
 SDLOG1029_GEN := gen_1029_log_budget.h
+
 SD_MGR_SRC    := ../../firmware/src/services/sd_card_services/sd_card_manager.c
 SD_MGR_HDR    := ../../firmware/src/services/sd_card_services/sd_card_manager.h
 PYTHON        ?= python3
@@ -603,6 +619,70 @@ LOGCEIL_SRC3 := ../../firmware/src/services/wifi_services/wifi_manager.c
 # Naming them rather than only counting them makes the next drift visible
 # instead of arithmetic.
 RECIPES := Makefile
+
+# =====================================================================
+# ⛔ PLACED AFTER `RECIPES := Makefile` ON PURPOSE, and the first version of
+# this block was not. make expands a prerequisite list when it READS the
+# rule, so with the rule above that assignment `$(RECIPES)` expanded to
+# NOTHING: the guard silently stopped re-running when its own recipe changed.
+# Caught by tools/lint/make_prereq_audit.py in CI, not by anything local --
+# the rule looked correct and the suite passed.
+# =====================================================================
+# #1231: the clamp-report latch.
+#
+# The sample-queue clamp used to LOG_E on every stream start on a healthy
+# device; it now reports only when the clamp CHANGES. The property is a
+# SEQUENCE over calls -- report once, re-report when the request changes,
+# re-report after the clamp lifts -- so it is not visible to a check that
+# looks at one call.
+#
+# ⭐ THE REAL PREDICATE IS SPLICED, NOT MODELLED. AInSample.c is not
+# host-includable (FreeRTOS queues, semaphores, the board graph), which is why
+# almost everything else in this directory has to model its subject. But
+# ClampReportDue() is six lines over one caller-owned size_t with no includes
+# of its own, so it escapes that and is tested AS ITSELF -- the same
+# arrangement #1201 used for StopRequestedSince().
+#
+# The range is the signature line through the next line starting in column 0
+# with '}'. The bound is deliberately LOOSE: a tight line count would fail the
+# BUILD on exactly the source changes this binary exists to catch by RUNNING
+# the code, turning a behavioural verdict back into a text-shape one (the #981
+# lesson, which cost two review rounds there).
+CLAMP1231_BIN := run_1231_tests
+CLAMP1231_GEN := gen_1231_clamp_latch.h
+CLAMP1231_SRC := ../../firmware/src/state/data/AInSample.c
+
+$(CLAMP1231_BIN): test_1231_clamp_report_latch.c test_framework.h \
+                  $(CLAMP1231_SRC) $(RECIPES)
+	@sed -n '/^static inline bool ClampReportDue(size_t needed, bool clamped,/,/^}/p' \
+	     $(CLAMP1231_SRC) | tr -d '\r' > $(CLAMP1231_GEN)
+	@lines=`wc -l < $(CLAMP1231_GEN) | tr -d ' '`; \
+	 last=`tail -1 $(CLAMP1231_GEN) | tr -d '[:space:]'`; \
+	 test "$$lines" -ge 4 && test "$$lines" -le 40 && test "$$last" = "}" \
+	  || { echo "ERROR: could not splice ClampReportDue() out of"; \
+	       echo "       $(CLAMP1231_SRC): got $$lines line(s) ending in '$$last'."; \
+	       echo "       0 lines means the signature was reworded or is no"; \
+	       echo "       longer at column 0; a run to EOF means its closing"; \
+	       echo "       brace left column 0. Either way"; \
+	       echo "       test_1231_clamp_report_latch.c would compile against"; \
+	       echo "       nothing, and a test that tests nothing must not pass."; \
+	       rm -f $(CLAMP1231_GEN); exit 1; }
+	@# The latch is only a fix if the LOG_E is actually behind it. The splice
+	@# above proves the predicate exists; this proves the call site uses it,
+	@# which no host test can see. Comment-stripped via the compiler, because
+	@# the prose around this fix names the identifier repeatedly.
+	@gated=`$(CC) -fpreprocessed -E $(CLAMP1231_SRC) 2>/dev/null \
+	   | tr '\n' ' ' \
+	   | grep -coE 'if \( *ClampReportDue *\(' || true`; \
+	if [ "$$gated" -lt 1 ]; then \
+	   echo "FAIL: #1231 -- AInSample.c no longer GATES its resize-skip LOG_E"; \
+	   echo "      on ClampReportDue(). The predicate can be perfectly correct"; \
+	   echo "      while the log line fires unconditionally beside it, and the"; \
+	   echo "      host test cannot see the call site. Found $$gated gated"; \
+	   echo "      call(s), expected at least 1."; \
+	   exit 1; \
+	fi
+	$(CC) $(CFLAGS) -o $(CLAMP1231_BIN) test_1231_clamp_report_latch.c
 
 # #970: encoder consume-accounting. Like BENCH_BIN, streaming.c and
 # JSON_Encoder.c are not host-test candidates (FreeRTOS/libscpi/the whole
@@ -5246,7 +5326,7 @@ $(ARMREFUSE_BIN): test_936_bench_arm_refusal.c test_framework.h $(SD_BENCH_SRC) 
 
 run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) \
      $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) \
-     $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(CAP1202_BIN) $(ISRLOG1197_BIN) $(STOP1201_BIN) \
+     $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(CAP1202_BIN) $(ISRLOG1197_BIN) $(STOP1201_BIN) $(CLAMP1231_BIN) \
      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(USECALTYPE_BIN) $(ARM_BIN) $(NAME_BIN) \
      $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) check-1200-parity check-885-savecal-claim \
      $(NVM1153_BIN) $(ARMREFUSE_BIN)
@@ -5284,6 +5364,7 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
 	./$(HEXWIN_BIN)
 	./$(LOGONCE_BIN)
 	./$(STOP1201_BIN)
+	./$(CLAMP1231_BIN)
 	./$(CAP1202_BIN)
 	./$(ISRLOG1197_BIN)
 	@# #1158: no AD7609 rate override in START (SCPIInterface.c is not
@@ -5311,7 +5392,8 @@ $(SUMBUDGET_BIN): test_1055_stream_end_summary_budget.c test_framework.h \
 	@# against the ceiling, not as a silently stale pass.
 	@for s in 'Stream end (post-grace): lost %u/%llu samples (%u%%); ' \
 	          'Stream end (post-grace) bytes lost: USB=%u WiFi=%u SD=%u' \
-	          'Stream end (post-grace) samples lost: encFail=%u encDrop=%u dioDrop=%u' \
+	          'Stream end (post-grace) samples lost: encDrop=%u dioDrop=%u' \
+	          'Stream end (post-grace) encoder events: encFail=%u (drops already counted in loss above)' \
 	          'eos=%u stale not lost' \
 	          'Stream end (post-grace): SD teardown incomplete after %u ms; ' \
 	          'SD discards not included'; do \
@@ -5830,7 +5912,7 @@ clean:
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
 	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) \
 	      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(GEN_1125) $(CAP1202_BIN) $(GEN_1202) $(ISRLOG1197_BIN) $(GEN_1197) \
-	      $(STOP1201_BIN) $(STOP1201_GEN) \
+	      $(STOP1201_BIN) $(STOP1201_GEN) $(CLAMP1231_BIN) $(CLAMP1231_GEN) \
 	      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(SDLOG1029_GEN).tmp \
 	      $(USECALTYPE_BIN) $(NAME_BIN) $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(ARM_BIN) $(SCPIDAC_RAILGATE_BIN) \
 	      $(FORCEGATE_BIN) $(LOG1039_BIN) $(LOG1039_GEN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) $(ARMREFUSE_BIN)

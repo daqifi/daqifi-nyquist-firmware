@@ -63,20 +63,23 @@ run_*
 !run_*.py
 run_904_tests
 
-# ⛔ #1201: the SAME fix, for the other half. Every gen_*.h above was also
-# added individually, so a new generated header had to remember to come here
-# too -- and the r7 note above is the record of what that costs when someone
-# forgets: a build-time artifact gets COMMITTED, and from then on make sees a
-# file that looks up to date and skips the recipe that would have regenerated
-# it. For a spliced-from-firmware header that is worse than for a binary: the
-# stale copy still COMPILES, so the test goes on passing against code the
-# firmware no longer contains, which is precisely the failure the generator
-# exists to prevent.
+# ⛔ #1201 and #1231 BOTH ADDED THIS PATTERN INDEPENDENTLY, which is the
+# strongest evidence it was needed: every gen_*.h had been listed here
+# individually, so each new spliced-source test had to remember to come back,
+# and #1231's gen_1231_clamp_latch.h arrived UNIGNORED -- which is how one of
+# them noticed. Same reason the run_* block above gives.
+#
+# Why it matters more for a spliced header than for a binary: a committed
+# generated header still COMPILES, and make then sees a file that looks up to
+# date and SKIPS the recipe that would have regenerated it. So the test goes on
+# passing against code the firmware no longer contains -- precisely the failure
+# the generator exists to prevent.
 #
 # Sources are test_*.c and generators are gen_*.py, so nothing legitimate
 # matches gen_*.h -- verified: `git ls-files tests/host | grep gen_` returns
-# only the two .py generators. The negations are belt-and-braces in case that
-# convention ever changes.
+# only the .py generators. The negations are belt-and-braces in case that
+# convention ever changes, exactly as above.
 gen_*.h
+gen_*.h.tmp
 !gen_*.c
 !gen_*.py
