@@ -977,8 +977,8 @@ bool DRV_SDSPI_IsCardAttached(SYS_MODULE_OBJ object);
 void DRV_SDSPI_GetCrcStats(SYS_MODULE_OBJ object, bool* crcEnabled, uint32_t* resyncs);
 
 /* #1217: SD:PROTect. protect = true: CRC checking on, every block written with
-   CMD24, abandoned writes resynced. false: CRC off and CMD25 multi-block writes
-   (faster; a stray block is programmed). Takes effect at the next media init,
+   CMD24. false: CRC off and CMD25 multi-block writes (faster; a stray block is
+   programmed). Abandoned writes are resynced and re-sent in both modes. Takes effect at the next media init,
    which this requests: an attached card is re-initialized as if reinserted.
    Call only while the card is not mounted. */
 void DRV_SDSPI_SetCrcMode(SYS_MODULE_OBJ object, bool protect);
