@@ -487,7 +487,9 @@ static uint32_t lDRV_SDSPI_ProcessCSD(uint8_t* csdPtr)
  * deliberately no CMD25 resync: a CRC-rejected block inside a CMD25 left the
  * bench SanDisk card unresponsive, CMD0 included, until power-cycled, whatever
  * ended the write (stop token after a flush, stop token at once with CS held,
- * CMD12), so with CRC on the driver never issues CMD25.
+ * CMD12), so with CRC on the driver never issues CMD25. With CRC off a
+ * multi-block request is still a CMD25, and an abandoned one is not covered
+ * here.
  *
  *  - Waiting for the CMD24 token: 0xFE + 512 x 0xFF + 0xFF 0xFF is a complete
  *    block with a guaranteed-bad CRC (CRC16 of 512 x 0xFF is 0x7FA1). The card
@@ -504,12 +506,22 @@ static uint32_t lDRV_SDSPI_ProcessCSD(uint8_t* csdPtr)
  *    rejects. It answers with an R1 that nobody reads, and later 0xFF bytes are
  *    idle.
  *
- * Only safe with CRC checking on: with it off, a waiting card would PROGRAM the
- * 0xFF block. So writeInDoubt is only ever set while crcEnabled is true
- * (DRV_SDSPI_CMD_SEND_PACKET); with SD:PROTect 0 there is no resync at all. A
- * card asked for CRC that refuses CMD59 is never mounted (see
+ * With CRC checking off (SD:PROTect 0) the card checks nothing, so a card
+ * waiting for the token PROGRAMS the 0xFF block, and one part-way through a
+ * block programs what it captured padded with 0xFF. That sector is still
+ * wrong, but it no longer holds the traffic that would otherwise have followed:
+ * the mount's CMD17 retries, the CMD10 detect poll, CMD0, WINC frames. That is
+ * the #1217 image, reproduced on the bench SanDisk card with CRC off by
+ * abandoning one CMD24 after its R1 (2026-11-09). Either way the request that
+ * was in doubt is still in hand, so DRV_SDSPI_TASK_READ_WRITE_ABORT re-sends
+ * the same CMD24 after this resync (DRV_SDSPI_WRITE_IN_DOUBT_RETRIES), and the
+ * sector ends with the intended data whichever state the card was in. The
+ * 0xFF block is left only if every retry fails, or if nothing re-sends the
+ * write; the request still reports an error then.
+ *
+ * With CRC on, a card asked for CRC that refuses CMD59 is never mounted (see
  * DRV_SDSPI_INIT_TURN_ON_CRC), and CMD0, the one thing that turns checking
- * off, cannot be sent past this gate, so a write in doubt always has CRC on.
+ * off, cannot be sent past this gate, so a write in doubt keeps CRC on.
  *
  * Bounded: one DRV_SDSPI_WRITE_TIMEOUT_IN_MS budget for all busy waits, plus the
  * #567 watchdog per transfer. The exclusive lock is held only for this attempt.
@@ -538,6 +550,12 @@ static void lDRV_SDSPI_WriteResyncEnd(DRV_SDSPI_OBJ* dObj, bool resolved)
         /* One-shot, static string: a stuck-busy card retries this on every
          * command, which LOG_E would turn into a flood. */
         LOG_E_ONCE(LOG_ONCE_SD_WRITE_RESYNC_FAIL, "SD: write in doubt resync failed; retrying (#1217)");
+        /* A resync that cannot finish means the bus or the card is not
+         * working, not that the write needs another try: spend the current
+         * request's re-send budget, so DRV_SDSPI_TASK_READ_WRITE_ABORT reports
+         * it instead of holding the bus through more attempts. The next
+         * request starts with a fresh budget and resyncs first. */
+        dObj->writeInDoubtRetries = DRV_SDSPI_WRITE_IN_DOUBT_RETRIES;
         /* Raises CS and releases the lock taken in RESYNC_START. */
         dObj->cmdState = DRV_SDSPI_CMD_CONFIRM_EXEC_ERROR;
     }
@@ -776,13 +794,10 @@ static void lDRV_SDSPI_CommandSend
             /* #1217: set BEFORE the frame goes out. The failure being guarded
              * is losing this command's R1, so "the card accepted it" can never
              * be what sets this. */
-            /* Only with CRC on: the resync's 0xFF block would be programmed by
-             * a card that does not check CRC (see lDRV_SDSPI_WriteResyncTasks). */
-            if (dObj->crcEnabled == false)
-            {
-                /* SD:PROTect 0: no resync */
-            }
-            else if (command == DRV_SDSPI_WRITE_SINGLE_BLOCK)
+            /* Both SD:PROTect modes: with CRC off the resync may program a
+             * 0xFF block, and the retry in DRV_SDSPI_TASK_READ_WRITE_ABORT
+             * then rewrites it (see lDRV_SDSPI_WriteResyncEnd). */
+            if (command == DRV_SDSPI_WRITE_SINGLE_BLOCK)
             {
                 dObj->writeInDoubt = DRV_SDSPI_WRITE_IN_DOUBT_SINGLE;
             }
@@ -2235,6 +2250,7 @@ static void lDRV_SDSPI_BufferIOTasks
             dObj->sdState = TASK_STATE_CARD_COMMAND;
 
             currentBufObj->status = DRV_SDSPI_COMMAND_IN_PROGRESS;
+            dObj->writeInDoubtRetries = 0U;
 
             if (dObj->sdCardType == DRV_SDSPI_MODE_NORMAL)
             {
@@ -2606,9 +2622,9 @@ static void lDRV_SDSPI_BufferIOTasks
              * don't care bits, and check if there was an error */
             if ((dObj->pCmdResp[0] & DRV_SDSPI_WRITE_RESPONSE_TOKEN_MASK) != DRV_SDSPI_DATA_ACCEPTED)
             {
-                /* Something went wrong, a CRC reject (0x0B) included: reported
-                 * as an error, never retried here. With CRC on this is a CMD24,
-                 * writeInDoubt stays set and the next command resyncs first. */
+                /* Something went wrong, a CRC reject (0x0B) included. For a
+                 * CMD24 writeInDoubt stays set, and READ_WRITE_ABORT resyncs
+                 * and re-sends it a bounded number of times. */
                 dObj->taskBufferIOState = DRV_SDSPI_TASK_READ_WRITE_ABORT;
             }
             else
@@ -2799,6 +2815,36 @@ static void lDRV_SDSPI_BufferIOTasks
             break;
 
         case DRV_SDSPI_TASK_READ_WRITE_ABORT:
+            /* #1217: a CMD24 that may have reached the card. Its data phase
+             * did not provably end, so the card may still be capturing what
+             * the bus carries next. Re-send the same block from the request
+             * in hand: lDRV_SDSPI_CommandSend resyncs first (writeInDoubt),
+             * then the CMD24 goes out again with the intended data. A
+             * multi-block request written as CMD24s has already advanced
+             * buffer and blockStart past the blocks that completed. The
+             * resync and the CMD24 each take the exclusive lock themselves, so
+             * this holds whether or not DRV_SDSPI_ReleaseBus unwound the outer
+             * one taken at BUFFER_IO_CHECK_DEVICE. */
+            if ((currentBufObj->opType == DRV_SDSPI_OPERATION_TYPE_WRITE) &&
+                    (currentBufObj->command == (uint8_t)DRV_SDSPI_WRITE_SINGLE_BLOCK) &&
+                    (dObj->writeInDoubt != DRV_SDSPI_WRITE_IN_DOUBT_NONE) &&
+                    (dObj->writeInDoubtRetries < DRV_SDSPI_WRITE_IN_DOUBT_RETRIES))
+            {
+                dObj->writeInDoubtRetries++;
+                /* A busy-wait abort may leave the write timer armed. */
+                if (dObj->timerFlag == true)
+                {
+                    (void) DRV_SDSPI_TimerStop(dObj);
+                    dObj->timerFlag = false;
+                }
+                /* See DRV_SDSPI_CMD_CONFIRM_EXEC_ERROR. */
+                SYS_PORT_PinSet(dObj->chipSelectPin);
+                LOG_E("SD: write in doubt, re-sending blk=%lu (try %u)",
+                        (unsigned long)currentBufObj->blockStart,
+                        (unsigned)dObj->writeInDoubtRetries);
+                dObj->taskBufferIOState = DRV_SDSPI_TASK_PROCESS_WRITE;
+                break;
+            }
             /* Reset any of the error flags. */
         case DRV_SDSPI_TASK_PROCESS_NEXT:
 
