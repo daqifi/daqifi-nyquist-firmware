@@ -125,11 +125,6 @@
 #define DRV_SDSPI_WRITE_IN_DOUBT_NONE             (0U)
 #define DRV_SDSPI_WRITE_IN_DOUBT_SINGLE           (1U)
 #define DRV_SDSPI_WRITE_IN_DOUBT_MULTI            (2U)
-/* A CMD25 whose block the card rejected (CRC or write error token), until the
- * CMD12 that ends it (SD Physical Layer Simplified Specification v6.00,
- * 7.3.3.1) and the busy after that CMD12 are done. CMD12 goes out without a
- * resync; any other command resyncs it as a CMD25. */
-#define DRV_SDSPI_WRITE_IN_DOUBT_REJECTED         (3U)
 
 /* #1217: how many times one write request re-sends a CMD24 whose write was
  * in doubt, after the resync, before it is reported as failed. Each attempt is
@@ -142,6 +137,8 @@
 #define DRV_SDSPI_RESYNC_STAGE_AFTER_BLOCK        (1U)
 /* CMD25 only: after the stop-tran token, waiting out the card's busy. */
 #define DRV_SDSPI_RESYNC_STAGE_AFTER_STOP         (2U)
+/* CMD25 only: after the CMD12 that follows the stop-tran token. */
+#define DRV_SDSPI_RESYNC_STAGE_AFTER_CMD12        (3U)
 
 /* #1217: why the current request's last read/write attempt was abandoned
  * (DRV_SDSPI_OBJ.ioAbortCause), named in the re-send and failure log lines so
@@ -603,8 +600,6 @@ typedef enum
     /* Send the stop transmission token for multi block writes. */
     DRV_SDSPI_TASK_WRITE_STOP_TRAN_TOKEN,
 
-    /* #1217: a CMD25 block was rejected; end the write with CMD12. */
-    DRV_SDSPI_TASK_WRITE_REJECT_STOP,
 
     /* Send 8 clock pulses post stop tran token. */
     DRV_SDSPI_TASK_WR_STP_TRN_DUMMY_PLS,

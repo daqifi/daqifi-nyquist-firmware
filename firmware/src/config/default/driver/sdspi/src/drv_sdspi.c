@@ -532,14 +532,17 @@ static uint32_t lDRV_SDSPI_ProcessCSD(uint8_t* csdPtr)
  *  - Not in a write: 0xFF is idle, and 0xFD followed by 0xFF parses at worst
  *    as CMD63 (reserved) with an all-ones argument, answered with an illegal-
  *    command R1 that nobody reads. The resync clocks eight idle bytes after
- *    0xFD before it ends, so that frame is complete before the next command.
+ *    0xFD, so that frame is complete before anything else is sent.
+ *  - Rejected a block (CRC or write error token, whether or not the driver
+ *    read it): the card ignores data and tokens until CMD12 (SD Physical
+ *    Layer Simplified Specification v6.00, 7.3.3.1). So the resync then sends
+ *    CMD12 and waits out its busy. A card in any other state is out of the
+ *    write by then and answers CMD12 with an illegal-command R1.
  *
  * DRV_SDSPI_TASK_READ_WRITE_ABORT re-sends a CMD25 in doubt whole, as a new
  * CMD25 from the request's first block: a block's busy ending inside a CMD25
  * does not prove it was programmed (see there). If every try fails the request
- * reports an error, and this resync ends the write before the next command. A
- * block the card REJECTS is ended with CMD12 instead
- * (DRV_SDSPI_WRITE_IN_DOUBT_REJECTED).
+ * reports an error, and this resync ends the write before the next command.
  *
  * With CRC on, a card asked for CRC that refuses CMD59 is never mounted (see
  * DRV_SDSPI_INIT_TURN_ON_CRC), and CMD0, the one thing that turns checking
@@ -707,7 +710,7 @@ static void lDRV_SDSPI_WriteResyncTasks(DRV_SDSPI_OBJ* dObj)
              * would be swallowed by it. */
             dObj->resyncIdleReads++;
             if (dObj->resyncIdleReads <
-                    ((dObj->resyncStage == DRV_SDSPI_RESYNC_STAGE_AFTER_STOP) ? 8U : 2U))
+                    ((dObj->resyncStage >= DRV_SDSPI_RESYNC_STAGE_AFTER_STOP) ? 8U : 2U))
             {
                 lDRV_SDSPI_WriteResyncBusyRead(dObj);
                 break;
@@ -717,9 +720,9 @@ static void lDRV_SDSPI_WriteResyncTasks(DRV_SDSPI_OBJ* dObj)
             {
                 dObj->resyncFlushLeft = (uint16_t)(DRV_SDSPI_MEDIA_BLOCK_SIZE + 2U);
                 dObj->cmdState = DRV_SDSPI_CMD_RESYNC_FLUSH;
-                if (dObj->writeInDoubt != DRV_SDSPI_WRITE_IN_DOUBT_SINGLE)
+                if (dObj->writeInDoubt == DRV_SDSPI_WRITE_IN_DOUBT_MULTI)
                 {
-                    /* A CMD25 (MULTI or REJECTED). No 0xFE: see the CMD25 notes above. The busy read just
+                    /* No 0xFE: see the CMD25 notes above. The busy read just
                      * completed, so RESYNC_FLUSH proceeds at once. */
                     break;
                 }
@@ -730,7 +733,7 @@ static void lDRV_SDSPI_WriteResyncTasks(DRV_SDSPI_OBJ* dObj)
                 }
             }
             else if ((dObj->resyncStage == DRV_SDSPI_RESYNC_STAGE_AFTER_BLOCK) &&
-                    (dObj->writeInDoubt != DRV_SDSPI_WRITE_IN_DOUBT_SINGLE))
+                    (dObj->writeInDoubt == DRV_SDSPI_WRITE_IN_DOUBT_MULTI))
             {
                 /* Any block the card was in is finished; end the CMD25. */
                 dObj->resyncIdleReads = 0U;
@@ -738,6 +741,28 @@ static void lDRV_SDSPI_WriteResyncTasks(DRV_SDSPI_OBJ* dObj)
                 dObj->cmdState = DRV_SDSPI_CMD_RESYNC_STOP;
                 dObj->pCmdResp[0] = DRV_SDSPI_DATA_STOP_TRAN_TOKEN;
                 if (DRV_SDSPI_SPIWrite(dObj, dObj->pCmdResp, 1) == false)
+                {
+                    lDRV_SDSPI_WriteResyncEnd(dObj, false);
+                }
+            }
+            else if (dObj->resyncStage == DRV_SDSPI_RESYNC_STAGE_AFTER_STOP)
+            {
+                /* Then CMD12: a card that rejected a block of the CMD25 (CRC
+                 * or write error token) hears only CMD12 (SD Physical Layer
+                 * Simplified Specification v6.00, 7.3.3.1), and the reject
+                 * token may itself be what was lost. Every other card state
+                 * is out of the write by now, and answers CMD12 with an
+                 * illegal-command R1 that nobody reads. */
+                dObj->resyncIdleReads = 0U;
+                dObj->resyncStage = DRV_SDSPI_RESYNC_STAGE_AFTER_CMD12;
+                dObj->cmdState = DRV_SDSPI_CMD_RESYNC_STOP;
+                dObj->pCmdResp[0] = ((uint8_t)CMD_VALUE_STOP_TRANSMISSION | DRV_SDSPI_TRANSMIT_SET);
+                dObj->pCmdResp[1] = 0U;
+                dObj->pCmdResp[2] = 0U;
+                dObj->pCmdResp[3] = 0U;
+                dObj->pCmdResp[4] = 0U;
+                dObj->pCmdResp[5] = (uint8_t)((uint8_t)(DRV_SDSPI_Crc7(dObj->pCmdResp, 5U) << 1) | 1U);
+                if (DRV_SDSPI_SPIWrite(dObj, dObj->pCmdResp, 6U) == false)
                 {
                     lDRV_SDSPI_WriteResyncEnd(dObj, false);
                 }
@@ -752,7 +777,7 @@ static void lDRV_SDSPI_WriteResyncTasks(DRV_SDSPI_OBJ* dObj)
 
         case DRV_SDSPI_CMD_RESYNC_STOP:
 
-            /* The stop token went out: wait out the card's busy. */
+            /* The stop token or CMD12 went out: wait out the card's busy. */
             lDRV_SDSPI_WriteResyncBusyRead(dObj);
             break;
 
@@ -827,11 +852,8 @@ static void lDRV_SDSPI_CommandSend
     {
         case DRV_SDSPI_CMD_FRAME_PACKET:
 
-            /* #1217: nothing goes to a card that may be waiting for write
-             * data, except the CMD12 that ends a rejected CMD25. */
-            if ((dObj->writeInDoubt != DRV_SDSPI_WRITE_IN_DOUBT_NONE) &&
-                    !((dObj->writeInDoubt == DRV_SDSPI_WRITE_IN_DOUBT_REJECTED) &&
-                      (command == DRV_SDSPI_STOP_TRANSMISSION)))
+            /* #1217: nothing goes to a card that may be waiting for write data. */
+            if (dObj->writeInDoubt != DRV_SDSPI_WRITE_IN_DOUBT_NONE)
             {
                 dObj->cmdState = DRV_SDSPI_CMD_RESYNC_START;
                 break;
@@ -2730,20 +2752,11 @@ static void lDRV_SDSPI_BufferIOTasks
                  * READ_WRITE_ABORT resyncs and re-sends the request a bounded
                  * number of times. A token the card did produce, a CRC error
                  * (0x0B) or write error (0x0D), is a reject; anything else
-                 * means the token was lost. A CMD25 the card rejected a block
-                 * of must be ended with CMD12 (SD Physical Layer Simplified
-                 * Specification v6.00, 7.3.3.1). */
+                 * means the token was lost. A CMD25's resync ends with the
+                 * CMD12 that a rejected CMD25 needs. */
                 const uint8_t token = dObj->pCmdResp[0] & DRV_SDSPI_WRITE_RESPONSE_TOKEN_MASK;
                 const bool reject = (token == 0x0BU) || (token == 0x0DU);
-                if (reject && (currentBufObj->command == (uint8_t)DRV_SDSPI_WRITE_MULTI_BLOCK))
-                {
-                    dObj->writeInDoubt = DRV_SDSPI_WRITE_IN_DOUBT_REJECTED;
-                    dObj->taskBufferIOState = DRV_SDSPI_TASK_WRITE_REJECT_STOP;
-                }
-                else
-                {
-                    lDRV_SDSPI_IoAbort(dObj, reject ? DRV_SDSPI_ABORT_REJECT : DRV_SDSPI_ABORT_TOKEN);
-                }
+                lDRV_SDSPI_IoAbort(dObj, reject ? DRV_SDSPI_ABORT_REJECT : DRV_SDSPI_ABORT_TOKEN);
             }
             else
             {
@@ -2868,31 +2881,6 @@ static void lDRV_SDSPI_BufferIOTasks
             }
             break;
 
-        case DRV_SDSPI_TASK_WRITE_REJECT_STOP:
-
-            /* #1217: the card rejected a CMD25 block. writeInDoubt is
-             * REJECTED, which lets CMD12 out without a resync. The card may
-             * be busy after CMD12; the stop token's busy wait waits that out
-             * and, seeing REJECTED, ends the attempt as a reject rather than
-             * a success. READ_WRITE_ABORT then re-sends the request whole or
-             * reports it failed. Anything that ends this early leaves
-             * REJECTED set, so the next command resyncs first. */
-            lDRV_SDSPI_CommandSend (object, DRV_SDSPI_STOP_TRANSMISSION, 0);
-            if (dObj->cmdState == DRV_SDSPI_CMD_EXEC_IS_COMPLETE)
-            {
-                dObj->timerFlag = false;
-                dObj->taskBufferIOState = DRV_SDSPI_TASK_WR_STP_TRAN_CHK_BSY;
-            }
-            else if (dObj->cmdState == DRV_SDSPI_CMD_EXEC_ERROR)
-            {
-                lDRV_SDSPI_IoAbort(dObj, DRV_SDSPI_ABORT_REJECT);
-            }
-            else
-            {
-                /* Nothing to do */
-            }
-            break;
-
         case DRV_SDSPI_TASK_WR_STP_TRN_DUMMY_PLS:
 
             if (DRV_SDSPI_SPIRead(dObj, dObj->pCmdResp, 1) == true)
@@ -2956,14 +2944,6 @@ static void lDRV_SDSPI_BufferIOTasks
                 /* The card is out of the busy state. Stop the timer */
                 (void) DRV_SDSPI_TimerStop(dObj);
                 dObj->timerFlag = false;
-                if (dObj->writeInDoubt == DRV_SDSPI_WRITE_IN_DOUBT_REJECTED)
-                {
-                    /* #1217: CMD12 ended a rejected CMD25 and the card is
-                     * out of busy: nothing in doubt, but the write failed. */
-                    dObj->writeInDoubt = DRV_SDSPI_WRITE_IN_DOUBT_NONE;
-                    lDRV_SDSPI_IoAbort(dObj, DRV_SDSPI_ABORT_REJECT);
-                    break;
-                }
                 /* #1217: the stop token was taken and programming finished. */
                 dObj->writeInDoubt = DRV_SDSPI_WRITE_IN_DOUBT_NONE;
                 dObj->taskBufferIOState = DRV_SDSPI_TASK_PROCESS_NEXT;
@@ -3000,8 +2980,7 @@ static void lDRV_SDSPI_BufferIOTasks
                     (currentBufObj->opType == DRV_SDSPI_OPERATION_TYPE_WRITE) &&
                     ((currentBufObj->command == (uint8_t)DRV_SDSPI_WRITE_SINGLE_BLOCK) ||
                      (currentBufObj->command == (uint8_t)DRV_SDSPI_WRITE_MULTI_BLOCK)) &&
-                    ((dObj->writeInDoubt != DRV_SDSPI_WRITE_IN_DOUBT_NONE) ||
-                     (dObj->ioAbortCause == DRV_SDSPI_ABORT_REJECT)) &&
+                    (dObj->writeInDoubt != DRV_SDSPI_WRITE_IN_DOUBT_NONE) &&
                     (dObj->writeInDoubtRetries < DRV_SDSPI_WRITE_IN_DOUBT_RETRIES))
             {
                 dObj->writeInDoubtRetries++;

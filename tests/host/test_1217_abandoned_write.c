@@ -98,6 +98,7 @@ static struct {
     unsigned dropBlockAt;
     unsigned writeErrorAt;
     unsigned faultCmd25s;
+    bool writeErrorTokenLost; /* the write error token reads as 0xFF */
     unsigned multiIndex;
 
     int events[EVENT_LOG];
@@ -345,7 +346,7 @@ static void cardBlockDone(void)
     if (faulted && (card.multiIndex == card.writeErrorAt))
     {
         cardEvent(EV_BLOCK_REJECTED);
-        cardOut(0xEDU); /* xxx0_1101: write error */
+        cardOut(card.writeErrorTokenLost ? 0xFFU : 0xEDU); /* xxx0_1101: write error */
         card.state = CARD_MULTI_ERROR;
         card.frameBits = 0U;
         card.frame = 0U;
@@ -1982,10 +1983,64 @@ TEST(fast_mode_cmd25_write_error_every_try_fails_and_leaves_the_card_working)
     ASSERT_EQ(writeBlocks(40U, data, 3U), DRV_SDSPI_EVENT_COMMAND_ERROR);
 
     ASSERT_EQ(card.writeErrorAt, 0U); /* every try met it */
-    ASSERT_EQ(cmdCount(12) - cmd12, (int)(1U + test1217_RetryLimit()));
+    /* one resync before each re-send; the last write error is ended by the
+     * next command's resync */
+    ASSERT_EQ(cmdCount(12) - cmd12, (int)test1217_RetryLimit());
     ASSERT_TRUE(logged("write failed blk=", "cause=reject"));
-    ASSERT_EQ(card.state, CARD_READY);
+    ASSERT_EQ(card.state, CARD_MULTI_ERROR);
     passes(1500U);
+    ASSERT_EQ(cmdCount(12) - cmd12, (int)(1U + test1217_RetryLimit()));
+    ASSERT_EQ(card.state, CARD_READY);
+    ASSERT_TRUE(DRV_SDSPI_IsAttached(gHandle));
+    assertCardHealthy(45U);
+}
+
+/* The write error token itself is lost (it reads as 0xFF): the driver cannot
+ * know the card rejected the block, so the resync of every CMD25 ends with the
+ * CMD12 that a rejected one needs (audit round 2). */
+TEST(fast_mode_cmd25_lost_write_error_token_still_gets_cmd12)
+{
+    uint8_t data[3U * BLOCK];
+
+    bootCard();
+    switchCrcMode(false);
+    fill(data, sizeof(data), 0x6CU);
+    card.writeErrorAt = 2U;
+    card.writeErrorTokenLost = true;
+    const unsigned cmd12 = cmdCount(12);
+    ASSERT_EQ(writeBlocks(40U, data, 3U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+    ASSERT_EQ(cmdCount(EV_BLOCK_REJECTED), 1U); /* the premise */
+    ASSERT_EQ(cmdCount(12) - cmd12, 1);
+    ASSERT_TRUE(logged("re-sending blk=40 n=3", "cause=token"));
+    ASSERT_TRUE(sectorIs(40U, &data[0U]));
+    ASSERT_TRUE(sectorIs(41U, &data[BLOCK]));
+    ASSERT_TRUE(sectorIs(42U, &data[2U * BLOCK]));
+    ASSERT_EQ(card.state, CARD_READY);
+    assertCardHealthy(44U);
+}
+
+/* The resync's CMD12 is refused by DRV_SPI: that resync fails, spending the
+ * request's budget, but the write stays in doubt, so the next command's resync
+ * sends CMD12 again and the card is back (audit round 2). */
+TEST(fast_mode_cmd25_resync_cmd12_lost_is_sent_by_the_next_resync)
+{
+    uint8_t data[3U * BLOCK];
+
+    bootCard();
+    switchCrcMode(false);
+    fill(data, sizeof(data), 0x6DU);
+    card.writeErrorAt = 2U;
+    gFault.action = FAULT_REJECT;
+    gFault.isRead = 0;
+    gFault.len = 6;
+    gFault.firstByte = 0x4C; /* CMD12 */
+    ASSERT_EQ(writeBlocks(40U, data, 3U), DRV_SDSPI_EVENT_COMMAND_ERROR);
+    ASSERT_EQ(gFault.action, FAULT_NONE); /* the premise */
+    ASSERT_EQ(card.state, CARD_MULTI_ERROR);
+    const unsigned cmd12 = cmdCount(12);
+    passes(1500U);
+    ASSERT_EQ(cmdCount(12) - cmd12, 1);
+    ASSERT_EQ(card.state, CARD_READY);
     ASSERT_TRUE(DRV_SDSPI_IsAttached(gHandle));
     assertCardHealthy(45U);
 }
@@ -2426,6 +2481,8 @@ int main(void)
     RUN(fast_mode_cmd25_stop_token_lost_every_try_is_ended_by_the_resync);
     RUN(fast_mode_cmd25_write_error_rewrites_a_block_the_card_dropped);
     RUN(fast_mode_cmd25_write_error_every_try_fails_and_leaves_the_card_working);
+    RUN(fast_mode_cmd25_lost_write_error_token_still_gets_cmd12);
+    RUN(fast_mode_cmd25_resync_cmd12_lost_is_sent_by_the_next_resync);
     RUN(fast_mode_refused_cmd25_resync_does_not_swallow_the_re_send);
     RUN(fast_mode_cmd25_abandon_on_every_try_stores_no_bus_traffic);
     RUN(fast_mode_cmd25_abandon_with_winc_traffic_stores_the_data);
