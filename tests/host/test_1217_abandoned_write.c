@@ -81,6 +81,7 @@ static struct {
      * CS held, CMD12). Set by resetAll(): the model is that card. */
     bool diesOnMultiReject;
     int nextWriteR1;        /* >= 0: answer the next CMD24/25 with this, no data phase */
+    unsigned nextWriteR1Times; /* how many CMD24/25s get it; 0 means 1 */
     unsigned programBusy;   /* busy bytes after a block is accepted */
 
     int events[EVENT_LOG];
@@ -268,7 +269,14 @@ static void cardCommand(uint8_t cmd, uint32_t arg, uint8_t crcField)
             if (card.nextWriteR1 >= 0)
             {
                 cardR1((uint8_t)card.nextWriteR1);
-                card.nextWriteR1 = -1;
+                if (card.nextWriteR1Times > 1U)
+                {
+                    card.nextWriteR1Times--;
+                }
+                else
+                {
+                    card.nextWriteR1 = -1;
+                }
                 break;
             }
             cardR1(0x00U);
@@ -521,6 +529,12 @@ typedef struct {
 
 typedef enum { FAULT_NONE, FAULT_REJECT, FAULT_LOSE, FAULT_CORRUPT } FaultAction;
 
+/* test_1217_driver_uut.c: whether the driver's command FSM is in its resync,
+ * and how many CMD24 re-sends the current request has spent. */
+extern bool test1217_InResync(void);
+extern unsigned test1217_WriteRetries(void);
+extern unsigned test1217_RetryLimit(void);
+
 /* The next transfer matching all of these takes the action. */
 static struct {
     FaultAction action;
@@ -529,6 +543,8 @@ static struct {
     int firstByte;   /* -1 = any; writes only */
     int afterCmd;    /* -1 = any; else only once this command's frame has been sent */
     unsigned skip;   /* matches to let through first */
+    unsigned times;  /* matches that take the action; 0 means 1 */
+    bool exceptResync; /* never match a transfer the resync submits */
 } gFault;
 
 #define SPI_QUEUE 16U
@@ -604,7 +620,8 @@ static void spiAdd(bool isRead, void* buf, size_t n, DRV_SPI_TRANSFER_HANDLE* ou
             ((gFault.isRead < 0) || (gFault.isRead == (isRead ? 1 : 0))) &&
             ((gFault.len < 0) || ((size_t)gFault.len == n)) &&
             ((gFault.firstByte < 0) || (!isRead && (((uint8_t*)buf)[0] == (uint8_t)gFault.firstByte))) &&
-            ((gFault.afterCmd < 0) || (gFault.afterCmd == gLastFrameCmd)))
+            ((gFault.afterCmd < 0) || (gFault.afterCmd == gLastFrameCmd)) &&
+            !(gFault.exceptResync && test1217_InResync()))
     {
         if (gFault.skip > 0U)
         {
@@ -613,7 +630,14 @@ static void spiAdd(bool isRead, void* buf, size_t n, DRV_SPI_TRANSFER_HANDLE* ou
         else
         {
             const FaultAction action = gFault.action;
-            gFault.action = FAULT_NONE;
+            if (gFault.times > 1U)
+            {
+                gFault.times--;
+            }
+            else
+            {
+                gFault.action = FAULT_NONE;
+            }
             if (action == FAULT_REJECT)
             {
                 *out = DRV_SPI_TRANSFER_HANDLE_INVALID;
@@ -1010,7 +1034,12 @@ TEST(detect_polling_works_with_crc_on)
 
 /* ---- a write abandoned before the data token ------------------------------- */
 
-/* The issue's headline. The driver gives up after CMD24; the card waits. */
+/* The issue's headline. The driver gives up after CMD24; the card waits.
+ *
+ * Every attempt is abandoned the same way, the first send and each re-send in
+ * DRV_SDSPI_TASK_READ_WRITE_ABORT, so the request does fail and leaves the card
+ * waiting. The resync's own 0xFE is exempt: it is not the write's token. A
+ * single abandon is retried and lands, see abandoned_cmd24_is_retried_and_lands. */
 static void abandonBeforeToken(uint32_t lba, const uint8_t* data)
 {
     gFault.action = FAULT_REJECT;
@@ -1018,8 +1047,39 @@ static void abandonBeforeToken(uint32_t lba, const uint8_t* data)
     gFault.len = 1;
     gFault.firstByte = 0xFE;
     gFault.afterCmd = 24;
+    gFault.times = 1U + test1217_RetryLimit();
+    gFault.exceptResync = true;
     ASSERT_EQ(writeBlocks(lba, data, 1U), DRV_SDSPI_EVENT_COMMAND_ERROR);
+    ASSERT_EQ(gFault.action, FAULT_NONE); /* every attempt was abandoned */
+    ASSERT_EQ(test1217_WriteRetries(), test1217_RetryLimit());
     ASSERT_EQ(card.state, CARD_WAIT_SINGLE); /* the premise: it really is waiting */
+}
+
+/* The common case: one abandon, and the re-send in the same request lands. */
+TEST(abandoned_cmd24_is_retried_and_lands)
+{
+    uint8_t data[BLOCK];
+
+    bootCard();
+    fill(data, sizeof(data), 0x21U);
+    gFault.action = FAULT_REJECT;
+    gFault.isRead = 0;
+    gFault.len = 1;
+    gFault.firstByte = 0xFE;
+    gFault.afterCmd = 24;
+    gFault.exceptResync = true;
+    const unsigned mark = card.eventCount;
+    ASSERT_EQ(writeBlocks(19U, data, 1U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+
+    ASSERT_EQ(gFault.action, FAULT_NONE);
+    /* CMD24, abandoned; the filler, rejected; CMD24 again, programmed. */
+    ASSERT_EQ(firstOf(mark, EV_BLOCK_REJECTED, EV_BLOCK_PROGRAMMED, -1), EV_BLOCK_REJECTED);
+    ASSERT_EQ(cmdCount(EV_BLOCK_PROGRAMMED), 1);
+    ASSERT_TRUE(sectorIs(19U, data));
+    ASSERT_EQ(test1217_WriteRetries(), 1U);
+    ASSERT_EQ(card.state, CARD_READY);
+    ASSERT_TRUE(gCsHigh);
+    ASSERT_EQ(gLockDepth, 0);
 }
 
 TEST(abandoned_write_next_write_does_not_store_its_own_command)
@@ -1174,7 +1234,10 @@ TEST(write_in_doubt_is_recorded_before_the_r1_is_read)
     gFault.action = FAULT_REJECT;
     gFault.isRead = 1;
     gFault.afterCmd = 24;
+    gFault.times = 1U + test1217_RetryLimit(); /* every attempt */
+    gFault.exceptResync = true;
     ASSERT_EQ(writeBlocks(28U, data, 1U), DRV_SDSPI_EVENT_COMMAND_ERROR);
+    ASSERT_EQ(gFault.action, FAULT_NONE);
     ASSERT_EQ(card.state, CARD_WAIT_SINGLE);
 
     const unsigned mark = card.eventCount;
@@ -1217,7 +1280,10 @@ TEST(single_block_abandoned_after_data_is_flushed_and_not_programmed)
     gFault.isRead = 0;
     gFault.len = 2;
     gFault.afterCmd = 24;
+    gFault.times = 1U + test1217_RetryLimit(); /* every attempt */
+    gFault.exceptResync = true;
     ASSERT_EQ(writeBlocks(31U, data, 1U), DRV_SDSPI_EVENT_COMMAND_ERROR);
+    ASSERT_EQ(gFault.action, FAULT_NONE);
     ASSERT_EQ(card.state, CARD_CAPTURE);
 
     const unsigned mark = card.eventCount;
@@ -1241,7 +1307,10 @@ TEST(single_block_abandoned_at_start_of_data_is_flushed)
     gFault.isRead = 0;
     gFault.len = 512;
     gFault.afterCmd = 24;
+    gFault.times = 1U + test1217_RetryLimit(); /* every attempt */
+    gFault.exceptResync = true;
     ASSERT_EQ(writeBlocks(63U, data, 1U), DRV_SDSPI_EVENT_COMMAND_ERROR);
+    ASSERT_EQ(gFault.action, FAULT_NONE);
     ASSERT_EQ(card.state, CARD_CAPTURE);
 
     const unsigned mark = card.eventCount;
@@ -1252,7 +1321,10 @@ TEST(single_block_abandoned_at_start_of_data_is_flushed)
 
 /* ---- the card rejects a block ---------------------------------------------- */
 
-TEST(crc_reject_is_reported_once_and_not_retried)
+/* A bit flipped on the wire is what a re-send fixes: the data is still in the
+ * request. Before this was retried, the reject went to FatFs as a failed
+ * write of a sector it still held dirty. */
+TEST(crc_reject_is_retried_and_lands)
 {
     uint8_t data[BLOCK];
 
@@ -1262,11 +1334,34 @@ TEST(crc_reject_is_reported_once_and_not_retried)
     gFault.isRead = 0;
     gFault.len = 512;
     const unsigned before = cmdCount(24);
+    ASSERT_EQ(writeBlocks(44U, data, 1U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+
+    ASSERT_EQ(cmdCount(24) - before, 2);
+    ASSERT_EQ(cmdCount(EV_BLOCK_REJECTED), 1);
+    ASSERT_TRUE(sectorIs(44U, data));
+    ASSERT_EQ(test1217_WriteRetries(), 1U);
+    assertCardHealthy(45U);
+}
+
+/* Bounded: a block the card rejects every time is reported, not looped on. */
+TEST(crc_reject_on_every_try_is_reported_after_the_retries)
+{
+    uint8_t data[BLOCK];
+
+    bootCard();
+    fill(data, sizeof(data), 0x2BU);
+    gFault.action = FAULT_CORRUPT;
+    gFault.isRead = 0;
+    gFault.len = 512;
+    gFault.times = 1U + test1217_RetryLimit();
+    const unsigned before = cmdCount(24);
     ASSERT_EQ(writeBlocks(44U, data, 1U), DRV_SDSPI_EVENT_COMMAND_ERROR);
 
-    ASSERT_EQ(cmdCount(24) - before, 1);
-    ASSERT_EQ(cmdCount(EV_BLOCK_REJECTED), 1);
+    ASSERT_EQ(gFault.action, FAULT_NONE);
+    ASSERT_EQ(cmdCount(24) - before, 1U + test1217_RetryLimit());
+    ASSERT_EQ(cmdCount(EV_BLOCK_REJECTED), 1U + test1217_RetryLimit());
     ASSERT_TRUE(sectorUntouched(44U));
+    ASSERT_EQ(gLockDepth, 0);
     assertCardHealthy(45U);
 }
 
@@ -1279,7 +1374,9 @@ TEST(resync_is_harmless_when_cmd24_was_refused)
     bootCard();
     fill(data, sizeof(data), 0x2EU);
     card.nextWriteR1 = 0x40; /* parameter error: the card stays ready */
+    card.nextWriteR1Times = 1U + test1217_RetryLimit(); /* every attempt */
     ASSERT_EQ(writeBlocks(49U, data, 1U), DRV_SDSPI_EVENT_COMMAND_ERROR);
+    ASSERT_EQ(card.nextWriteR1, -1);
     ASSERT_EQ(card.state, CARD_READY);
 
     assertCardHealthy(50U);
@@ -1295,7 +1392,9 @@ TEST(resync_is_harmless_when_a_two_block_write_is_refused)
     bootCard();
     fill(data, sizeof(data), 0x2FU);
     card.nextWriteR1 = 0x40;
+    card.nextWriteR1Times = 1U + test1217_RetryLimit(); /* every attempt */
     ASSERT_EQ(writeBlocks(51U, data, 2U), DRV_SDSPI_EVENT_COMMAND_ERROR);
+    ASSERT_EQ(card.nextWriteR1, -1);
     ASSERT_EQ(card.state, CARD_READY);
 
     assertCardHealthy(53U);
@@ -1309,7 +1408,8 @@ TEST(resync_is_harmless_when_a_two_block_write_is_refused)
 /* ---- a multi-block request with CRC on (SD:PROTect 1) ----------------------- */
 
 /* The bench card dies on a CRC reject inside a CMD25 (diesOnMultiReject). With
- * every block a CMD24, the reject costs that block and nothing else. */
+ * every block a CMD24, the reject costs that block's re-send and nothing else,
+ * and the re-send is of the block that was rejected, not of the first. */
 TEST(multi_block_crc_reject_leaves_the_card_working)
 {
     uint8_t data[3U * BLOCK];
@@ -1320,11 +1420,34 @@ TEST(multi_block_crc_reject_leaves_the_card_working)
     gFault.isRead = 0;
     gFault.len = 512;
     gFault.skip = 1U; /* the first block goes through, the second is corrupted */
-    ASSERT_EQ(writeBlocks(46U, data, 3U), DRV_SDSPI_EVENT_COMMAND_ERROR);
+    ASSERT_EQ(writeBlocks(46U, data, 3U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
 
     ASSERT_TRUE(card.state != CARD_DEAD);
     ASSERT_EQ(cmdCount(25), 0);
     ASSERT_EQ(cmdCount(EV_BLOCK_REJECTED), 1);
+    ASSERT_TRUE(sectorIs(46U, &data[0U]));
+    ASSERT_TRUE(sectorIs(47U, &data[BLOCK]));
+    ASSERT_TRUE(sectorIs(48U, &data[2U * BLOCK]));
+    assertCardHealthy(49U);
+}
+
+/* Every try of the second block rejected: the first block stays written, the
+ * rest are never sent, and the request fails. */
+TEST(multi_block_crc_reject_on_every_try_stops_the_request)
+{
+    uint8_t data[3U * BLOCK];
+
+    bootCard();
+    fill(data, sizeof(data), 0x2DU);
+    gFault.action = FAULT_CORRUPT;
+    gFault.isRead = 0;
+    gFault.len = 512;
+    gFault.skip = 1U;
+    gFault.times = 1U + test1217_RetryLimit();
+    ASSERT_EQ(writeBlocks(46U, data, 3U), DRV_SDSPI_EVENT_COMMAND_ERROR);
+
+    ASSERT_TRUE(card.state != CARD_DEAD);
+    ASSERT_EQ(cmdCount(EV_BLOCK_REJECTED), 1U + test1217_RetryLimit());
     ASSERT_TRUE(sectorIs(46U, &data[0U]));
     ASSERT_TRUE(sectorUntouched(47U));
     ASSERT_TRUE(sectorUntouched(48U));
@@ -1345,7 +1468,10 @@ TEST(multi_block_request_abandoned_between_blocks_is_resynced)
     gFault.firstByte = 0xFE;
     gFault.afterCmd = 24;
     gFault.skip = 1U; /* the first block's token goes through */
+    gFault.times = 1U + test1217_RetryLimit(); /* then every try of the second */
+    gFault.exceptResync = true;
     ASSERT_EQ(writeBlocks(33U, data, 3U), DRV_SDSPI_EVENT_COMMAND_ERROR);
+    ASSERT_EQ(gFault.action, FAULT_NONE);
     ASSERT_EQ(card.state, CARD_WAIT_SINGLE);
     ASSERT_TRUE(sectorIs(33U, &data[0U]));
 
@@ -1405,9 +1531,12 @@ TEST(fast_mode_reinits_without_crc_and_writes_with_cmd25)
     assertCardHealthy(25U);
 }
 
-/* With CRC off the resync's 0xFF block would be PROGRAMMED by a waiting card,
- * so fast mode must never start one. */
-TEST(fast_mode_abort_does_not_resync)
+/* SD:PROTect 0, the default, and the configuration #1217 was reported on and
+ * reproduced on the bench SanDisk card (2026-11-09): one CMD24 abandoned after
+ * its R1. Before this fix fast mode had no resync, and the waiting card stored
+ * the mount's CMD17s, the CMD10 poll and CMD0 as the sector. Now the resync's
+ * 0xFF block is programmed and the same CMD24 goes out again with its data. */
+TEST(fast_mode_abandoned_cmd24_is_retried_and_lands)
 {
     uint8_t data[BLOCK];
     bool crcOn = true;
@@ -1421,20 +1550,261 @@ TEST(fast_mode_abort_does_not_resync)
     gFault.len = 1;
     gFault.firstByte = 0xFE;
     gFault.afterCmd = 24;
-    ASSERT_EQ(writeBlocks(30U, data, 1U), DRV_SDSPI_EVENT_COMMAND_ERROR);
-    ASSERT_EQ(card.state, CARD_WAIT_SINGLE);
+    gFault.exceptResync = true;
+    const unsigned programmed = cmdCount(EV_BLOCK_PROGRAMMED);
+    ASSERT_EQ(writeBlocks(30U, data, 1U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
 
-    /* The next command is where a resync would run. With CRC off the waiting
-     * card captures this CMD24 instead -- the hazard SD:PROTect 0 accepts --
-     * so its outcome is not asserted, only that no filler block went out. */
-    (void) writeBlocks(31U, data, 1U);
-
+    ASSERT_EQ(gFault.action, FAULT_NONE); /* the abandon did happen */
+    ASSERT_TRUE(sectorIs(30U, data));
+    /* the 0xFF filler, then the real block */
+    ASSERT_EQ(cmdCount(EV_BLOCK_PROGRAMMED) - programmed, 2);
     DRV_SDSPI_GetCrcStats(0, &crcOn, &resyncs);
-    ASSERT_EQ(resyncs, 0U);
-    for (unsigned i = 0U; i < 4U; i++)
+    ASSERT_FALSE(crcOn);
+    ASSERT_EQ(resyncs, 1U);
+    ASSERT_EQ(test1217_WriteRetries(), 1U);
+    ASSERT_EQ(card.state, CARD_READY);
+    assertCardHealthy(31U);
+}
+
+/* The same with the card clocking while deselected and WINC traffic after the
+ * request: the retry ran under the request's own lock, so there is nothing for
+ * the traffic to land in. */
+TEST(fast_mode_abandon_with_winc_traffic_stores_the_data)
+{
+    uint8_t data[BLOCK];
+
+    bootCard();
+    switchCrcMode(false);
+    fill(data, sizeof(data), 0x43U);
+    card.ignoresCs = true;
+    gFault.action = FAULT_REJECT;
+    gFault.isRead = 0;
+    gFault.len = 1;
+    gFault.firstByte = 0xFE;
+    gFault.afterCmd = 24;
+    gFault.exceptResync = true;
+    ASSERT_EQ(writeBlocks(20U, data, 1U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+    wincTraffic(600U);
+    card.ignoresCs = false;
+
+    ASSERT_EQ(gFault.action, FAULT_NONE);
+    ASSERT_TRUE(sectorIs(20U, data));
+    ASSERT_EQ(card.state, CARD_READY);
+    assertCardHealthy(21U);
+}
+
+/* Every try abandoned: the request fails, and what the sector ends up holding
+ * is the resync's 0xFF block, not the detect poll that follows. The failure
+ * #1217 reported was traffic stored over the FAT; 0xFF is still a lost write,
+ * but FatFs was told it failed, and nothing else on the bus is written. */
+TEST(fast_mode_abandon_on_every_try_leaves_0xff_not_bus_traffic)
+{
+    uint8_t data[BLOCK];
+
+    bootCard();
+    switchCrcMode(false);
+    fill(data, sizeof(data), 0x44U);
+    abandonBeforeToken(30U, data);
+
+    const unsigned mark = card.eventCount;
+    passes(1500U);
+    ASSERT_EQ(firstOf(mark, EV_BLOCK_PROGRAMMED, 10, 0), EV_BLOCK_PROGRAMMED);
+    for (unsigned i = 0U; i < BLOCK; i++)
     {
-        ASSERT_FALSE(card.sector[30U][i] == 0xFFU); /* no 0xFF filler block */
+        ASSERT_EQ(card.sector[30U][i], 0xFFU);
     }
+    ASSERT_TRUE(cmdCount(10) > 0U);
+    ASSERT_TRUE(DRV_SDSPI_IsAttached(gHandle));
+    assertCardHealthy(31U);
+}
+
+/* A fresh request gets a fresh retry budget. */
+TEST(retry_budget_is_per_request)
+{
+    uint8_t data[BLOCK];
+
+    bootCard();
+    switchCrcMode(false);
+    fill(data, sizeof(data), 0x45U);
+    abandonBeforeToken(32U, data);
+    ASSERT_EQ(test1217_WriteRetries(), test1217_RetryLimit());
+
+    gFault.action = FAULT_REJECT;
+    gFault.isRead = 0;
+    gFault.len = 1;
+    gFault.firstByte = 0xFE;
+    gFault.afterCmd = 24;
+    gFault.times = 0U;
+    gFault.exceptResync = true;
+    ASSERT_EQ(writeBlocks(32U, data, 1U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+    ASSERT_EQ(gFault.action, FAULT_NONE);
+    ASSERT_EQ(test1217_WriteRetries(), 1U);
+    ASSERT_TRUE(sectorIs(32U, data));
+}
+
+/* Audit finding on PR #1237 (codex, 2026-11-10): DRV_SDSPI_ReleaseBus (graceful
+ * shutdown timeout, #925 leak unwind) resets sdState to IDLE and restarts
+ * detection while a write is in doubt. A re-send then ran without owning the
+ * card; the next detect poll freed the request and PROCESS_WRITE dereferenced
+ * NULL. The auditor's sequence: detect poll about to expire, one write whose
+ * first token is rejected, ReleaseBus, resume. The write must end with an
+ * event, and the driver must keep working.
+ *
+ * Two independent guards each prevent the crash, so disabling either alone
+ * leaves this green (measured): the ownership check in READ_WRITE_ABORT and
+ * the NULL-request reset at the top of lDRV_SDSPI_BufferIOTasks. Disabling
+ * both crashes it (SIGSEGV at the audited head 22c5f42d). */
+TEST(release_bus_during_a_write_in_doubt_does_not_retry_without_the_request)
+{
+    uint8_t data[BLOCK];
+    DRV_SDSPI_COMMAND_HANDLE h = DRV_SDSPI_COMMAND_HANDLE_INVALID;
+
+    bootCard();
+    switchCrcMode(false);
+    passes(940U);
+    fill(data, sizeof(data), 0x46U);
+    gFault.action = FAULT_REJECT;
+    gFault.isRead = 0;
+    gFault.len = 1;
+    gFault.firstByte = 0xFE;
+    gFault.afterCmd = 24;
+    const unsigned seen = gEventsSeen;
+    DRV_SDSPI_AsyncWrite(gHandle, &h, (void*)data, 33U, 1U);
+    ASSERT_TRUE(h != DRV_SDSPI_COMMAND_HANDLE_INVALID);
+    for (unsigned i = 0U; (i < 20000U) && (gFault.action != FAULT_NONE); i++)
+    {
+        pass();
+    }
+    ASSERT_EQ(gFault.action, FAULT_NONE); /* the token was rejected */
+    DRV_SDSPI_ReleaseBus(0);
+    for (unsigned i = 0U; (i < 20000U) && (gEventsSeen == seen); i++)
+    {
+        pass();
+    }
+    ASSERT_TRUE(gEventsSeen != seen);
+    passes(3000U);
+    ASSERT_TRUE(runUntilAttached(20000U));
+    ASSERT_EQ(gLockDepth, 0);
+    /* What the sector holds is not asserted: with the request gone there is
+     * nothing to re-send, and a waiting card programs the resync's 0xFF block.
+     * That it is not bus traffic is fast_mode_abandon_on_every_try_..._traffic. */
+    assertCardHealthy(34U);
+}
+
+/* The SD task suspended: time passes and timers fire, but the driver does not
+ * run (app_SDCard_GracefulShutdown's view of the world). */
+static void suspendMs(unsigned ms)
+{
+    for (unsigned t = 0U; t < ms; t++)
+    {
+        gNowMs++;
+        for (uint32_t i = 0U; i < TIMERS; i++)
+        {
+            if (gTimer[i].live && ((int32_t)(gNowMs - gTimer[i].due) >= 0))
+            {
+                gTimer[i].live = false;
+                gTimer[i].cb(gTimer[i].ctx);
+            }
+        }
+    }
+}
+
+/* Audit finding on PR #1237, round 3 (codex, 2026-11-10): ReleaseBus landing
+ * just after a retry's resync, then a long suspend. The resumed PROCESS_WRITE
+ * framed the CMD24 without owning the card, the detect poll then freed the
+ * request, and the frame left in pCmdResp went out later under the detect
+ * FSM's CMD0 call, with no write-in-doubt recorded. No command of a request may
+ * reach the card after ReleaseBus: the request is ended with an error, and the
+ * card is left to the resync.
+ *
+ * Two independent guards each prevent it, so disabling either alone leaves
+ * this green (measured): ReleaseBus ending the request (READ_WRITE_ABORT), and
+ * the NULL-request reset putting cmdState back to FRAME_PACKET. With both
+ * disabled the card is left in CAPTURE and the next write fails. */
+TEST(release_bus_after_a_retry_resync_sends_no_stale_cmd24)
+{
+    uint8_t data[BLOCK];
+    DRV_SDSPI_COMMAND_HANDLE h = DRV_SDSPI_COMMAND_HANDLE_INVALID;
+    bool sawResync = false;
+
+    bootCard();
+    switchCrcMode(false);
+    fill(data, sizeof(data), 0x47U);
+    gFault.action = FAULT_REJECT;
+    gFault.isRead = 0;
+    gFault.len = 1;
+    gFault.firstByte = 0xFE;
+    gFault.afterCmd = 24;
+    gFault.exceptResync = true;
+    const unsigned seen = gEventsSeen;
+    DRV_SDSPI_AsyncWrite(gHandle, &h, (void*)data, 33U, 1U);
+    ASSERT_TRUE(h != DRV_SDSPI_COMMAND_HANDLE_INVALID);
+    for (unsigned i = 0U; i < 20000U; i++)
+    {
+        pass();
+        sawResync = sawResync || test1217_InResync();
+        if (sawResync && !test1217_InResync())
+        {
+            break;
+        }
+    }
+    ASSERT_TRUE(sawResync);
+    ASSERT_EQ(gEventsSeen, seen); /* still in the request: the re-send is next */
+
+    const unsigned cmd24 = cmdCount(24);
+    DRV_SDSPI_ReleaseBus(0);
+    suspendMs(3000U);
+    for (unsigned i = 0U; (i < 20000U) && (gEventsSeen == seen); i++)
+    {
+        pass();
+    }
+    ASSERT_EQ(gLastEvent, DRV_SDSPI_EVENT_COMMAND_ERROR);
+    passes(3000U);
+    ASSERT_TRUE(runUntilAttached(20000U));
+    ASSERT_EQ(cmdCount(24), cmd24); /* nothing of the request went out */
+    /* The resync programmed its 0xFF block before ReleaseBus; nothing since. */
+    for (unsigned i = 0U; i < BLOCK; i++)
+    {
+        ASSERT_EQ(card.sector[33U][i], 0xFFU);
+    }
+    ASSERT_EQ(gLockDepth, 0);
+    assertCardHealthy(34U);
+}
+
+/* The read twin: a read in flight when the bus is released ends with an error
+ * on resume, and the driver re-attaches without holding the lock. That is all
+ * this pins. It is NOT a regression test for the change: the round-2 head
+ * (da7178c6) ends this read with an error too, through the transfer status
+ * ReleaseBus forces to ERROR. What it guards is that the abort added to
+ * ReleaseBus does not turn a read into a hang or a false success.
+ *
+ * Observed and NOT fixed here: in this card model, a read issued right after
+ * this one returns wrong data, at the round-2 head and here alike. The model's
+ * card is left part-way through sending the abandoned block. Whether a real
+ * card behaves that way after the re-init's CMD0 is not established. */
+TEST(release_bus_during_a_read_ends_it_with_an_error)
+{
+    static uint8_t buf[BLOCK];
+    DRV_SDSPI_COMMAND_HANDLE h = DRV_SDSPI_COMMAND_HANDLE_INVALID;
+
+    bootCard();
+    const unsigned seen = gEventsSeen;
+    const unsigned cmd17 = cmdCount(17);
+    DRV_SDSPI_AsyncRead(gHandle, &h, buf, 40U, 1U);
+    ASSERT_TRUE(h != DRV_SDSPI_COMMAND_HANDLE_INVALID);
+    for (unsigned i = 0U; (i < 20000U) && (cmdCount(17) == cmd17); i++)
+    {
+        pass();
+    }
+    ASSERT_EQ(gEventsSeen, seen); /* CMD17 out, data not yet in */
+    DRV_SDSPI_ReleaseBus(0);
+    for (unsigned i = 0U; (i < 20000U) && (gEventsSeen == seen); i++)
+    {
+        pass();
+    }
+    ASSERT_EQ(gLastEvent, DRV_SDSPI_EVENT_COMMAND_ERROR);
+    ASSERT_TRUE(runUntilAttached(20000U));
+    ASSERT_EQ(gLockDepth, 0);
 }
 
 /* ---- bounded ---------------------------------------------------------------- */
@@ -1548,6 +1918,9 @@ TEST(resync_with_a_lost_completion_fails_and_retries)
     ASSERT_TRUE(gCsHigh);
     ASSERT_EQ(gLockDepth, 0);
     ASSERT_EQ(cmdCount(EV_BLOCK_PROGRAMMED), 0);
+    /* One resync attempt, not one per re-send: a failed resync spends the
+     * request's retry budget (lDRV_SDSPI_WriteResyncEnd). */
+    ASSERT_EQ(test1217_WriteRetries(), test1217_RetryLimit());
     ASSERT_TRUE(gLockMaxHeld <= 1100U);
 
     /* The stuck transfer drains and the bus works again; the flag is still set. */
@@ -1586,6 +1959,7 @@ int main(void)
     RUN(driver_default_is_fast_mode);
     RUN(normal_single_and_multi_writes_are_accepted);
     RUN(detect_polling_works_with_crc_on);
+    RUN(abandoned_cmd24_is_retried_and_lands);
     RUN(abandoned_write_next_write_does_not_store_its_own_command);
     RUN(abandoned_write_detect_poll_is_not_captured);
     RUN(abandoned_write_winc_traffic_is_not_programmed);
@@ -1597,13 +1971,21 @@ int main(void)
     RUN(write_in_doubt_survives_release_bus);
     RUN(single_block_abandoned_after_data_is_flushed_and_not_programmed);
     RUN(single_block_abandoned_at_start_of_data_is_flushed);
-    RUN(crc_reject_is_reported_once_and_not_retried);
+    RUN(crc_reject_is_retried_and_lands);
+    RUN(crc_reject_on_every_try_is_reported_after_the_retries);
     RUN(resync_is_harmless_when_cmd24_was_refused);
     RUN(resync_is_harmless_when_a_two_block_write_is_refused);
     RUN(multi_block_crc_reject_leaves_the_card_working);
+    RUN(multi_block_crc_reject_on_every_try_stops_the_request);
     RUN(multi_block_request_abandoned_between_blocks_is_resynced);
     RUN(fast_mode_reinits_without_crc_and_writes_with_cmd25);
-    RUN(fast_mode_abort_does_not_resync);
+    RUN(fast_mode_abandoned_cmd24_is_retried_and_lands);
+    RUN(fast_mode_abandon_with_winc_traffic_stores_the_data);
+    RUN(fast_mode_abandon_on_every_try_leaves_0xff_not_bus_traffic);
+    RUN(retry_budget_is_per_request);
+    RUN(release_bus_during_a_write_in_doubt_does_not_retry_without_the_request);
+    RUN(release_bus_after_a_retry_resync_sends_no_stale_cmd24);
+    RUN(release_bus_during_a_read_ends_it_with_an_error);
     RUN(mode_change_pending_during_io_waits_for_a_quiet_poll);
     RUN(mode_change_is_not_pending_without_a_card);
     RUN(stuck_busy_card_gets_no_commands_and_never_pins_the_bus);

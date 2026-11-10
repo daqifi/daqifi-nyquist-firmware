@@ -119,10 +119,17 @@
 #define DRV_SDSPI_COMMAND_RESPONSE_TRIES          (10)
 
 /* #1217: what kind of write is in doubt (DRV_SDSPI_OBJ.writeInDoubt). Only a
- * CMD24 can be: with CRC on every block is its own CMD24, and with CRC off
- * (SD:PROTect 0) there is no resync, so nothing is ever recorded. */
+ * CMD24 is recorded, in both SD:PROTect modes. A CMD25 is never in doubt: with
+ * CRC on the driver does not issue one, and with CRC off an abandoned CMD25 is
+ * not resynced (see lDRV_SDSPI_WriteResyncEnd). */
 #define DRV_SDSPI_WRITE_IN_DOUBT_NONE             (0U)
 #define DRV_SDSPI_WRITE_IN_DOUBT_SINGLE           (1U)
+
+/* #1217: how many times one write request re-sends a CMD24 whose write was
+ * in doubt, after the resync, before it is reported as failed. Each attempt is
+ * bounded by DRV_SDSPI_WRITE_TIMEOUT_IN_MS plus the #567 watchdog per
+ * transfer, so a card that is truly gone costs at most a few seconds. */
+#define DRV_SDSPI_WRITE_IN_DOUBT_RETRIES          (2U)
 
 /* #1217: which busy wait a resync is in (DRV_SDSPI_OBJ.resyncStage). */
 #define DRV_SDSPI_RESYNC_STAGE_BEFORE_BLOCK       (0U)
@@ -1503,8 +1510,8 @@ typedef struct
     /* Counter to keep track of retries to get command's response from the SD Card */
     uint8_t                                         ncrTries;
 
-    /* #1217: DRV_SDSPI_WRITE_IN_DOUBT_*. Set before a CMD24 is sent with CRC
-       on (the only write that can be resynced), cleared only when the card has
+    /* #1217: DRV_SDSPI_WRITE_IN_DOUBT_*. Set before every CMD24 is sent (the
+       only write that is resynced), cleared only when the card has
        provably left the data phase. Survives an abort, DRV_SDSPI_ReleaseBus
        and the detect FSM. Only touched under transferMutex on the SD task.
 
@@ -1609,6 +1616,11 @@ typedef struct
 
     /* Write protect state */
     uint8_t                                         isWriteProtected;
+
+    /* #1217: CMD24 re-sends spent on the current request after a write in
+       doubt; reset when a request starts. Sits in the alignment hole before
+       resyncFlushLeft, so it costs no RAM. */
+    uint8_t                                         writeInDoubtRetries;
 
     /* #1217: 0xFF bytes still to clock in the resync's flush. */
     uint16_t                                        resyncFlushLeft;

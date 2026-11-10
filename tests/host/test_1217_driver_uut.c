@@ -17,3 +17,20 @@ void test1217_DriverReset(void)
         (void) memset(gDrvSDSPICmdResponseBuffer[i], 0, sizeof(gDrvSDSPICmdResponseBuffer[i]));
     }
 }
+
+bool test1217_InResync(void)
+{
+    const DRV_SDSPI_CMD_STATES st = gDrvSDSPIObj[0].cmdState;
+    return (st == DRV_SDSPI_CMD_RESYNC_START) || (st == DRV_SDSPI_CMD_RESYNC_FLUSH) ||
+            (st == DRV_SDSPI_CMD_RESYNC_BUSY_CHECK);
+}
+
+unsigned test1217_WriteRetries(void)
+{
+    return gDrvSDSPIObj[0].writeInDoubtRetries;
+}
+
+unsigned test1217_RetryLimit(void)
+{
+    return DRV_SDSPI_WRITE_IN_DOUBT_RETRIES;
+}
