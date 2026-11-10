@@ -1642,6 +1642,55 @@ TEST(retry_budget_is_per_request)
     ASSERT_TRUE(sectorIs(32U, data));
 }
 
+/* Audit finding on PR #1237 (codex, 2026-11-10): DRV_SDSPI_ReleaseBus (graceful
+ * shutdown timeout, #925 leak unwind) resets sdState to IDLE and restarts
+ * detection while a write is in doubt. A re-send then ran without owning the
+ * card; the next detect poll freed the request and PROCESS_WRITE dereferenced
+ * NULL. The auditor's sequence: detect poll about to expire, one write whose
+ * first token is rejected, ReleaseBus, resume. The write must end with an
+ * event, and the driver must keep working.
+ *
+ * Two independent guards each prevent the crash, so disabling either alone
+ * leaves this green (measured): the ownership check in READ_WRITE_ABORT and
+ * the NULL-request reset at the top of lDRV_SDSPI_BufferIOTasks. Disabling
+ * both crashes it (SIGSEGV at the audited head 22c5f42d). */
+TEST(release_bus_during_a_write_in_doubt_does_not_retry_without_the_request)
+{
+    uint8_t data[BLOCK];
+    DRV_SDSPI_COMMAND_HANDLE h = DRV_SDSPI_COMMAND_HANDLE_INVALID;
+
+    bootCard();
+    switchCrcMode(false);
+    passes(940U);
+    fill(data, sizeof(data), 0x46U);
+    gFault.action = FAULT_REJECT;
+    gFault.isRead = 0;
+    gFault.len = 1;
+    gFault.firstByte = 0xFE;
+    gFault.afterCmd = 24;
+    const unsigned seen = gEventsSeen;
+    DRV_SDSPI_AsyncWrite(gHandle, &h, (void*)data, 33U, 1U);
+    ASSERT_TRUE(h != DRV_SDSPI_COMMAND_HANDLE_INVALID);
+    for (unsigned i = 0U; (i < 20000U) && (gFault.action != FAULT_NONE); i++)
+    {
+        pass();
+    }
+    ASSERT_EQ(gFault.action, FAULT_NONE); /* the token was rejected */
+    DRV_SDSPI_ReleaseBus(0);
+    for (unsigned i = 0U; (i < 20000U) && (gEventsSeen == seen); i++)
+    {
+        pass();
+    }
+    ASSERT_TRUE(gEventsSeen != seen);
+    passes(3000U);
+    ASSERT_TRUE(runUntilAttached(20000U));
+    ASSERT_EQ(gLockDepth, 0);
+    /* What the sector holds is not asserted: with the request gone there is
+     * nothing to re-send, and a waiting card programs the resync's 0xFF block.
+     * That it is not bus traffic is fast_mode_abandon_on_every_try_..._traffic. */
+    assertCardHealthy(34U);
+}
+
 /* ---- bounded ---------------------------------------------------------------- */
 
 /* Audit finding (codex, 2026-11-09): a mode change pending when I/O starts
@@ -1818,6 +1867,7 @@ int main(void)
     RUN(fast_mode_abandon_with_winc_traffic_stores_the_data);
     RUN(fast_mode_abandon_on_every_try_leaves_0xff_not_bus_traffic);
     RUN(retry_budget_is_per_request);
+    RUN(release_bus_during_a_write_in_doubt_does_not_retry_without_the_request);
     RUN(mode_change_pending_during_io_waits_for_a_quiet_poll);
     RUN(mode_change_is_not_pending_without_a_card);
     RUN(stuck_busy_card_gets_no_commands_and_never_pins_the_bus);

@@ -2214,6 +2214,24 @@ static void lDRV_SDSPI_BufferIOTasks
 
     currentBufObj = lDRV_SDSPI_BufferListGet(dObj);
 
+    /* #1217 (audit on PR #1237): DRV_SDSPI_ReleaseBus resets sdState and
+     * restarts detection without touching taskBufferIOState, and the detect
+     * FSM can then free the request this FSM was in the middle of. A request
+     * state with no request goes back to waiting for one; ReleaseBus already
+     * dropped the lock and CS. */
+    if ((currentBufObj == NULL) &&
+            (dObj->taskBufferIOState != DRV_SDSPI_BUFFER_IO_CHECK_DEVICE) &&
+            (dObj->taskBufferIOState != DRV_SDSPI_TASK_PROCESS_QUEUE))
+    {
+        if (dObj->timerFlag == true)
+        {
+            (void) DRV_SDSPI_TimerStop(dObj);
+            dObj->timerFlag = false;
+        }
+        SYS_PORT_PinSet(dObj->chipSelectPin);
+        dObj->taskBufferIOState = DRV_SDSPI_BUFFER_IO_CHECK_DEVICE;
+    }
+
     /* Check what state we are in, to decide what to do */
     switch (dObj->taskBufferIOState)
     {
@@ -2822,11 +2840,17 @@ static void lDRV_SDSPI_BufferIOTasks
              * in hand: lDRV_SDSPI_CommandSend resyncs first (writeInDoubt),
              * then the CMD24 goes out again with the intended data. A
              * multi-block request written as CMD24s has already advanced
-             * buffer and blockStart past the blocks that completed. The
-             * resync and the CMD24 each take the exclusive lock themselves, so
-             * this holds whether or not DRV_SDSPI_ReleaseBus unwound the outer
-             * one taken at BUFFER_IO_CHECK_DEVICE. */
-            if ((currentBufObj->opType == DRV_SDSPI_OPERATION_TYPE_WRITE) &&
+             * buffer and blockStart past the blocks that completed.
+             *
+             * Only while this request still owns the card (sdState is
+             * CARD_COMMAND from BUFFER_IO_CHECK_DEVICE). DRV_SDSPI_ReleaseBus
+             * sets it IDLE, drops the outer lock and restarts detection, which
+             * can free the request mid-retry (audit on PR #1237). Then the
+             * write is reported failed, as before the retry existed, and the
+             * next command's resync still keeps bus traffic out of the
+             * sector. */
+            if ((dObj->sdState == TASK_STATE_CARD_COMMAND) &&
+                    (currentBufObj->opType == DRV_SDSPI_OPERATION_TYPE_WRITE) &&
                     (currentBufObj->command == (uint8_t)DRV_SDSPI_WRITE_SINGLE_BLOCK) &&
                     (dObj->writeInDoubt != DRV_SDSPI_WRITE_IN_DOUBT_NONE) &&
                     (dObj->writeInDoubtRetries < DRV_SDSPI_WRITE_IN_DOUBT_RETRIES))
