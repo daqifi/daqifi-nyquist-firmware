@@ -96,7 +96,57 @@ SYST:STOR:SD:MAXSize?               # Query current setting
 **File Naming:**
 - First file: Uses original name (e.g., `experiment.csv`)
 - Split files: Sequential numbering, **not** zero-padded (e.g., `experiment-1.csv`, `experiment-2.csv`) — `generateFilename` formats `"%s/%s-%u%s"` (`sd_card_manager.c`)
-- Supports up to 9999 files per session (~39TB @ 3.9GB each)
+- Split index ceiling: 9999 (`SD_CARD_MANAGER_MAX_SPLIT_FILES`). In practice
+  the directory-bucket ceiling below is reached first.
+
+**Bucket subdirectories (#689):** ⚠️ **a long session's continuations are not
+all in the configured directory.** FatFs file-create is O(directory size), so a
+session that piled hundreds of parts into one directory eventually took longer
+than the SD op timeout to create the next one and wedged the manager. The
+manager therefore caps each directory at 64 files
+(`SD_CARD_MANAGER_MAX_DIR_FILES`, `sd_card_manager.c`):
+
+- **Bucket 0 is the configured directory itself.** A session that never fills
+  it has exactly the pre-#689 layout, with no new paths.
+- Once that directory holds 64 files, new files go into the subdirectories
+  `P001`, `P002`, … `P064` under it (`sd_BuildBucketPath`, `"%s/P%03u"`). The
+  names are 8.3-clean on purpose: one directory entry each, so the parent
+  stays small too.
+- **The count includes files already on the card**, not just this session's.
+  On a card that already holds 64 files in the configured directory, the very
+  first continuation lands in `P001`.
+- The ceiling is bucket 0 plus `P001`–`P064`, 65 × 64 = 4,160 files. Past it,
+  the SD manager stops logging cleanly instead of wedging
+  (`SD_REFUSE_BUCKETS_EXHAUSTED`). `SYST:STReam:START` is then refused, and
+  `SYST:LOG?` says *"every directory bucket is full - use a different directory
+  or clear the card"*.
+
+**Downloading a bucketed file with `SYST:STOR:SD:GET`:** the operand is
+resolved as `<configured directory>/<operand>`, so a file inside a bucket needs
+its **bucket-relative path**: `SYST:STOR:SD:GET "P001/experiment-70.csv"`. The
+fully-qualified form the device prints (`"<directory>/P001/experiment-70.csv"`)
+also works, because one leading copy of the configured directory is stripped
+(`SD_StripConfiguredDir`, `SCPIStorageSD.c`). The **bare name**
+(`"experiment-70.csv"`) does **not** search the buckets. It opens
+`<directory>/experiment-70.csv`, which does not exist.
+
+**What a failed SD:GET looks like.** A missing or unopenable file is not a
+hang and not a silent success, but the stream alone does not tell you it
+failed:
+
+- The reply is **zero bytes followed by the normal `__END_OF_FILE__`
+  terminator** (#703). Python clients wait for exactly that marker, so a
+  different terminator here would turn a wrong answer into a hang.
+- The failure is reported as a **deferred SCPI error (#914)**: `-256 "File
+  name not found"` for a missing file or directory, `-257` for an invalid name,
+  `-250` for unusable storage (`SdAsyncErrorForFsError`). It is latched at the
+  open and pushed to the error queue at the next command boundary (`SCPI_DrainDeferredSdError`, `SCPIInterface.c`). It is
+  **queue-only**: it is never written into the stream, because writing it there
+  corrupted the *next* download's leading bytes.
+- **So read `SYST:ERR?` after every SD:GET that returned zero bytes.** An empty
+  file and a missing file produce the same bytes on the wire; only the error
+  queue tells them apart. A tool that reports "0 bytes, no error" without
+  having read `SYST:ERR?` has not established that the file was empty.
 
 **CSV Headers:** ⚠️ **every split file carries its own header, including
 continuations.** The bullet here used to say "Split files: Data rows only (no
