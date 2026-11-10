@@ -22,7 +22,7 @@ bool test1217_InResync(void)
 {
     const DRV_SDSPI_CMD_STATES st = gDrvSDSPIObj[0].cmdState;
     return (st == DRV_SDSPI_CMD_RESYNC_START) || (st == DRV_SDSPI_CMD_RESYNC_FLUSH) ||
-            (st == DRV_SDSPI_CMD_RESYNC_BUSY_CHECK);
+            (st == DRV_SDSPI_CMD_RESYNC_BUSY_CHECK) || (st == DRV_SDSPI_CMD_RESYNC_STOP);
 }
 
 unsigned test1217_WriteRetries(void)
