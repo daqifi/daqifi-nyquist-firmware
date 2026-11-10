@@ -1893,11 +1893,12 @@ static void lDRV_SDSPI_MediaInitialize ( SYS_MODULE_OBJ object )
                 }
                 else
                 {
-                    /* Fail closed. Without CRC this card can be silently
-                     * destroyed and cannot be safely resynced: the resync's
-                     * block would be programmed. So it is reported as an
-                     * unusable card and never mounted; the detect FSM retries
-                     * init about once a second, as for any card that fails. */
+                    /* Fail closed. SD:PROTect 1 asked for a card that rejects
+                     * a corrupted block; this one cannot, so mounting it would
+                     * silently give fast-mode protection instead. It is
+                     * reported as an unusable card and never mounted; the
+                     * detect FSM retries init about once a second, as for any
+                     * card that fails. SD:PROTect 0 mounts it. */
                     /* Static string: LOG_E_ONCE drops arguments (Logger.h),
                      * and this path repeats about once a second. */
                     LOG_E_ONCE(LOG_ONCE_SD_CMD59_REJECTED, "SD: card rejected CRC enable (CMD59); not mounted, cannot protect it (#1217)");
