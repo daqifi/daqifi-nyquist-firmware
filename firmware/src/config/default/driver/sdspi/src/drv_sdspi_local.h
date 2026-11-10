@@ -118,6 +118,16 @@
 
 #define DRV_SDSPI_COMMAND_RESPONSE_TRIES          (10)
 
+/* #1217: what kind of write is in doubt (DRV_SDSPI_OBJ.writeInDoubt). Only a
+ * CMD24 can be: with CRC on every block is its own CMD24, and with CRC off
+ * (SD:PROTect 0) there is no resync, so nothing is ever recorded. */
+#define DRV_SDSPI_WRITE_IN_DOUBT_NONE             (0U)
+#define DRV_SDSPI_WRITE_IN_DOUBT_SINGLE           (1U)
+
+/* #1217: which busy wait a resync is in (DRV_SDSPI_OBJ.resyncStage). */
+#define DRV_SDSPI_RESYNC_STAGE_BEFORE_BLOCK       (0U)
+#define DRV_SDSPI_RESYNC_STAGE_AFTER_BLOCK        (1U)
+
 // *****************************************************************************
 // *****************************************************************************
 // Section: SD Card constants
@@ -823,6 +833,12 @@ typedef enum
     /* Command execution is complete */
     DRV_SDSPI_CMD_EXEC_IS_COMPLETE,
 
+    /* #1217: ending a write in doubt before any command is sent. See
+       lDRV_SDSPI_WriteResyncTasks. */
+    DRV_SDSPI_CMD_RESYNC_START,
+    DRV_SDSPI_CMD_RESYNC_FLUSH,
+    DRV_SDSPI_CMD_RESYNC_BUSY_CHECK,
+
 }DRV_SDSPI_CMD_STATES;
 
 typedef enum
@@ -887,8 +903,8 @@ typedef enum
     /* Process the CID register data */
     DRV_SDSPI_INIT_PROCESS_CID,
 
-    /* Issue command to turn off the CRC */
-    DRV_SDSPI_INIT_TURN_OFF_CRC,
+    /* Issue command to turn on the CRC */
+    DRV_SDSPI_INIT_TURN_ON_CRC,
 
     /* Set the block length of the card */
     DRV_SDSPI_INIT_SET_BLOCKLEN,
@@ -905,9 +921,6 @@ typedef struct
 {
     /* Command code */
     DRV_SDSPI_COMMAND_VALUE      commandCode;
-
-    /* CRC value for that command */
-    uint8_t                     crc;
 
     /* Response type */
     DRV_SDSPI_RESPONSES         responseType;
@@ -1490,6 +1503,18 @@ typedef struct
     /* Counter to keep track of retries to get command's response from the SD Card */
     uint8_t                                         ncrTries;
 
+    /* #1217: DRV_SDSPI_WRITE_IN_DOUBT_*. Set before a CMD24 is sent with CRC
+       on (the only write that can be resynced), cleared only when the card has
+       provably left the data phase. Survives an abort, DRV_SDSPI_ReleaseBus
+       and the detect FSM. Only touched under transferMutex on the SD task.
+
+       The #1217 fields are placed in existing alignment holes where one exists
+       (this one, writeBlockCrc16, the three after detectForceEver, and
+       resyncFlushLeft); the rest grew gDrvSDSPIObj from 264 to 280 bytes
+       (linker map, 2026-11-09). BSS growth has to be paid for by trimming the
+       streaming pool, see docs/MEMORY_ARCHITECTURE.md. */
+    uint8_t                                         writeInDoubt;
+
     /* Pointer to the buffer used during sending commands and receiving responses
     on the SPI bus */
     uint8_t*                                        pCmdResp;
@@ -1532,6 +1557,9 @@ typedef struct
        PIC32MZ, mcu-hygiene section 3). */
     uint16_t                                        detachedPollCount;
 
+    /* #1217: CRC16 of the block being written, between its data and CRC phases. */
+    uint16_t                                        writeBlockCrc16;
+
     /* #756: FORCED detect-poll request/acknowledge pair.
        DRV_SDSPI_DetectPollExpireNow (whichever task dispatched the SCPI
        command) bumps detectForceReq; the detect FSM copies the value it
@@ -1571,11 +1599,19 @@ typedef struct
     uint64_t                                        detectForceAt;
     bool                                            detectForceEver;
 
+    /* #1217: lDRV_SDSPI_WriteResyncTasks's working state. */
+    uint8_t                                         resyncStage;
+    uint8_t                                         resyncIdleReads;
+    uint8_t                                         resyncToken;
+
     /* Flag indicating the presence of the SD Card */
     SYS_MEDIA_STATUS                                mediaState;
 
     /* Write protect state */
     uint8_t                                         isWriteProtected;
+
+    /* #1217: 0xFF bytes still to clock in the resync's flush. */
+    uint16_t                                        resyncFlushLeft;
 
     /* SD card type, will be updated by initialization function */
     DRV_SDSPI_TYPE                                  sdCardType;
@@ -1635,6 +1671,19 @@ typedef struct
 
     /* SDCARD driver media geomtery table. */
     SYS_MEDIA_REGION_GEOMETRY                       mediaGeometryTable[3];
+
+    /* #1217: observability, reported by SYST:STOR:SD:INFO?. crcEnabled is
+       set when the card accepts CMD59 and cleared at the start of every media
+       init; resyncCount counts writes in doubt that were resynced, i.e. how
+       often the protection actually fired since boot. */
+    bool                                            crcEnabled;
+    uint32_t                                        resyncCount;
+    /* #1217: SD:PROTect. Read only at media init (DRV_SDSPI_INIT_TURN_ON_CRC);
+     * crcEnabled is what the card actually runs with. */
+    bool                                            crcRequested;
+    /* Set by DRV_SDSPI_SetCrcMode from another task; consumed by the detect
+     * verdict in DRV_SDSPI_Tasks, which then re-runs media init. */
+    volatile bool                                   reinitRequested;
 
 } DRV_SDSPI_OBJ;
 

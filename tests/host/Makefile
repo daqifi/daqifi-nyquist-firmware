@@ -125,6 +125,27 @@ SD_BENCH_SRC := ../../firmware/src/services/SCPI/SCPIStorageSD.c
 ARM_BIN := run_971_tests
 FORCEGATE_BIN := run_756_tests
 SDSPI_DRV_SRC := ../../firmware/src/config/default/driver/sdspi/src/drv_sdspi.c
+
+# #1217: an abandoned CMD24/CMD25 left the card storing bus traffic over FAT
+# sectors. Two binaries:
+#  - SDCRC_BIN: the CRCs against published vectors. drv_sdspi_crc.h is
+#    header-only and Harmony-free, like FixedPointFmt.h, so no stubs.
+#  - SDWRITE_BIN: the REAL driver sources, not a re-implementation, against a
+#    model of DRV_SPI and of an SPI-mode card, with faults injected at the SPI
+#    layer. Unlike $(FORCEGATE_BIN) this needs no shape pins, because it runs the
+#    code itself. stubs/sdspi_1217/ goes first on the include path, then the
+#    driver's own headers. The driver TU is built with warnings off and on its
+#    own: it is vendored code on a platform it was not written for.
+SDCRC_BIN := run_1217_crc_tests
+SDWRITE_BIN := run_1217_abandoned_write_tests
+SDWRITE_UUT_OBJ := run_1217_driver_uut.o
+SDSPI_SRC_DIR := ../../firmware/src/config/default/driver/sdspi/src
+SDSPI_CRC_HDR := ../../firmware/src/config/default/driver/sdspi/src/drv_sdspi_crc.h
+SDSPI_IFACE_SRC := ../../firmware/src/config/default/driver/sdspi/src/drv_sdspi_driver_interface.c
+SDSPI_LOCAL_HDR := ../../firmware/src/config/default/driver/sdspi/src/drv_sdspi_local.h
+SDSPI_PUBLIC_HDR := ../../firmware/src/config/default/driver/sdspi/drv_sdspi.h
+SDWRITE_INCLUDES := -Istubs/sdspi_1217 -I../../firmware/src/config/default
+SDWRITE_STUBS := $(wildcard stubs/sdspi_1217/*.h stubs/sdspi_1217/*/*.h stubs/sdspi_1217/*/*/*.h)
 SD_ARM_HELPER := SD_ArmOrRefuseWithCleanup
 SD_ARM_HELPER_SHA := 48fc182fdf552b9a5cb860d7dc16821212874f734d9504d68fd110c75c97ee9f
 
@@ -1646,6 +1667,21 @@ $(FORCEGATE_BIN): test_756_detect_force_rate_limit.c test_framework.h $(SDSPI_DR
 	       echo "       both before changing this pin."; \
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(FORCEGATE_BIN) test_756_detect_force_rate_limit.c
+
+$(SDCRC_BIN): test_1217_sd_crc.c test_framework.h $(SDSPI_CRC_HDR) $(RECIPES)
+	$(CC) $(CFLAGS) -I$(SDSPI_SRC_DIR) -o $(SDCRC_BIN) test_1217_sd_crc.c
+
+# #1217 audit (PR #1228 round 2): no SD mount may start while an SD:PROTect
+# change is pending. The exclusion lives in three SCPI handlers that are not
+# host-compilable, so check_1217_mount_gate.py reads the REAL source and fails
+# the build if any handler loses its half. Read its docstring before editing.
+$(SDWRITE_BIN): test_1217_abandoned_write.c test_1217_driver_uut.c test_framework.h \
+                $(SDSPI_DRV_SRC) $(SDSPI_IFACE_SRC) $(SDSPI_CRC_HDR) $(SDSPI_LOCAL_HDR) $(SDSPI_PUBLIC_HDR) \
+                $(SDWRITE_STUBS) check_1217_mount_gate.py $(SD_BENCH_SRC) $(RECIPES)
+	@python3 check_1217_mount_gate.py --source $(SD_BENCH_SRC) >/dev/null \
+	  || { python3 check_1217_mount_gate.py --source $(SD_BENCH_SRC); exit 1; }
+	$(CC) -std=c11 -w -O0 -g $(SDWRITE_INCLUDES) -I$(SDSPI_SRC_DIR) -c test_1217_driver_uut.c -o $(SDWRITE_UUT_OBJ)
+	$(CC) $(CFLAGS) $(SDWRITE_INCLUDES) -o $(SDWRITE_BIN) test_1217_abandoned_write.c $(SDWRITE_UUT_OBJ)
 
 $(ARM_BIN): test_971_sd_arm_refusal_order.c test_framework.h $(SD_BENCH_SRC) hash_function.py $(CDEF) $(RECIPES)
 	@python3 hash_function.py --find $(SD_BENCH_SRC) $(SD_ARM_HELPER) >/dev/null 2>&1 \
@@ -5329,7 +5365,9 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(CAP1202_BIN) $(ISRLOG1197_BIN) $(STOP1201_BIN) $(CLAMP1231_BIN) \
      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(USECALTYPE_BIN) $(ARM_BIN) $(NAME_BIN) \
      $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) check-1200-parity check-885-savecal-claim \
-     $(NVM1153_BIN) $(ARMREFUSE_BIN)
+     $(NVM1153_BIN) $(ARMREFUSE_BIN) $(SDCRC_BIN) $(SDWRITE_BIN)
+	./$(SDCRC_BIN)
+	./$(SDWRITE_BIN)
 	./$(ARMREFUSE_BIN)
 	./$(NVM1153_BIN)
 	./$(SEQ908_BIN)
@@ -5906,6 +5944,7 @@ $(NVM1153_BIN): test_1153_nvm_recursive_lock.c test_framework.h \
 	$(CC) $(CFLAGS) -o $(NVM1153_BIN) test_1153_nvm_recursive_lock.c
 
 clean:
+	rm -f $(SDCRC_BIN) $(SDWRITE_BIN) $(SDWRITE_UUT_OBJ)
 	rm -f $(NVM1153_BIN)
 	rm -f $(SEQ908_BIN)
 	rm -f $(TEAR904_BIN)

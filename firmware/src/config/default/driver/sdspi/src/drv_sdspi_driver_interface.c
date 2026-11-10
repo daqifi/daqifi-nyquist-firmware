@@ -118,6 +118,19 @@ void DRV_SDSPI_SPIDriverEventHandler(
 {
     DRV_SDSPI_OBJ* dObj = (DRV_SDSPI_OBJ *)context;
 
+    /* #1217: raised first, so a late completion of an aborted transfer (the
+     * early return below) cannot leave the card selected for whoever is next on
+     * the bus. DRV_SPI raises CS itself only if the client's setup still names
+     * the pin, and DRV_SDSPI_SPIWriteWithChipSelectDisabled clears that.
+     *
+     * Unconditional, and not gated on "no newer SD transfer in progress", because
+     * this cannot pull CS from under one: DRV_SPI's queue is FIFO and it asserts
+     * the next transfer's CS only after this handler returns (drv_spi.c, the
+     * lDRV_SPI_RX_DMA_CallbackHandler tail). A gate would be actively wrong: with
+     * a newer SD transfer queued behind a WINC one, it would leave CS low across
+     * the WINC transfer. */
+    SYS_PORT_PinSet(dObj->chipSelectPin);
+
     /* #567 rework (SD-detect regression fix): the original guard ignored any
      * completion whose handle didn't match expectedXferHandle — but that
      * field is stored only AFTER DRV_SPI_*TransferAdd() returns, and short
@@ -146,8 +159,6 @@ void DRV_SDSPI_SPIDriverEventHandler(
     {
         dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_ERROR;
     }
-
-    SYS_PORT_PinSet(dObj->chipSelectPin);
 }
 
 // *****************************************************************************

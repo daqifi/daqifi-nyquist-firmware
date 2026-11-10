@@ -54,6 +54,9 @@ bool __attribute__((weak)) DRV_SDSPI_GetCID(uint8_t* cidBuffer, size_t bufLen) {
 #define SCPI_SD_DELETE_TIMEOUT_MS 5000
 #define SCPI_SD_FORMAT_TIMEOUT_MS 30000
 #define SCPI_SD_SPACE_TIMEOUT_MS 10000
+/* #1217: SD:PROTect waits this long for the driver to drop the card for
+ * re-init (one detect poll on a quiet driver, a few ms). */
+#define SCPI_SD_PROTECT_APPLY_MS 2000U
 
 /* #943: the two numbers that bound SYST:STOR:SD:BENCHmark's per-chunk write
  * loop. STALL_TIMEOUT_MS is now measured as ELAPSED TICKS since the last byte
@@ -566,12 +569,38 @@ scpi_result_t SCPI_StorageSDEnableSet(scpi_t * context){
     if (param1 != 0) {
         // Enable SD card
         LOG_D("SD:ENAble - Enabling SD card manager\r\n");
-        pSDCardRuntimeConfig->enable = true;
         // #589: manual re-enable clears a bus-jam quarantine (user has
-        // presumably reseated or replaced the card).
+        // presumably reseated or replaced the card). First: the SD task does
+        // not run the driver while quarantined, and the #1217 wait below needs
+        // it to.
         if (SpiBusHealth_IsSdQuarantined()) {
             SpiBusHealth_SetSdQuarantine(false);
             Streaming_QuesExternalClear(STREAMING_QUES_SPI_BUS_FAULT);
+        }
+        /* #1217: never mount while an SD:PROTect change is pending, or the
+         * driver's re-init lands under the mounted volume at its next quiet
+         * poll. Checked and set under the same exclusion SD:PROTect uses. */
+        for (uint32_t waited = 0U; ; waited += 10U) {
+            bool enabled = false;
+            taskENTER_CRITICAL();
+            if (!DRV_SDSPI_CrcModePending(0)) {
+                pSDCardRuntimeConfig->enable = true;
+                enabled = true;
+            }
+            taskEXIT_CRITICAL();
+            if (enabled) {
+                break;
+            }
+            if (waited >= SCPI_SD_PROTECT_APPLY_MS) {
+                LOG_E("SD:ENAble - SD:PROTect change not yet applied; power up, stop WiFi stream, retry");
+                SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+                result = SCPI_RES_ERR;
+                goto __exit_point;
+            }
+            if (waited == 0U) {
+                DRV_SDSPI_DetectPollExpireNow(0);
+            }
+            vTaskDelay(pdMS_TO_TICKS(10));
         }
     } else {
         // Disable SD card - check if busy first to prevent data loss
@@ -597,6 +626,84 @@ scpi_result_t SCPI_StorageSDEnableSet(scpi_t * context){
 __exit_point:
     return result;
 }
+/* #1217: SYSTem:STORage:SD:PROTect <0|1>
+ *
+ * 0 (default): CRC off and CMD25 multi-block writes, as before #1217. Fast,
+ * but a stray block is programmed over its target sector.
+ * 1: the card runs with CRC checking on and every block is written as its own
+ * CMD24. A block the card captured from bus traffic fails its CRC and is
+ * refused; an abandoned write is resynced. Costs about two thirds of the SD
+ * write throughput (CMD25 cannot be used: a CRC reject inside it left the
+ * bench card unresponsive until power-cycled), and its per-sector bus lock
+ * starves a WiFi control session during SD logging (#1234), which is why it
+ * is not the default.
+ *
+ * Only while SD is disabled and idle: the driver applies it by
+ * re-initializing the card, which a mounted volume would lose. Runtime only,
+ * like the other SD settings. */
+scpi_result_t SCPI_StorageSDProtectSet(scpi_t * context){
+    int32_t param1;
+    sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+
+    if (!SCPI_ParamInt32(context, &param1, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if ((param1 != 0) && (param1 != 1)) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+    /* Never let the card be mounted with a re-init still queued behind it.
+     * There are two mount paths, and two transports (USB, TCP) can race them:
+     *  - SD:ENAble 1 sets `enable` only inside a critical section and only with
+     *    no request pending; the enable check and the request below share that
+     *    exclusion, so whichever lands first, the other refuses or waits.
+     *  - SD:SPACe? mounts with SD disabled. It holds the manager claim while it
+     *    checks for a pending request and arms; this holds the claim while it
+     *    makes one, so the two cannot interleave. */
+    bool conflict = !sd_card_manager_IsIdle() || !sd_card_manager_TryClaim();
+    if (!conflict) {
+        taskENTER_CRITICAL();
+        if (pSDCardRuntimeConfig->enable) {
+            conflict = true;
+        } else if (pSDCardRuntimeConfig->crcProtect != (param1 == 1)) {
+            pSDCardRuntimeConfig->crcProtect = (param1 == 1);
+            DRV_SDSPI_SetCrcMode(0, pSDCardRuntimeConfig->crcProtect);
+        }
+        taskEXIT_CRITICAL();
+        sd_card_manager_ReleaseClaim();
+    }
+    if (conflict) {
+        LOG_E("SD:PROTect - disable SD first (SD:ENAble 0) and let it go idle");
+        SCPI_ErrorPush(context, SCPI_ERROR_SETTINGS_CONFLICT);
+        return SCPI_RES_ERR;
+    }
+    /* Return only once the driver has dropped the card for re-init: from then
+     * on any mount goes through a media init that applies the new mode. The
+     * driver does that at its first detect poll with no I/O in progress; the
+     * kick makes that the next pass. Checked even when the value did not
+     * change: an earlier request may still be pending. */
+    DRV_SDSPI_DetectPollExpireNow(0);
+    for (uint32_t waited = 0U;
+         DRV_SDSPI_CrcModePending(0) && (waited < SCPI_SD_PROTECT_APPLY_MS);
+         waited += 10U) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    if (DRV_SDSPI_CrcModePending(0)) {
+        /* The SD task is not running the driver: standby, or SPI handed to
+         * WiFi streaming. The setting stands and applies when it next runs. */
+        LOG_E("SD:PROTect - set, not yet applied; power up, stop WiFi stream, retry");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_StorageSDProtectGet(scpi_t * context){
+    sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    SCPI_ResultInt32(context, pSDCardRuntimeConfig->crcProtect ? 1 : 0);
+    return SCPI_RES_OK;
+}
+
 scpi_result_t SCPI_StorageSDEnableGet(scpi_t * context){
     sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
     SCPI_ResultInt32(context, pSDCardRuntimeConfig->enable ? 1 : 0);
@@ -3157,6 +3264,16 @@ scpi_result_t SCPI_StorageSDSpaceGet(scpi_t * context) {
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
+    /* #1217: this mounts even with SD disabled, so it must not run while an
+     * SD:PROTect change is pending: the re-init would land under the mount.
+     * Checked under the claim, which SD:PROTect also takes to make a request. */
+    if (DRV_SDSPI_CrcModePending(0)) {
+        sd_card_manager_ReleaseClaim();
+        LOG_E("SD:SPACe - SD:PROTect change not yet applied; retry");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_GET_SPACE;  /* #829: LAST write */
     if (!SD_ArmOrRefuse(context, "SPACe", pSDCardRuntimeConfig)) {
         /* #955: `mode` is cleared inside SD_ArmOrRefuse, under the claim. */
@@ -3288,12 +3405,19 @@ scpi_result_t SCPI_StorageSDInfo(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    /* #1217: two trailing fields -- whether the card is running with CRC
+     * checking on (1/0), and how many abandoned writes the driver has
+     * resynced since boot. Appended, so existing fields keep their places. */
+    bool crcOn = false;
+    uint32_t resyncs = 0U;
+    DRV_SDSPI_GetCrcStats(0, &crcOn, &resyncs);
     int len = snprintf(result, SCPI_RESPONSE_BUF_SIZE,
-                       "%u,\"%s\",\"%s\",%u.%u,%lu,%u-%02u",
+                       "%u,\"%s\",\"%s\",%u.%u,%lu,%u-%02u,%u,%lu",
                        mid, oid, pnm,
                        prv_major, prv_minor,
                        (unsigned long)psn,
-                       mdt_year, mdt_month);
+                       mdt_year, mdt_month,
+                       crcOn ? 1u : 0u, (unsigned long)resyncs);
 
     if (len < 0 || (size_t)len >= SCPI_RESPONSE_BUF_SIZE) {
         /* Released before the log/push: nothing below reads `result`, and

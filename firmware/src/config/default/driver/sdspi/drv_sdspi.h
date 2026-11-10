@@ -972,6 +972,24 @@ bool DRV_SDSPI_IsAttached(const DRV_HANDLE handle);
    client handle; diagnostics have none). */
 bool DRV_SDSPI_IsCardAttached(SYS_MODULE_OBJ object);
 
+/* #1217: whether the mounted card accepted CRC checking (CMD59), and how many
+   abandoned writes have been resynced since boot. */
+void DRV_SDSPI_GetCrcStats(SYS_MODULE_OBJ object, bool* crcEnabled, uint32_t* resyncs);
+
+/* #1217: SD:PROTect. protect = true: CRC checking on, every block written with
+   CMD24, abandoned writes resynced. false: CRC off and CMD25 multi-block writes
+   (faster; a stray block is programmed). Takes effect at the next media init,
+   which this requests: an attached card is re-initialized as if reinserted.
+   Call only while the card is not mounted. */
+void DRV_SDSPI_SetCrcMode(SYS_MODULE_OBJ object, bool protect);
+
+/* #1217: true while an attached card has not yet been dropped for re-init
+   after the last SetCrcMode. The drop happens at the first detect poll that
+   finds the driver quiet (no command in progress or queued); every mount after
+   it goes through a media init in the new mode, so a caller about to mount
+   must wait for this to clear first. */
+bool DRV_SDSPI_CrcModePending(SYS_MODULE_OBJ object);
+
 /* #589 P1: reset the detect-poll backoff (expected insertion). */
 void DRV_SDSPI_DetectPollKick(SYS_MODULE_OBJ object);
 

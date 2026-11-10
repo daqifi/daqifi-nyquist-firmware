@@ -48,6 +48,39 @@ makes a lost race visible instead of a false success — `FORmat`, `CRC` and
 `GET` all return OK without waiting, so an unchecked arm reports success having
 queued nothing.
 
+### Abandoned writes and CRC (#1217)
+
+An abandoned CMD24 or CMD25 leaves the card waiting for data, and it stores whatever is clocked next as that sector. `#1217` found FAT sectors full of SPI commands and WINC traffic this way. The trigger is still unknown.
+
+**Protection is opt-in: `SYST:STOR:SD:PROTect 1`.** The default, `0`, runs as before #1217: CRC off and CMD25 multi-block writes. Protected mode costs about two thirds of the SD write throughput, and its per-sector bus lock starves a WiFi control session during SD logging (#1234), so it is not the default. The setting changes only while SD is disabled (`-221` otherwise), takes effect by re-initializing the card, and resets to `0` at boot.
+
+**No mount may start while a change is pending**, or the driver's re-init lands under the mounted volume. The driver drops the card at its first detect poll with no I/O in progress or queued (`DRV_SDSPI_CrcModePending` is true until then), and three SCPI handlers keep the rest:
+
+- `SD:PROTect` takes the manager claim and, in one critical section, checks `enable` and makes the request. It then waits (2 s cap) until the driver has dropped the card, or returns `-200` if the SD task is not running the driver (standby, WiFi streaming).
+- `SD:ENAble 1` sets `enable` only inside a critical section and only with no change pending. If one is pending, it waits up to 2 s and then returns `-200`. This keeps the two commands safe when they arrive on different transports (USB and TCP).
+- `SD:SPACe?`, the one mount that runs with SD disabled, refuses with `-200` if a change is pending when it holds the claim.
+
+`tests/host/check_1217_mount_gate.py` pins all three in the real source. `SYST:STOR:SD:INFO?` reports whether the card is running with CRC on and how many resyncs have fired since boot, as its last two fields.
+
+With `PROTect 1` the driver defends in two ways, both in `driver/sdspi/src/`:
+
+- **CRC is on.** Media init sends CMD59 with argument 1, every command frame carries a computed CRC7, and every data block a computed CRC16 (`drv_sdspi_crc.h`). A captured block fails its check and is not programmed. Every block is written as its own CMD24: a CRC-rejected block inside a CMD25 left the bench card unresponsive until power-cycled.
+- **A write in doubt is resynced before any other command.** `writeInDoubt` is set before a CMD24's command frame is sent and cleared only once the card is provably out of the data phase. While it is set, `lDRV_SDSPI_CommandSend` runs `lDRV_SDSPI_WriteResyncTasks` instead of sending anything. It survives aborts and `DRV_SDSPI_ReleaseBus`. The function's comment covers what each card state does with the bytes.
+
+In both modes, **CS goes high on every abort**, before the exclusive lock is released, and in the completion handler before the aborted-transfer early return.
+
+**What you will see (`PROTect 1` only):**
+
+- `SD: card rejected CRC enable (CMD59); not mounted, cannot protect it (#1217)`: the card refused CRC and is deliberately not mounted, so SD commands report no usable card. Without CRC it is not protected, and the resync's all-`0xFF` block would be programmed. Logged once until `SYST:LOG?` or `SYST:LOG:CLEar` re-arms it.
+- `SD: write in doubt resynced (type=1 token=0x..)`: a write was abandoned and recovered. A token with low bits `0x0B` proves the card really was waiting. `0xFF` means it was not. Type 1 is CMD24, the only type.
+- `SD: write in doubt resync failed; retrying (#1217)`: the attempt failed and the command in hand failed with it. The flag stays set, so the next command tries again. Commands, CMD0 included, are held back until one succeeds, so a card stuck busy reads as "no card" until it lets go or is power cycled. Logged once until `SYST:LOG?` or `SYST:LOG:CLEar` re-arms it.
+
+**A rejected block is an error, not a retry (`PROTect 1`).** A bit error on the bus used to store a bad sector silently. Now it fails the write and takes the normal failed-write path, which today means #1031: ERROR, unmount, remount, and the log file reopened in truncate mode.
+
+**Read data CRC is still not checked.** The card sends it and the driver discards it.
+
+**Host coverage:** `tests/host/test_1217_abandoned_write.c` runs the real driver sources against a modelled card.
+
 ### SD Card File Splitting
 
 **Feature:** Automatic file splitting prevents FAT32 4GB file size limit issues during long logging sessions.

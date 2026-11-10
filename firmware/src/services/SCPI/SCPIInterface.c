@@ -10659,6 +10659,8 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:STORage:SD:MINFree?", .callback = SCPI_StorageSDMinFreeGet},  // #498
     {.pattern = "SYSTem:STORage:SD:SPACe?", .callback = SCPI_StorageSDSpaceGet},
     {.pattern = "SYSTem:STORage:SD:ABORt", .callback = SCPI_StorageSDAbort},
+    {.pattern = "SYSTem:STORage:SD:PROTect", .callback = SCPI_StorageSDProtectSet,},   /* #1217 */
+    {.pattern = "SYSTem:STORage:SD:PROTect?", .callback = SCPI_StorageSDProtectGet,},  /* #1217 */
     {.pattern = "SYSTem:STORage:SD:INFO?", .callback = SCPI_StorageSDInfo},
     // DIO debug probe framework
     {.pattern = "SYSTem:DIOProbe:MODE", .callback = SCPI_DioProbeModeSet,},

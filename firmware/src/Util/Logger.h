@@ -191,6 +191,8 @@ extern "C" {
         LOG_ONCE_MDNS_ARM_FAIL,           /**< mdns_responder.c: recvfrom re-arm failed — responder deaf until ServiceHealth() re-opens (#58) */
         LOG_ONCE_ADC_THRESHOLD_TRIP,      /**< AdcThreshold.c: an ADC digital-comparator threshold tripped (#670); one-shot so a signal parked past the limit can't flood */
         LOG_ONCE_SD_WBUF_SUBSECTOR,       /**< sd_card_manager.c: SD DMA write buffer below one sector, so the sector-aligned drain can extract nothing (#738); unreachable with the current 512-byte floor, one-shot so a broken floor can't flood the drain loop */
+        LOG_ONCE_SD_CMD59_REJECTED,       /**< drv_sdspi.c: card refused CRC checking, so it is not mounted (#1217); media init retries about once a second, one-shot so that can't flood */
+        LOG_ONCE_SD_WRITE_RESYNC_FAIL,    /**< drv_sdspi.c: a resync attempt failed and will retry (#1217); a stuck-busy card would otherwise log per attempt */
         /* Add new entries above this line */
         LOG_ONCE_COUNT                     /**< Must be <= 32 */
     } LogOnceBit_t;
