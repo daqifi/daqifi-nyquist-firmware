@@ -1691,6 +1691,122 @@ TEST(release_bus_during_a_write_in_doubt_does_not_retry_without_the_request)
     assertCardHealthy(34U);
 }
 
+/* The SD task suspended: time passes and timers fire, but the driver does not
+ * run (app_SDCard_GracefulShutdown's view of the world). */
+static void suspendMs(unsigned ms)
+{
+    for (unsigned t = 0U; t < ms; t++)
+    {
+        gNowMs++;
+        for (uint32_t i = 0U; i < TIMERS; i++)
+        {
+            if (gTimer[i].live && ((int32_t)(gNowMs - gTimer[i].due) >= 0))
+            {
+                gTimer[i].live = false;
+                gTimer[i].cb(gTimer[i].ctx);
+            }
+        }
+    }
+}
+
+/* Audit finding on PR #1237, round 3 (codex, 2026-11-10): ReleaseBus landing
+ * just after a retry's resync, then a long suspend. The resumed PROCESS_WRITE
+ * framed the CMD24 without owning the card, the detect poll then freed the
+ * request, and the frame left in pCmdResp went out later under the detect
+ * FSM's CMD0 call, with no write-in-doubt recorded. No command of a request may
+ * reach the card after ReleaseBus: the request is ended with an error, and the
+ * card is left to the resync.
+ *
+ * Two independent guards each prevent it, so disabling either alone leaves
+ * this green (measured): ReleaseBus ending the request (READ_WRITE_ABORT), and
+ * the NULL-request reset putting cmdState back to FRAME_PACKET. With both
+ * disabled the card is left in CAPTURE and the next write fails. */
+TEST(release_bus_after_a_retry_resync_sends_no_stale_cmd24)
+{
+    uint8_t data[BLOCK];
+    DRV_SDSPI_COMMAND_HANDLE h = DRV_SDSPI_COMMAND_HANDLE_INVALID;
+    bool sawResync = false;
+
+    bootCard();
+    switchCrcMode(false);
+    fill(data, sizeof(data), 0x47U);
+    gFault.action = FAULT_REJECT;
+    gFault.isRead = 0;
+    gFault.len = 1;
+    gFault.firstByte = 0xFE;
+    gFault.afterCmd = 24;
+    gFault.exceptResync = true;
+    const unsigned seen = gEventsSeen;
+    DRV_SDSPI_AsyncWrite(gHandle, &h, (void*)data, 33U, 1U);
+    ASSERT_TRUE(h != DRV_SDSPI_COMMAND_HANDLE_INVALID);
+    for (unsigned i = 0U; i < 20000U; i++)
+    {
+        pass();
+        sawResync = sawResync || test1217_InResync();
+        if (sawResync && !test1217_InResync())
+        {
+            break;
+        }
+    }
+    ASSERT_TRUE(sawResync);
+    ASSERT_EQ(gEventsSeen, seen); /* still in the request: the re-send is next */
+
+    const unsigned cmd24 = cmdCount(24);
+    DRV_SDSPI_ReleaseBus(0);
+    suspendMs(3000U);
+    for (unsigned i = 0U; (i < 20000U) && (gEventsSeen == seen); i++)
+    {
+        pass();
+    }
+    ASSERT_EQ(gLastEvent, DRV_SDSPI_EVENT_COMMAND_ERROR);
+    passes(3000U);
+    ASSERT_TRUE(runUntilAttached(20000U));
+    ASSERT_EQ(cmdCount(24), cmd24); /* nothing of the request went out */
+    /* The resync programmed its 0xFF block before ReleaseBus; nothing since. */
+    for (unsigned i = 0U; i < BLOCK; i++)
+    {
+        ASSERT_EQ(card.sector[33U][i], 0xFFU);
+    }
+    ASSERT_EQ(gLockDepth, 0);
+    assertCardHealthy(34U);
+}
+
+/* The read twin: a read in flight when the bus is released ends with an error
+ * on resume, and the driver re-attaches without holding the lock. That is all
+ * this pins. It is NOT a regression test for the change: the round-2 head
+ * (da7178c6) ends this read with an error too, through the transfer status
+ * ReleaseBus forces to ERROR. What it guards is that the abort added to
+ * ReleaseBus does not turn a read into a hang or a false success.
+ *
+ * Observed and NOT fixed here: in this card model, a read issued right after
+ * this one returns wrong data, at the round-2 head and here alike. The model's
+ * card is left part-way through sending the abandoned block. Whether a real
+ * card behaves that way after the re-init's CMD0 is not established. */
+TEST(release_bus_during_a_read_ends_it_with_an_error)
+{
+    static uint8_t buf[BLOCK];
+    DRV_SDSPI_COMMAND_HANDLE h = DRV_SDSPI_COMMAND_HANDLE_INVALID;
+
+    bootCard();
+    const unsigned seen = gEventsSeen;
+    const unsigned cmd17 = cmdCount(17);
+    DRV_SDSPI_AsyncRead(gHandle, &h, buf, 40U, 1U);
+    ASSERT_TRUE(h != DRV_SDSPI_COMMAND_HANDLE_INVALID);
+    for (unsigned i = 0U; (i < 20000U) && (cmdCount(17) == cmd17); i++)
+    {
+        pass();
+    }
+    ASSERT_EQ(gEventsSeen, seen); /* CMD17 out, data not yet in */
+    DRV_SDSPI_ReleaseBus(0);
+    for (unsigned i = 0U; (i < 20000U) && (gEventsSeen == seen); i++)
+    {
+        pass();
+    }
+    ASSERT_EQ(gLastEvent, DRV_SDSPI_EVENT_COMMAND_ERROR);
+    ASSERT_TRUE(runUntilAttached(20000U));
+    ASSERT_EQ(gLockDepth, 0);
+}
+
 /* ---- bounded ---------------------------------------------------------------- */
 
 /* Audit finding (codex, 2026-11-09): a mode change pending when I/O starts
@@ -1868,6 +1984,8 @@ int main(void)
     RUN(fast_mode_abandon_on_every_try_leaves_0xff_not_bus_traffic);
     RUN(retry_budget_is_per_request);
     RUN(release_bus_during_a_write_in_doubt_does_not_retry_without_the_request);
+    RUN(release_bus_after_a_retry_resync_sends_no_stale_cmd24);
+    RUN(release_bus_during_a_read_ends_it_with_an_error);
     RUN(mode_change_pending_during_io_waits_for_a_quiet_poll);
     RUN(mode_change_is_not_pending_without_a_card);
     RUN(stuck_busy_card_gets_no_commands_and_never_pins_the_bus);

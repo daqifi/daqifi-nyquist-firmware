@@ -2218,7 +2218,9 @@ static void lDRV_SDSPI_BufferIOTasks
      * restarts detection without touching taskBufferIOState, and the detect
      * FSM can then free the request this FSM was in the middle of. A request
      * state with no request goes back to waiting for one; ReleaseBus already
-     * dropped the lock and CS. */
+     * dropped the lock and CS. The command FSM goes back to framing too: a
+     * frame of the freed request left in pCmdResp would otherwise go out under
+     * the next caller's command. */
     if ((currentBufObj == NULL) &&
             (dObj->taskBufferIOState != DRV_SDSPI_BUFFER_IO_CHECK_DEVICE) &&
             (dObj->taskBufferIOState != DRV_SDSPI_TASK_PROCESS_QUEUE))
@@ -2229,6 +2231,7 @@ static void lDRV_SDSPI_BufferIOTasks
             dObj->timerFlag = false;
         }
         SYS_PORT_PinSet(dObj->chipSelectPin);
+        dObj->cmdState = DRV_SDSPI_CMD_FRAME_PACKET;
         dObj->taskBufferIOState = DRV_SDSPI_BUFFER_IO_CHECK_DEVICE;
     }
 
@@ -3187,6 +3190,26 @@ void DRV_SDSPI_ReleaseBus(SYS_MODULE_OBJ object)
     dObj->cmdDetectState = DRV_SDSPI_CMD_DETECT_START_INIT;
     dObj->cmdState = DRV_SDSPI_CMD_FRAME_PACKET;
     dObj->sdState = TASK_STATE_IDLE;
+
+    /* #1217 (audit on PR #1237): a request in flight does not survive the
+     * release. It no longer owns the card or the lock, and detection restarts
+     * underneath it, so continuing it would send its next command unowned,
+     * and a frame left in pCmdResp can go out later under the detect FSM's own
+     * command. On resume it completes with an error instead (no re-send:
+     * sdState is IDLE), and a write in doubt is left to the resync, which
+     * writeInDoubt still triggers. PROCESS_NEXT is a request that already
+     * finished, so it keeps its success. */
+    if ((dObj->taskBufferIOState != DRV_SDSPI_BUFFER_IO_CHECK_DEVICE) &&
+            (dObj->taskBufferIOState != DRV_SDSPI_TASK_PROCESS_QUEUE) &&
+            (dObj->taskBufferIOState != DRV_SDSPI_TASK_PROCESS_NEXT))
+    {
+        if (dObj->timerFlag == true)
+        {
+            (void) DRV_SDSPI_TimerStop(dObj);
+            dObj->timerFlag = false;
+        }
+        dObj->taskBufferIOState = DRV_SDSPI_TASK_READ_WRITE_ABORT;
+    }
 }
 
 DRV_HANDLE DRV_SDSPI_Open
