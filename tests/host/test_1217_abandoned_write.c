@@ -99,6 +99,10 @@ static struct {
     unsigned writeErrorAt;
     unsigned faultCmd25s;
     bool writeErrorTokenLost; /* the write error token reads as 0xFF */
+    /* CMD12 ending a CMD25 write error: extra 0xFF bytes before its R1 (NCR
+     * may be up to eight, SD spec v6.00, 7.5.4) and its busy, in bytes. */
+    unsigned cmd12Ncr;
+    unsigned cmd12Busy;
     unsigned multiIndex;
 
     int events[EVENT_LOG];
@@ -312,8 +316,12 @@ static void cardCommand(uint8_t cmd, uint32_t arg, uint8_t crcField)
             if (card.state == CARD_MULTI_ERROR)
             {
                 card.state = CARD_READY;
+                for (unsigned i = 0U; i < card.cmd12Ncr; i++)
+                {
+                    cardOut(0xFFU);
+                }
                 cardR1(0x00U);
-                card.busyLeft = card.programBusy;
+                card.busyLeft = (card.cmd12Busy > 0U) ? card.cmd12Busy : card.programBusy;
             }
             else
             {
@@ -2045,6 +2053,32 @@ TEST(fast_mode_cmd25_resync_cmd12_lost_is_sent_by_the_next_resync)
     assertCardHealthy(45U);
 }
 
+/* CMD12's R1 comes after seven extra 0xFF bytes (eight in all, the most NCR
+ * allows) and its busy is long. The resync must wait for the R1 and then out
+ * the busy, or the re-sent CMD25 goes to a busy card that ignores it (audit
+ * round 3). */
+TEST(fast_mode_cmd25_resync_waits_for_cmd12_r1_and_busy)
+{
+    uint8_t data[3U * BLOCK];
+
+    bootCard();
+    switchCrcMode(false);
+    fill(data, sizeof(data), 0x6EU);
+    card.writeErrorAt = 2U;
+    card.cmd12Ncr = 7U;
+    card.cmd12Busy = 200U;
+    const unsigned cmd25 = cmdCount(25);
+    ASSERT_EQ(writeBlocks(40U, data, 3U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+    ASSERT_EQ(cmdCount(12), 1U);
+    ASSERT_EQ(cmdCount(25) - cmd25, 2); /* first try, one re-send */
+    ASSERT_EQ(test1217_WriteRetries(), 1U);
+    ASSERT_TRUE(sectorIs(40U, &data[0U]));
+    ASSERT_TRUE(sectorIs(41U, &data[BLOCK]));
+    ASSERT_TRUE(sectorIs(42U, &data[2U * BLOCK]));
+    ASSERT_TRUE(sectorUntouched(43U));
+    assertCardHealthy(44U);
+}
+
 /* The CMD25 was refused (an error R1, no data phase), so the card is not in a
  * write when the resync's stop token goes out. To a card that frames commands
  * bit by bit, 0xFD followed by 0xFF bytes starts a CMD63 frame, and a command
@@ -2483,6 +2517,7 @@ int main(void)
     RUN(fast_mode_cmd25_write_error_every_try_fails_and_leaves_the_card_working);
     RUN(fast_mode_cmd25_lost_write_error_token_still_gets_cmd12);
     RUN(fast_mode_cmd25_resync_cmd12_lost_is_sent_by_the_next_resync);
+    RUN(fast_mode_cmd25_resync_waits_for_cmd12_r1_and_busy);
     RUN(fast_mode_refused_cmd25_resync_does_not_swallow_the_re_send);
     RUN(fast_mode_cmd25_abandon_on_every_try_stores_no_bus_traffic);
     RUN(fast_mode_cmd25_abandon_with_winc_traffic_stores_the_data);

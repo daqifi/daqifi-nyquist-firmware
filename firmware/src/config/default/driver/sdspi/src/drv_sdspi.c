@@ -536,7 +536,8 @@ static uint32_t lDRV_SDSPI_ProcessCSD(uint8_t* csdPtr)
  *  - Rejected a block (CRC or write error token, whether or not the driver
  *    read it): the card ignores data and tokens until CMD12 (SD Physical
  *    Layer Simplified Specification v6.00, 7.3.3.1). So the resync then sends
- *    CMD12 and waits out its busy. A card in any other state is out of the
+ *    CMD12, waits for its R1 (past up to eight 0xFF bytes of NCR) and waits
+ *    out its busy; no R1 at all fails the resync and keeps the write in doubt. A card in any other state is out of the
  *    write by then and answers CMD12 with an illegal-command R1.
  *
  * DRV_SDSPI_TASK_READ_WRITE_ABORT re-sends a CMD25 in doubt whole, as a new
@@ -690,6 +691,33 @@ static void lDRV_SDSPI_WriteResyncTasks(DRV_SDSPI_OBJ* dObj)
                 dObj->resyncToken = rxByte;
             }
 
+            if (dObj->resyncStage == DRV_SDSPI_RESYNC_STAGE_CMD12_R1)
+            {
+                /* An R1 has bit 7 clear; up to eight 0xFF bytes (NCR) come
+                 * first, and must not be counted as the card being idle, or
+                 * the resync ends inside CMD12's busy and the next command
+                 * is ignored (audit round 3). The byte after CMD12 is a stuff
+                 * byte only when a read is being stopped: the card drives
+                 * 0xFF there during a write, so it needs no special case. */
+                if ((rxByte & 0x80U) == 0U)
+                {
+                    dObj->resyncIdleReads = 0U;
+                    dObj->resyncStage = DRV_SDSPI_RESYNC_STAGE_AFTER_CMD12;
+                    lDRV_SDSPI_WriteResyncBusyRead(dObj);
+                }
+                else if (++dObj->resyncIdleReads >= DRV_SDSPI_RESYNC_CMD12_R1_READS)
+                {
+                    /* No answer at all: the card cannot be known to be out
+                     * of the write, so the write stays in doubt. */
+                    lDRV_SDSPI_WriteResyncEnd(dObj, false);
+                }
+                else
+                {
+                    lDRV_SDSPI_WriteResyncBusyRead(dObj);
+                }
+                break;
+            }
+
             if (rxByte == 0x00U)
             {
                 dObj->resyncIdleReads = 0U;
@@ -710,7 +738,7 @@ static void lDRV_SDSPI_WriteResyncTasks(DRV_SDSPI_OBJ* dObj)
              * would be swallowed by it. */
             dObj->resyncIdleReads++;
             if (dObj->resyncIdleReads <
-                    ((dObj->resyncStage >= DRV_SDSPI_RESYNC_STAGE_AFTER_STOP) ? 8U : 2U))
+                    ((dObj->resyncStage == DRV_SDSPI_RESYNC_STAGE_AFTER_STOP) ? 8U : 2U))
             {
                 lDRV_SDSPI_WriteResyncBusyRead(dObj);
                 break;
@@ -754,7 +782,7 @@ static void lDRV_SDSPI_WriteResyncTasks(DRV_SDSPI_OBJ* dObj)
                  * is out of the write by now, and answers CMD12 with an
                  * illegal-command R1 that nobody reads. */
                 dObj->resyncIdleReads = 0U;
-                dObj->resyncStage = DRV_SDSPI_RESYNC_STAGE_AFTER_CMD12;
+                dObj->resyncStage = DRV_SDSPI_RESYNC_STAGE_CMD12_R1;
                 dObj->cmdState = DRV_SDSPI_CMD_RESYNC_STOP;
                 dObj->pCmdResp[0] = ((uint8_t)CMD_VALUE_STOP_TRANSMISSION | DRV_SDSPI_TRANSMIT_SET);
                 dObj->pCmdResp[1] = 0U;

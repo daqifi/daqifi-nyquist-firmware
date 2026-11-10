@@ -137,8 +137,13 @@
 #define DRV_SDSPI_RESYNC_STAGE_AFTER_BLOCK        (1U)
 /* CMD25 only: after the stop-tran token, waiting out the card's busy. */
 #define DRV_SDSPI_RESYNC_STAGE_AFTER_STOP         (2U)
-/* CMD25 only: after the CMD12 that follows the stop-tran token. */
-#define DRV_SDSPI_RESYNC_STAGE_AFTER_CMD12        (3U)
+/* CMD25 only: the CMD12 that follows the stop-tran token went out; waiting
+ * for its R1, which may come after up to eight 0xFF bytes (NCR). */
+#define DRV_SDSPI_RESYNC_STAGE_CMD12_R1           (3U)
+/* CMD25 only: CMD12's R1 is in; waiting out its busy (R1b). */
+#define DRV_SDSPI_RESYNC_STAGE_AFTER_CMD12        (4U)
+/* Reads allowed for CMD12's R1: NCR is at most eight bytes, plus margin. */
+#define DRV_SDSPI_RESYNC_CMD12_R1_READS           (16U)
 
 /* #1217: why the current request's last read/write attempt was abandoned
  * (DRV_SDSPI_OBJ.ioAbortCause), named in the re-send and failure log lines so
