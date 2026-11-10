@@ -546,6 +546,26 @@ static uint32_t lDRV_SDSPI_ProcessCSD(uint8_t* csdPtr)
  * Bounded: one DRV_SDSPI_WRITE_TIMEOUT_IN_MS budget for all busy waits, plus the
  * #567 watchdog per transfer. The exclusive lock is held only for this attempt.
  */
+/* #1217: what the abort sites in lDRV_SDSPI_BufferIOTasks record. Short names,
+ * so the log lines that carry them stay inside LOG_E's 125-byte budget. */
+static const char* const gDrvSDSPIAbortName[DRV_SDSPI_ABORT_CAUSES] =
+{
+    "none", "xfer", "xfer-timeout", "spi-add", "timer", "r1", "cmd", "token",
+    "busy", "release",
+};
+
+static const char* lDRV_SDSPI_AbortName(uint8_t cause)
+{
+    return (cause < DRV_SDSPI_ABORT_CAUSES) ? gDrvSDSPIAbortName[cause] : "?";
+}
+
+/* Abandon the current read/write attempt, recording why. */
+static void lDRV_SDSPI_IoAbort(DRV_SDSPI_OBJ* dObj, uint8_t cause)
+{
+    dObj->ioAbortCause = cause;
+    dObj->taskBufferIOState = DRV_SDSPI_TASK_READ_WRITE_ABORT;
+}
+
 static void lDRV_SDSPI_WriteResyncEnd(DRV_SDSPI_OBJ* dObj, bool resolved)
 {
     (void) DRV_SDSPI_CmdResponseTimerStop(dObj);
@@ -2323,6 +2343,7 @@ static void lDRV_SDSPI_BufferIOTasks
 
             currentBufObj->status = DRV_SDSPI_COMMAND_IN_PROGRESS;
             dObj->writeInDoubtRetries = 0U;
+            dObj->ioAbortCause = DRV_SDSPI_ABORT_NONE;
 
             if (dObj->sdCardType == DRV_SDSPI_MODE_NORMAL)
             {
@@ -2413,7 +2434,7 @@ static void lDRV_SDSPI_BufferIOTasks
                     (void) DRV_SDSPI_SpiXferTimerStop(dObj);
                     dObj->spiXferTimerFlag = false;
                 }
-                dObj->taskBufferIOState = DRV_SDSPI_TASK_READ_WRITE_ABORT;
+                lDRV_SDSPI_IoAbort(dObj, DRV_SDSPI_ABORT_XFER);
             }
             else
             {
@@ -2431,7 +2452,7 @@ static void lDRV_SDSPI_BufferIOTasks
                     {
                         DRV_SDSPI_AbortedXferRecord(dObj);
                         dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_ERROR;
-                        dObj->taskBufferIOState = DRV_SDSPI_TASK_READ_WRITE_ABORT;
+                        lDRV_SDSPI_IoAbort(dObj, DRV_SDSPI_ABORT_TIMER);
                         break;
                     }
                     dObj->spiXferTimerFlag = true;
@@ -2441,7 +2462,7 @@ static void lDRV_SDSPI_BufferIOTasks
                     dObj->spiXferTimerFlag = false;
                     DRV_SDSPI_AbortedXferRecord(dObj);
                     dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_ERROR;
-                    dObj->taskBufferIOState = DRV_SDSPI_TASK_READ_WRITE_ABORT;
+                    lDRV_SDSPI_IoAbort(dObj, DRV_SDSPI_ABORT_XFER_TIMEOUT);
                 }
                 else
                 {
@@ -2599,12 +2620,12 @@ static void lDRV_SDSPI_BufferIOTasks
                 }
                 else
                 {
-                    dObj->taskBufferIOState = DRV_SDSPI_TASK_READ_WRITE_ABORT;
+                    lDRV_SDSPI_IoAbort(dObj, DRV_SDSPI_ABORT_R1);
                 }
             }
             else if (dObj->cmdState == DRV_SDSPI_CMD_EXEC_ERROR)
             {
-                dObj->taskBufferIOState = DRV_SDSPI_TASK_READ_WRITE_ABORT;
+                lDRV_SDSPI_IoAbort(dObj, DRV_SDSPI_ABORT_CMD);
             }
             else
             {
@@ -2631,7 +2652,7 @@ static void lDRV_SDSPI_BufferIOTasks
             }
             else
             {
-                dObj->taskBufferIOState = DRV_SDSPI_TASK_READ_WRITE_ABORT;
+                lDRV_SDSPI_IoAbort(dObj, DRV_SDSPI_ABORT_ADD);
             }
             break;
 
@@ -2654,7 +2675,7 @@ static void lDRV_SDSPI_BufferIOTasks
             }
             else
             {
-                dObj->taskBufferIOState = DRV_SDSPI_TASK_READ_WRITE_ABORT;
+                lDRV_SDSPI_IoAbort(dObj, DRV_SDSPI_ABORT_ADD);
             }
             break;
 
@@ -2671,7 +2692,7 @@ static void lDRV_SDSPI_BufferIOTasks
             }
             else
             {
-                dObj->taskBufferIOState = DRV_SDSPI_TASK_READ_WRITE_ABORT;
+                lDRV_SDSPI_IoAbort(dObj, DRV_SDSPI_ABORT_ADD);
             }
             break;
 
@@ -2684,7 +2705,7 @@ static void lDRV_SDSPI_BufferIOTasks
             }
             else
             {
-                dObj->taskBufferIOState = DRV_SDSPI_TASK_READ_WRITE_ABORT;
+                lDRV_SDSPI_IoAbort(dObj, DRV_SDSPI_ABORT_ADD);
             }
             break;
 
@@ -2697,7 +2718,7 @@ static void lDRV_SDSPI_BufferIOTasks
                 /* Something went wrong, a CRC reject (0x0B) included. For a
                  * CMD24 writeInDoubt stays set, and READ_WRITE_ABORT resyncs
                  * and re-sends it a bounded number of times. */
-                dObj->taskBufferIOState = DRV_SDSPI_TASK_READ_WRITE_ABORT;
+                lDRV_SDSPI_IoAbort(dObj, DRV_SDSPI_ABORT_TOKEN);
             }
             else
             {
@@ -2718,7 +2739,7 @@ static void lDRV_SDSPI_BufferIOTasks
             }
             else
             {
-                dObj->taskBufferIOState = DRV_SDSPI_TASK_READ_WRITE_ABORT;
+                lDRV_SDSPI_IoAbort(dObj, DRV_SDSPI_ABORT_ADD);
             }
             break;
 
@@ -2734,7 +2755,7 @@ static void lDRV_SDSPI_BufferIOTasks
                 {
                     if (DRV_SDSPI_TimerStart(dObj, DRV_SDSPI_WRITE_TIMEOUT_IN_MS) == false)
                     {
-                        dObj->taskBufferIOState = DRV_SDSPI_TASK_READ_WRITE_ABORT;
+                        lDRV_SDSPI_IoAbort(dObj, DRV_SDSPI_ABORT_TIMER);
                         break;
                     }
                     dObj->timerFlag = true;
@@ -2745,7 +2766,7 @@ static void lDRV_SDSPI_BufferIOTasks
                     dObj->timerFlag = false;
                     /* Abort the write operation as the card has failed to complete the operation
                        in time. */
-                    dObj->taskBufferIOState = DRV_SDSPI_TASK_READ_WRITE_ABORT;
+                    lDRV_SDSPI_IoAbort(dObj, DRV_SDSPI_ABORT_BUSY);
                 }
                 else
                 {
@@ -2819,7 +2840,7 @@ static void lDRV_SDSPI_BufferIOTasks
             }
             else
             {
-                dObj->taskBufferIOState = DRV_SDSPI_TASK_READ_WRITE_ABORT;
+                lDRV_SDSPI_IoAbort(dObj, DRV_SDSPI_ABORT_ADD);
             }
             break;
 
@@ -2832,7 +2853,7 @@ static void lDRV_SDSPI_BufferIOTasks
             }
             else
             {
-                dObj->taskBufferIOState = DRV_SDSPI_TASK_READ_WRITE_ABORT;
+                lDRV_SDSPI_IoAbort(dObj, DRV_SDSPI_ABORT_ADD);
             }
             break;
 
@@ -2848,7 +2869,7 @@ static void lDRV_SDSPI_BufferIOTasks
             }
             else
             {
-                dObj->taskBufferIOState = DRV_SDSPI_TASK_READ_WRITE_ABORT;
+                lDRV_SDSPI_IoAbort(dObj, DRV_SDSPI_ABORT_ADD);
             }
             break;
 
@@ -2863,7 +2884,7 @@ static void lDRV_SDSPI_BufferIOTasks
                 {
                     if (DRV_SDSPI_TimerStart(dObj, DRV_SDSPI_WRITE_TIMEOUT_IN_MS) == false)
                     {
-                        dObj->taskBufferIOState = DRV_SDSPI_TASK_READ_WRITE_ABORT;
+                        lDRV_SDSPI_IoAbort(dObj, DRV_SDSPI_ABORT_TIMER);
                         break;
                     }
                     dObj->timerFlag = true;
@@ -2874,7 +2895,7 @@ static void lDRV_SDSPI_BufferIOTasks
                     dObj->timerFlag = false;
                     /* Abort the write operation as the card has failed to complete the operation
                        in time. */
-                    dObj->taskBufferIOState = DRV_SDSPI_TASK_READ_WRITE_ABORT;
+                    lDRV_SDSPI_IoAbort(dObj, DRV_SDSPI_ABORT_BUSY);
                 }
                 else
                 {
@@ -2927,9 +2948,10 @@ static void lDRV_SDSPI_BufferIOTasks
                 }
                 /* See DRV_SDSPI_CMD_CONFIRM_EXEC_ERROR. */
                 SYS_PORT_PinSet(dObj->chipSelectPin);
-                LOG_E("SD: write in doubt, re-sending blk=%lu (try %u)",
+                LOG_E("SD: write in doubt, re-sending blk=%lu (try %u, cause=%.12s)",
                         (unsigned long)currentBufObj->blockStart,
-                        (unsigned)dObj->writeInDoubtRetries);
+                        (unsigned)dObj->writeInDoubtRetries,
+                        lDRV_SDSPI_AbortName(dObj->ioAbortCause));
                 dObj->taskBufferIOState = DRV_SDSPI_TASK_PROCESS_WRITE;
                 break;
             }
@@ -2945,6 +2967,17 @@ static void lDRV_SDSPI_BufferIOTasks
             {
                 currentBufObj->status = DRV_SDSPI_COMMAND_ERROR_UNKNOWN;
                 evtStatus = DRV_SDSPI_EVENT_COMMAND_ERROR;
+                /* #1217: one line per failed write request, naming what
+                 * abandoned its last attempt. What abandons writes in the
+                 * field is still unknown; this is how a field log answers it. */
+                if (currentBufObj->opType == DRV_SDSPI_OPERATION_TYPE_WRITE)
+                {
+                    LOG_E("SD: write failed blk=%lu n=%lu tries=%u cause=%.12s",
+                            (unsigned long)currentBufObj->blockStart,
+                            (unsigned long)currentBufObj->nBlocks,
+                            (unsigned)dObj->writeInDoubtRetries + 1U,
+                            lDRV_SDSPI_AbortName(dObj->ioAbortCause));
+                }
                 /* #1217: see DRV_SDSPI_CMD_CONFIRM_EXEC_ERROR. */
                 SYS_PORT_PinSet(dObj->chipSelectPin);
             }
@@ -3268,7 +3301,19 @@ void DRV_SDSPI_ReleaseBus(SYS_MODULE_OBJ object)
             (void) DRV_SDSPI_TimerStop(dObj);
             dObj->timerFlag = false;
         }
-        dObj->taskBufferIOState = DRV_SDSPI_TASK_READ_WRITE_ABORT;
+        /* #1217: in the shipped firmware no WRITE should reach this branch.
+         * Every write is driven to completion synchronously: FatFs's
+         * disk_write spins in diskio.c's disk_checkCommandStatus on the media
+         * manager's TransferTask, which runs DRV_SDSPI_Tasks, and the media
+         * manager's own read-modify-write waits the same way. Every
+         * ReleaseBus caller runs on that same SD task, between those calls.
+         * The one asynchronous request is the media manager's sector-0 read
+         * at mount (SYS_FS_MEDIA_MANAGER_Tasks), a read, which is safe to end.
+         * A write ended here loses its re-send, so a field log showing this
+         * line for a write means that reasoning has stopped holding. */
+        LOG_E("SD: bus released with a request in flight (state=%u)",
+                (unsigned)dObj->taskBufferIOState);
+        lDRV_SDSPI_IoAbort(dObj, DRV_SDSPI_ABORT_RELEASE);
     }
 }
 

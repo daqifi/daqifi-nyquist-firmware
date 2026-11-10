@@ -17,7 +17,10 @@
  *
  * What this cannot show is that a real card behaves like the model. That is the
  * bench's job; #1217's success criteria keep the fault-injection and soak runs. */
+#include <stdarg.h>
 #include <stdbool.h>
+#include <stdio.h>
+#include <string.h>
 #include <stdint.h>
 
 #include "configuration.h"
@@ -468,6 +471,33 @@ bool SYS_PORT_PinRead(SYS_PORT_PIN pin)
 }
 
 unsigned gTest1217LogE;
+
+#define LOG_KEEP 16U
+static char gLogLines[LOG_KEEP][160];
+
+void test1217_LogE(const char* fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    (void) vsnprintf(gLogLines[gTest1217LogE % LOG_KEEP], sizeof(gLogLines[0]), fmt, ap);
+    va_end(ap);
+    gTest1217LogE++;
+}
+
+/* Whether one of the last LOG_KEEP LOG_E lines contains all of a and b. */
+static bool logged(const char* a, const char* b)
+{
+    const unsigned n = (gTest1217LogE < LOG_KEEP) ? gTest1217LogE : LOG_KEEP;
+    for (unsigned i = 0U; i < n; i++)
+    {
+        const char* line = gLogLines[(gTest1217LogE - 1U - i) % LOG_KEEP];
+        if ((strstr(line, a) != NULL) && ((b == NULL) || (strstr(line, b) != NULL)))
+        {
+            return true;
+        }
+    }
+    return false;
+}
 
 #define TIMERS 8U
 static uint32_t gNowMs;
@@ -1682,6 +1712,45 @@ TEST(fast_mode_healthy_cmd25_leaves_nothing_in_doubt)
     ASSERT_EQ(resyncs, 0U);
 }
 
+/* ---- what abandoned the write is in the log --------------------------------
+ *
+ * The field trigger of #1217 is still unknown, and a field log is the evidence
+ * a customer can send. Every re-send and every failed write names the cause of
+ * the last abandoned attempt. */
+
+TEST(abort_cause_is_named_in_the_resend_log)
+{
+    uint8_t data[BLOCK];
+
+    bootCard();
+    switchCrcMode(false);
+    fill(data, sizeof(data), 0x66U);
+    gFault.action = FAULT_REJECT; /* DRV_SPI refuses to queue the token */
+    gFault.isRead = 0;
+    gFault.len = 1;
+    gFault.firstByte = 0xFE;
+    gFault.afterCmd = 24;
+    gFault.exceptResync = true;
+    ASSERT_EQ(writeBlocks(30U, data, 1U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+    ASSERT_TRUE(logged("re-sending blk=30", "cause=spi-add"));
+    ASSERT_FALSE(logged("write failed", NULL));
+}
+
+TEST(abort_cause_is_named_in_the_failure_log)
+{
+    uint8_t data[BLOCK];
+
+    bootCard();
+    switchCrcMode(false);
+    fill(data, sizeof(data), 0x67U);
+    card.nextWriteR1 = 0x20;  /* address error, every try */
+    card.nextWriteR1Times = 1U + test1217_RetryLimit();
+    ASSERT_EQ(writeBlocks(30U, data, 1U), DRV_SDSPI_EVENT_COMMAND_ERROR);
+    ASSERT_TRUE(logged("re-sending blk=30", "cause=r1"));
+    ASSERT_TRUE(logged("write failed blk=30", "tries=3 cause=r1"));
+    assertCardHealthy(31U);
+}
+
 /* Abandoned before the first block: the re-send writes all three. */
 TEST(fast_mode_cmd25_abandoned_before_the_first_block_is_retried_and_lands)
 {
@@ -1847,6 +1916,9 @@ TEST(release_bus_during_a_write_in_doubt_does_not_retry_without_the_request)
     }
     ASSERT_EQ(gFault.action, FAULT_NONE); /* the token was rejected */
     DRV_SDSPI_ReleaseBus(0);
+    /* Unreachable in the shipped firmware (see DRV_SDSPI_ReleaseBus), so it
+     * must say so if it happens. */
+    ASSERT_TRUE(logged("bus released with a request in flight", NULL));
     for (unsigned i = 0U; (i < 20000U) && (gEventsSeen == seen); i++)
     {
         pass();
@@ -2162,6 +2234,8 @@ int main(void)
     RUN(resync_with_a_lost_completion_fails_and_retries);
     RUN(card_that_rejects_cmd59_is_not_mounted_and_says_so);
     RUN(fast_mode_healthy_cmd25_leaves_nothing_in_doubt);
+    RUN(abort_cause_is_named_in_the_resend_log);
+    RUN(abort_cause_is_named_in_the_failure_log);
     RUN(fast_mode_cmd25_abandoned_before_the_first_block_is_retried_and_lands);
     RUN(fast_mode_cmd25_abandoned_between_blocks_resends_the_rest);
     RUN(fast_mode_cmd25_abandoned_at_the_stop_token_writes_nothing_past_the_request);

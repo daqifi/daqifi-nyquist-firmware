@@ -138,6 +138,21 @@
 /* CMD25 only: after the stop-tran token, waiting out the card's busy. */
 #define DRV_SDSPI_RESYNC_STAGE_AFTER_STOP         (2U)
 
+/* #1217: why the current request's last read/write attempt was abandoned
+ * (DRV_SDSPI_OBJ.ioAbortCause), named in the re-send and failure log lines so
+ * a field log says what abandons writes. Kept in step with gDrvSDSPIAbortName. */
+#define DRV_SDSPI_ABORT_NONE                      (0U)
+#define DRV_SDSPI_ABORT_XFER                      (1U) /* DRV_SPI reported a transfer error */
+#define DRV_SDSPI_ABORT_XFER_TIMEOUT              (2U) /* #567 watchdog: completion never came */
+#define DRV_SDSPI_ABORT_ADD                       (3U) /* DRV_SPI refused to queue a transfer */
+#define DRV_SDSPI_ABORT_TIMER                     (4U) /* a SYS_TIME timer could not be started */
+#define DRV_SDSPI_ABORT_R1                        (5U) /* the card answered the write command with an error R1 */
+#define DRV_SDSPI_ABORT_CMD                       (6U) /* the write command did not complete (no R1, bus error, failed resync) */
+#define DRV_SDSPI_ABORT_TOKEN                     (7U) /* the card did not accept the block (CRC or write error) */
+#define DRV_SDSPI_ABORT_BUSY                      (8U) /* the card stayed busy past DRV_SDSPI_WRITE_TIMEOUT_IN_MS */
+#define DRV_SDSPI_ABORT_RELEASE                   (9U) /* DRV_SDSPI_ReleaseBus ended the request */
+#define DRV_SDSPI_ABORT_CAUSES                    (10U)
+
 // *****************************************************************************
 // *****************************************************************************
 // Section: SD Card constants
@@ -1693,6 +1708,10 @@ typedef struct
        init; resyncCount counts writes in doubt that were resynced, i.e. how
        often the protection actually fired since boot. */
     bool                                            crcEnabled;
+
+    /* #1217: DRV_SDSPI_ABORT_*, see there. Sits in the alignment hole after
+       crcEnabled, so it costs no RAM (gDrvSDSPIObj stays 280 B, linker map). */
+    uint8_t                                         ioAbortCause;
     uint32_t                                        resyncCount;
     /* #1217: SD:PROTect. Read only at media init (DRV_SDSPI_INIT_TURN_ON_CRC);
      * crcEnabled is what the card actually runs with. */
