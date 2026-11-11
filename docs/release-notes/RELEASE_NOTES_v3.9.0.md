@@ -252,7 +252,8 @@ board:
   this build.
 - **Companion tests for #1242, #1243, #1244, #1247, #1217 and #1226:** 7/7
   PASS. This was a targeted run of those tests, not the full release-gate
-  suite.
+  suite. The full release-gate run happens after the 3.9.0 release,
+  separately; it is not a precondition of this release.
 - **WiFi:** protobuf streaming stopped cleanly. For CSV over WiFi, see the
   pre-existing limitation under Known issues.
 
