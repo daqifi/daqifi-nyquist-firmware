@@ -2141,9 +2141,10 @@ static void lDRV_SDSPI_AttachDetachTasks
              * the first poll after resume only records the detach (START_INIT
              * reports DETACHED on its set-up pass, ReleaseBus having reset
              * cmdDetectState), and the re-attach waits for the NEXT poll, a
-             * full cadence interval later. Measured on the bench: the card
-             * reads absent for ~2.4-2.9 s after SYST:POW:STAT 1, and
-             * SPACe?/LISt? in that window answer "No SD Card Detected".
+             * full cadence interval later. Measured on the bench (lane nq-d,
+             * 2026-11-11): one SD:SPACe? sent 0.7 s after SYST:POW:STAT?
+             * read 1 answered "No SD Card Detected" 4/4 before this change;
+             * with it, 4/4 succeed at 0.3 s.
              *
              * So report the detach NOW, exactly as CHECK_DEVICE's own detach
              * branch does, and go straight to CHECK_DEVICE with detection
