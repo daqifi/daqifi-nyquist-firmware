@@ -1734,6 +1734,10 @@ typedef struct
     /* Set by DRV_SDSPI_SetCrcMode from another task; consumed by the detect
      * verdict in DRV_SDSPI_Tasks, which then re-runs media init. */
     volatile bool                                   reinitRequested;
+    /* #756: set by DRV_SDSPI_MediaPowerCycled from the SD task when the SD
+     * rail returns from STANDBY; consumed under transferMutex in
+     * TASK_WAIT_POLLING_TIMER_EXPIRE. */
+    volatile bool                                   powerCycleRequested;
 
 } DRV_SDSPI_OBJ;
 

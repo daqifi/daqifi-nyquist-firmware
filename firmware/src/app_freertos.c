@@ -367,6 +367,7 @@ static void app_WifiTask(void* p_arg) {
  * declaration for the file, so the two consumers below cannot drift apart. */
 extern void DRV_SDSPI_ReleaseBus(SYS_MODULE_OBJ object);
 extern bool DRV_SDSPI_HoldsBus(SYS_MODULE_OBJ object);
+extern void DRV_SDSPI_MediaPowerCycled(SYS_MODULE_OBJ object);  /* #756 */
 
 /**
  * Gracefully shut down SD card operations from within the SD task context.
@@ -669,6 +670,11 @@ static void app_SDCardTask(void* p_arg) {
                 if (pPowerState != NULL &&
                     (pPowerState->powerState == POWERED_UP ||
                      pPowerState->powerState == POWERED_UP_EXT_DOWN)) {
+                    /* #756: every way into this state is a power drop (or
+                     * boot), so the card has just been (re)powered. Tell the
+                     * driver, so it re-detects the card now rather than one
+                     * poll to notice the detach plus one more to re-attach. */
+                    DRV_SDSPI_MediaPowerCycled(sysObj.drvSDSPI0);
                     state = APP_SD_STATE_PROCESS;
                 } else {
                     vTaskDelay(pdMS_TO_TICKS(100));

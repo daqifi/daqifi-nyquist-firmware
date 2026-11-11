@@ -2134,6 +2134,45 @@ static void lDRV_SDSPI_AttachDetachTasks
 
         case DRV_SDSPI_TASK_WAIT_POLLING_TIMER_EXPIRE:
         {
+            /* #756: the SD rail came back from STANDBY. The card lost power,
+             * so whatever this FSM last concluded about it is void: a card
+             * that read ATTACHED before standby is now an uninitialised card
+             * in SD mode. Without this, the FSM finds that out the slow way:
+             * the first poll after resume only records the detach (START_INIT
+             * reports DETACHED on its set-up pass, ReleaseBus having reset
+             * cmdDetectState), and the re-attach waits for the NEXT poll, a
+             * full cadence interval later. Measured on the bench: the card
+             * reads absent for ~2.4-2.9 s after SYST:POW:STAT 1, and
+             * SPACe?/LISt? in that window answer "No SD Card Detected".
+             *
+             * So report the detach NOW, exactly as CHECK_DEVICE's own detach
+             * branch does, and go straight to CHECK_DEVICE with detection
+             * restarted: the card is then reset and initialised within this
+             * one poll. Reporting DETACHED immediately is also the honest
+             * answer for the window itself -- before this, mediaState still
+             * said ATTACHED for a card that had just been unpowered.
+             *
+             * Taken before the forced-expiry handling below, and it also
+             * cancels the cadence timer for the same SYS_TIME slot reason
+             * documented there. */
+            if (dObj->powerCycleRequested == true)
+            {
+                dObj->powerCycleRequested = false;
+                if (dObj->isAttachedLastStatus == DRV_SDSPI_IS_ATTACHED)
+                {
+                    dObj->isAttached = DRV_SDSPI_IS_DETACHED;
+                    dObj->isAttachedLastStatus = DRV_SDSPI_IS_DETACHED;
+                    dObj->mediaState = SYS_MEDIA_DETACHED;
+                    lDRV_SDSPI_RemoveBufferObjects (dObj);
+                }
+                dObj->cmdDetectState = DRV_SDSPI_CMD_DETECT_START_INIT;
+                (void) SYS_TIME_TimerDestroy(dObj->cardPollingTmrHandle);
+                dObj->cardPollingTmrHandle = SYS_TIME_HANDLE_INVALID;
+                dObj->cardPollingTimerExpired = false;
+                dObj->taskState = DRV_SDSPI_TASK_CHECK_DEVICE;
+                break;
+            }
+
             /* #756: a FORCED expiry (DRV_SDSPI_DetectPollExpireNow, called
              * from whichever task dispatched an SCPI command) is honoured
              * here alongside the cadence timer's own expiry. This is the one
@@ -3181,6 +3220,7 @@ SYS_MODULE_OBJ DRV_SDSPI_Initialize
      * starves a WiFi control session during SD logging (#1234). */
     dObj->crcRequested          = false;
     dObj->reinitRequested       = false;
+    dObj->powerCycleRequested   = false;
     dObj->sdspiTokenCount       = 1;
 
     /* Reset the SDSPI attach/detach variables */
@@ -3727,6 +3767,17 @@ void DRV_SDSPI_EventHandlerSet (
         clientObj->context = context;
     }
 }
+/* #756: the SD rail has just been restored (STANDBY -> powered). Called from
+   the SD task, the task that runs DRV_SDSPI_Tasks; served at the FSM's next
+   poll wait, under transferMutex. One aligned bool store, atomic on PIC32MZ. */
+void DRV_SDSPI_MediaPowerCycled(SYS_MODULE_OBJ object)
+{
+    if (object < DRV_SDSPI_INSTANCES_NUMBER)
+    {
+        gDrvSDSPIObj[object].powerCycleRequested = true;
+    }
+}
+
 /* #1217: SD:PROTect, called from the SCPI task while SD is disabled. */
 void DRV_SDSPI_SetCrcMode(SYS_MODULE_OBJ object, bool protect)
 {
