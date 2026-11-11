@@ -1,7 +1,7 @@
 # DAQiFi Nyquist Firmware v3.9.0
 
-**Release date:** TBD
-**Status:** DRAFT. Not tagged.
+**Release date:** 2026-11-11
+**Status:** Released, tagged `v3.9.0` (Latest).
 **Baseline:** v3.8.0. **145 commits** on `main` since `v3.8.0`: 90 fixes,
 8 features, 3 refactors, and the rest docs, tests, CI and lint.
 
