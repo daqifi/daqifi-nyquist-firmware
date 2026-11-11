@@ -253,6 +253,19 @@ The four later merges (#1242, #1243, #1244, #1247) are not covered by these runs
     while logging.
   - This is deliberate: after a card is pulled, silence from the card is not
     proof that it is gone, so the firmware does not treat it as such.
+- **Known limitation, pre-existing: CSV streaming over WiFi near its maximum
+  rate can drop samples.** With 1 T2 channel at the derived maximum rate
+  (about 4.7 kHz), WiFi streaming in CSV intermittently drops samples at the
+  sample pool. In the worst run, about 0.44% of samples were dropped.
+  - **Not new in 3.9.0:** in an A/B on one NQ1 bench board, it failed in 3 of
+    4 runs on 3.9.0 and in 1 of 3 on the 3.9.0 baseline build (`7704cc23`).
+    Those trial counts cannot tell whether the rate of occurrence changed.
+  - **Not visible in the loss counter:** `SampleLossPercent` reads 0 for these
+    drops.
+  - **Protobuf is not affected:** protobuf over WiFi at the same
+    configuration ran clean.
+  - **Workaround:** stream in protobuf over WiFi, or use a lower rate for CSV.
+  - Measured 2026-11-11; not re-measured for these notes.
 - **Intermittent: SD logging of CSV at 11 channels at the T2 cap (1565 Hz).**
   1 failure in 7 runs of 120 s: that run dropped 39,006 B (0.11%) of the SD
   stream through SD-ring back-pressure, with 0 samples lost. The other 6 runs
