@@ -87,6 +87,14 @@ In both modes, **CS goes high on every abort**, before the exclusive lock is rel
 
 **Host coverage:** `tests/host/test_1217_abandoned_write.c` runs the real driver sources against a modelled card.
 
+### The card after STANDBY (#756)
+
+`SYST:POW:STAT 0` takes the SD rail down, and the SD task stops running the SDSPI driver until power returns, so the driver still believes the card is attached. On its own it then needs two detect polls to recover: the first only records the detach, the second (one 1 s cadence interval later) resets and initialises the card. Until then `SPACe?`, `LISt?` and the other SD commands answer `No SD Card Detected` + `-200`.
+
+When the SD task leaves its wait-for-power state it now calls `DRV_SDSPI_MediaPowerCycled`, before running the driver again. That sends the detect FSM straight to its own detach branch and publishes one forced poll expiry, so the card is ready within one card initialisation. It runs synchronously rather than as a flag the FSM serves later: a deferred request could land after the card had re-initialised and a read had taken the SPI lock, and tearing the card down then stranded the lock (audit on the #756 PR). It is safe at that point because every power drop reaches the wait state through `app_SDCard_GracefulShutdown`, whose exits all call `DRV_SDSPI_ReleaseBus`.
+
+Bench (2026-11-11), one `SD:SPACe?` at a fixed delay after `SYST:POW:STAT?` first reads 1, from a client sending nothing in between: before, 0/4 at 0.3 s and at 0.7 s, 4/4 at 1.5 s; after, 0/4 at 0.1 s and 4/4 at 0.3 s. A client that queries in the first ~0.2 s still gets the "not detected" answer, so client-side retry after power-on remains worthwhile. Regression test: `test_756_sd_detect_after_powerup.py` in the test suite.
+
 ### SD Card File Splitting
 
 **Feature:** Automatic file splitting prevents FAT32 4GB file size limit issues during long logging sessions.
