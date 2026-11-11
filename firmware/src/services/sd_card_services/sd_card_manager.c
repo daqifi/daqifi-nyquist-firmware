@@ -3351,8 +3351,8 @@ void sd_card_manager_ProcessState() {
                      *     because SCPI_StartStreaming waits for it, so the
                      *     SD-only header block never fired for file 1. Under
                      *     CSV/JSON the encoder's inline header lands there
-                     *     instead; under protobuf file 1 carries no
-                     *     sd_metadata, a pre-existing #196 gap left untouched.
+                     *     instead; under protobuf the streaming task writes
+                     *     file 1's sd_metadata ahead of its first data (#1177).
                      *   - and a NON-STREAMING write session is excluded by
                      *     the second half of the predicate, because this state
                      *     also serves SYST:STOR:SD:BENCHmark. An unconditional

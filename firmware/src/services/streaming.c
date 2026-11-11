@@ -153,7 +153,8 @@ static volatile uint8_t gSdHeaderEnc = 0;     // StreamingEncoding it was built 
  * the cache is always rebuilt for the live session well before any file that
  * consumes it. The session's FIRST file needs no header from here: under
  * CSV/JSON the encoder's own inline header lands at its byte 0, and under
- * protobuf it has never had one (a pre-existing #196 gap).
+ * protobuf the streaming task writes it ahead of the first SD data (#1177,
+ * gSdFirstFileHeaderPending).
  *
  * An intermediate revision used a session EPOCH bumped before the SD arm.
  * That worked for the race but made the gate global, and the audit found two
@@ -3426,7 +3427,8 @@ static void Streaming_WriteSdFirstFileHeader(bool soloSd, size_t sdCap) {
  *     header is itself what lands at byte 0 of such a file, so writing here as
  *     well would duplicate it. Protobuf has no inline header and so no such
  *     predicate; every protobuf file from the first ROTATION onward carries
- *     its sd_metadata. */
+ *     its sd_metadata from here, and file 1 gets it from the streaming task
+ *     (#1177, Streaming_WriteSdFirstFileHeader). */
 size_t Streaming_GetSdFileHeader(const uint8_t** ppHeader) {
     if (ppHeader == NULL || !gSdHeaderValid) {
         return 0;
@@ -3956,9 +3958,9 @@ void streaming_Task(void) {
          * had a separately-written one: the old gSdFileWasReady latch was
          * initialised from IsWriteReady() precisely so the SD-only header
          * block skipped it. For CSV/JSON that is right (the encoder's inline
-         * header lands there instead); for protobuf it means file 1 carries
-         * no sd_metadata, which is a pre-existing #196 gap this change
-         * deliberately does not alter. */
+         * header lands there instead); for protobuf, file 1 gets it from
+         * Streaming_WriteSdFirstFileHeader ahead of the session's first SD
+         * data (#1177). */
         if (!gSdHeaderValid && gSdExpectedThisSession) {
             Streaming_BuildSdFileHeader(pRunTimeStreamConf->Encoding);
         }
