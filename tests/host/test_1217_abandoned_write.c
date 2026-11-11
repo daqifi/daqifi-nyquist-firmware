@@ -2634,6 +2634,9 @@ TEST(fast_mode_cmd25_mid_block_through_a_detach_captures_no_command)
     const unsigned stops = cmdCount(EV_STOP_TOKEN);
     const unsigned cmd0 = cmdCount(0);
     ASSERT_TRUE(runUntilAttached(60000U));
+    /* The hazard itself: CMD0 sent into the open block is taken as data, not
+     * parsed as a command, and the card is left capturing. */
+    ASSERT_TRUE(card.state != CARD_CAPTURE);
     ASSERT_TRUE(cmdCount(0) > cmd0);
     ASSERT_TRUE(cmdCount(EV_STOP_TOKEN) > stops); /* the resync ended the write */
     ASSERT_TRUE(!logged("resolved by detach", NULL)); /* the card answered */

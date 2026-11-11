@@ -142,6 +142,15 @@
 #define DRV_SDSPI_RESYNC_STAGE_CMD12_R1           (3U)
 /* CMD25 only: CMD12's R1 is in; waiting out its busy (R1b). */
 #define DRV_SDSPI_RESYNC_STAGE_AFTER_CMD12        (4U)
+
+/* #1217 (fw#1240 post-merge audit): dObj->resyncFlags.
+   HEARD: this resync attempt read a byte other than 0xFF -- busy, a token or
+   an R1 -- so something on the bus answered it.
+   DOUBT_DETACHED: detection declared the card detached while a write was in
+   doubt. See lDRV_SDSPI_WriteResyncTasks's CMD12 R1 stage for how the two
+   resolve a doubt that no card can answer. */
+#define DRV_SDSPI_RESYNC_FLAG_HEARD               (0x01U)
+#define DRV_SDSPI_RESYNC_FLAG_DOUBT_DETACHED      (0x02U)
 /* Reads allowed for CMD12's R1: NCR is at most eight bytes, plus margin. */
 #define DRV_SDSPI_RESYNC_CMD12_R1_READS           (16U)
 
@@ -1638,6 +1647,10 @@ typedef struct
     uint8_t                                         resyncStage;
     uint8_t                                         resyncIdleReads;
     uint8_t                                         resyncToken;
+
+    /* #1217: DRV_SDSPI_RESYNC_FLAG_*. Costs no RAM: gDrvSDSPIObj is still
+       280 bytes with it (XC32 v4.60 linker map, 2026-11-10). */
+    uint8_t                                         resyncFlags;
 
     /* Flag indicating the presence of the SD Card */
     SYS_MEDIA_STATUS                                mediaState;

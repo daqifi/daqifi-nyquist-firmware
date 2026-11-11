@@ -588,6 +588,7 @@ static void lDRV_SDSPI_WriteResyncEnd(DRV_SDSPI_OBJ* dObj, bool resolved)
         LOG_E("SD: write in doubt resynced (type=%u token=0x%02X)",
                 (unsigned)dObj->writeInDoubt, (unsigned)dObj->resyncToken);
         dObj->writeInDoubt = DRV_SDSPI_WRITE_IN_DOUBT_NONE;
+        dObj->resyncFlags = 0U;
         (void) DRV_SDSPI_SPIExclusiveAccess(dObj, false);
         dObj->cmdState = DRV_SDSPI_CMD_FRAME_PACKET;
     }
@@ -654,6 +655,7 @@ static void lDRV_SDSPI_WriteResyncTasks(DRV_SDSPI_OBJ* dObj)
             dObj->cmdRespTmrFlag = true;
             dObj->resyncToken = 0xFFU;
             dObj->resyncIdleReads = 0U;
+            dObj->resyncFlags &= (uint8_t)~DRV_SDSPI_RESYNC_FLAG_HEARD;
             dObj->resyncStage = DRV_SDSPI_RESYNC_STAGE_BEFORE_BLOCK;
             lDRV_SDSPI_WriteResyncBusyRead(dObj);
             break;
@@ -684,6 +686,10 @@ static void lDRV_SDSPI_WriteResyncTasks(DRV_SDSPI_OBJ* dObj)
         case DRV_SDSPI_CMD_RESYNC_BUSY_CHECK:
 
             rxByte = dObj->pCmdResp[0];
+            if (rxByte != 0xFFU)
+            {
+                dObj->resyncFlags |= DRV_SDSPI_RESYNC_FLAG_HEARD;
+            }
 
             if ((dObj->resyncStage == DRV_SDSPI_RESYNC_STAGE_AFTER_BLOCK) &&
                     (dObj->resyncToken == 0xFFU))
@@ -707,9 +713,36 @@ static void lDRV_SDSPI_WriteResyncTasks(DRV_SDSPI_OBJ* dObj)
                 }
                 else if (++dObj->resyncIdleReads >= DRV_SDSPI_RESYNC_CMD12_R1_READS)
                 {
-                    /* No answer at all: the card cannot be known to be out
-                     * of the write, so the write stays in doubt. */
-                    lDRV_SDSPI_WriteResyncEnd(dObj, false);
+                    if ((dObj->resyncFlags == DRV_SDSPI_RESYNC_FLAG_DOUBT_DETACHED))
+                    {
+                        /* fw#1240 audit: since detection declared the card
+                         * detached, this whole resync -- busy reads, 514 x
+                         * 0xFF, the stop token, CMD12 and its NCR -- read
+                         * nothing but 0xFF. A card still in an SPI write
+                         * cannot do that: one part-way through a block sends
+                         * its data response after the filler, one waiting for
+                         * a token goes busy on the stop token, and either way
+                         * CMD12 gets an R1 (SD spec v6.00, 7.3.3.1). Silence
+                         * is an empty slot, or a card put back: powered up in
+                         * SD mode, it answers nothing on MISO until a CMD0
+                         * with CS low (7.2.1), and this gate is what withholds
+                         * that CMD0, so the doubt would never clear and
+                         * detection never reattach. Neither is in a write.
+                         * Detach alone proves nothing: a powered card that is
+                         * mid-block fails detection too, and is answered for
+                         * by the HEARD half. Assumes MISO reads 0xFF with no
+                         * card driving it; if not, this never fires and the
+                         * write stays in doubt as before. */
+                        LOG_E("SD: write in doubt resolved by detach: resync heard nothing (#1217)");
+                        lDRV_SDSPI_WriteResyncEnd(dObj, true);
+                    }
+                    else
+                    {
+                        /* No answer at all and no detach: the card cannot be
+                         * known to be out of the write, so the write stays in
+                         * doubt. */
+                        lDRV_SDSPI_WriteResyncEnd(dObj, false);
+                    }
                 }
                 else
                 {
@@ -925,10 +958,12 @@ static void lDRV_SDSPI_CommandSend
             if (command == DRV_SDSPI_WRITE_SINGLE_BLOCK)
             {
                 dObj->writeInDoubt = DRV_SDSPI_WRITE_IN_DOUBT_SINGLE;
+                dObj->resyncFlags = 0U;
             }
             else if (command == DRV_SDSPI_WRITE_MULTI_BLOCK)
             {
                 dObj->writeInDoubt = DRV_SDSPI_WRITE_IN_DOUBT_MULTI;
+                dObj->resyncFlags = 0U;
             }
             else
             {
@@ -2265,6 +2300,14 @@ static void lDRV_SDSPI_AttachDetachTasks
                 {
                     dObj->taskState = DRV_SDSPI_TASK_START_POLLING_TIMER;
                     dObj->mediaState = SYS_MEDIA_DETACHED;
+                    /* fw#1240 audit: NOT a reason to clear writeInDoubt -- a
+                     * powered card still in the write fails detection too.
+                     * It only lets a resync that hears nothing at all resolve
+                     * the doubt (see the CMD12 R1 stage of the resync). */
+                    if (dObj->writeInDoubt != DRV_SDSPI_WRITE_IN_DOUBT_NONE)
+                    {
+                        dObj->resyncFlags |= DRV_SDSPI_RESYNC_FLAG_DOUBT_DETACHED;
+                    }
                     lDRV_SDSPI_RemoveBufferObjects (dObj);
                     /* SD Card seems to have been removed, check for attach */
                     dObj->cmdDetectState = DRV_SDSPI_CMD_DETECT_START_INIT;
@@ -2874,6 +2917,7 @@ static void lDRV_SDSPI_BufferIOTasks
             {
                 /* #1217: block accepted and programmed, card no longer busy. */
                 dObj->writeInDoubt = DRV_SDSPI_WRITE_IN_DOUBT_NONE;
+                dObj->resyncFlags = 0U;
 
                 if (currentBufObj->nBlocks > 1U)
                 {
@@ -2974,6 +3018,7 @@ static void lDRV_SDSPI_BufferIOTasks
                 dObj->timerFlag = false;
                 /* #1217: the stop token was taken and programming finished. */
                 dObj->writeInDoubt = DRV_SDSPI_WRITE_IN_DOUBT_NONE;
+                dObj->resyncFlags = 0U;
                 dObj->taskBufferIOState = DRV_SDSPI_TASK_PROCESS_NEXT;
             }
             break;
