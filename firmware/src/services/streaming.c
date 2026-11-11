@@ -3384,34 +3384,49 @@ static void Streaming_BuildSdFileHeader(StreamingEncoding encoding) {
 /* #1177: write the session's sd_metadata at the head of file 1, once.
  *
  * Called from the encoder loop's SD branch, before that iteration's data, so
- * the header lands ahead of the session's first SD bytes. The pending flag is
- * cleared whether or not the write lands: a header retried later would land
- * in the middle of the data.
+ * the header lands ahead of the session's first SD bytes.
  *
  * The header goes in only when the ring has room for it AND the batch that
  * follows (`sdFree`, read at the top of this iteration, is a lower bound: this
  * task is the ring's only producer and the SD task only frees space). Without
  * that check the header could take the room the first batch needed, and that
  * all-or-nothing write would then be dropped, or would stall solo-SD for its
- * 10 s retry, on a healthy card (#1177 audit round 1). When both do not fit,
- * the data wins: the file is still valid protobuf without the metadata, as
- * every file 1 was before, and the miss is logged. It fits whenever the first
- * batch leaves the header's ~70 B of a ring that is empty at session start. */
-static void Streaming_WriteSdFirstFileHeader(size_t sdFree, size_t dataLen) {
-    gSdFirstFileHeaderPending = false;
+ * 10 s retry, on a healthy card (audit round 1). The batch is sized with the
+ * header's bytes reserved (sdHdrReserve), so the two normally fit.
+ *
+ * Returns true once the header is in the ring, and only then clears the
+ * pending flag. When it is not written the flag stays set, so a later
+ * iteration tries again -- correct as long as no DATA has reached the ring
+ * yet, which is why Streaming_SdFirstDataWritten() gives up on the header the
+ * moment a batch lands without it (audit round 2). */
+static bool Streaming_WriteSdFirstFileHeader(size_t sdFree, size_t dataLen) {
     if (!gSdHeaderValid || gSdHeaderLen == 0u) {
-        return;
+        gSdFirstFileHeaderPending = false;
+        return false;
     }
     size_t len = (size_t)gSdHeaderLen;
-    size_t wr = 0u;
-    if (sdFree >= dataLen && sdFree - dataLen >= len) {
-        wr = sd_card_manager_WriteToBuffer((const char*)gSdHeaderBytes, len);
+    if (sdFree < dataLen || sdFree - dataLen < len) {
+        return false;
     }
-    if (wr != len) {
-        LOG_E("SD: first file's protobuf metadata not written (%u B free, "
-              "%u B data) - that file has no sd_metadata (#1177)",
-              (unsigned)sdFree, (unsigned)dataLen);
+    if (sd_card_manager_WriteToBuffer((const char*)gSdHeaderBytes, len) != len) {
+        return false;
     }
+    gSdFirstFileHeaderPending = false;
+    return true;
+}
+
+/* #1177: a batch reached the SD ring while file 1's header was still owed.
+ * Anything written after this would land behind data, so the header is given
+ * up and the miss is logged: the file is valid protobuf without metadata, as
+ * every file 1 was before #1177. */
+static void Streaming_SdFirstDataWritten(size_t sdFree, size_t dataLen) {
+    if (!gSdFirstFileHeaderPending) {
+        return;
+    }
+    gSdFirstFileHeaderPending = false;
+    LOG_E("SD: first file's protobuf metadata not written (%u B free, "
+          "%u B data) - that file has no sd_metadata (#1177)",
+          (unsigned)sdFree, (unsigned)dataLen);
 }
 
 /* #824: hand the SD task the bytes to write at the head of a newly opened
@@ -4112,6 +4127,13 @@ void streaming_Task(void) {
                 batchXportCap = sdCap;
             }
         }
+        /* #1177: while file 1's header is still owed, keep its bytes free in
+         * the SD ring when deciding how many more messages this batch takes,
+         * so the header and the batch fit together (audit round 2). Only the
+         * append test below uses it: batchXportCap also decides which packets
+         * can NEVER be written, and that verdict must not shrink. */
+        size_t sdHdrReserve = (hasSD && gSdFirstFileHeaderPending)
+                            ? (size_t)gSdHeaderLen : 0u;
         packetSize = 0;
         for (uint32_t batchIdx = 0; batchIdx < STREAMING_BATCH_MAX; batchIdx++) {
             bool ainNow = !AInSampleList_IsEmpty();
@@ -4154,11 +4176,12 @@ void streaming_Task(void) {
                 if (encRoom < STREAMING_BATCH_MIN_ROOM) {
                     break;                   // no encoder-buffer room
                 }
-                if ((packetSize + STREAMING_BATCH_MIN_ROOM) > batchXportFree) {
+                if ((packetSize + STREAMING_BATCH_MIN_ROOM + sdHdrReserve) >
+                        batchXportFree) {
                     break;                   // would overflow the smallest active ring
                 }
-                size_t ringRoom = (batchXportCap > packetSize)
-                                ? (batchXportCap - packetSize) : 0;
+                size_t ringRoom = (batchXportCap > packetSize + sdHdrReserve)
+                                ? (batchXportCap - packetSize - sdHdrReserve) : 0;
                 if (ringRoom < encRoom) {
                     encRoom = ringRoom;
                 }
@@ -4411,7 +4434,7 @@ void streaming_Task(void) {
             }
             if (hasSD) {
                 if (gSdFirstFileHeaderPending) {
-                    Streaming_WriteSdFirstFileHeader(sdSize, packetSize);
+                    (void)Streaming_WriteSdFirstFileHeader(sdSize, packetSize);
                 }
                 if (pRunTimeStreamConf->ActiveInterface != StreamingInterface_SD) {
                     /* #534: multi-output — a stalled SD must never block the
@@ -4432,8 +4455,11 @@ void streaming_Task(void) {
                      * drop+count, mirroring the USB side of this branch.
                      * Solo-SD keeps the blocking backpressure below
                      * (#520: pool absorbs the burst; single drop point). */
-                    if (sd_card_manager_WriteToBuffer((const char*)buffer,
-                                                      packetSize) != packetSize) {
+                    size_t sdWr = sd_card_manager_WriteToBuffer(
+                            (const char*)buffer, packetSize);
+                    if (sdWr == packetSize) {
+                        Streaming_SdFirstDataWritten(sdSize, packetSize);
+                    } else {
                         /* Skip the bookkeeping when streaming was stopped
                          * mid-iteration — mirrors WriteWithRetry's STOPPED
                          * path: a non-write during the stop transition (file
@@ -4456,8 +4482,10 @@ void streaming_Task(void) {
                         LOG_E_SESSION(LOG_SESSION_SD_DROP,
                             "Streaming: SD write gave up - interface dead (10 s) or packet larger than the SD ring (#1021)");
                     }
-                    /* else: wr == packetSize (success) or
-                     *       wr == STREAM_WRITE_RETURN_STOPPED (stop-abort,
+                    else if (wr == packetSize) {
+                        Streaming_SdFirstDataWritten(sdSize, packetSize);
+                    }
+                    /* else: wr == STREAM_WRITE_RETURN_STOPPED (stop-abort,
                      *       intentional, no bookkeeping). */
                 }
             }
