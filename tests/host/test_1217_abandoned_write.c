@@ -42,6 +42,7 @@ enum {
     EV_BLOCK_PROGRAMMED,
     EV_STOP_TOKEN,
     EV_BLOCK_DROPPED,
+    EV_NATIVE_IGNORED,   /* a powered-up card in SD mode ignored a frame */
 };
 
 typedef enum {
@@ -52,6 +53,9 @@ typedef enum {
     CARD_CAPTURE,        /* taking a block */
     CARD_MULTI_ERROR,    /* a CMD25 block got a write error: only CMD12 ends it */
     CARD_DEAD,           /* drives nothing, parses nothing, until power-cycled */
+    CARD_ABSENT,         /* not in the slot: MISO floats high, nothing is heard */
+    CARD_NATIVE,         /* powered up in SD mode: only CMD0 with CS low is heard
+                          * (SD spec v6.00, 7.2.1), and it is not answered on MISO */
 } CardState;
 
 static struct {
@@ -198,6 +202,20 @@ static void cardCommand(uint8_t cmd, uint32_t arg, uint8_t crcField)
     static bool nextIsApp = false;
     const bool crcChecked = card.crcOn || (cmd == 0U) || (cmd == 8U);
     const uint8_t idleBit = card.idle ? 1U : 0U;
+
+    if (card.state == CARD_NATIVE)
+    {
+        /* SD spec v6.00, 7.2.1: a card powers up in SD mode and enters SPI
+         * mode only on CMD0 received with CS asserted (the SPI model clocks
+         * the card only while CS is low). Anything else gets no SPI answer;
+         * in SD mode a response would be on CMD, which is MOSI here. */
+        if ((cmd != 0U) || (modelCrc7(head, 5U) != crcField))
+        {
+            cardEvent(EV_NATIVE_IGNORED);
+            return;
+        }
+        card.state = CARD_READY;
+    }
 
     if (crcChecked && (modelCrc7(head, 5U) != crcField))
     {
@@ -404,6 +422,7 @@ static void cardBit(unsigned bit)
     {
         case CARD_READY:
         case CARD_MULTI_ERROR:
+        case CARD_NATIVE:
             if ((card.busyLeft > 0U) || card.stuckBusy)
             {
                 return; /* "all commands rejected" while programming */
@@ -433,6 +452,7 @@ static void cardBit(unsigned bit)
             break;
 
         case CARD_DEAD:
+        case CARD_ABSENT:
             return;
 
         case CARD_WAIT_SINGLE:
@@ -488,6 +508,10 @@ static uint8_t cardClock(uint8_t mosi)
 {
     uint8_t miso = 0xFFU;
 
+    if (card.state == CARD_ABSENT)
+    {
+        return miso;
+    }
     if (card.outCount > 0U)
     {
         miso = card.out[card.outHead];
@@ -513,6 +537,30 @@ static uint8_t cardClock(uint8_t mosi)
         cardBit((mosi >> b) & 1U);
     }
     return miso;
+}
+
+/* The card leaves the slot: whatever it was doing is lost with its power. */
+static void cardPull(void)
+{
+    card.state = CARD_ABSENT;
+    card.outHead = card.outCount = 0U;
+    card.busyLeft = 0U;
+    card.stuckBusy = false;
+    card.frame = 0U;
+    card.frameBits = 0U;
+    card.captureBits = 0U;
+    card.multiRejected = false;
+}
+
+/* A card goes into the slot: freshly powered, in SD mode, CRC off, idle
+ * (SD spec v6.00, 6.4.1 and 7.2.1). Sector contents survive the power cycle. */
+static void cardInsert(void)
+{
+    cardPull();
+    card.state = CARD_NATIVE;
+    card.crcOn = false;
+    card.idle = true;
+    card.acmd41Tries = 0U;
 }
 
 /* ---- the pin, the clock and DRV_SPI ---------------------------------------- */
@@ -2468,6 +2516,176 @@ TEST(card_that_rejects_cmd59_is_not_mounted_and_says_so)
     ASSERT_EQ(cmdCount(24), 0);
 }
 
+/* ---- a write in doubt and a detach (#1240 post-merge audit) ----------------
+ *
+ * A CMD25 in doubt is ended by a resync whose last step needs CMD12's R1. A
+ * card pulled mid-write and put back is powered up in SD mode and answers
+ * nothing on MISO until a CMD0 with CS low (SD spec v6.00, 7.2.1), and the
+ * resync gates every command, CMD0 included, so before this fix detection never
+ * reattached the card until a reboot. Detach is NOT evidence the card left the
+ * write (a powered card that is mid-block fails detection too), so the doubt is
+ * resolved only by a resync that heard nothing at all, AFTER a detach. */
+
+extern unsigned test1217_WriteInDoubt(void);
+
+static bool runUntilDetached(unsigned maxPasses)
+{
+    for (unsigned i = 0U; i < maxPasses; i++)
+    {
+        if (!DRV_SDSPI_IsAttached(gHandle))
+        {
+            return true;
+        }
+        pass();
+    }
+    return false;
+}
+
+/* A fast-mode CMD25 whose stop token is lost on every try: the request fails
+ * with the card waiting for a token and the driver holding a CMD25 in doubt. */
+static void leaveCmd25InDoubt(uint8_t seed)
+{
+    uint8_t data[3U * BLOCK];
+
+    bootCard();
+    switchCrcMode(false);
+    fill(data, sizeof(data), seed);
+    gFault.action = FAULT_REJECT;
+    gFault.isRead = 0;
+    gFault.len = 1;
+    gFault.firstByte = 0xFD;
+    gFault.afterCmd = 25;
+    gFault.times = 1U + test1217_RetryLimit();
+    gFault.exceptResync = true;
+    ASSERT_EQ(writeBlocks(40U, data, 3U), DRV_SDSPI_EVENT_COMMAND_ERROR);
+    ASSERT_EQ(gFault.action, FAULT_NONE);
+    ASSERT_EQ(card.state, CARD_WAIT_MULTI);                         /* premise */
+    ASSERT_EQ(test1217_WriteInDoubt(), 2U /* MULTI */); /* premise */
+}
+
+/* T1, the audit's reproduction: pull the card during a CMD25 in doubt, leave
+ * it out until detection says detached, put it back. It must be reattached. */
+TEST(fast_mode_cmd25_in_doubt_card_pulled_and_reinserted_is_reattached)
+{
+    leaveCmd25InDoubt(0x71U);
+    cardPull();
+    ASSERT_TRUE(runUntilDetached(20000U));
+
+    passes(5000U); /* out of the slot for a while */
+    const unsigned cmd0 = cmdCount(0);
+    cardInsert();
+    ASSERT_TRUE(runUntilAttached(60000U)); /* 60 simulated seconds */
+    ASSERT_TRUE(cmdCount(0) > cmd0);
+    ASSERT_EQ(test1217_WriteInDoubt(), 0U /* NONE */);
+    ASSERT_TRUE(logged("resolved by detach", NULL));
+    ASSERT_TRUE(sectorUntouched(43U));
+    assertCardHealthy(45U);
+}
+
+/* T2, the negative control. The card stays in the slot, powered, part-way
+ * through a CMD25 block, while the bus fails long enough for detection to say
+ * detached. When the bus comes back the card is still capturing, so whatever
+ * is clocked next becomes sector data. Clearing the doubt on the detach would
+ * send CMD0 into it: the #1217 image. It must be ended by the resync first. */
+TEST(fast_mode_cmd25_mid_block_through_a_detach_captures_no_command)
+{
+    uint8_t data[3U * BLOCK];
+    DRV_SDSPI_COMMAND_HANDLE h = DRV_SDSPI_COMMAND_HANDLE_INVALID;
+
+    bootCard();
+    switchCrcMode(false);
+    fill(data, sizeof(data), 0x72U);
+
+    /* The first block's data is lost after its token: the card is capturing. */
+    gFault.action = FAULT_REJECT;
+    gFault.isRead = 0;
+    gFault.len = (int)BLOCK;
+    gFault.afterCmd = 25;
+    gFault.exceptResync = true;
+    const unsigned seen = gEventsSeen;
+    DRV_SDSPI_AsyncWrite(gHandle, &h, (void*)data, 40U, 3U);
+    ASSERT_TRUE(h != DRV_SDSPI_COMMAND_HANDLE_INVALID);
+    for (unsigned i = 0U; (i < 20000U) && (gFault.action != FAULT_NONE); i++)
+    {
+        pass();
+    }
+    ASSERT_EQ(gFault.action, FAULT_NONE);
+    ASSERT_EQ(card.state, CARD_CAPTURE); /* premise */
+
+    /* Then the bus refuses everything, the resync included, until detached. */
+    memset(&gFault, 0, sizeof(gFault));
+    gFault.action = FAULT_REJECT;
+    gFault.isRead = -1;
+    gFault.len = -1;
+    gFault.firstByte = -1;
+    gFault.afterCmd = -1;
+    gFault.times = 1000000U;
+    for (unsigned i = 0U; (i < 20000U) && (gEventsSeen == seen); i++)
+    {
+        pass();
+    }
+    ASSERT_TRUE(gEventsSeen != seen);
+    ASSERT_EQ(gLastEvent, DRV_SDSPI_EVENT_COMMAND_ERROR);
+    ASSERT_TRUE(runUntilDetached(20000U));
+    ASSERT_EQ(card.state, CARD_CAPTURE); /* premise: nothing reached the card */
+    ASSERT_EQ(test1217_WriteInDoubt(), 2U /* MULTI */);
+
+    gFault.action = FAULT_NONE;
+    const unsigned stops = cmdCount(EV_STOP_TOKEN);
+    const unsigned cmd0 = cmdCount(0);
+    ASSERT_TRUE(runUntilAttached(60000U));
+    ASSERT_TRUE(cmdCount(0) > cmd0);
+    ASSERT_TRUE(cmdCount(EV_STOP_TOKEN) > stops); /* the resync ended the write */
+    ASSERT_TRUE(!logged("resolved by detach", NULL)); /* the card answered */
+    /* Sector 40 holds the resync's 0xFF filler -- a sector the request had not
+     * confirmed, as for any abandoned fast-mode block -- and never a command. */
+    for (unsigned i = 0U; i < BLOCK; i++)
+    {
+        ASSERT_EQ(card.sector[40][i], 0xFFU);
+    }
+    ASSERT_TRUE(sectorUntouched(41U));
+    ASSERT_TRUE(sectorUntouched(42U));
+    assertCardHealthy(45U);
+}
+
+/* T3, fail-closed is unchanged while attached: a card that goes silent in the
+ * slot during a CMD25 in doubt gets no command and keeps the doubt, until
+ * detection has declared it detached. */
+TEST(fast_mode_cmd25_in_doubt_silent_card_gets_no_command_while_attached)
+{
+    leaveCmd25InDoubt(0x73U);
+    card.state = CARD_DEAD; /* powered, wedged, drives nothing */
+    const unsigned cmd0 = cmdCount(0);
+    const unsigned cmd10 = cmdCount(10);
+
+    for (unsigned i = 0U; (i < 20000U) && DRV_SDSPI_IsAttached(gHandle); i++)
+    {
+        pass();
+        ASSERT_EQ(cmdCount(0), cmd0);
+        ASSERT_EQ(cmdCount(10), cmd10);
+        ASSERT_EQ(test1217_WriteInDoubt(), 2U /* MULTI */);
+    }
+    ASSERT_TRUE(!logged("resolved by detach", NULL));
+}
+
+/* The wedged-but-powered probe (coordinator, 2026-11-10): the same silent card,
+ * past the detach. Silence after a detach is what resolves the doubt, so this
+ * card is sent CMD0 -- reported, not designed around. Each assertion records
+ * what the model shows; whether a real wedged card can later capture is not
+ * something a model can settle (see the PR). */
+TEST(probe_wedged_silent_card_past_a_detach_is_resolved_and_sent_cmd0)
+{
+    leaveCmd25InDoubt(0x74U);
+    card.state = CARD_DEAD;
+    ASSERT_TRUE(runUntilDetached(20000U));
+    passes(3000U);
+    ASSERT_EQ(test1217_WriteInDoubt(), 0U /* NONE */);
+    ASSERT_TRUE(logged("resolved by detach", NULL));
+    ASSERT_TRUE(!DRV_SDSPI_IsAttached(gHandle)); /* it still answers nothing */
+    ASSERT_TRUE(sectorUntouched(43U));
+    ASSERT_EQ(card.state, CARD_DEAD);
+}
+
 int main(void)
 {
     RUN(init_turns_crc_on_with_valid_frames);
@@ -2521,5 +2739,9 @@ int main(void)
     RUN(fast_mode_refused_cmd25_resync_does_not_swallow_the_re_send);
     RUN(fast_mode_cmd25_abandon_on_every_try_stores_no_bus_traffic);
     RUN(fast_mode_cmd25_abandon_with_winc_traffic_stores_the_data);
+    RUN(fast_mode_cmd25_in_doubt_card_pulled_and_reinserted_is_reattached);
+    RUN(fast_mode_cmd25_mid_block_through_a_detach_captures_no_command);
+    RUN(fast_mode_cmd25_in_doubt_silent_card_gets_no_command_while_attached);
+    RUN(probe_wedged_silent_card_past_a_detach_is_resolved_and_sent_cmd0);
     return TEST_SUMMARY();
 }

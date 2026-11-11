@@ -34,3 +34,8 @@ unsigned test1217_RetryLimit(void)
 {
     return DRV_SDSPI_WRITE_IN_DOUBT_RETRIES;
 }
+
+unsigned test1217_WriteInDoubt(void)
+{
+    return (unsigned)gDrvSDSPIObj[0].writeInDoubt;
+}
