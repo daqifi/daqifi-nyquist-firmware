@@ -143,6 +143,9 @@
 /* CMD25 only: CMD12's R1 is in; waiting out its busy (R1b). */
 #define DRV_SDSPI_RESYNC_STAGE_AFTER_CMD12        (4U)
 
+/* Reads allowed for CMD12's R1: NCR is at most eight bytes, plus margin. */
+#define DRV_SDSPI_RESYNC_CMD12_R1_READS           (16U)
+
 /* #1217 (fw#1240 post-merge audit): dObj->resyncFlags.
    HEARD: this resync attempt read a byte other than 0xFF -- busy, a token or
    an R1 -- so something on the bus answered it.
@@ -151,8 +154,6 @@
    resolve a doubt that no card can answer. */
 #define DRV_SDSPI_RESYNC_FLAG_HEARD               (0x01U)
 #define DRV_SDSPI_RESYNC_FLAG_DOUBT_DETACHED      (0x02U)
-/* Reads allowed for CMD12's R1: NCR is at most eight bytes, plus margin. */
-#define DRV_SDSPI_RESYNC_CMD12_R1_READS           (16U)
 
 /* #1217: why the current request's last read/write attempt was abandoned
  * (DRV_SDSPI_OBJ.ioAbortCause), named in the re-send and failure log lines so

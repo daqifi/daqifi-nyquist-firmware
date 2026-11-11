@@ -713,7 +713,8 @@ static void lDRV_SDSPI_WriteResyncTasks(DRV_SDSPI_OBJ* dObj)
                 }
                 else if (++dObj->resyncIdleReads >= DRV_SDSPI_RESYNC_CMD12_R1_READS)
                 {
-                    if ((dObj->resyncFlags == DRV_SDSPI_RESYNC_FLAG_DOUBT_DETACHED))
+                    if (((dObj->resyncFlags & DRV_SDSPI_RESYNC_FLAG_DOUBT_DETACHED) != 0U) &&
+                            ((dObj->resyncFlags & DRV_SDSPI_RESYNC_FLAG_HEARD) == 0U))
                     {
                         /* fw#1240 audit: since detection declared the card
                          * detached, this whole resync -- busy reads, 514 x
