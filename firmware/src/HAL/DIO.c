@@ -424,6 +424,18 @@ bool DIO_PWMDutyCycleSetSingle(uint8_t dataIndex) {
     return true;
 }
 
+/* TMR3, the shared PWM timebase: 16-bit period register, largest prescaler
+ * /256 (the last entry of tim3PreScalers below). */
+#define DIO_PWM_TMR3_MAX_PERIOD   0xFFFFu
+#define DIO_PWM_TMR3_MAX_PRESCALE 256u
+
+uint32_t DIO_PwmMinFrequencyHz(void) {
+    uint32_t scaled = TimerApi_PeripheralClockHz() / DIO_PWM_TMR3_MAX_PRESCALE;
+    /* ceil(scaled / max period): the smallest frequency whose period fits. */
+    uint32_t minHz = (scaled + DIO_PWM_TMR3_MAX_PERIOD - 1u) / DIO_PWM_TMR3_MAX_PERIOD;
+    return (minHz == 0u) ? 1u : minHz;
+}
+
 bool DIO_PWMFrequencySet(uint8_t dataIndex) {
     /* Bounds-guard the table indexing below — see DIO_WriteStateSingle. */
     if (gpBoardConfig == NULL || dataIndex >= gpBoardConfig->DIOChannels.Size) {
@@ -452,7 +464,7 @@ bool DIO_PWMFrequencySet(uint8_t dataIndex) {
     uint64_t temp;
     uint8_t preScalerIndex = (sizeof (tim3PreScalers) / sizeof (tim3PreScalers[0])) - 1;
     uint16_t period = 2000;
-    temp = period*pwmFrequency; //2000 is kept as the ideal minimum period value
+    temp = (uint64_t)period * pwmFrequency; //2000 is kept as the ideal minimum period value
     for (; preScalerIndex > 0; preScalerIndex--) {
         timer3ScaledClock = timerClock / tim3PreScalers[preScalerIndex];
         if (timer3ScaledClock > temp) {
@@ -460,7 +472,14 @@ bool DIO_PWMFrequencySet(uint8_t dataIndex) {
         }
     }
     timer3ScaledClock = timerClock / tim3PreScalers[preScalerIndex];
-    period = timer3ScaledClock / pwmFrequency;
+    /* #902: the quotient was assigned straight to the 16-bit period, so below
+     * the floor it truncated and the pin ran at an unrelated frequency with no
+     * error. Reject it before touching TMR3, so the running waveform stays. */
+    uint32_t fullPeriod = timer3ScaledClock / pwmFrequency;
+    if (fullPeriod == 0u || fullPeriod > DIO_PWM_TMR3_MAX_PERIOD) {
+        return false;
+    }
+    period = (uint16_t)fullPeriod;
     TimerApi_Stop(3);
     TimerApi_PreScalerSet(3, preScalerIndex);
     TimerApi_PeriodSet(3, period);

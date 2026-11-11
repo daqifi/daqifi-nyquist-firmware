@@ -9355,10 +9355,12 @@ static void EmitDioChannelJson(scpi_t* context,
 
     if (dio->IsPwmCapable) {
         /* PWM freq/res reflect OCMP HAL support
-         * (HAL/DIO.c:DIO_PWMFrequencySet, 16-bit OCMP timer). */
+         * (HAL/DIO.c:DIO_PWMFrequencySet, 16-bit OCMP timer). The floor is
+         * the one DIO:PWM:FREQ enforces (#902), not a literal. */
         scpi_printf(context,
-            "\"pwm\":{\"min_freq_hz\":1,\"max_freq_hz\":50000,"
-            "\"resolution_bits\":16}},\"extensions\":{}}");
+            "\"pwm\":{\"min_freq_hz\":%u,\"max_freq_hz\":50000,"
+            "\"resolution_bits\":16}},\"extensions\":{}}",
+            (unsigned)DIO_PwmMinFrequencyHz());
     }
 }
 
