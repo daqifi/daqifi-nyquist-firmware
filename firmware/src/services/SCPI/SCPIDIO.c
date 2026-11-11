@@ -426,12 +426,25 @@ scpi_result_t SCPI_PWMChannelFrequencySet(scpi_t * context){
     if (SCPI_DioChannelBlocked(context, param1, "DIO:PWM:FREQ")) {
         return SCPI_RES_ERR;
     }
+    /* #902: below the floor the TMR3 period does not fit in 16 bits. Refuse
+     * before the loop below writes the value into every channel. */
+    uint32_t minHz = DIO_PwmMinFrequencyHz();
+    if (param2 < minHz) {
+        LOG_E("DIO:PWM:FREQ: %u Hz is below the %u Hz minimum (16-bit TMR3 at /256)",
+              (unsigned)param2, (unsigned)minHz);
+        SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+        return SCPI_RES_ERR;
+    }
     //only timer 3 is driving all the pwm so, channel independent frequency cannot be generated
     for(i=0;i<pRunTimeDIOChannels->Size;i++){
         pRunTimeDIOChannels->Data[i].PwmFrequency=param2;
     }
     //updating frequency for one channel means updating frequency of all the channels
-    DIO_PWMFrequencySet(param1);
+    if (!DIO_PWMFrequencySet(param1)) {
+        /* Unreachable after the floor check above; logged in case the clock
+         * derivation and that check ever disagree. */
+        LOG_E("DIO:PWM:FREQ: TMR3 refused %u Hz", (unsigned)param2);
+    }
     //update the duty cycle period register of all the channels based on the new frequency
     for(i=0;i<pRunTimeDIOChannels->Size;i++){
         DIO_PWMDutyCycleSetSingle(i);
