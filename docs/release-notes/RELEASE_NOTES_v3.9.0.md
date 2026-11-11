@@ -76,16 +76,15 @@ in three places:
   distinguishable marker plus a SCPI error. Before, it returned an empty
   transfer.
 - **#756 Part A (#1094):** the SD presence gate refreshes before it refuses.
-- **#756 (#1247):** after `SYST:POW:STAT 1`, the SD card is re-detected at
-  once instead of about 1 to 1.5 s later.
+- **#756 (#1247):** after `SYST:POW:STAT 1`, the SD card is re-detected
+  sooner.
   - **Before:** a client that powered the device on and then sent a single SD
     query got `Error !! No SD Card Detected` and `-200` for a card that was in
     the slot.
-  - **Now:** a single SD query at 0.3 s after power-on finds the card (4/4,
-    against 0/4 before). A query within the first ~0.2 s can still get the
-    "not detected" answer, so clients should retry it.
-  - These figures are from #1247's own bench table; they were not
-    re-measured for these notes.
+  - **Now:** detection completes about 0.5 to 1.0 s after `SYST:POW:STAT 1`
+    (measured on `ae098050`, one NQ1 bench board: a single SD query found the
+    card in 1 of 3 tries at 0.5 s and 3 of 3 at 1.0 s). A query sent sooner
+    can still get the "not detected" answer, so clients should retry it.
 - **Teardown and arm paths:**
   - **#963:** mode is cleared inside the claim on every arm refusal.
   - **#964/#968:** FORmat retracts format-pending when its arm is refused.
@@ -226,8 +225,8 @@ in three places:
 ## Validation
 
 E, 2026-11-10 and 2026-11-11, on `main` `7704cc23`, one NQ1 bench board.
-The four later merges (#1242, #1243, #1244, #1247) are not covered by these runs.
-[PENDING: nq-c go/no-go and regression-gate results on `ae098050`]
+The four later merges (#1242, #1243, #1244, #1247) are not covered by these
+runs; the `ae098050` runs below cover them.
 
 - **SD go/no-go:** 4/4 PASS.
 - **Full SD matrix (28 cells, 120 s each):** 27/28 PASS. The one FAIL was
@@ -240,6 +239,21 @@ The four later merges (#1242, #1243, #1244, #1247) are not covered by these runs
   repaired on the first try, 0 failed.
 - **USB at-cap re-check:** 28/28 PASS, with caps identical to the 3.8.0-era
   soak.
+
+E, 2026-11-11, on `main` `ae098050` (firmware CRC32 `989F3292`), one NQ1 bench
+board:
+
+- **SD go/no-go:** 4/4 PASS (protobuf and CSV; 1 T2 channel and 3 T1
+  channels). The device-reported sample rate matched the `7704cc23` baseline
+  in all four, the stream stayed on SD, and nothing was dropped.
+- **#1217 SD write resyncs:** 0, with `SD:PROTect` 0 and with 1. No write was
+  ever in doubt in these runs, so the #1217 repair path was not exercised on
+  this build.
+- **Companion tests for #1242, #1243, #1244, #1247, #1217 and #1226:** 7/7
+  PASS. This was a targeted run of those tests, not the full release-gate
+  suite.
+- **WiFi:** protobuf streaming stopped cleanly. For CSV over WiFi, see the
+  pre-existing limitation under Known issues.
 
 ## Known issues and caveats
 
