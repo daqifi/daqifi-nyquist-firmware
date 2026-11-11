@@ -3386,23 +3386,31 @@ static void Streaming_BuildSdFileHeader(StreamingEncoding encoding) {
  * Called from the encoder loop's SD branch, before that iteration's data, so
  * the header lands ahead of the session's first SD bytes. The pending flag is
  * cleared whether or not the write lands: a header retried later would land
- * in the middle of the data. Solo-SD uses the same backpressure as its data
- * (Streaming_WriteWithRetry); multi-output does not retry, so a stalled SD
- * cannot block USB (#534). A miss is logged; the file is still valid
- * protobuf, it just lacks the metadata, as every file 1 did before. */
-static void Streaming_WriteSdFirstFileHeader(bool soloSd, size_t sdCap) {
+ * in the middle of the data.
+ *
+ * The header goes in only when the ring has room for it AND the batch that
+ * follows (`sdFree`, read at the top of this iteration, is a lower bound: this
+ * task is the ring's only producer and the SD task only frees space). Without
+ * that check the header could take the room the first batch needed, and that
+ * all-or-nothing write would then be dropped, or would stall solo-SD for its
+ * 10 s retry, on a healthy card (#1177 audit round 1). When both do not fit,
+ * the data wins: the file is still valid protobuf without the metadata, as
+ * every file 1 was before, and the miss is logged. It fits whenever the first
+ * batch leaves the header's ~70 B of a ring that is empty at session start. */
+static void Streaming_WriteSdFirstFileHeader(size_t sdFree, size_t dataLen) {
     gSdFirstFileHeaderPending = false;
     if (!gSdHeaderValid || gSdHeaderLen == 0u) {
         return;
     }
     size_t len = (size_t)gSdHeaderLen;
-    size_t wr = soloSd
-        ? Streaming_WriteWithRetry(sd_card_manager_WriteToBuffer,
-                                   gSdHeaderBytes, len, sdCap)
-        : sd_card_manager_WriteToBuffer((const char*)gSdHeaderBytes, len);
-    if (wr != len && wr != STREAM_WRITE_RETURN_STOPPED) {
-        LOG_E("SD: first file's protobuf metadata not written (%u of %u B) - "
-              "that file has no sd_metadata (#1177)", (unsigned)wr, (unsigned)len);
+    size_t wr = 0u;
+    if (sdFree >= dataLen && sdFree - dataLen >= len) {
+        wr = sd_card_manager_WriteToBuffer((const char*)gSdHeaderBytes, len);
+    }
+    if (wr != len) {
+        LOG_E("SD: first file's protobuf metadata not written (%u B free, "
+              "%u B data) - that file has no sd_metadata (#1177)",
+              (unsigned)sdFree, (unsigned)dataLen);
     }
 }
 
@@ -4403,9 +4411,7 @@ void streaming_Task(void) {
             }
             if (hasSD) {
                 if (gSdFirstFileHeaderPending) {
-                    Streaming_WriteSdFirstFileHeader(
-                        pRunTimeStreamConf->ActiveInterface == StreamingInterface_SD,
-                        sdCap);
+                    Streaming_WriteSdFirstFileHeader(sdSize, packetSize);
                 }
                 if (pRunTimeStreamConf->ActiveInterface != StreamingInterface_SD) {
                     /* #534: multi-output — a stalled SD must never block the
