@@ -2,7 +2,7 @@
 
 **Release date:** TBD
 **Status:** DRAFT. Not tagged.
-**Baseline:** v3.8.0. **143 commits** on `main` since `v3.8.0`: 89 fixes,
+**Baseline:** v3.8.0. **145 commits** on `main` since `v3.8.0`: 90 fixes,
 8 features, 3 refactors, and the rest docs, tests, CI and lint.
 
 3.9.0 is a **hardening release**. It adds few features. Most of its weight is
@@ -76,6 +76,16 @@ in three places:
   distinguishable marker plus a SCPI error. Before, it returned an empty
   transfer.
 - **#756 Part A (#1094):** the SD presence gate refreshes before it refuses.
+- **#756 (#1247):** after `SYST:POW:STAT 1`, the SD card is re-detected
+  sooner.
+  - **Before:** a client that powered the device on and then sent a single SD
+    query got `Error !! No SD Card Detected` and `-200` for a card that was in
+    the slot. (This is from #1247's own bench table; it was not re-measured
+    for these notes.)
+  - **Now:** detection completes about 0.5 to 1.0 s after `SYST:POW:STAT 1`
+    (measured on `ae098050`, one NQ1 bench board: a single SD query found the
+    card in 1 of 3 tries at 0.5 s and 3 of 3 at 1.0 s). A query sent sooner
+    can still get the "not detected" answer, so clients should retry it.
 - **Teardown and arm paths:**
   - **#963:** mode is cleared inside the claim on every arm refusal.
   - **#964/#968:** FORmat retracts format-pending when its arm is refused.
@@ -216,7 +226,8 @@ in three places:
 ## Validation
 
 E, 2026-11-10 and 2026-11-11, on `main` `7704cc23`, one NQ1 bench board.
-The three later merges (#1242, #1243, #1244) are not covered by these runs.
+The four later merges (#1242, #1243, #1244, #1247) are not covered by these
+runs; the `ae098050` runs below cover them.
 
 - **SD go/no-go:** 4/4 PASS.
 - **Full SD matrix (28 cells, 120 s each):** 27/28 PASS. The one FAIL was
@@ -230,6 +241,22 @@ The three later merges (#1242, #1243, #1244) are not covered by these runs.
 - **USB at-cap re-check:** 28/28 PASS, with caps identical to the 3.8.0-era
   soak.
 
+E, 2026-11-11, on `main` `ae098050` (firmware CRC32 `989F3292`), one NQ1 bench
+board:
+
+- **SD go/no-go:** 4/4 PASS (protobuf and CSV; 1 T2 channel and 3 T1
+  channels). The device-reported sample rate matched the `7704cc23` baseline
+  in all four, the stream stayed on SD, and nothing was dropped.
+- **#1217 SD write resyncs:** 0, with `SD:PROTect` 0 and with 1. No write was
+  ever in doubt in these runs, so the #1217 repair path was not exercised on
+  this build.
+- **Companion tests for #1242, #1243, #1244, #1247, #1217 and #1226:** 7/7
+  PASS. This was a targeted run of those tests, not the full release-gate
+  suite. The full release-gate run happens after the 3.9.0 release,
+  separately; it is not a precondition of this release.
+- **WiFi:** protobuf streaming stopped cleanly. For CSV over WiFi, see the
+  pre-existing limitation under Known issues.
+
 ## Known issues and caveats
 
 > These must ship with the release.
@@ -242,6 +269,20 @@ The three later merges (#1242, #1243, #1244) are not covered by these runs.
     while logging.
   - This is deliberate: after a card is pulled, silence from the card is not
     proof that it is gone, so the firmware does not treat it as such.
+- **Known limitation, pre-existing: CSV streaming over WiFi near its maximum
+  rate can drop samples.** With 1 T2 channel at the derived maximum rate
+  (about 4.7 kHz), WiFi streaming in CSV intermittently drops samples at the
+  sample pool. In the worst run, about 0.44% of samples were dropped.
+  - **Not new in 3.9.0:** in an A/B on one NQ1 bench board, it failed in 3 of
+    4 runs on 3.9.0 and in 1 of 3 on the 3.9.0 baseline build (`7704cc23`).
+    Those trial counts cannot tell whether the rate of occurrence changed.
+  - **How to see it:** `SampleLossPercent` is a whole-number percentage, so it
+    reads 0 for these sub-1% losses. `QueueDroppedSamples` (and
+    `PoolExhaustedSamples`) in `SYSTem:STReam:STATS?` show the dropped count.
+  - **Protobuf is not affected:** protobuf over WiFi at the same
+    configuration ran clean.
+  - **Workaround:** stream in protobuf over WiFi, or use a lower rate for CSV.
+  - Measured 2026-11-11; not re-measured for these notes.
 - **Intermittent: SD logging of CSV at 11 channels at the T2 cap (1565 Hz).**
   1 failure in 7 runs of 120 s: that run dropped 39,006 B (0.11%) of the SD
   stream through SD-ring back-pressure, with 0 samples lost. The other 6 runs
