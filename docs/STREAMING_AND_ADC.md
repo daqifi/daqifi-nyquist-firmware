@@ -276,7 +276,7 @@ Set on `StartStreamData`, cleared on `StopStreamData`.
 | 9   | 512   | WiFi Overflow | WiFi circular buffer overflow detected |
 | 10  | 1024  | SD Overflow | SD write failure detected |
 | 11  | 2048  | Encoder Fail | Encoder returned 0 bytes with data available |
-| 12  | 4096  | Transport Down | All configured transports unhealthy >grace; streaming auto-stopped (#397). Cleared on next start. Grace tunable via `SYST:STR:CONSumer:GRACe <sec>` (5..300, default 60). LOG_E line `Streaming: all configured transports down >Ns — auto-stop` captures the stop reason. |
+| 12  | 4096  | Transport Down | All configured transports unhealthy >grace; streaming auto-stopped (#397). WiFi counts as healthy only while associated **and** a TCP client holds the slot, so a client that vanishes without a stop ends the session after the grace window (#1072). Cleared on next start. Grace tunable via `SYST:STR:CONSumer:GRACe <sec>` (5..300, default 60). LOG_E line `Streaming: all configured transports down >Ns — auto-stop` captures the stop reason. |
 
 QUES bits are set in real-time during streaming and cleared when streaming stops. The QUES CONDition register reflects the *current* health; the QUES EVENt register latches transitions (clears on read).
 
