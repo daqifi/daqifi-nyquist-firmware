@@ -2,7 +2,7 @@
 
 **Release date:** TBD
 **Status:** DRAFT. Not tagged.
-**Baseline:** v3.8.0. **143 commits** on `main` since `v3.8.0`: 89 fixes,
+**Baseline:** v3.8.0. **145 commits** on `main` since `v3.8.0`: 90 fixes,
 8 features, 3 refactors, and the rest docs, tests, CI and lint.
 
 3.9.0 is a **hardening release**. It adds few features. Most of its weight is
@@ -76,6 +76,14 @@ in three places:
   distinguishable marker plus a SCPI error. Before, it returned an empty
   transfer.
 - **#756 Part A (#1094):** the SD presence gate refreshes before it refuses.
+- **#756 (#1247):** after `SYST:POW:STAT 1`, the SD card is re-detected at
+  once instead of about 1 to 1.5 s later.
+  - **Before:** a client that powered the device on and then sent a single SD
+    query got `Error !! No SD Card Detected` and `-200` for a card that was in
+    the slot.
+  - **Now:** a single SD query at 0.3 s after power-on finds the card (4/4,
+    against 0/4 before). A query within the first ~0.2 s can still get the
+    "not detected" answer, so clients should retry it.
 - **Teardown and arm paths:**
   - **#963:** mode is cleared inside the claim on every arm refusal.
   - **#964/#968:** FORmat retracts format-pending when its arm is refused.
@@ -216,7 +224,8 @@ in three places:
 ## Validation
 
 E, 2026-11-10 and 2026-11-11, on `main` `7704cc23`, one NQ1 bench board.
-The three later merges (#1242, #1243, #1244) are not covered by these runs.
+The four later merges (#1242, #1243, #1244, #1247) are not covered by these runs.
+[PENDING: nq-c go/no-go and regression-gate results on `ae098050`]
 
 - **SD go/no-go:** 4/4 PASS.
 - **Full SD matrix (28 cells, 120 s each):** 27/28 PASS. The one FAIL was
