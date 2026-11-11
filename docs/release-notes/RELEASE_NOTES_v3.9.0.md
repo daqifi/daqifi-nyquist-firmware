@@ -80,7 +80,8 @@ in three places:
   sooner.
   - **Before:** a client that powered the device on and then sent a single SD
     query got `Error !! No SD Card Detected` and `-200` for a card that was in
-    the slot.
+    the slot. (This is from #1247's own bench table; it was not re-measured
+    for these notes.)
   - **Now:** detection completes about 0.5 to 1.0 s after `SYST:POW:STAT 1`
     (measured on `ae098050`, one NQ1 bench board: a single SD query found the
     card in 1 of 3 tries at 0.5 s and 3 of 3 at 1.0 s). A query sent sooner
