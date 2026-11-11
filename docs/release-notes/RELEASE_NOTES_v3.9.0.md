@@ -84,6 +84,8 @@ in three places:
   - **Now:** a single SD query at 0.3 s after power-on finds the card (4/4,
     against 0/4 before). A query within the first ~0.2 s can still get the
     "not detected" answer, so clients should retry it.
+  - These figures are from #1247's own bench table; they were not
+    re-measured for these notes.
 - **Teardown and arm paths:**
   - **#963:** mode is cleared inside the claim on every arm refusal.
   - **#964/#968:** FORmat retracts format-pending when its arm is refused.
