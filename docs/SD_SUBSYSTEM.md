@@ -174,9 +174,9 @@ absent.
 
 - First file: full CSV header (device info, column names with "ain" prefix),
   written **inline by the encoder** — the file is open before the encoder runs,
-  so the SD task has nothing to write yet, which is also why a **protobuf**
-  session's first file carries no `sd_metadata` (files 2..N do; pre-existing
-  #196 gap)
+  so the SD task has nothing to write yet. A **protobuf** session's first file
+  gets its `sd_metadata` from the streaming task instead, written ahead of the
+  session's first SD data (#1177); before that fix, file 1 had none
 - Split files: the same header, written at file open, then data rows
 
 **Safety Features:**
