@@ -3727,6 +3727,86 @@ void DRV_SDSPI_EventHandlerSet (
         clientObj->context = context;
     }
 }
+/* #756: the SD rail has just been restored (STANDBY -> powered).
+
+   While the device is in STANDBY the SD task does not run DRV_SDSPI_Tasks,
+   so the attach FSM still holds whatever it concluded before power went:
+   usually ATTACHED, about a card that has since been unpowered and is now an
+   uninitialised card in SD mode. Left alone, it finds that out the slow way.
+   Its first poll after resume only records the detach (ReleaseBus reset
+   cmdDetectState to START_INIT, whose set-up pass reports DETACHED), and the
+   re-attach waits for the next poll, one cadence interval later. Measured on
+   the bench (lane nq-d, 2026-11-11): one SD:SPACe? sent 0.7 s after
+   SYST:POW:STAT? read 1 answered "No SD Card Detected" 4/4; with this, 4/4
+   succeed at 0.3 s.
+
+   So this sends the FSM straight to CHECK_DEVICE, where its own stock detach
+   branch runs at once, and publishes a forced poll expiry so the poll after
+   that one -- the one that resets and initialises the card -- does not wait
+   out the cadence either.
+
+   It runs HERE, synchronously, on the SD task before that task resumes
+   pumping the driver -- not as a flag the FSM consumes later. A deferred
+   request can be served after the card has already re-initialised and a read
+   has taken the SPI lock, and tearing the card down then would strand that
+   lock (#756 audit r1). At this point nothing can be in flight: every way into
+   the SD task's wait-for-power state goes through
+   app_SDCard_GracefulShutdown, whose every exit calls DRV_SDSPI_ReleaseBus,
+   which ends any request and unwinds the lock; and the driver has not run
+   since.
+
+   The detach itself is NOT done here. CHECK_DEVICE's own detach branch does
+   it (buffer objects, mediaState, the SPI lock), exactly as on the stock
+   path; this only removes the two waits in front of it. Before the first
+   resume (taskState still OPEN_SPI, i.e. boot) there is nothing to undo, so
+   this does nothing. Called from the SD task only. */
+void DRV_SDSPI_MediaPowerCycled(SYS_MODULE_OBJ object)
+{
+    DRV_SDSPI_OBJ* dObj;
+    OSAL_CRITSECT_DATA_TYPE critState;
+
+    if (object >= DRV_SDSPI_INSTANCES_NUMBER)
+    {
+        return;
+    }
+    dObj = &gDrvSDSPIObj[object];
+
+    if (OSAL_MUTEX_Lock(&dObj->transferMutex, OSAL_WAIT_FOREVER) != OSAL_RESULT_SUCCESS)
+    {
+        return;
+    }
+    if (dObj->taskState != DRV_SDSPI_TASK_OPEN_SPI)
+    {
+        /* Cancel the cadence timer for the same SYS_TIME slot reason as the
+           forced-expiry path in TASK_WAIT_POLLING_TIMER_EXPIRE. A media-init
+           timer may also be armed if power went mid-init; that init is void
+           now (the card lost power), so stop it and restart init from its
+           first step for the next attach. */
+        (void) SYS_TIME_TimerDestroy(dObj->cardPollingTmrHandle);
+        dObj->cardPollingTmrHandle = SYS_TIME_HANDLE_INVALID;
+        dObj->cardPollingTimerExpired = false;
+        if (dObj->timerFlag == true)
+        {
+            (void) DRV_SDSPI_TimerStop(dObj);
+            dObj->timerFlag = false;
+        }
+        dObj->mediaInitState = DRV_SDSPI_INIT_CHIP_DESELECT;
+        dObj->cmdDetectState = DRV_SDSPI_CMD_DETECT_START_INIT;
+        dObj->detachedPollCount = 0U;
+        dObj->taskState = DRV_SDSPI_TASK_CHECK_DEVICE;
+
+        /* Publish one forced expiry, outside DetectPollExpireNow's rate
+           limiter: this is once per power-up, not per command, and the
+           limiter's 1 s floor is precisely the wait being removed. Same
+           critical section as the publisher's, for the same lost-increment
+           reason. */
+        critState = OSAL_CRIT_Enter(OSAL_CRIT_TYPE_HIGH);
+        dObj->detectForceReq++;
+        OSAL_CRIT_Leave(OSAL_CRIT_TYPE_HIGH, critState);
+    }
+    (void) OSAL_MUTEX_Unlock(&dObj->transferMutex);
+}
+
 /* #1217: SD:PROTect, called from the SCPI task while SD is disabled. */
 void DRV_SDSPI_SetCrcMode(SYS_MODULE_OBJ object, bool protect)
 {
