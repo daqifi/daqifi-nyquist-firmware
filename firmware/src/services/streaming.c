@@ -172,10 +172,12 @@ static volatile bool gSdHeaderValid = false;
  * has built anything. CSV and JSON cover file 1 with the encoder's inline
  * header; protobuf had nothing, so every session's first file -- the only
  * file of a session that never rotates -- had no timestamp_freq, port counts
- * or device identity. Set when the header is built for a protobuf session,
- * and cleared by the first SD write after it, which puts the header ahead of
- * that write's data. That write is file 1's first data, because a rotation
- * needs MAXSize bytes of output first.
+ * or device identity. Set when the header is built for a protobuf session;
+ * cleared when Streaming_WriteSdFirstFileHeader puts the header in the SD
+ * ring ahead of the session's first data, or by Streaming_SdFirstDataWritten
+ * when data landed first and the header can no longer go ahead of it. The
+ * first data written is file 1's, because a rotation needs MAXSize bytes of
+ * output first.
  *
  * Streaming task only (set in Streaming_BuildSdFileHeader, consumed in the
  * encoder loop, cleared at session start in Streaming_Start), so it needs no
@@ -4128,10 +4130,11 @@ void streaming_Task(void) {
             }
         }
         /* #1177: while file 1's header is still owed, keep its bytes free in
-         * the SD ring when deciding how many more messages this batch takes,
-         * so the header and the batch fit together (audit round 2). Only the
-         * append test below uses it: batchXportCap also decides which packets
-         * can NEVER be written, and that verdict must not shrink. */
+         * the SD ring when sizing this batch -- the first encode and the
+         * append test below both use it -- so the header and the batch fit
+         * together (audit rounds 2-4). batchXportCap itself is left alone: it
+         * also decides which packets can NEVER be written, and that verdict
+         * must not shrink. */
         size_t sdHdrReserve = (hasSD && gSdFirstFileHeaderPending)
                             ? (size_t)gSdHeaderLen : 0u;
         packetSize = 0;
