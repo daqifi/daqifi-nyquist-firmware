@@ -260,8 +260,9 @@ The four later merges (#1242, #1243, #1244, #1247) are not covered by these runs
   - **Not new in 3.9.0:** in an A/B on one NQ1 bench board, it failed in 3 of
     4 runs on 3.9.0 and in 1 of 3 on the 3.9.0 baseline build (`7704cc23`).
     Those trial counts cannot tell whether the rate of occurrence changed.
-  - **Not visible in the loss counter:** `SampleLossPercent` reads 0 for these
-    drops.
+  - **How to see it:** `SampleLossPercent` is a whole-number percentage, so it
+    reads 0 for these sub-1% losses. `QueueDroppedSamples` (and
+    `PoolExhaustedSamples`) in `SYSTem:STReam:STATS?` show the dropped count.
   - **Protobuf is not affected:** protobuf over WiFi at the same
     configuration ran clean.
   - **Workaround:** stream in protobuf over WiFi, or use a lower rate for CSV.
