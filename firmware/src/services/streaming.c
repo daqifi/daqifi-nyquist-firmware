@@ -2488,7 +2488,15 @@ static bool Streaming_AllConfiguredTransportsDead(StreamingRuntimeConfig *cfg) {
     }
 
     if (wantWifi) {
-        if (wifi_manager_IsWiFiConnected()) {
+        /* #1072: WiFi streaming is only delivered while a TCP client holds the
+         * slot. Association alone said "healthy" after the client vanished (a
+         * killed app, a phone out of range), so this timer never started and
+         * the device streamed into nothing until the pool was exhausted, for
+         * as long as nobody noticed. The client slot is freed when the WINC
+         * reports the socket closed -- a FIN/RST at once, a peer that just
+         * went silent once TCP gives up on it -- and the grace window below
+         * then still lets a client that reconnects in time keep the session. */
+        if (wifi_manager_IsWiFiConnected() && wifi_tcp_server_HasActiveClient()) {
             if (gTransportDownSinceWifi != 0) {
                 LOG_I("Streaming: WiFi transport recovered");
                 gTransportDownSinceWifi = 0;
