@@ -164,6 +164,23 @@ static volatile uint8_t gSdHeaderEnc = 0;     // StreamingEncoding it was built 
  * the rotation itself removes the need for the epoch entirely. */
 static volatile bool gSdHeaderValid = false;
 
+/* #1177: the session's FIRST protobuf file still owes its sd_metadata.
+ *
+ * Only a rotation's open writes the cached header (sd_card_manager.c
+ * OPEN_FILE), and file 1 is opened by SCPI_StartStreaming before the encoder
+ * has built anything. CSV and JSON cover file 1 with the encoder's inline
+ * header; protobuf had nothing, so every session's first file -- the only
+ * file of a session that never rotates -- had no timestamp_freq, port counts
+ * or device identity. Set when the header is built for a protobuf session,
+ * and cleared by the first SD write after it, which puts the header ahead of
+ * that write's data. That write is file 1's first data, because a rotation
+ * needs MAXSize bytes of output first.
+ *
+ * Streaming task only (set in Streaming_BuildSdFileHeader, consumed in the
+ * encoder loop, cleared at session start in Streaming_Start), so it needs no
+ * volatile and no lock. */
+static bool gSdFirstFileHeaderPending = false;
+
 // Per-session streaming statistics.
 // Written by: deferred ISR task (queueDroppedSamples, poolExhaustedSamples,
 //             queueOverflowSamples, totalSamplesStreamed)
@@ -2284,6 +2301,7 @@ static void Streaming_Start(void) {
          * time. */
         if (gpRuntimeConfigStream->IsEnabled) {
             gSdHeaderValid = false;
+            gSdFirstFileHeaderPending = false;  // #1177: re-armed by the build
         }
 
         TimerApi_Initialize(gpStreamingConfig->TimerIndex);
@@ -3130,6 +3148,7 @@ void Streaming_Init(tStreamingConfig* pStreamingConfigInit,
     gBenchmarkMode = BENCHMARK_OFF;
     gSdHeaderLen = 0;
     gSdHeaderValid = false;
+    gSdFirstFileHeaderPending = false;
     memset((void*)&gStreamStats, 0, sizeof(gStreamStats));
     gTimerISRCalls = 0;
     gScanStaleDropped = 0;
@@ -3353,8 +3372,37 @@ static void Streaming_BuildSdFileHeader(StreamingEncoding encoding) {
      * pessimising every byte access that survived. */
     gSdHeaderEnc = (uint8_t)encoding;
     gSdHeaderLen = (uint32_t)len;
+    /* #1177: protobuf has no inline header, so file 1 gets this one from the
+     * first SD write. CSV/JSON must not: their inline header is already at
+     * byte 0 of file 1. */
+    gSdFirstFileHeaderPending = (encoding == Streaming_ProtoBuffer && len > 0u);
     __asm__ volatile ("" ::: "memory");
     gSdHeaderValid = true;
+}
+
+/* #1177: write the session's sd_metadata at the head of file 1, once.
+ *
+ * Called from the encoder loop's SD branch, before that iteration's data, so
+ * the header lands ahead of the session's first SD bytes. The pending flag is
+ * cleared whether or not the write lands: a header retried later would land
+ * in the middle of the data. Solo-SD uses the same backpressure as its data
+ * (Streaming_WriteWithRetry); multi-output does not retry, so a stalled SD
+ * cannot block USB (#534). A miss is logged; the file is still valid
+ * protobuf, it just lacks the metadata, as every file 1 did before. */
+static void Streaming_WriteSdFirstFileHeader(bool soloSd, size_t sdCap) {
+    gSdFirstFileHeaderPending = false;
+    if (!gSdHeaderValid || gSdHeaderLen == 0u) {
+        return;
+    }
+    size_t len = (size_t)gSdHeaderLen;
+    size_t wr = soloSd
+        ? Streaming_WriteWithRetry(sd_card_manager_WriteToBuffer,
+                                   gSdHeaderBytes, len, sdCap)
+        : sd_card_manager_WriteToBuffer((const char*)gSdHeaderBytes, len);
+    if (wr != len && wr != STREAM_WRITE_RETURN_STOPPED) {
+        LOG_E("SD: first file's protobuf metadata not written (%u of %u B) - "
+              "that file has no sd_metadata (#1177)", (unsigned)wr, (unsigned)len);
+    }
 }
 
 /* #824: hand the SD task the bytes to write at the head of a newly opened
@@ -4352,6 +4400,11 @@ void streaming_Task(void) {
                 //       STREAM_WRITE_RETURN_STOPPED (stop-abort, no bookkeeping).
             }
             if (hasSD) {
+                if (gSdFirstFileHeaderPending) {
+                    Streaming_WriteSdFirstFileHeader(
+                        pRunTimeStreamConf->ActiveInterface == StreamingInterface_SD,
+                        sdCap);
+                }
                 if (pRunTimeStreamConf->ActiveInterface != StreamingInterface_SD) {
                     /* #534: multi-output — a stalled SD must never block the
                      * (healthy) USB path through this shared encoder loop.
