@@ -670,10 +670,13 @@ static void app_SDCardTask(void* p_arg) {
                 if (pPowerState != NULL &&
                     (pPowerState->powerState == POWERED_UP ||
                      pPowerState->powerState == POWERED_UP_EXT_DOWN)) {
-                    /* #756: every way into this state is a power drop (or
-                     * boot), so the card has just been (re)powered. Tell the
-                     * driver, so it re-detects the card now rather than one
-                     * poll to notice the detach plus one more to re-attach. */
+                    /* #756: every way into this state is boot or a power
+                     * drop, and every power drop got here through
+                     * app_SDCard_GracefulShutdown, which released the bus. The
+                     * card has just been re-powered, so tell the driver now,
+                     * before it runs again: it re-detects the card at once
+                     * rather than one poll to notice the detach plus one more
+                     * to re-attach. A no-op at boot. */
                     DRV_SDSPI_MediaPowerCycled(sysObj.drvSDSPI0);
                     state = APP_SD_STATE_PROCESS;
                 } else {

@@ -1001,8 +1001,9 @@ void DRV_SDSPI_DetectPollKick(SYS_MODULE_OBJ object);
 void DRV_SDSPI_DetectPollExpireNow(SYS_MODULE_OBJ object);
 
 /* #756: the SD rail has just come back from STANDBY. The card was unpowered,
-   so the driver drops it (if it was attached) and re-detects it at once,
-   instead of spending one poll noticing the detach and a second re-attaching. */
+   so the driver re-detects it at once, instead of spending one poll noticing
+   the detach and a second re-attaching. Call from the SD task, before it
+   resumes DRV_SDSPI_Tasks, and only after DRV_SDSPI_ReleaseBus. */
 void DRV_SDSPI_MediaPowerCycled(SYS_MODULE_OBJ object);
 
 // *****************************************************************************
