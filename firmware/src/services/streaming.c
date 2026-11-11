@@ -4172,6 +4172,19 @@ void streaming_Task(void) {
              * min). The capped room is therefore never below
              * STREAMING_BATCH_MIN_ROOM: the same 1,024 B floor an encode on
              * this path is given today. */
+            /* #1177 (audit round 3): the FIRST encode can pack many samples --
+             * the protobuf fast path fills whatever room it gets -- so the
+             * header's reservation must bound it too, not only the appends
+             * below. Applied only while the header is owed (protobuf only, so
+             * JSON's full-capacity test is never affected) and only when the
+             * bounded room keeps the usual STREAMING_BATCH_MIN_ROOM floor, so
+             * the queue is never starved; below that the header is given up
+             * rather than the data. */
+            if (batchIdx == 0 && sdHdrReserve > 0u &&
+                batchXportFree >= sdHdrReserve + STREAMING_BATCH_MIN_ROOM &&
+                batchXportFree - sdHdrReserve < encRoom) {
+                encRoom = batchXportFree - sdHdrReserve;
+            }
             if (batchIdx > 0) {
                 if (encRoom < STREAMING_BATCH_MIN_ROOM) {
                     break;                   // no encoder-buffer room
