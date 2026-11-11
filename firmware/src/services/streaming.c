@@ -4179,11 +4179,14 @@ void streaming_Task(void) {
              * JSON's full-capacity test is never affected) and only when the
              * bounded room keeps the usual STREAMING_BATCH_MIN_ROOM floor, so
              * the queue is never starved; below that the header is given up
-             * rather than the data. */
+             * rather than the data. Bounded by the SD ring's own free space,
+             * not batchXportFree: that is a min over every active ring, so a
+             * full USB ring would read 0 and switch the bound off (audit
+             * round 4). */
             if (batchIdx == 0 && sdHdrReserve > 0u &&
-                batchXportFree >= sdHdrReserve + STREAMING_BATCH_MIN_ROOM &&
-                batchXportFree - sdHdrReserve < encRoom) {
-                encRoom = batchXportFree - sdHdrReserve;
+                sdSize >= sdHdrReserve + STREAMING_BATCH_MIN_ROOM &&
+                sdSize - sdHdrReserve < encRoom) {
+                encRoom = sdSize - sdHdrReserve;
             }
             if (batchIdx > 0) {
                 if (encRoom < STREAMING_BATCH_MIN_ROOM) {
