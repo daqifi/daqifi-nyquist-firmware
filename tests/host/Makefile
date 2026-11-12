@@ -5360,12 +5360,45 @@ $(ARMREFUSE_BIN): test_936_bench_arm_refusal.c test_framework.h $(SD_BENCH_SRC) 
 	fi
 	$(CC) $(CFLAGS) -o $(ARMREFUSE_BIN) test_936_bench_arm_refusal.c
 
+# #1248: SYSTem:LOG? must not lose a record to a short write. Two layers of
+# REAL code: LogRing.h is included unchanged, and LogMessageDump is spliced
+# out of Logger.c (not host-includable: FreeRTOS + libscpi + xc.h) and compiled
+# against test_1248_log_ring.c's prelude -- a stub transport and mutex, and a
+# counting Logger_ResetOneShots -- so "a short write keeps the record" and
+# "one-shots reset only on a complete dump" run against the shipped function.
+# Both sizes are read out of Logger.h, never hand-copied: the 64/64 case is the
+# one the coordinator asked for, and a stale capacity would test another ring.
+LOGRING1248_BIN := run_1248_tests
+LOGRING1248_GEN := gen_1248_log_dump.h
+LOGGER_SRC      := ../../firmware/src/Util/Logger.c
+LOG_MAX_ENTRIES := $(shell sed -n 's/^[[:space:]]*#define[[:space:]]\{1,\}LOG_MAX_ENTRY_COUNT[[:space:]]\{1,\}\([0-9]\{1,\}\).*/\1/p' ../../firmware/src/Util/Logger.h | head -1)
+
+$(LOGRING1248_BIN): test_1248_log_ring.c test_framework.h $(FW_UTIL)/LogRing.h \
+                    $(LOGGER_SRC) $(LOGGER_HDR) $(RECIPES)
+	@test -n '$(LOG_MAX_ENTRIES)' && test -n '$(LOG_MSG_SIZE)' \
+	  || { echo "ERROR: could not read LOG_MAX_ENTRY_COUNT / LOG_MESSAGE_SIZE"; \
+	       echo "       out of Logger.h; test_1248 would size the ring wrong."; \
+	       exit 1; }
+	@sed -n '/^bool LogMessageDump(scpi_t \* context) {/,/^}/p' $(LOGGER_SRC) \
+	     | tr -d '\r' > $(LOGRING1248_GEN)
+	@lines=`wc -l < $(LOGRING1248_GEN) | tr -d ' '`; \
+	 last=`tail -1 $(LOGRING1248_GEN) | tr -d '[:space:]'`; \
+	 test "$$lines" -ge 10 && test "$$lines" -le 120 && test "$$last" = "}" \
+	  || { echo "ERROR: could not splice LogMessageDump() out of"; \
+	       echo "       $(LOGGER_SRC): got $$lines line(s) ending in '$$last'."; \
+	       echo "       Its signature was reworded or left column 0; a test"; \
+	       echo "       that compiles against nothing must not pass."; \
+	       rm -f $(LOGRING1248_GEN); exit 1; }
+	$(CC) $(CFLAGS) -I$(FW_UTIL) -DLOG_MAX_ENTRY_COUNT=$(LOG_MAX_ENTRIES) \
+	      -DLOG_MESSAGE_SIZE=$(LOG_MSG_SIZE) -o $(LOGRING1248_BIN) test_1248_log_ring.c
+
 run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) \
      $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) \
      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(CAP1202_BIN) $(ISRLOG1197_BIN) $(STOP1201_BIN) $(CLAMP1231_BIN) \
      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(USECALTYPE_BIN) $(ARM_BIN) $(NAME_BIN) \
      $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) check-1200-parity check-885-savecal-claim \
-     $(NVM1153_BIN) $(ARMREFUSE_BIN) $(SDCRC_BIN) $(SDWRITE_BIN)
+     $(NVM1153_BIN) $(ARMREFUSE_BIN) $(SDCRC_BIN) $(SDWRITE_BIN) $(LOGRING1248_BIN)
+	./$(LOGRING1248_BIN)
 	./$(SDCRC_BIN)
 	./$(SDWRITE_BIN)
 	./$(ARMREFUSE_BIN)
@@ -5944,6 +5977,7 @@ $(NVM1153_BIN): test_1153_nvm_recursive_lock.c test_framework.h \
 	$(CC) $(CFLAGS) -o $(NVM1153_BIN) test_1153_nvm_recursive_lock.c
 
 clean:
+	rm -f $(LOGRING1248_BIN) $(LOGRING1248_GEN)
 	rm -f $(SDCRC_BIN) $(SDWRITE_BIN) $(SDWRITE_UUT_OBJ)
 	rm -f $(NVM1153_BIN)
 	rm -f $(SEQ908_BIN)

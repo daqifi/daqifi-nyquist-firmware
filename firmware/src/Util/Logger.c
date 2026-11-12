@@ -491,7 +491,7 @@ int LogMessage(const char* format, ...)
  */
 size_t LogMessageCount(void)
 {
-    return logBuffer.count;
+    return logBuffer.ring.count;
 }
 
 /**
@@ -516,9 +516,8 @@ void LogMessageInit(void) {
     taskENTER_CRITICAL();
     if (logBuffer.mutex == NULL) {
         // We won the race - initialize buffer and assign mutex
-        logBuffer.head = 0;
-        logBuffer.tail = 0;
-        logBuffer.count = 0;
+        LogRing_Init(&logBuffer.ring);
+        memset(&logBuffer.dumping, 0, sizeof(logBuffer.dumping));
         logBuffer.mutex = newMutex;
         taskEXIT_CRITICAL();
 
@@ -590,73 +589,121 @@ static int LogMessageAdd(const char *message) {
     #endif
 
     if (xSemaphoreTake(logBuffer.mutex, portMAX_DELAY) == pdTRUE) {
-        memcpy(logBuffer.entries[logBuffer.head].message, message, message_len);
-        logBuffer.entries[logBuffer.head].message[message_len] = '\0';
-        logBuffer.head = (logBuffer.head + 1) % LOG_MAX_ENTRY_COUNT;
-
-        if (logBuffer.count < LOG_MAX_ENTRY_COUNT) {
-            logBuffer.count++;
-        } else {
-            logBuffer.tail = (logBuffer.tail + 1) % LOG_MAX_ENTRY_COUNT;
+        /* #1248: a task that is dumping does not buffer its own records --
+         * see LogMessageDumpBegin. Checked under the mutex, which is what
+         * guards the set. */
+        if (LogOwnerSet_Contains(&logBuffer.dumping,
+                                 (const void *)xTaskGetCurrentTaskHandle())) {
+            xSemaphoreGive(logBuffer.mutex);
+            return 0;
         }
-
+        LogRing_Push(&logBuffer.ring, message, (size_t)message_len);
         xSemaphoreGive(logBuffer.mutex);
         return message_len;
     }
     return 0;
 }
 
+bool LogMessageDumpBegin(void) {
+    bool added = false;
 
-/**
- * @brief Dumps all log messages to the SCPI interface and clears the buffer.
- *        Uses pop-and-print pattern to avoid holding mutex during I/O.
- *
- * @param context SCPI context used to write and flush messages
- */
-void LogMessageDump(scpi_t * context) {
-
-    char tempBuffer[LOG_MESSAGE_SIZE];
-    bool hasMessage;
-
-    if (context == NULL || context->interface == NULL || context->interface->write == NULL) {
-        return;
+    if (logBuffer.mutex == NULL) {
+        return false;
     }
+    if (xSemaphoreTake(logBuffer.mutex, portMAX_DELAY) == pdTRUE) {
+        added = LogOwnerSet_Add(&logBuffer.dumping,
+                                (const void *)xTaskGetCurrentTaskHandle());
+        xSemaphoreGive(logBuffer.mutex);
+    }
+    return added;
+}
 
+void LogMessageDumpEnd(void) {
     if (logBuffer.mutex == NULL) {
         return;
     }
+    if (xSemaphoreTake(logBuffer.mutex, portMAX_DELAY) == pdTRUE) {
+        LogOwnerSet_Remove(&logBuffer.dumping,
+                           (const void *)xTaskGetCurrentTaskHandle());
+        xSemaphoreGive(logBuffer.mutex);
+    }
+}
 
-    // Pop-and-print loop: mutex held only during memory copy, not I/O
-    do {
-        hasMessage = false;
 
-        // Critical section: pop one message from buffer
+/**
+ * @brief Dumps all log messages to the SCPI interface and clears the buffer.
+ *        Peek, write, then pop: the mutex is held only for the copy and the
+ *        pop, never across the I/O.
+ *
+ * #1248: this used to pop each record BEFORE writing it and discard the
+ * write's return value, so a short write (SCPI_WriteWithRetry gives up after
+ * its ~1 s retry budget when the transport stays full, and the TCP write
+ * returns 0 once the client is gone) lost the record and the dump carried on
+ * as if nothing had happened. Now a record leaves the ring only after the
+ * transport took all of it, and only if it is still the record that was
+ * written (LogRing_PopIfUnchanged -- see LogRing.h for why a changed tailSeq
+ * means "already gone, carry on from the new tail"). A short write stops the
+ * dump: the bytes that did not go out are not coming back on this call, every
+ * later record would cost another ~1 s for the same result, and the unsent
+ * record stays at the tail for the next SYSTem:LOG?.
+ *
+ * Nothing in this function logs. A record logged here on a full ring would
+ * overwrite the tail, i.e. the unsent record this function is keeping.
+ *
+ * @param context SCPI context used to write and flush messages
+ * @return true if complete, false if a short write truncated the dump
+ */
+bool LogMessageDump(scpi_t * context) {
+
+    char tempBuffer[LOG_MESSAGE_SIZE];
+    bool complete = true;
+
+    if (context == NULL || context->interface == NULL || context->interface->write == NULL) {
+        return true;
+    }
+
+    if (logBuffer.mutex == NULL) {
+        return true;
+    }
+
+    for (;;) {
+        bool hasMessage = false;
+        uint32_t seq = 0;
+
         if (xSemaphoreTake(logBuffer.mutex, portMAX_DELAY) == pdTRUE) {
-            if (logBuffer.count > 0) {
-                // Copy message to local stack buffer
-                strncpy(tempBuffer, logBuffer.entries[logBuffer.tail].message, LOG_MESSAGE_SIZE - 1);
-                tempBuffer[LOG_MESSAGE_SIZE - 1] = '\0';
-
-                // Advance tail and decrement count
-                logBuffer.tail = (logBuffer.tail + 1) % LOG_MAX_ENTRY_COUNT;
-                logBuffer.count--;
-
-                hasMessage = true;
-            }
+            hasMessage = LogRing_Peek(&logBuffer.ring, tempBuffer,
+                                      sizeof(tempBuffer), &seq);
             xSemaphoreGive(logBuffer.mutex);
+        }
+        if (!hasMessage) {
+            break;
         }
 
         // I/O section: write message (mutex released)
-        if (hasMessage) {
-            context->interface->write(context, tempBuffer, strlen(tempBuffer));
-            if (context->interface->flush) {
-                context->interface->flush(context);
-            }
+        size_t len = strlen(tempBuffer);
+        size_t written = context->interface->write(context, tempBuffer, len);
+        if (written != len) {
+            complete = false;   // record stays in the ring
+            break;
         }
-    } while (hasMessage);
+        if (context->interface->flush) {
+            context->interface->flush(context);
+        }
 
-    /* Allow one-shot log sites to fire again after user reads the log */
-    Logger_ResetOneShots();
+        if (xSemaphoreTake(logBuffer.mutex, portMAX_DELAY) == pdTRUE) {
+            (void)LogRing_PopIfUnchanged(&logBuffer.ring, seq);
+            xSemaphoreGive(logBuffer.mutex);
+        }
+    }
+
+    /* Allow one-shot log sites to fire again after the user has read the
+     * log -- only when they read ALL of it. After a truncated dump the
+     * one-shot records may still be unread in the ring, and re-arming would
+     * let the same site add a duplicate before the host reads the first. */
+    if (complete) {
+        Logger_ResetOneShots();
+    }
+    return complete;
 }
 
 /**
@@ -669,9 +716,7 @@ void LogMessageClear(void) {
     }
 
     if (xSemaphoreTake(logBuffer.mutex, portMAX_DELAY) == pdTRUE) {
-        logBuffer.head = 0;
-        logBuffer.tail = 0;
-        logBuffer.count = 0;
+        LogRing_Clear(&logBuffer.ring);
         xSemaphoreGive(logBuffer.mutex);
     }
 
