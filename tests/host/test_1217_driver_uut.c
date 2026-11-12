@@ -34,3 +34,38 @@ unsigned test1217_RetryLimit(void)
 {
     return DRV_SDSPI_WRITE_IN_DOUBT_RETRIES;
 }
+
+/* #1217 (stale-ring fix): the aborted-transfer ring, read for the tests that
+ * pin which handles it may hold. */
+unsigned test1217_AbortedRingCount(void)
+{
+    unsigned n = 0U;
+    for (unsigned i = 0U; i < DRV_SDSPI_ABORTED_XFER_SLOTS; i++)
+    {
+        if (gDrvSDSPIObj[0].abortedXferHandles[i] != DRV_SPI_TRANSFER_HANDLE_INVALID)
+        {
+            n++;
+        }
+    }
+    return n;
+}
+
+DRV_SPI_TRANSFER_HANDLE test1217_LastSubmitted(void)
+{
+    return gDrvSDSPIObj[0].expectedXferHandle;
+}
+
+/* Every ring entry names a transfer DRV_SPI still holds. */
+bool test1217_AbortedRingAllPending(void)
+{
+    for (unsigned i = 0U; i < DRV_SDSPI_ABORTED_XFER_SLOTS; i++)
+    {
+        const DRV_SPI_TRANSFER_HANDLE h = gDrvSDSPIObj[0].abortedXferHandles[i];
+        if ((h != DRV_SPI_TRANSFER_HANDLE_INVALID) &&
+                !DRV_SPI_TransferIsPending(gDrvSDSPIObj[0].spiDrvHandle, h))
+        {
+            return false;
+        }
+    }
+    return true;
+}

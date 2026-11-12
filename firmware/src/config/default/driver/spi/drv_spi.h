@@ -1278,6 +1278,15 @@ void DRV_SPI_GetExclusiveState(const SYS_MODULE_INDEX drvIndex,
                                uint32_t *depth);
 bool DRV_SPI_IsExclusiveHolder( const DRV_HANDLE handle );
 
+/* DAQiFi addition (#1217): true iff `xfer` is still an allocated transfer of
+ * the instance `handle` belongs to -- queued or in progress, so its completion
+ * event can still be delivered. False once the completion path has freed it
+ * (DRV_SPI frees the object BEFORE calling the client's event handler).
+ * Unlocked scan of the transfer pool: call it with the DMA completion
+ * interrupt masked (OSAL_CRIT_TYPE_HIGH) when the answer must not change
+ * before the caller acts on it. */
+bool DRV_SPI_TransferIsPending( const DRV_HANDLE handle, const DRV_SPI_TRANSFER_HANDLE xfer );
+
 /* MISRAC 2012 deviation block end */
 //DOM-IGNORE-BEGIN
 #ifdef __cplusplus

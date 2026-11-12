@@ -1522,13 +1522,16 @@ typedef struct
      * whose late completion is still in flight). The completion callback
      * ignores a matching late completion once (then clears the slot) so a
      * timed-out transfer can't falsely complete a later one — the protection
-     * #567's original always-on guard was after. Entries are also cleared
-     * when DRV_SPI reuses the same handle value for a new submit (the old
-     * transfer object was freed, so its completion can no longer arrive).
-     * Cross-context notes: slots are 32-bit (atomic on PIC32MZ), task writes
-     * precede any possible ISR read by the >=500 ms watchdog timeout, and
-     * every path crosses opaque call boundaries — per the project atomicity
-     * rules and the #578 precedent, no volatile. */
+     * #567's original always-on guard was after. #1217: an entry exists only
+     * while DRV_SPI still holds its transfer -- it is recorded only if the
+     * transfer is pending, and every SD submit first prunes entries whose
+     * transfer DRV_SPI has freed (DRV_SDSPI_AbortedXferRecord,
+     * lDRV_SDSPI_AbortedXferPrune). A stale entry swallowed the completion of a
+     * later transfer that reused its handle value.
+     * Cross-context notes: slots are 32-bit (atomic on PIC32MZ); the task-side
+     * writes run under OSAL_CRIT_TYPE_HIGH, which masks the DMA completion ISR
+     * that reads them; every path crosses opaque call boundaries -- per the
+     * project atomicity rules and the #578 precedent, no volatile. */
     DRV_SPI_TRANSFER_HANDLE                         abortedXferHandles[DRV_SDSPI_ABORTED_XFER_SLOTS];
     uint8_t                                         abortedXferIdx;
 

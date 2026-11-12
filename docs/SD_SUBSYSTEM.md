@@ -87,6 +87,19 @@ In both modes, **CS goes high on every abort**, before the exclusive lock is rel
 
 **Host coverage:** `tests/host/test_1217_abandoned_write.c` runs the real driver sources against a modelled card.
 
+### What abandoned writes in the field: a stale aborted-transfer handle (#1217)
+
+The SD driver keeps a 4-slot ring of transfers the #567 watchdog gave up on (`abortedXferHandles`), and its completion handler ignores a completion whose handle is in the ring. Otherwise a late completion of an aborted transfer would complete a later one. Two paths used to leave entries in it that nothing would ever consume:
+
+- `DRV_SDSPI_AbortedXferRecord` stored the handle unconditionally. `DRV_SDSPI_ReleaseBus`, which runs on **every trip to STANDBY**, recorded the last transfer although it had almost always completed long before. The xfer-timeout path recorded the very handle whose completion the ring had just swallowed.
+- The handle-reuse "forget" ran after `DRV_SPI_*TransferAdd`, but a short transfer completes from the DMA interrupt before `TransferAdd` returns.
+
+DRV_SPI hands out the same handle value again after one token/index cycle: 759.2 s under 8-channel 1 kHz SD logging on NQ1. The stale entry then swallowed that transfer's real completion, the watchdog abandoned the write 500 ms later as `cause=xfer-timeout`, and the abort recorded the swallowed handle again, re-arming the next event. On the bench, 6 STANDBY cycles then 30 min of logging abandoned 4 writes. In each one the SPI queue was empty and both DMA channels were idle, so the hardware never lost anything. With no STANDBY cycle first, the same 30 min abandoned none.
+
+Now a handle is recorded only while DRV_SPI still holds its transfer (`DRV_SPI_TransferIsPending`). The check and the store share one `OSAL_CRIT_TYPE_HIGH` section, which masks the IPL-2 DMA completion interrupt. Every SD submit first prunes the entries whose transfer DRV_SPI has freed.
+
+Host coverage: three tests in `tests/host/test_1217_abandoned_write.c`. Bench regression: `test_1217_stale_abort_ring.py` in the test suite (a 22-minute soak, outside the release gate).
+
 ### The card after STANDBY (#756)
 
 `SYST:POW:STAT 0` takes the SD rail down, and the SD task stops running the SDSPI driver until power returns, so the driver still believes the card is attached. On its own it then needs two detect polls to recover: the first only records the detach, the second (one 1 s cadence interval later) resets and initialises the card. Until then `SPACe?`, `LISt?` and the other SD commands answer `No SD Card Detected` + `-200`.
