@@ -186,6 +186,30 @@ bool DRV_SPI_IsExclusiveHolder(const DRV_HANDLE handle)
 }
 
 
+/* DAQiFi addition (#1217): see drv_spi.h. */
+bool DRV_SPI_TransferIsPending(const DRV_HANDLE handle, const DRV_SPI_TRANSFER_HANDLE xfer)
+{
+    const DRV_SPI_CLIENT_OBJ* clientObj = lDRV_SPI_DriverHandleValidate(handle);
+    const DRV_SPI_OBJ* dObj;
+    const DRV_SPI_TRANSFER_OBJ* pool;
+    uint32_t i;
+
+    if ((clientObj == NULL) || (xfer == DRV_SPI_TRANSFER_HANDLE_INVALID))
+    {
+        return false;
+    }
+    dObj = &gDrvSPIObj[clientObj->drvIndex];
+    pool = dObj->transferObjPool;
+    for (i = 0; i < dObj->transferObjPoolSize; i++)
+    {
+        if (pool[i].inUse && (pool[i].transferHandle == xfer))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 // *****************************************************************************
 // *****************************************************************************
 // Section: File scope functions
