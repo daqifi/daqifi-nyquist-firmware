@@ -637,6 +637,9 @@ typedef enum { FAULT_NONE, FAULT_REJECT, FAULT_LOSE, FAULT_CORRUPT } FaultAction
 extern bool test1217_InResync(void);
 extern unsigned test1217_WriteRetries(void);
 extern unsigned test1217_RetryLimit(void);
+extern unsigned test1217_AbortedRingCount(void);
+extern DRV_SPI_TRANSFER_HANDLE test1217_LastSubmitted(void);
+extern bool test1217_AbortedRingAllPending(void);
 
 /* The next transfer matching all of these takes the action. */
 static struct {
@@ -658,6 +661,13 @@ static DRV_SPI_TRANSFER_EVENT_HANDLER gHandler;
 static uintptr_t gHandlerCtx;
 static SYS_PORT_PIN gSetupCs;
 static int gLastFrameCmd;
+
+/* #1217 (stale-ring fix): when set, a transfer submitted to an idle bus
+ * completes INSIDE DRV_SPI_*TransferAdd, before it returns -- as a short DMA
+ * transfer does on the target, whose completion interrupt preempts the
+ * submitting task. Without it this model always completes after the submit
+ * returns, which hid a defect that only exists in that window. */
+static bool gCompleteInAdd;
 
 static unsigned gLockDepth;
 static uint32_t gLockSince;
@@ -708,11 +718,29 @@ bool DRV_SPI_Lock(DRV_HANDLE h, bool lock)
     return true;
 }
 
+/* drv_spi.c frees a transfer object BEFORE it calls the client's event
+ * handler, so a transfer is pending from its submit until its completion
+ * starts -- here, while it is in the queue. */
+bool DRV_SPI_TransferIsPending(DRV_HANDLE h, DRV_SPI_TRANSFER_HANDLE xfer)
+{
+    (void) h;
+    for (unsigned i = 0U; i < gQueueCount; i++)
+    {
+        if (gQueue[(gQueueHead + i) % SPI_QUEUE].h == xfer)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool DRV_SPI_IsExclusiveHolder(DRV_HANDLE h)
 {
     (void) h;
     return gLockDepth > 0U;
 }
+
+static void spiRun(void);
 
 static void spiAdd(bool isRead, void* buf, size_t n, DRV_SPI_TRANSFER_HANDLE* out)
 {
@@ -760,6 +788,10 @@ static void spiAdd(bool isRead, void* buf, size_t n, DRV_SPI_TRANSFER_HANDLE* ou
     *out = gNextHandle;
     gQueue[(gQueueHead + gQueueCount) % SPI_QUEUE] = (Xfer){ isRead, (uint8_t*)buf, n, *out, corrupt, stuck, false };
     gQueueCount++;
+    if (gCompleteInAdd && (gQueueCount == 1U))
+    {
+        spiRun();
+    }
 }
 
 void DRV_SPI_WriteTransferAdd(DRV_HANDLE h, void* buf, size_t n, DRV_SPI_TRANSFER_HANDLE* out)
@@ -851,6 +883,15 @@ static void spiLateCompletion(void)
     spiComplete(&x);
 }
 
+/* drv_spi.c's RX DMA handler, when the transfer's client handle no longer
+ * matches an open client: it frees the object WITHOUT calling any event
+ * handler. Everything queued goes that way here. */
+static void spiDropAllWithoutEvents(void)
+{
+    gQueueHead = (gQueueHead + gQueueCount) % SPI_QUEUE;
+    gQueueCount = 0U;
+}
+
 /* WINC traffic: the card sees it if it is selected or clocks regardless. */
 static void wincTraffic(unsigned bytes)
 {
@@ -937,6 +978,7 @@ static void resetAll(void)
     gLastFrameCmd = -1;
     gLockDepth = 0U;
     gLockMaxHeld = 0U;
+    gCompleteInAdd = false;
     gCsHigh = true;
     gSetupCs = SYS_PORT_PIN_NONE;
     gLastEvent = -1;
@@ -1325,6 +1367,100 @@ TEST(late_completion_of_an_aborted_transfer_raises_chip_select)
     gSetupCs = SD_CS;
     passes(10U);
     assertCardHealthy(27U);
+}
+
+/* #1217 field trigger. Every trip to STANDBY runs DRV_SDSPI_ReleaseBus, which
+ * recorded the last transfer in the aborted-transfer ring although that
+ * transfer had completed long before, so no late completion would ever clear
+ * the entry. DRV_SPI hands out the same handle value again after one
+ * token/index cycle (759.2 s on the bench), and the stale entry then swallowed
+ * the new transfer's completion: the watchdog abandoned the write 500 ms later
+ * as cause=xfer-timeout. Rewinding the handle counter is that reuse; completing
+ * inside TransferAdd is the DMA interrupt beating the submit's return. */
+TEST(release_bus_after_a_completed_transfer_does_not_swallow_a_reused_handle)
+{
+    uint8_t data[BLOCK];
+
+    bootCard();
+    gCompleteInAdd = true;
+    fill(data, sizeof(data), 0x71U);
+    ASSERT_EQ(writeBlocks(31U, data, 1U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+
+    const DRV_SPI_TRANSFER_HANDLE last = test1217_LastSubmitted();
+    ASSERT_TRUE(last != DRV_SPI_TRANSFER_HANDLE_INVALID);
+    ASSERT_FALSE(DRV_SPI_TransferIsPending(gHandle, last)); /* the premise */
+    DRV_SDSPI_ReleaseBus(0);
+    ASSERT_EQ(test1217_AbortedRingCount(), 0);
+
+    passes(1500U);
+    ASSERT_TRUE(runUntilAttached(20000U));
+    gNextHandle = last - 1U; /* the counter wraps: `last` is handed out again */
+    fill(data, sizeof(data), 0x72U);
+    ASSERT_EQ(writeBlocks(32U, data, 1U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+    ASSERT_TRUE(sectorIs(32U, data));
+    ASSERT_FALSE(logged("cause=xfer-timeout", NULL));
+    ASSERT_FALSE(logged("write in doubt", NULL));
+}
+
+/* The other half of the fix: the forget that cleared a reused handle ran AFTER
+ * the submit, which a completion inside TransferAdd beats. A stale entry must
+ * be gone before the submit, whatever planted it. */
+TEST(stale_ring_entry_is_pruned_before_the_submit_that_reuses_its_handle)
+{
+    uint8_t data[BLOCK];
+
+    bootCard();
+    gCompleteInAdd = true;
+    gFault.action = FAULT_LOSE; /* abort a write: its transfer is recorded */
+    gFault.isRead = 1;
+    gFault.afterCmd = 24;
+    fill(data, sizeof(data), 0x73U);
+    ASSERT_EQ(writeBlocks(33U, data, 1U), DRV_SDSPI_EVENT_COMMAND_ERROR);
+    ASSERT_TRUE(test1217_AbortedRingCount() > 0U);
+    ASSERT_TRUE(test1217_AbortedRingAllPending());
+
+    /* The recorded transfers leave DRV_SPI with no completion event at all,
+     * so nothing will consume their entries: they are now stale. */
+    const DRV_SPI_TRANSFER_HANDLE lost = gQueue[gQueueHead].h;
+    spiDropAllWithoutEvents();
+    ASSERT_FALSE(test1217_AbortedRingAllPending()); /* the premise */
+    ASSERT_TRUE(runUntilAttached(20000U));
+
+    /* `lost` handed out again, its completion beating the submit's return:
+     * the stale entry must be gone before that submit. */
+    gNextHandle = lost - 1U;
+    fill(data, sizeof(data), 0x74U);
+    ASSERT_EQ(writeBlocks(35U, data, 1U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+    ASSERT_TRUE(sectorIs(35U, data));
+    ASSERT_FALSE(logged("cause=xfer-timeout", NULL));
+    ASSERT_TRUE(test1217_AbortedRingAllPending());
+}
+
+/* Recording is gated on the transfer still being pending, not removed: an
+ * aborted transfer DRV_SPI still holds must stay in the ring until its late
+ * completion arrives, or that completion would complete a later transfer. The
+ * driver's later submits queue behind the stuck head and time out too; they are
+ * pending as well, so they are recorded -- the rule is "every entry pending". */
+TEST(aborted_transfer_still_pending_survives_the_prune_until_it_completes)
+{
+    uint8_t data[BLOCK];
+
+    bootCard();
+    gFault.action = FAULT_LOSE;
+    gFault.isRead = 1;
+    gFault.afterCmd = 24;
+    fill(data, sizeof(data), 0x75U);
+    ASSERT_EQ(writeBlocks(36U, data, 1U), DRV_SDSPI_EVENT_COMMAND_ERROR);
+    const DRV_SPI_TRANSFER_HANDLE lost = gQueue[gQueueHead].h;
+    passes(2000U); /* the driver keeps submitting, and pruning, behind the stuck head */
+    ASSERT_TRUE(test1217_AbortedRingCount() > 0U);
+    ASSERT_TRUE(test1217_AbortedRingAllPending());
+    ASSERT_TRUE(DRV_SPI_TransferIsPending(gHandle, lost));
+    spiLateCompletion();
+    passes(50U);
+    ASSERT_EQ(test1217_AbortedRingCount(), 0);
+    ASSERT_TRUE(runUntilAttached(20000U)); /* 2 s of a dead bus detached it */
+    assertCardHealthy(37U);
 }
 
 /* The first R1 is what the abort lost, so the flag cannot wait for it. */
@@ -2521,5 +2657,8 @@ int main(void)
     RUN(fast_mode_refused_cmd25_resync_does_not_swallow_the_re_send);
     RUN(fast_mode_cmd25_abandon_on_every_try_stores_no_bus_traffic);
     RUN(fast_mode_cmd25_abandon_with_winc_traffic_stores_the_data);
+    RUN(release_bus_after_a_completed_transfer_does_not_swallow_a_reused_handle);
+    RUN(stale_ring_entry_is_pruned_before_the_submit_that_reuses_its_handle);
+    RUN(aborted_transfer_still_pending_survives_the_prune_until_it_completes);
     return TEST_SUMMARY();
 }
