@@ -1406,12 +1406,32 @@ __stalled_exit:
 
 /**
  * Gets the system log
+ *
+ * #1248: a dump cut short by a stalled transport answers -200, so a host can
+ * tell "the log ended" from "the log was cut off". The records that did not go
+ * out stay in the ring for the next SYSTem:LOG?.
+ *
+ * ⛔ The -200 is pushed with SCPI_ErrorPush, NOT SCPI_ExecutionError: the
+ * latter LOG_E's its reason, and on a full ring that record would overwrite
+ * the tail -- the unsent record the truncation just kept. SCPI_ErrorPush is
+ * not log-free either (the transport error callbacks, SCPI_USB_Error and
+ * SCPI_TCP_Error, LOG_E every error they emit), which is why the push sits
+ * INSIDE the LogMessageDumpBegin/End bracket: records this task logs there
+ * are not buffered.
+ *
  * @param context
- * @return 
+ * @return SCPI_RES_OK, or SCPI_RES_ERR with -200 queued if truncated
  */
 static scpi_result_t SCPI_SysLogGet(scpi_t * context) {
-    LogMessageDump(context);
-    return SCPI_RES_OK;
+    bool bracketed = LogMessageDumpBegin();
+    bool complete = LogMessageDump(context);
+    if (!complete) {
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+    }
+    if (bracketed) {
+        LogMessageDumpEnd();
+    }
+    return complete ? SCPI_RES_OK : SCPI_RES_ERR;
 }
 
 /**
