@@ -101,12 +101,12 @@ ERR1:
  * with RX done unwritten: the WINC then raised no further interrupt and
  * granted no buffer, so WiFi stayed dead until the WINC was reset.
  * A single corrupted header read on the shared SPI bus was enough. */
-static void hif_drop_rx(const char *why)
+static int8_t hif_drop_rx(const char *why)
 {
     int8_t ret;
 
     if(!gstrHifCxt.u8HifRXDone)
-        return;
+        return M2M_SUCCESS;
     ret = hif_set_rx_done();
     /* The retry path runs on every WINC task pass while the bus is failing,
      * so it reports only the recovery, never the failure. */
@@ -115,6 +115,7 @@ static void hif_drop_rx(const char *why)
         /* log_budget: max=11 */
         LOG_E("WiFi: dropped unreadable WINC message (%s), RX done rc=%d", why, (int)ret);
     }
+    return ret;
 }
 /**
 *   @fn         static void m2m_hif_cb(uint8_t u8OpCode, uint16_t u16DataSize, uint32_t u32Addr)
@@ -592,8 +593,10 @@ static int8_t hif_isr(void)
             M2M_ERR("(hif) False interrupt %lx\r\n",reg);
             /* #881: a message is still pending only if an RX done write
              * failed. The WINC task re-runs this handler after any error
-             * (wdrv_winc.c re-posts drvEventSemaphore), so retry it here. */
-            hif_drop_rx("retry");
+             * (wdrv_winc.c re-posts drvEventSemaphore), so retry it here --
+             * and report a failed retry as an error, or the task stops
+             * re-running the handler and the message stays pending. */
+            ret = hif_drop_rx("retry");
             goto ERR1;
         }
     }

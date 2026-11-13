@@ -151,6 +151,21 @@ TEST(failed_acknowledgement_is_retried_on_the_next_pass)
     ASSERT_EQ(gRxDoneWrites, 1);
 }
 
+/* While the bus keeps failing, every pass must report an error: the WINC task
+ * re-runs the handler only after an error, so a pass that swallowed its failed
+ * retry would end the retries with the message still pending (codex r1). */
+TEST(acknowledgement_is_retried_until_it_succeeds)
+{
+    post(16, 0x82, 0x45, 16);
+    gFailRxDoneWrites = 3;
+    ASSERT_TRUE(hif_handle_isr() != M2M_SUCCESS);
+    ASSERT_TRUE(hif_handle_isr() != M2M_SUCCESS);
+    ASSERT_TRUE(hif_handle_isr() != M2M_SUCCESS);
+    ASSERT_EQ(gRxDoneWrites, 0);
+    ASSERT_EQ(hif_handle_isr(), M2M_SUCCESS);
+    ASSERT_EQ(gRxDoneWrites, 1);
+}
+
 /* Same, for a good message whose post-callback acknowledgement fails. */
 TEST(failed_acknowledgement_of_a_good_message_is_retried)
 {
@@ -173,6 +188,7 @@ int main(void)
     RUN(ctrl1_read_failure_is_acknowledged);
     RUN(header_read_failure_is_acknowledged);
     RUN(failed_acknowledgement_is_retried_on_the_next_pass);
+    RUN(acknowledgement_is_retried_until_it_succeeds);
     RUN(failed_acknowledgement_of_a_good_message_is_retried);
     return test_summary();
 }
