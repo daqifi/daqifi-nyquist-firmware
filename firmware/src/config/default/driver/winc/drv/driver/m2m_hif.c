@@ -33,6 +33,7 @@ implied, are granted under any patent or other intellectual property rights of
 Microchip or any third party.
 */
 
+#include <string.h>
 #include "nm_common.h"
 #include "nmbus.h"
 #include "nm_bsp.h"
@@ -41,6 +42,8 @@ Microchip or any third party.
 #include "nmasic.h"
 #include "m2m_periph.h"
 #include "osal/osal.h"
+#define LOG_MODULE LOG_MODULE_WIFI
+#include "Util/Logger.h"
 
 #define NMI_AHB_DATA_MEM_BASE  0x30000
 #define NMI_AHB_SHARE_MEM_BASE 0xd0000
@@ -84,8 +87,34 @@ static int8_t hif_set_rx_done(void)
     reg |= NBIT1;
     ret = nm_write_reg(WIFI_HOST_RCV_CTRL_0,reg);
     if(ret != M2M_SUCCESS)goto ERR1;
-ERR1:
     return ret;
+ERR1:
+    /* #881: the WINC still holds the message, so keep it marked pending.
+     * Upstream cleared the flag even when the write failed, which made the
+     * failure invisible: nothing would ever try the write again. */
+    gstrHifCxt.u8HifRXDone = 1;
+    return ret;
+}
+
+/* #881: drop a received message the host could not read or parse, by giving
+ * its buffer back to the WINC. Upstream's error exits in hif_isr() returned
+ * with RX done unwritten: the WINC then raised no further interrupt and
+ * granted no buffer, so WiFi stayed dead until the WINC was reset.
+ * A single corrupted header read on the shared SPI bus was enough. */
+static void hif_drop_rx(const char *why)
+{
+    int8_t ret;
+
+    if(!gstrHifCxt.u8HifRXDone)
+        return;
+    ret = hif_set_rx_done();
+    /* The retry path runs on every WINC task pass while the bus is failing,
+     * so it reports only the recovery, never the failure. */
+    if((M2M_SUCCESS == ret) || (0 != strcmp(why, "retry")))
+    {
+        /* log_budget: max=11 */
+        LOG_E("WiFi: dropped unreadable WINC message (%s), RX done rc=%d", why, (int)ret);
+    }
 }
 /**
 *   @fn         static void m2m_hif_cb(uint8_t u8OpCode, uint16_t u16DataSize, uint32_t u32Addr)
@@ -465,6 +494,7 @@ static int8_t hif_isr(void)
                 if(M2M_SUCCESS != ret)
                 {
                     M2M_ERR("(hif) WIFI_HOST_RCV_CTRL_1 bus fail\r\n");
+                    hif_drop_rx("ctrl1 read");
                     goto ERR1;
                 }
                 gstrHifCxt.u32RxAddr = address;
@@ -474,6 +504,7 @@ static int8_t hif_isr(void)
                 if(M2M_SUCCESS != ret)
                 {
                     M2M_ERR("(hif) address bus fail\r\n");
+                    hif_drop_rx("header read");
                     goto ERR1;
                 }
                 if(strHif.u16Length != size)
@@ -483,6 +514,7 @@ static int8_t hif_isr(void)
                         M2M_ERR("(hif) Corrupted packet Size = %u <L = %u, G = %u, OP = %02X>\r\n",
                             size, strHif.u16Length, strHif.u8Gid, strHif.u8Opcode);
                         ret = M2M_ERR_BUS_FAIL;
+                        hif_drop_rx("size");
                         goto ERR1;
                     }
                 }
@@ -534,6 +566,7 @@ static int8_t hif_isr(void)
                 else
                 {
                     M2M_ERR("(hif) invalid group ID\r\n");
+                    hif_drop_rx("group");
                     return M2M_ERR_BUS_FAIL;
                 }
                 if(gstrHifCxt.u8HifRXDone)
@@ -550,12 +583,17 @@ static int8_t hif_isr(void)
             {
                 M2M_ERR("(hif) Wrong size\r\n");
                 ret = M2M_ERR_RCV;
+                hif_drop_rx("zero size");
                 goto ERR1;
             }
         }
         else
         {
             M2M_ERR("(hif) False interrupt %lx\r\n",reg);
+            /* #881: a message is still pending only if an RX done write
+             * failed. The WINC task re-runs this handler after any error
+             * (wdrv_winc.c re-posts drvEventSemaphore), so retry it here. */
+            hif_drop_rx("retry");
             goto ERR1;
         }
     }

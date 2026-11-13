@@ -5392,12 +5392,26 @@ $(LOGRING1248_BIN): test_1248_log_ring.c test_framework.h $(FW_UTIL)/LogRing.h \
 	$(CC) $(CFLAGS) -I$(FW_UTIL) -DLOG_MAX_ENTRY_COUNT=$(LOG_MAX_ENTRIES) \
 	      -DLOG_MESSAGE_SIZE=$(LOG_MSG_SIZE) -o $(LOGRING1248_BIN) test_1248_log_ring.c
 
+# #881: a WINC message the host cannot read or parse must still get RX done,
+# or the WINC goes silent until reset. Builds the REAL m2m_hif.c (included
+# into the test, because its register addresses are file-private) against a
+# fake WINC register file. Stubs in stubs/hif_881 replace OSAL, Logger and the
+# Harmony definitions.h that wdrv_winc_debug.h would otherwise pull in.
+HIF881_BIN  := run_881_tests
+HIF881_DIR  := ../../firmware/src/config/default/driver/winc
+HIF881_INC  := -Istubs/hif_881 -Istubs/sdspi_1217 -I$(HIF881_DIR)/drv/driver \
+               $(addprefix -I,$(shell find $(HIF881_DIR)/include -type d))
+$(HIF881_BIN): test_881_hif_rx_done.c test_framework.h $(HIF881_DIR)/drv/driver/m2m_hif.c \
+               stubs/hif_881/osal/osal.h stubs/hif_881/Util/Logger.h stubs/hif_881/definitions.h
+	$(CC) $(CFLAGS) $(HIF881_INC) -o $@ test_881_hif_rx_done.c
+
 run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) \
      $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) \
      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(CAP1202_BIN) $(ISRLOG1197_BIN) $(STOP1201_BIN) $(CLAMP1231_BIN) \
      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(USECALTYPE_BIN) $(ARM_BIN) $(NAME_BIN) \
      $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) check-1200-parity check-885-savecal-claim \
-     $(NVM1153_BIN) $(ARMREFUSE_BIN) $(SDCRC_BIN) $(SDWRITE_BIN) $(LOGRING1248_BIN)
+     $(NVM1153_BIN) $(ARMREFUSE_BIN) $(SDCRC_BIN) $(SDWRITE_BIN) $(LOGRING1248_BIN) $(HIF881_BIN)
+	./$(HIF881_BIN)
 	./$(LOGRING1248_BIN)
 	./$(SDCRC_BIN)
 	./$(SDWRITE_BIN)
@@ -5977,6 +5991,7 @@ $(NVM1153_BIN): test_1153_nvm_recursive_lock.c test_framework.h \
 	$(CC) $(CFLAGS) -o $(NVM1153_BIN) test_1153_nvm_recursive_lock.c
 
 clean:
+	rm -f $(HIF881_BIN)
 	rm -f $(LOGRING1248_BIN) $(LOGRING1248_GEN)
 	rm -f $(SDCRC_BIN) $(SDWRITE_BIN) $(SDWRITE_UUT_OBJ)
 	rm -f $(NVM1153_BIN)
