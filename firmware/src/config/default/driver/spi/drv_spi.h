@@ -1302,6 +1302,12 @@ void DRV_SPI_ChipSelectHold( const DRV_HANDLE handle, bool hold );
  * on a clock after CS rises). Unlike changing the client setup, the property
  * belongs to the transfer, so it holds however long the transfer waits in the
  * queue. */
+/* DAQiFi addition (#1255): true while any transfer this client submitted is
+ * still queued or running. Unlocked scan of the transfer pool, like
+ * DRV_SPI_TransferIsPending: a transfer may finish right after it answers true,
+ * but none can appear unless this client submits one. */
+bool DRV_SPI_ClientHasPending( const DRV_HANDLE handle );
+
 void DRV_SPI_WriteTransferAddNoCs( const DRV_HANDLE handle, void* pTransmitData,
                                    size_t txSize, DRV_SPI_TRANSFER_HANDLE* const transferHandle );
 

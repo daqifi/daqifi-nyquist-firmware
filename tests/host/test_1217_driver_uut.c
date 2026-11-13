@@ -69,3 +69,12 @@ bool test1217_AbortedRingAllPending(void)
     }
     return true;
 }
+
+/* #1255 audit r2: the card model detaches after a dead bus, which closes the
+ * window the audit found (a request starting while an abandoned request's
+ * transfers are still queued, reached on the board through a failed timer
+ * allocation in the resync). This reopens it so the hold decision is tested. */
+void test1255_ForceAttached(void)
+{
+    gDrvSDSPIObj[0].mediaState = SYS_MEDIA_ATTACHED;
+}

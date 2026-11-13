@@ -1571,10 +1571,13 @@ typedef struct
 
     /* #1255: this driver's own depth on the (recursive) DRV_SPI exclusive
      * lock, whether DRV_SPI is holding SD CS low for the current request, and
-     * how often the 0xFF clocked after raising CS did not complete in time. */
+     * how often the 0xFF clocked after raising CS did not complete in time,
+     * and how many requests ran without the hold because an earlier request's
+     * transfer was still queued. */
     uint8_t                                         csLockDepth;
     volatile bool                                   csHeld;   /* read by the SPI event handler (ISR) */
     uint32_t                                        csTrailTimeouts;
+    uint32_t                                        csHoldSkips;
 
     uint32_t                                        pollingIntervalMs;
 

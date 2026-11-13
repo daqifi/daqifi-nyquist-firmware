@@ -527,6 +527,7 @@ static bool gCsHigh = true;
 static unsigned gLockDepth;
 static unsigned gCsRisesThisLock, gCsRisesMax;
 static unsigned gNoCsClocked, gNoCsWhileSelected;
+static unsigned gHoldWithPending;   /* holds taken with transfers still queued */
 
 void SYS_PORT_PinSet(SYS_PORT_PIN pin)
 {
@@ -594,9 +595,15 @@ static struct {
 } gTimer[TIMERS];
 static uint32_t gTimerGen;
 
+static bool gTimerRefuse;   /* #1255: every registration fails while set */
+
 SYS_TIME_HANDLE SYS_TIME_CallbackRegisterMS(SYS_TIME_CALLBACK cb, uintptr_t ctx, uint32_t ms, SYS_TIME_CALLBACK_TYPE type)
 {
     (void) type;
+    if (gTimerRefuse)
+    {
+        return SYS_TIME_HANDLE_INVALID;
+    }
     for (uint32_t i = 0U; i < TIMERS; i++)
     {
         if (!gTimer[i].live)
@@ -825,9 +832,20 @@ void DRV_SPI_WriteTransferAddNoCs(DRV_HANDLE h, void* buf, size_t n, DRV_SPI_TRA
 }
 
 /* drv_spi.c: a held CS survives completions; releasing raises it now. */
+/* The SD driver is the only client in this model. */
+bool DRV_SPI_ClientHasPending(DRV_HANDLE h)
+{
+    (void) h;
+    return gQueueCount > 0U;
+}
+
 void DRV_SPI_ChipSelectHold(DRV_HANDLE h, bool hold)
 {
     (void) h;
+    if (hold && (gQueueCount > 0U))
+    {
+        gHoldWithPending++;
+    }
     gHoldCs = hold;
     if (!hold && (gSetupCs != SYS_PORT_PIN_NONE))
     {
@@ -965,6 +983,7 @@ static void wincTraffic(unsigned bytes)
 /* ---- running the driver ---------------------------------------------------- */
 
 extern void test1217_DriverReset(void);
+extern void test1255_ForceAttached(void);
 extern void DRV_SDSPI_ReleaseBus(SYS_MODULE_OBJ object);
 
 static DRV_SDSPI_CLIENT_OBJ gClients[1];
@@ -1036,11 +1055,13 @@ static void resetAll(void)
     gLockDepth = 0U;
     gLockMaxHeld = 0U;
     gCompleteInAdd = false;
+    gTimerRefuse = false;
     gCsHigh = true;
     gSetupCs = SYS_PORT_PIN_NONE;
     gHoldCs = false;
     gCsRisesThisLock = gCsRisesMax = 0U;
     gNoCsClocked = gNoCsWhileSelected = 0U;
+    gHoldWithPending = 0U;
     gLastEvent = -1;
     gEventsSeen = 0U;
     gTest1217LogE = 0U;
@@ -1572,6 +1593,33 @@ TEST(miso_release_byte_behind_an_abandoned_transfer_never_selects_the_card)
     ASSERT_TRUE(gCsHigh);
     ASSERT_TRUE(runUntilAttached(20000U));
     assertCardHealthy(47U);
+}
+
+/* #1255 audit r2: the hold is client-wide, so a request that took it while an
+ * abandoned request's transfers were still queued would hold CS low through
+ * them, and through any WINC transfer queued between them. Such a request runs
+ * without the hold. */
+TEST(no_hold_while_an_abandoned_requests_transfers_are_queued)
+{
+    uint8_t data[BLOCK];
+    DRV_SDSPI_COMMAND_HANDLE h = DRV_SDSPI_COMMAND_HANDLE_INVALID;
+
+    bootCard();
+    fill(data, sizeof(data), 0x5CU);
+    gFault.action = FAULT_LOSE;
+    gFault.isRead = 1;
+    gFault.afterCmd = 24;
+    ASSERT_EQ(writeBlocks(48U, data, 1U), DRV_SDSPI_EVENT_COMMAND_ERROR);
+    gTimerRefuse = true;   /* the resync gives up at once, transfers still queued */
+    passes(40U);
+    gTimerRefuse = false;
+    ASSERT_TRUE(gQueueCount > 0U);   /* the premise */
+    test1255_ForceAttached();
+    DRV_SDSPI_AsyncWrite(gHandle, &h, data, 49U, 1U);
+    ASSERT_TRUE(h != DRV_SDSPI_COMMAND_HANDLE_INVALID);
+    passes(20U);
+    ASSERT_EQ(gHoldWithPending, 0);
+    ASSERT_FALSE(gHoldCs);
 }
 
 /* The first R1 is what the abort lost, so the flag cannot wait for it. */
@@ -2773,5 +2821,6 @@ int main(void)
     RUN(aborted_transfer_still_pending_survives_the_prune_until_it_completes);
     RUN(cs_is_held_for_a_whole_request_then_clocked_once_deselected);
     RUN(miso_release_byte_behind_an_abandoned_transfer_never_selects_the_card);
+    RUN(no_hold_while_an_abandoned_requests_transfers_are_queued);
     return TEST_SUMMARY();
 }

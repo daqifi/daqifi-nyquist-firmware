@@ -379,8 +379,10 @@ bool DRV_SDSPI_SPISpeedSetup(
  * The byte is a no-CS transfer (DRV_SPI_WriteTransferAddNoCs), not a change to
  * the client setup: DRV_SPI applies a setup when a transfer STARTS, so a byte
  * still queued behind a watchdog-abandoned transfer would start under whatever
- * setup was current by then and assert CS. A no-CS transfer cannot, however
- * late it runs.
+ * setup was current by then and assert CS. A no-CS transfer never changes CS,
+ * however late it runs; that it runs with CS high relies on no hold being in
+ * force then, which is why a request does not take the hold while an earlier
+ * one's transfers are still queued (drv_sdspi.c).
  *
  * The wait is for completion bookkeeping: the byte's completion must arrive as
  * this request's, not the next one's. One byte takes well under 1 us at the

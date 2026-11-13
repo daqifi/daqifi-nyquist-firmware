@@ -211,6 +211,30 @@ bool DRV_SPI_TransferIsPending(const DRV_HANDLE handle, const DRV_SPI_TRANSFER_H
 }
 
 /* DAQiFi addition (#1255): see drv_spi.h. */
+bool DRV_SPI_ClientHasPending(const DRV_HANDLE handle)
+{
+    const DRV_SPI_CLIENT_OBJ* clientObj = lDRV_SPI_DriverHandleValidate(handle);
+    const DRV_SPI_OBJ* dObj;
+    const DRV_SPI_TRANSFER_OBJ* pool;
+    uint32_t i;
+
+    if (clientObj == NULL)
+    {
+        return false;
+    }
+    dObj = &gDrvSPIObj[clientObj->drvIndex];
+    pool = dObj->transferObjPool;
+    for (i = 0; i < dObj->transferObjPoolSize; i++)
+    {
+        if (pool[i].inUse && (pool[i].clientHandle == handle))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* DAQiFi addition (#1255): see drv_spi.h. */
 void DRV_SPI_ChipSelectHold(const DRV_HANDLE handle, bool hold)
 {
     DRV_SPI_CLIENT_OBJ* clientObj = lDRV_SPI_DriverHandleValidate(handle);
