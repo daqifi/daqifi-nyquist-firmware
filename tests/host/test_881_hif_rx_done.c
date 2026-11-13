@@ -28,6 +28,38 @@ static uint8_t gHdr[4];             /* tstrHifHdr at RX_ADDR: gid, op, len LE */
 static int gFailCtrl1Read, gFailHdrRead, gFailRxDoneWrites;
 static unsigned gIpCalls;
 
+/* A write the WINC APPLIES whose SPI response is then lost, so the host is
+ * told it failed (codex audit r1 on #1259). */
+static int gApplyLostRxDone;
+/* When set, an applied RX done stays visible (bit 1) until wincConsume(). */
+static int gHoldAck;
+static int gAckPending;
+/* Messages the WINC posts after the current one is acknowledged. */
+struct msg { uint16_t size; uint8_t gid, op; uint16_t len; };
+static struct msg gQueue[4];
+static unsigned gQueued;
+/* When set, the IP callback acknowledges through hif_receive(..., isDone=1),
+ * as the socket layer does. */
+static int gCbAcks;
+
+static void deliver(const struct msg *m)
+{
+    gCtrl0 = ((uint32_t)m->size << 2) | NBIT0;
+    gHdr[0] = m->gid; gHdr[1] = m->op;
+    gHdr[2] = (uint8_t)m->len; gHdr[3] = (uint8_t)(m->len >> 8);
+}
+
+/* The WINC consumes RX done: frees the message and posts the next, if any. */
+static void wincConsume(void)
+{
+    gAckPending = 0;
+    gCtrl0 &= ~NBIT1;
+    if (gQueued) {
+        deliver(&gQueue[0]);
+        memmove(gQueue, gQueue + 1, --gQueued * sizeof gQueue[0]);
+    }
+}
+
 int8_t nm_read_reg_with_ret(uint32_t addr, uint32_t *val)
 {
     if (addr == WIFI_HOST_RCV_CTRL_0) { *val = gCtrl0; return M2M_SUCCESS; }
@@ -44,9 +76,15 @@ int8_t nm_write_reg(uint32_t addr, uint32_t val)
 {
     if (addr == WIFI_HOST_RCV_CTRL_0) {
         if (val & NBIT1) {
+            int lost;
             if (gFailRxDoneWrites) { gFailRxDoneWrites--; return M2M_ERR_BUS_FAIL; }
-            gRxDoneWrites++;
-            val &= ~NBIT1;          /* the WINC consumes the bit */
+            lost = gApplyLostRxDone > 0;
+            if (lost) gApplyLostRxDone--;
+            gRxDoneWrites++;        /* counts RX done writes that LANDED */
+            gCtrl0 = val;
+            gAckPending = 1;
+            if (!gHoldAck) wincConsume();
+            return lost ? M2M_ERR_BUS_FAIL : M2M_SUCCESS;
         }
         gCtrl0 = val;
     }
@@ -67,17 +105,32 @@ int8_t chip_wake(void) { return M2M_SUCCESS; }
 int8_t chip_sleep(void) { return M2M_SUCCESS; }
 WDRV_WINC_DEBUG_PRINT_CALLBACK pfWINCDebugPrintCb;
 
-static void ip_cb(uint8_t op, uint16_t sz, uint32_t addr) { (void)op; (void)sz; (void)addr; gIpCalls++; }
+static void ip_cb(uint8_t op, uint16_t sz, uint32_t addr)
+{
+    uint8_t b[1];
+    (void)op; (void)sz;
+    gIpCalls++;
+    if (gCbAcks) (void)hif_receive(addr, b, 1, 1);
+}
 
 /* The WINC posts a message of `size` bytes whose header reads gid/op/len. */
 static void post(uint16_t size, uint8_t gid, uint8_t op, uint16_t len)
 {
+    struct msg m = { size, gid, op, len };
     hif_init(NULL);
     hif_register_cb(M2M_REQ_GROUP_IP, ip_cb);
-    gCtrl0 = ((uint32_t)size << 2) | NBIT0;
-    gHdr[0] = gid; gHdr[1] = op; gHdr[2] = (uint8_t)len; gHdr[3] = (uint8_t)(len >> 8);
+    deliver(&m);
     gRxDoneWrites = 0; gTest881LogE = 0; gIpCalls = 0;
     gFailCtrl1Read = gFailHdrRead = gFailRxDoneWrites = 0;
+    gApplyLostRxDone = gHoldAck = gAckPending = gCbAcks = 0;
+    gQueued = 0;
+}
+
+/* The WINC has a further message queued behind the current one. */
+static void queue_next(uint16_t size, uint8_t gid, uint8_t op, uint16_t len)
+{
+    struct msg m = { size, gid, op, len };
+    gQueue[gQueued++] = m;
 }
 
 /* ---- tests ------------------------------------------------------------ */
@@ -178,6 +231,44 @@ TEST(failed_acknowledgement_of_a_good_message_is_retried)
     ASSERT_EQ(gRxDoneWrites, 1);
 }
 
+/* codex r1 on #1259: the callback's RX done LANDS -- the WINC frees A and
+ * posts B -- but the host is told the write failed. Writing RX done again
+ * would acknowledge B unread and lose it. B must be dispatched instead. */
+TEST(landed_ack_with_lost_response_does_not_release_the_next_message)
+{
+    post(16, M2M_REQ_GROUP_IP, 0x45, 16);           /* A */
+    queue_next(16, M2M_REQ_GROUP_IP, 0x46, 16);     /* B */
+    gCbAcks = 1;
+    gApplyLostRxDone = 1;
+    hif_handle_isr();                               /* A: ack lands, reported failed */
+    ASSERT_EQ(gIpCalls, 1);
+    ASSERT_EQ(gRxDoneWrites, 1);
+    hif_handle_isr();                               /* B's interrupt */
+    ASSERT_EQ(gIpCalls, 2);                         /* B dispatched, not dropped */
+    ASSERT_EQ(gRxDoneWrites, 2);
+    ASSERT_EQ(gQueued, 0);
+}
+
+/* A dropped message's RX done lands but is reported failed, and the WINC has
+ * not consumed it yet (bit 1 still set). The retry pass must not write it
+ * again: when the WINC does consume, a second RX done would be applied to
+ * whatever it posts next. */
+TEST(landed_ack_not_yet_consumed_is_not_written_again)
+{
+    post(16, 0x82, 0x45, 16);                       /* unreadable A */
+    queue_next(16, M2M_REQ_GROUP_IP, 0x46, 16);     /* B */
+    gHoldAck = 1;
+    gApplyLostRxDone = 1;
+    ASSERT_TRUE(hif_handle_isr() != M2M_SUCCESS);   /* drop: ack lands, reported failed */
+    ASSERT_EQ(gRxDoneWrites, 1);
+    ASSERT_EQ(hif_handle_isr(), M2M_SUCCESS);       /* retry pass: sees bit 1, stops */
+    ASSERT_EQ(gRxDoneWrites, 1);
+    gHoldAck = 0;
+    wincConsume();                                  /* WINC frees A, posts B */
+    ASSERT_EQ(hif_handle_isr(), M2M_SUCCESS);
+    ASSERT_EQ(gIpCalls, 1);                         /* B dispatched */
+}
+
 int main(void)
 {
     printf("#881 hif_isr RX done on error exits\n");
@@ -190,5 +281,7 @@ int main(void)
     RUN(failed_acknowledgement_is_retried_on_the_next_pass);
     RUN(acknowledgement_is_retried_until_it_succeeds);
     RUN(failed_acknowledgement_of_a_good_message_is_retried);
+    RUN(landed_ack_with_lost_response_does_not_release_the_next_message);
+    RUN(landed_ack_not_yet_consumed_is_not_written_again);
     return test_summary();
 }
