@@ -369,22 +369,25 @@ bool DRV_SDSPI_SPISpeedSetup(
     None
 */
 
-/* #1255: end a held-CS request. Raise SD CS, then clock one 0xFF with CS
- * disabled: the card releases DataOut only on the clock after CS goes high
+/* #1255: end a held-CS request. Raise SD CS, then clock one 0xFF that does not
+ * touch CS: the card releases DataOut only on the clock after CS goes high
  * (SanDisk SD Card Product Manual v2.2, section 5.23.4), and without that clock
  * it can still be driving MISO into the next transfer on the shared bus, which
- * is a WINC transfer. Then restore the per-transfer CS setup. Runs while this
- * driver still holds the exclusive lock, so the byte goes out before any other
- * client's transfer.
+ * is a WINC transfer. Runs while this driver still holds the exclusive lock, so
+ * the byte is queued ahead of any other client's transfer.
  *
- * Synchronous on purpose: DRV_SPI applies a client's setup when a transfer
- * STARTS, so a queued CS-disabled byte followed by an immediate setup restore
- * could start with CS asserted, and its completion would arrive as the next
- * request's. One byte takes well under 1 us at the card clock; the wait is
- * capped at 1 ms, and on expiry the handle goes to the abort ring so its late
- * completion is ignored.
+ * The byte is a no-CS transfer (DRV_SPI_WriteTransferAddNoCs), not a change to
+ * the client setup: DRV_SPI applies a setup when a transfer STARTS, so a byte
+ * still queued behind a watchdog-abandoned transfer would start under whatever
+ * setup was current by then and assert CS. A no-CS transfer cannot, however
+ * late it runs.
  *
- * Skipped when an SD transfer is still outstanding (a lost completion being
+ * The wait is for completion bookkeeping: the byte's completion must arrive as
+ * this request's, not the next one's. One byte takes well under 1 us at the
+ * card clock; the wait is capped at 1 ms, and on expiry the handle goes to the
+ * abort ring so its late completion is ignored.
+ *
+ * Skipped when an SD transfer is still in progress (a lost completion being
  * unwound, e.g. DRV_SDSPI_ReleaseBus): that handle must stay in
  * expectedXferHandle for the abort ring, and the caller raises CS itself. */
 static void lDRV_SDSPI_ReleaseHeldCs(DRV_SDSPI_OBJ* const dObj)
@@ -400,10 +403,9 @@ static void lDRV_SDSPI_ReleaseHeldCs(DRV_SDSPI_OBJ* const dObj)
     {
         return;
     }
-    (void) DRV_SDSPI_SPISpeedSetup(dObj, dObj->sdcardSpeedHz, SYS_PORT_PIN_NONE);
     lDRV_SDSPI_AbortedXferPrune(dObj);
     dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_IN_PROGRESS;
-    DRV_SPI_WriteTransferAdd(dObj->spiDrvHandle, dObj->pClkPulseData, 1U, &h);
+    DRV_SPI_WriteTransferAddNoCs(dObj->spiDrvHandle, dObj->pClkPulseData, 1U, &h);
     dObj->expectedXferHandle = h;
     if (h == DRV_SPI_TRANSFER_HANDLE_INVALID)
     {
@@ -428,7 +430,6 @@ static void lDRV_SDSPI_ReleaseHeldCs(DRV_SDSPI_OBJ* const dObj)
             }
         }
     }
-    (void) DRV_SDSPI_SPISpeedSetup(dObj, dObj->sdcardSpeedHz, dObj->chipSelectPin);
 }
 
 bool DRV_SDSPI_SPIExclusiveAccess(DRV_SDSPI_OBJ* const dObj, bool isExclusive)

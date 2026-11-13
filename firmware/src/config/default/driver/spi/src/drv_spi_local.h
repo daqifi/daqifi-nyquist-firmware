@@ -175,6 +175,10 @@ typedef struct DRV_SPI_TRANSFER_OBJ_T
     /* Handle to the client that owns this buffer object when it was queued */
     DRV_HANDLE                      clientHandle;
 
+    /* #1255: true for a transfer queued by DRV_SPI_WriteTransferAddNoCs; it
+     * neither asserts nor deasserts the client's chip select. */
+    bool                            noCs;
+
     /* Buffer Handle object that was assigned to this buffer when it was added to
      * the queue */
     DRV_SPI_TRANSFER_HANDLE         transferHandle;

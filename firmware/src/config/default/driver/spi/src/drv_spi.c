@@ -445,6 +445,7 @@ static DRV_SPI_TRANSFER_OBJ* lDRV_SPI_FreeTransferObjGet(DRV_SPI_CLIENT_OBJ* cli
         {
             pTransferObj[index].inUse = true;
             pTransferObj[index].next = NULL;
+            pTransferObj[index].noCs = false;
 
             /* Generate a unique buffer handle consisting of an incrementing
              * token counter, driver index and the buffer index.
@@ -700,8 +701,8 @@ static void lDRV_SPI_UpdateTransferSetupAndAssertCS(
         clientObj->setupChanged = false;
     }
 
-    /* Assert chip select if configured */
-    if(clientObj->setup.chipSelect != SYS_PORT_PIN_NONE)
+    /* Assert chip select if configured (#1255: never for a no-CS transfer) */
+    if((clientObj->setup.chipSelect != SYS_PORT_PIN_NONE) && !transferObj->noCs)
     {
         if (clientObj->setup.csPolarity == DRV_SPI_CS_POLARITY_ACTIVE_LOW)
         {
@@ -737,7 +738,7 @@ static void lDRV_SPI_PlibCallbackHandler(uintptr_t contextHandle)
     [transferObj->clientHandle & DRV_SPI_INDEX_MASK];
 
     /* De-assert Chip Select if it is defined by user */
-    if((clientObj->setup.chipSelect != SYS_PORT_PIN_NONE) && !clientObj->holdCs)
+    if((clientObj->setup.chipSelect != SYS_PORT_PIN_NONE) && !clientObj->holdCs && !transferObj->noCs)
     {
         if (clientObj->setup.csPolarity == DRV_SPI_CS_POLARITY_ACTIVE_LOW)
         {
@@ -940,7 +941,7 @@ static void lDRV_SPI_RX_DMA_CallbackHandler(
         }
 
         /* Transfer complete. De-assert Chip Select if it is defined by user. */
-        if((clientObj->setup.chipSelect != SYS_PORT_PIN_NONE) && !clientObj->holdCs)
+        if((clientObj->setup.chipSelect != SYS_PORT_PIN_NONE) && !clientObj->holdCs && !transferObj->noCs)
         {
             if (clientObj->setup.csPolarity == DRV_SPI_CS_POLARITY_ACTIVE_LOW)
             {
@@ -1340,13 +1341,16 @@ bool DRV_SPI_TransferSetup (
     return isSuccess;
 }
 
-void DRV_SPI_WriteReadTransferAdd (
+/* #1255: the body of DRV_SPI_WriteReadTransferAdd, with noCs for
+ * DRV_SPI_WriteTransferAddNoCs. */
+static void lDRV_SPI_TransferAdd (
     const DRV_HANDLE handle,
     void* pTransmitData,
     size_t txSize,
     void* pReceiveData,
     size_t rxSize,
-    DRV_SPI_TRANSFER_HANDLE* const transferHandle
+    DRV_SPI_TRANSFER_HANDLE* const transferHandle,
+    bool noCs
 )
 {
     DRV_SPI_CLIENT_OBJ* clientObj = (DRV_SPI_CLIENT_OBJ*)NULL;
@@ -1402,6 +1406,24 @@ void DRV_SPI_WriteReadTransferAdd (
             return;
         }
 
+        /* #1255: check exclusive use again under the queue lock. The check
+         * above is not atomic with the enqueue: preempted between the two, this
+         * client could queue a transfer after another client took exclusive use
+         * and asserted (and is now holding) its chip select. An exclusive holder
+         * sets drvInExclusiveMode before it queues anything, and queueing takes
+         * this lock, so a transfer admitted here is ahead of all of its. */
+        if ((dObj->drvInExclusiveMode == true) && (dObj->exclusiveUseClientHandle != handle))
+        {
+            lDRV_SPI_CountReject(&gSpiRejExclusive);
+            if (gSpiAddRejectLogs < 8) {
+                gSpiAddRejectLogs++;
+            LOG_E("SPIADD reject: exclusive (recheck) holder=%08lx me=%08lx",
+                          (unsigned long)dObj->exclusiveUseClientHandle, (unsigned long)handle);
+            }
+            lDRV_SPI_ResourceUnlock(dObj);
+            return;
+        }
+
         /* Get a free transfer object */
         transferObj = lDRV_SPI_FreeTransferObjGet(clientObj);
 
@@ -1426,6 +1448,7 @@ void DRV_SPI_WriteReadTransferAdd (
         transferObj->currentState   = DRV_SPI_TRANSFER_OBJ_IS_IN_QUEUE;
         transferObj->event          = DRV_SPI_TRANSFER_EVENT_PENDING;
         transferObj->clientHandle   = handle;
+        transferObj->noCs           = noCs;
 
         if (clientObj->setup.dataBits == DRV_SPI_DATA_BITS_8)
         {
@@ -1471,6 +1494,18 @@ void DRV_SPI_WriteReadTransferAdd (
     }
 }
 
+void DRV_SPI_WriteReadTransferAdd (
+    const DRV_HANDLE handle,
+    void* pTransmitData,
+    size_t txSize,
+    void* pReceiveData,
+    size_t rxSize,
+    DRV_SPI_TRANSFER_HANDLE* const transferHandle
+)
+{
+    lDRV_SPI_TransferAdd(handle, pTransmitData, txSize, pReceiveData, rxSize, transferHandle, false);
+}
+
 void DRV_SPI_WriteTransferAdd (
     const   DRV_HANDLE  handle,
     void*   pTransmitData,
@@ -1479,6 +1514,17 @@ void DRV_SPI_WriteTransferAdd (
 )
 {
     DRV_SPI_WriteReadTransferAdd(handle, pTransmitData, txSize, NULL, 0, transferHandle);
+}
+
+/* DAQiFi addition (#1255): see drv_spi.h. */
+void DRV_SPI_WriteTransferAddNoCs (
+    const   DRV_HANDLE  handle,
+    void*   pTransmitData,
+    size_t  txSize,
+    DRV_SPI_TRANSFER_HANDLE* const transferHandle
+)
+{
+    lDRV_SPI_TransferAdd(handle, pTransmitData, txSize, NULL, 0, transferHandle, true);
 }
 
 void DRV_SPI_ReadTransferAdd (

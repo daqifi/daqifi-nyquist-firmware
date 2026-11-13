@@ -1296,6 +1296,15 @@ bool DRV_SPI_TransferIsPending( const DRV_HANDLE handle, const DRV_SPI_TRANSFER_
  * transfers is in progress: raising CS under a live transfer cuts it short. */
 void DRV_SPI_ChipSelectHold( const DRV_HANDLE handle, bool hold );
 
+/* DAQiFi addition (#1255): DRV_SPI_WriteTransferAdd for a transfer that neither
+ * asserts nor deasserts the client's chip select, whenever it starts. For
+ * clocking a device with its chip select high (the SD card releases MISO only
+ * on a clock after CS rises). Unlike changing the client setup, the property
+ * belongs to the transfer, so it holds however long the transfer waits in the
+ * queue. */
+void DRV_SPI_WriteTransferAddNoCs( const DRV_HANDLE handle, void* pTransmitData,
+                                   size_t txSize, DRV_SPI_TRANSFER_HANDLE* const transferHandle );
+
 /* MISRAC 2012 deviation block end */
 //DOM-IGNORE-BEGIN
 #ifdef __cplusplus
