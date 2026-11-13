@@ -334,6 +334,10 @@ typedef struct DRV_SPI_CLIENT_OBJ_T
     /* Flag to save setup changed status */
     bool                            setupChanged;
 
+    /* #1255: while true, a completed transfer of this client leaves its chip
+     * select asserted; DRV_SPI_ChipSelectHold(false) raises it. */
+    volatile bool                   holdCs;   /* read by the completion ISR */
+
     /* Client handle assigned to this client object when it was opened */
     DRV_HANDLE                      clientHandle;
 

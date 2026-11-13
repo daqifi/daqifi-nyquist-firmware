@@ -1287,6 +1287,15 @@ bool DRV_SPI_IsExclusiveHolder( const DRV_HANDLE handle );
  * before the caller acts on it. */
 bool DRV_SPI_TransferIsPending( const DRV_HANDLE handle, const DRV_SPI_TRANSFER_HANDLE xfer );
 
+/* DAQiFi addition (#1255): hold == true keeps this client's chip select
+ * asserted across transfer completions (each transfer still asserts it at its
+ * start), so a multi-transfer transaction stays selected end to end; hold ==
+ * false clears the hold and raises chip select now. A client that holds CS
+ * must also hold DRV_SPI's exclusive lock for the whole hold, so no other
+ * client's transfer can run while its CS is low. Release only when none of its
+ * transfers is in progress: raising CS under a live transfer cuts it short. */
+void DRV_SPI_ChipSelectHold( const DRV_HANDLE handle, bool hold );
+
 /* MISRAC 2012 deviation block end */
 //DOM-IGNORE-BEGIN
 #ifdef __cplusplus

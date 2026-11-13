@@ -210,6 +210,29 @@ bool DRV_SPI_TransferIsPending(const DRV_HANDLE handle, const DRV_SPI_TRANSFER_H
     return false;
 }
 
+/* DAQiFi addition (#1255): see drv_spi.h. */
+void DRV_SPI_ChipSelectHold(const DRV_HANDLE handle, bool hold)
+{
+    DRV_SPI_CLIENT_OBJ* clientObj = lDRV_SPI_DriverHandleValidate(handle);
+
+    if (clientObj == NULL)
+    {
+        return;
+    }
+    clientObj->holdCs = hold;
+    if (!hold && (clientObj->setup.chipSelect != SYS_PORT_PIN_NONE))
+    {
+        if (clientObj->setup.csPolarity == DRV_SPI_CS_POLARITY_ACTIVE_LOW)
+        {
+            SYS_PORT_PinSet(clientObj->setup.chipSelect);
+        }
+        else
+        {
+            SYS_PORT_PinClear(clientObj->setup.chipSelect);
+        }
+    }
+}
+
 // *****************************************************************************
 // *****************************************************************************
 // Section: File scope functions
@@ -714,7 +737,7 @@ static void lDRV_SPI_PlibCallbackHandler(uintptr_t contextHandle)
     [transferObj->clientHandle & DRV_SPI_INDEX_MASK];
 
     /* De-assert Chip Select if it is defined by user */
-    if(clientObj->setup.chipSelect != SYS_PORT_PIN_NONE)
+    if((clientObj->setup.chipSelect != SYS_PORT_PIN_NONE) && !clientObj->holdCs)
     {
         if (clientObj->setup.csPolarity == DRV_SPI_CS_POLARITY_ACTIVE_LOW)
         {
@@ -917,7 +940,7 @@ static void lDRV_SPI_RX_DMA_CallbackHandler(
         }
 
         /* Transfer complete. De-assert Chip Select if it is defined by user. */
-        if(clientObj->setup.chipSelect != SYS_PORT_PIN_NONE)
+        if((clientObj->setup.chipSelect != SYS_PORT_PIN_NONE) && !clientObj->holdCs)
         {
             if (clientObj->setup.csPolarity == DRV_SPI_CS_POLARITY_ACTIVE_LOW)
             {
@@ -1179,6 +1202,7 @@ DRV_HANDLE DRV_SPI_Open(
             clientObj->context              = 0U;
             clientObj->setup.chipSelect     = SYS_PORT_PIN_NONE;
             clientObj->setupChanged         = false;
+            clientObj->holdCs               = false;
             clientObj->drvIndex             = drvIndex;
 
             return clientObj->clientHandle;

@@ -2399,6 +2399,15 @@ static void lDRV_SDSPI_BufferIOTasks
                 break;
             }
 
+            /* #1255: an SPI-mode transaction must keep CS asserted from the
+             * command through the response and data (SanDisk SD Card Product
+             * Manual v2.2, 80-13-00169, section 3.3; only the busy period is
+             * exempt). DRV_SPI otherwise raises CS after every transfer, which
+             * put CS high between the CRC and the data-response token. Held
+             * until this request releases the bus (DRV_SDSPI_SPIExclusiveAccess). */
+            DRV_SPI_ChipSelectHold(dObj->spiDrvHandle, true);
+            dObj->csHeld = true;
+
             dObj->sdState = TASK_STATE_CARD_COMMAND;
 
             currentBufObj->status = DRV_SDSPI_COMMAND_IN_PROGRESS;
@@ -3162,6 +3171,9 @@ SYS_MODULE_OBJ DRV_SDSPI_Initialize
     dObj->writeProtectPin       = sdSPIInit->writeProtectPin;
     dObj->chipSelectPin         = sdSPIInit->chipSelectPin;
     dObj->sdcardSpeedHz         = sdSPIInit->sdcardSpeedHz;
+    dObj->csLockDepth           = 0U;
+    dObj->csHeld              = false;
+    dObj->csTrailTimeouts       = 0U;
     dObj->pollingIntervalMs     = sdSPIInit->pollingIntervalMs;
     dObj->detachedPollCount     = 0U;
     /* #756: forced-detect-poll request/ack pair and its rate limiter. Reset

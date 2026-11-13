@@ -49,6 +49,9 @@
 #include <string.h>
 #include "driver/spi/drv_spi.h"
 #include "drv_sdspi_driver_interface.h"
+#include <xc.h>               /* #1255: _CP0_GET_COUNT */
+#include "configuration.h"    /* #1255: SYS_TIME_CPU_CLOCK_FREQUENCY */
+#include "Util/Logger.h"
 
 // *****************************************************************************
 /* Timer Event Handler
@@ -166,7 +169,10 @@ void DRV_SDSPI_SPIDriverEventHandler(
      * lDRV_SPI_RX_DMA_CallbackHandler tail). A gate would be actively wrong: with
      * a newer SD transfer queued behind a WINC one, it would leave CS low across
      * the WINC transfer. */
-    SYS_PORT_PinSet(dObj->chipSelectPin);
+    if (!dObj->csHeld)   /* #1255: a held CS is raised at bus release instead */
+    {
+        SYS_PORT_PinSet(dObj->chipSelectPin);
+    }
 
     /* #567 rework (SD-detect regression fix): the original guard ignored any
      * completion whose handle didn't match expectedXferHandle — but that
@@ -363,9 +369,90 @@ bool DRV_SDSPI_SPISpeedSetup(
     None
 */
 
+/* #1255: end a held-CS request. Raise SD CS, then clock one 0xFF with CS
+ * disabled: the card releases DataOut only on the clock after CS goes high
+ * (SanDisk SD Card Product Manual v2.2, section 5.23.4), and without that clock
+ * it can still be driving MISO into the next transfer on the shared bus, which
+ * is a WINC transfer. Then restore the per-transfer CS setup. Runs while this
+ * driver still holds the exclusive lock, so the byte goes out before any other
+ * client's transfer.
+ *
+ * Synchronous on purpose: DRV_SPI applies a client's setup when a transfer
+ * STARTS, so a queued CS-disabled byte followed by an immediate setup restore
+ * could start with CS asserted, and its completion would arrive as the next
+ * request's. One byte takes well under 1 us at the card clock; the wait is
+ * capped at 1 ms, and on expiry the handle goes to the abort ring so its late
+ * completion is ignored.
+ *
+ * Skipped when an SD transfer is still outstanding (a lost completion being
+ * unwound, e.g. DRV_SDSPI_ReleaseBus): that handle must stay in
+ * expectedXferHandle for the abort ring, and the caller raises CS itself. */
+static void lDRV_SDSPI_ReleaseHeldCs(DRV_SDSPI_OBJ* const dObj)
+{
+    DRV_SPI_TRANSFER_HANDLE h;
+    uint32_t t0;
+    const uint32_t limit = (SYS_TIME_CPU_CLOCK_FREQUENCY / 2U) / 1000U;   /* 1 ms */
+
+    dObj->csHeld = false;
+    DRV_SPI_ChipSelectHold(dObj->spiDrvHandle, false);
+    SYS_PORT_PinSet(dObj->chipSelectPin);
+    if (dObj->spiTransferStatus == DRV_SDSPI_SPI_TRANSFER_STATUS_IN_PROGRESS)
+    {
+        return;
+    }
+    (void) DRV_SDSPI_SPISpeedSetup(dObj, dObj->sdcardSpeedHz, SYS_PORT_PIN_NONE);
+    lDRV_SDSPI_AbortedXferPrune(dObj);
+    dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_IN_PROGRESS;
+    DRV_SPI_WriteTransferAdd(dObj->spiDrvHandle, dObj->pClkPulseData, 1U, &h);
+    dObj->expectedXferHandle = h;
+    if (h == DRV_SPI_TRANSFER_HANDLE_INVALID)
+    {
+        dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_ERROR;
+    }
+    else
+    {
+        t0 = _CP0_GET_COUNT();
+        while ((dObj->spiTransferStatus == DRV_SDSPI_SPI_TRANSFER_STATUS_IN_PROGRESS) &&
+               ((_CP0_GET_COUNT() - t0) < limit))
+        {
+            /* the DMA completion ISR updates spiTransferStatus */
+        }
+        if (dObj->spiTransferStatus == DRV_SDSPI_SPI_TRANSFER_STATUS_IN_PROGRESS)
+        {
+            DRV_SDSPI_AbortedXferRecord(dObj);
+            dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_ERROR;
+            dObj->csTrailTimeouts++;
+            if (dObj->csTrailTimeouts <= 4U)
+            {
+                LOG_E("SD: MISO-release clock timed out (n=%lu)", (unsigned long)dObj->csTrailTimeouts);
+            }
+        }
+    }
+    (void) DRV_SDSPI_SPISpeedSetup(dObj, dObj->sdcardSpeedHz, dObj->chipSelectPin);
+}
+
 bool DRV_SDSPI_SPIExclusiveAccess(DRV_SDSPI_OBJ* const dObj, bool isExclusive)
 {
-    return DRV_SPI_Lock(dObj->spiDrvHandle, isExclusive);
+    bool ok;
+
+    if (isExclusive)
+    {
+        ok = DRV_SPI_Lock(dObj->spiDrvHandle, true);
+        if (ok && (dObj->csLockDepth < 255U))
+        {
+            dObj->csLockDepth++;
+        }
+        return ok;
+    }
+    if (dObj->csLockDepth > 0U)
+    {
+        dObj->csLockDepth--;
+    }
+    if ((dObj->csLockDepth == 0U) && dObj->csHeld)
+    {
+        lDRV_SDSPI_ReleaseHeldCs(dObj);
+    }
+    return DRV_SPI_Lock(dObj->spiDrvHandle, false);
 }
 
 // *****************************************************************************
