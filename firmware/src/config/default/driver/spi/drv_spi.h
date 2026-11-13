@@ -1287,6 +1287,30 @@ bool DRV_SPI_IsExclusiveHolder( const DRV_HANDLE handle );
  * before the caller acts on it. */
 bool DRV_SPI_TransferIsPending( const DRV_HANDLE handle, const DRV_SPI_TRANSFER_HANDLE xfer );
 
+/* DAQiFi addition (#1255): hold == true keeps this client's chip select
+ * asserted across transfer completions (each transfer still asserts it at its
+ * start), so a multi-transfer transaction stays selected end to end; hold ==
+ * false clears the hold and raises chip select now. A client that holds CS
+ * must also hold DRV_SPI's exclusive lock for the whole hold, so no other
+ * client's transfer can run while its CS is low. Release only when none of its
+ * transfers is in progress: raising CS under a live transfer cuts it short. */
+void DRV_SPI_ChipSelectHold( const DRV_HANDLE handle, bool hold );
+
+/* DAQiFi addition (#1255): DRV_SPI_WriteTransferAdd for a transfer that neither
+ * asserts nor deasserts the client's chip select, whenever it starts. For
+ * clocking a device with its chip select high (the SD card releases MISO only
+ * on a clock after CS rises). Unlike changing the client setup, the property
+ * belongs to the transfer, so it holds however long the transfer waits in the
+ * queue. */
+/* DAQiFi addition (#1255): true while any transfer this client submitted is
+ * still queued or running. Unlocked scan of the transfer pool, like
+ * DRV_SPI_TransferIsPending: a transfer may finish right after it answers true,
+ * but none can appear unless this client submits one. */
+bool DRV_SPI_ClientHasPending( const DRV_HANDLE handle );
+
+void DRV_SPI_WriteTransferAddNoCs( const DRV_HANDLE handle, void* pTransmitData,
+                                   size_t txSize, DRV_SPI_TRANSFER_HANDLE* const transferHandle );
+
 /* MISRAC 2012 deviation block end */
 //DOM-IGNORE-BEGIN
 #ifdef __cplusplus

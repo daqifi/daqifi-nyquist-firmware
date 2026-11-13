@@ -29,4 +29,8 @@ void DRV_SPI_ReadTransferAdd(DRV_HANDLE h, void* buf, size_t n, DRV_SPI_TRANSFER
 bool DRV_SPI_Lock(DRV_HANDLE h, bool lock);
 bool DRV_SPI_IsExclusiveHolder(DRV_HANDLE h);
 bool DRV_SPI_TransferIsPending(DRV_HANDLE h, DRV_SPI_TRANSFER_HANDLE xfer);
+void DRV_SPI_ChipSelectHold(DRV_HANDLE h, bool hold);                      /* #1255 */
+bool DRV_SPI_ClientHasPending(DRV_HANDLE h);                               /* #1255 */
+void DRV_SPI_WriteTransferAddNoCs(DRV_HANDLE h, void* buf, size_t n,
+                                  DRV_SPI_TRANSFER_HANDLE* out);           /* #1255 */
 #endif
