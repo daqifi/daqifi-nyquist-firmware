@@ -41,6 +41,8 @@ Microchip or any third party.
 #include "nmasic.h"
 #include "m2m_periph.h"
 #include "osal/osal.h"
+#define LOG_MODULE LOG_MODULE_WIFI
+#include "Util/Logger.h"
 
 #define NMI_AHB_DATA_MEM_BASE  0x30000
 #define NMI_AHB_SHARE_MEM_BASE 0xd0000
@@ -72,6 +74,43 @@ typedef struct {
 
 volatile tstrHifContext gstrHifCxt;
 
+/* #881: set when an RX done write returned an error. A failed write is
+ * AMBIGUOUS: the SPI layer reports failure when only the response was lost,
+ * so the write may have reached the WINC. Cleared when the doubt is resolved,
+ * a new message is claimed, or the HIF layer is (de)initialised. */
+static uint8_t s_u8RxDoneUnsure;
+/* #881: count of WINC resets requested -- after a dropped message, or an RX
+ * done that could not be confirmed. Written only here (WINC task), read by
+ * wifi_manager, which performs the reset; see hif_rx_reset_requests(). */
+static volatile uint32_t s_u32RxResetRequests;
+
+uint32_t hif_rx_reset_requests(void)
+{
+    return s_u32RxResetRequests;
+}
+
+/* #881: acknowledge the message the host holds by setting RX done
+ * (CTRL_0 bit 1), with a read-modify-write of a register the WINC also writes.
+ *
+ * That is safe ONLY while the WINC certainly still holds this message: it
+ * posts nothing new until it consumes RX done, so CTRL_0 cannot change under
+ * the read-modify-write. After a failed write that is no longer certain -- the
+ * write may have landed, been consumed, and the WINC may post its next message
+ * at any moment. A second write would then race that post: if the WINC posts
+ * between our read and our write, the write overwrites the new message's
+ * CTRL_0 and acknowledges it unread. No ordering of host reads closes that,
+ * and the WINC1500 has no set-only form of RX done (the driver's only access
+ * is this read-modify-write; WINC3400 drivers use a separate register).
+ *
+ * So after a failed write this NEVER writes again. It reads CTRL_0 only:
+ *  - bit 0 set: the WINC has posted a new message, which it does only after
+ *    consuming our RX done -- ours landed. The next hif_isr() pass takes it.
+ *  - bit 1 set: our RX done is there, not yet consumed -- it landed.
+ *  - neither: it did not land, or it landed and was consumed with nothing new
+ *    posted yet. That cannot be told apart without writing, so request a WINC
+ *    reset (wifi_manager performs it): an outage of seconds, logged, instead
+ *    of either a WINC waiting forever or a message silently acknowledged
+ *    unread. */
 static int8_t hif_set_rx_done(void)
 {
     uint32_t reg;
@@ -80,12 +119,66 @@ static int8_t hif_set_rx_done(void)
     gstrHifCxt.u8HifRXDone = 0;
     ret = nm_read_reg_with_ret(WIFI_HOST_RCV_CTRL_0,&reg);
     if(ret != M2M_SUCCESS)goto ERR1;
-    /* Set RX Done */
+    if(s_u8RxDoneUnsure)
+    {
+        s_u8RxDoneUnsure = 0;
+        if(!(reg & (NBIT0 | NBIT1)))
+        {
+            s_u32RxResetRequests++;
+            LOG_E("WiFi: WINC RX done unconfirmed after a bus error; resetting the WINC");
+        }
+        return M2M_SUCCESS;
+    }
+    /* Set RX Done, in ONE SPI attempt: nm_write_reg() would resend a write
+     * whose response was lost, and a resend is exactly the second write this
+     * function must never make. Any failure must reach the code below. */
     reg |= NBIT1;
-    ret = nm_write_reg(WIFI_HOST_RCV_CTRL_0,reg);
-    if(ret != M2M_SUCCESS)goto ERR1;
-ERR1:
+    ret = nm_write_reg_once(WIFI_HOST_RCV_CTRL_0,reg);
+    if(ret != M2M_SUCCESS)
+    {
+        s_u8RxDoneUnsure = 1;
+        goto ERR1;
+    }
     return ret;
+ERR1:
+    /* #881: keep the message marked pending, so the next pass resolves it
+     * (above). Upstream cleared the flag even when the write failed, so an RX
+     * done that never reached the WINC left it waiting forever. */
+    gstrHifCxt.u8HifRXDone = 1;
+    return ret;
+}
+
+/* #881: drop a received message the host could not read or parse: give its
+ * buffer back to the WINC, then request a WINC reset. Upstream's error exits in
+ * hif_isr() returned with RX done unwritten: the WINC then raised no further
+ * interrupt and granted no buffer, so WiFi stayed dead until the WINC was
+ * reset. A single corrupted header read on the shared SPI bus was enough.
+ * RX done alone revives the WINC but not what sits above it: the lost message
+ * cannot be identified (its header is what failed), and the layers above may
+ * be waiting for exactly it. Measured on hardware: dropping one socket
+ * receive event left the TCP server's only client slot without a recv() for
+ * the 300 s console idle timeout. The reset resynchronises every layer. */
+static int8_t hif_drop_rx(const char *why)
+{
+    int8_t ret;
+
+    if(!gstrHifCxt.u8HifRXDone)
+        return M2M_SUCCESS;
+    ret = hif_set_rx_done();
+    s_u32RxResetRequests++;
+    /* log_budget: max=11 */
+    LOG_E("WiFi: dropped unreadable WINC message (%s), RX done rc=%d; resetting the WINC", why, (int)ret);
+    return ret;
+}
+
+/* #881: resolve an RX done whose write failed (hif_set_rx_done() reads, and
+ * never writes again). Runs on the WINC task's retry pass; returns an error
+ * only while CTRL_0 cannot even be read, so the task keeps re-running it. */
+static int8_t hif_retry_rx_done(void)
+{
+    if(!gstrHifCxt.u8HifRXDone)
+        return M2M_SUCCESS;
+    return hif_set_rx_done();
 }
 /**
 *   @fn         static void m2m_hif_cb(uint8_t u8OpCode, uint16_t u16DataSize, uint32_t u32Addr)
@@ -220,6 +313,7 @@ ERR1:
 int8_t hif_init(void * arg)
 {
     memset((uint8_t*)&gstrHifCxt,0,sizeof(tstrHifContext));
+    s_u8RxDoneUnsure = 0;   /* #881: no message is held after (de)init */
 
     if (OSAL_RESULT_TRUE != OSAL_SEM_Create(&hifSemaphore, OSAL_SEM_TYPE_BINARY, 1, 1))
         return M2M_ERR_INIT;
@@ -257,6 +351,7 @@ int8_t hif_deinit(void * arg)
         OSAL_SEM_Delete(&hifSemaphore);
     }
     memset((uint8_t*)&gstrHifCxt,0,sizeof(tstrHifContext));
+    s_u8RxDoneUnsure = 0;   /* #881: no message is held after (de)init */
     return ret;
 }
 /**
@@ -455,6 +550,8 @@ static int8_t hif_isr(void)
             ret = nm_write_reg(WIFI_HOST_RCV_CTRL_0,reg);
             if(ret != M2M_SUCCESS)goto ERR1;
             gstrHifCxt.u8HifRXDone = 1;
+            /* #881: a new message means the WINC consumed any earlier RX done. */
+            s_u8RxDoneUnsure = 0;
             size = (uint16_t)((reg >> 2) & 0xfff);
             if (size > 0) {
                 uint32_t address = 0;
@@ -465,6 +562,7 @@ static int8_t hif_isr(void)
                 if(M2M_SUCCESS != ret)
                 {
                     M2M_ERR("(hif) WIFI_HOST_RCV_CTRL_1 bus fail\r\n");
+                    hif_drop_rx("ctrl1 read");
                     goto ERR1;
                 }
                 gstrHifCxt.u32RxAddr = address;
@@ -474,6 +572,7 @@ static int8_t hif_isr(void)
                 if(M2M_SUCCESS != ret)
                 {
                     M2M_ERR("(hif) address bus fail\r\n");
+                    hif_drop_rx("header read");
                     goto ERR1;
                 }
                 if(strHif.u16Length != size)
@@ -483,6 +582,7 @@ static int8_t hif_isr(void)
                         M2M_ERR("(hif) Corrupted packet Size = %u <L = %u, G = %u, OP = %02X>\r\n",
                             size, strHif.u16Length, strHif.u8Gid, strHif.u8Opcode);
                         ret = M2M_ERR_BUS_FAIL;
+                        hif_drop_rx("size");
                         goto ERR1;
                     }
                 }
@@ -534,6 +634,7 @@ static int8_t hif_isr(void)
                 else
                 {
                     M2M_ERR("(hif) invalid group ID\r\n");
+                    hif_drop_rx("group");
                     return M2M_ERR_BUS_FAIL;
                 }
                 if(gstrHifCxt.u8HifRXDone)
@@ -550,12 +651,19 @@ static int8_t hif_isr(void)
             {
                 M2M_ERR("(hif) Wrong size\r\n");
                 ret = M2M_ERR_RCV;
+                hif_drop_rx("zero size");
                 goto ERR1;
             }
         }
         else
         {
             M2M_ERR("(hif) False interrupt %lx\r\n",reg);
+            /* #881: a message is still pending only if an RX done write
+             * failed. The WINC task re-runs this handler after any error
+             * (wdrv_winc.c re-posts drvEventSemaphore), so resolve it here.
+             * A failure to resolve is returned as an error, or the task
+             * stops re-running the handler with the message still pending. */
+            ret = hif_retry_rx_done();
             goto ERR1;
         }
     }
@@ -608,8 +716,10 @@ int8_t hif_receive(uint32_t u32Addr, uint8_t *pu8Buf, uint16_t u16Sz, uint8_t is
     {
         if(isDone)
         {
-            /* set RX done */
-            ret = hif_set_rx_done();
+            /* set RX done. #881: as below, a failure stays pending for
+             * hif_isr()'s post-callback pass and is not the caller's. */
+            (void)hif_set_rx_done();
+            ret = M2M_SUCCESS;
         }
         else
         {
@@ -639,8 +749,19 @@ int8_t hif_receive(uint32_t u32Addr, uint8_t *pu8Buf, uint16_t u16Sz, uint8_t is
     /* check if this is the last packet */
     if((((gstrHifCxt.u32RxAddr + gstrHifCxt.u32RxSize) - (u32Addr + u16Sz)) <= 0) || isDone)
     {
-        /* set RX done */
-        ret = hif_set_rx_done();
+        /* set RX done. #881: its failure is NOT this call's failure. The
+         * payload is already read and intact, and callers deliver it only on
+         * success (Socket_ReadSocketData() drops the app callback otherwise,
+         * so a TCP client was never re-armed with recv() and stalled until the
+         * console idle timeout). The RX done itself stays pending and is
+         * resolved by hif_isr()'s post-callback pass: confirmed, or a WINC
+         * reset. Whether the WINC is reset is decided there, from CTRL_0,
+         * and is independent of this: on hardware a landed RX done is
+         * usually consumed before that read and so ALSO ends in a reset
+         * (#881, bench 2026-11-13, n=1). What delivering buys is the payload,
+         * which a reset alone would lose. */
+        (void)hif_set_rx_done();
+        ret = M2M_SUCCESS;
     }
 
 ERR1:

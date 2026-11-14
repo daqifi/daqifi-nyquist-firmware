@@ -481,6 +481,13 @@ on:
       # test_1217_sd_crc.c its CRC header. Whole directory: the driver's headers
       # are part of what gets compiled.
       - 'firmware/src/config/default/driver/sdspi/**'
+      # #881: test_881_hif_rx_done.c and test_881_spi_socket.c compile the WINC
+      # driver's m2m_hif.c, nmbus.c, nmspi.c and socket.c for real, against its
+      # headers, so a DRIVER-ONLY change must run them.
+      - 'firmware/src/config/default/driver/winc/**'
+      # #881: test_881_wifi_reset.c splices Iperf2_Stop()/MaybeAutoReset() out
+      # of this file (iperf2's auto-reset is one of the hard-reset callers).
+      - 'firmware/src/services/wifi_services/iperf2/iperf2.c'
   push:
     branches: [main]
     paths:
@@ -613,6 +620,13 @@ on:
       # test_1217_sd_crc.c its CRC header. Whole directory: the driver's headers
       # are part of what gets compiled.
       - 'firmware/src/config/default/driver/sdspi/**'
+      # #881: test_881_hif_rx_done.c and test_881_spi_socket.c compile the WINC
+      # driver's m2m_hif.c, nmbus.c, nmspi.c and socket.c for real, against its
+      # headers, so a DRIVER-ONLY change must run them.
+      - 'firmware/src/config/default/driver/winc/**'
+      # #881: test_881_wifi_reset.c splices Iperf2_Stop()/MaybeAutoReset() out
+      # of this file (iperf2's auto-reset is one of the hard-reset callers).
+      - 'firmware/src/services/wifi_services/iperf2/iperf2.c'
 
 permissions:
   contents: read   # checkout + gcc build + run only, no writes
