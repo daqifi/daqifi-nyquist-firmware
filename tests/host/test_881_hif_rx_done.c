@@ -16,6 +16,9 @@
 
 /* One translation unit: the register addresses are private to m2m_hif.c. */
 #include "m2m_hif.c"
+#ifdef TEST881_OLD_SOURCE   /* to run this file against pre-r4 sources */
+uint32_t hif_rx_reset_requests(void) { return 0; }
+#endif
 #include "test_framework.h"
 
 /* ---- fake WINC ------------------------------------------------------- */
@@ -25,7 +28,7 @@ unsigned gTest881LogE;
 static uint32_t gCtrl0;             /* WIFI_HOST_RCV_CTRL_0 as the host sees it */
 static unsigned gRxDoneWrites;      /* writes of CTRL_0 with bit 1 set */
 static uint8_t gHdr[4];             /* tstrHifHdr at RX_ADDR: gid, op, len LE */
-static int gFailCtrl1Read, gFailHdrRead, gFailRxDoneWrites;
+static int gFailCtrl1Read, gFailHdrRead, gFailRxDoneWrites, gFailCtrl0Reads;
 static unsigned gIpCalls;
 
 /* A write the WINC APPLIES whose SPI response is then lost, so the host is
@@ -45,12 +48,27 @@ static int gCbAcks;
  * at this CTRL_0 read (counted from post()), to place a post between two
  * register accesses of the host. */
 static unsigned gPostOnRead, gCtrl0Reads;
+/* When nonzero, the successor is posted just AFTER this CTRL_0 read returns:
+ * between the host's read and its next register access. */
+static unsigned gPostAfterRead;
+static void postNext(void);
+/* hif_rx_reset_requests() is a monotonic count; tests read it per test. */
+static uint32_t gResetBase;
+static uint32_t resets(void);
 
 static void deliver(const struct msg *m)
 {
     gCtrl0 = ((uint32_t)m->size << 2) | NBIT0;
     gHdr[0] = m->gid; gHdr[1] = m->op;
     gHdr[2] = (uint8_t)m->len; gHdr[3] = (uint8_t)(m->len >> 8);
+}
+
+static void postNext(void)
+{
+    if (gQueued && !gAckPending && !(gCtrl0 & NBIT0)) {
+        deliver(&gQueue[0]);
+        memmove(gQueue, gQueue + 1, --gQueued * sizeof gQueue[0]);
+    }
 }
 
 /* The WINC consumes RX done: frees the message it has posted -- read or not:
@@ -60,7 +78,7 @@ static void wincConsume(void)
 {
     gAckPending = 0;
     gCtrl0 &= ~(NBIT1 | NBIT0);
-    if (gQueued && !gPostOnRead) {
+    if (gQueued && !gPostOnRead && !gPostAfterRead) {
         deliver(&gQueue[0]);
         memmove(gQueue, gQueue + 1, --gQueued * sizeof gQueue[0]);
     }
@@ -69,11 +87,13 @@ static void wincConsume(void)
 int8_t nm_read_reg_with_ret(uint32_t addr, uint32_t *val)
 {
     if (addr == WIFI_HOST_RCV_CTRL_0) {
+        if (gFailCtrl0Reads) { gFailCtrl0Reads--; return M2M_ERR_BUS_FAIL; }
         if (++gCtrl0Reads == gPostOnRead && gQueued && !gAckPending && !(gCtrl0 & NBIT0)) {
             deliver(&gQueue[0]);
             memmove(gQueue, gQueue + 1, --gQueued * sizeof gQueue[0]);
         }
         *val = gCtrl0;
+        if (gCtrl0Reads == gPostAfterRead) postNext();
         return M2M_SUCCESS;
     }
     if (addr == WIFI_HOST_RCV_CTRL_1) {
@@ -134,11 +154,14 @@ static void post(uint16_t size, uint8_t gid, uint8_t op, uint16_t len)
     hif_register_cb(M2M_REQ_GROUP_IP, ip_cb);
     deliver(&m);
     gRxDoneWrites = 0; gTest881LogE = 0; gIpCalls = 0;
-    gFailCtrl1Read = gFailHdrRead = gFailRxDoneWrites = 0;
+    gFailCtrl1Read = gFailHdrRead = gFailRxDoneWrites = gFailCtrl0Reads = 0;
     gApplyLostRxDone = gHoldAck = gAckPending = gCbAcks = 0;
     gQueued = 0;
-    gPostOnRead = gCtrl0Reads = 0;
+    gPostOnRead = gPostAfterRead = gCtrl0Reads = 0;
+    gResetBase = hif_rx_reset_requests();
 }
+
+static uint32_t resets(void) { return hif_rx_reset_requests() - gResetBase; }
 
 /* The WINC has a further message queued behind the current one. */
 static void queue_next(uint16_t size, uint8_t gid, uint8_t op, uint16_t len)
@@ -201,48 +224,53 @@ TEST(header_read_failure_is_acknowledged)
     ASSERT_EQ(gRxDoneWrites, 1);
 }
 
-/* The acknowledgement itself can fail on a bad bus. The WINC task re-runs the
- * handler after any error (wdrv_winc.c re-posts its event semaphore); that
- * re-run finds no new interrupt and must retry the acknowledgement. Upstream
- * cleared the pending flag before the write, so a failed write was never
- * retried. */
-TEST(failed_acknowledgement_is_retried_on_the_next_pass)
+/* The acknowledgement itself can fail on a bad bus, and a failed write is
+ * ambiguous: it may have landed. Writing it again could acknowledge the
+ * WINC's NEXT message unread (codex r1-r3 on #1259), so the next pass must
+ * not write; it reads CTRL_0, and when nothing shows the write landed it
+ * requests a WINC reset. Upstream cleared the pending flag before the write
+ * and did neither, so the WINC waited forever. */
+TEST(failed_acknowledgement_that_did_not_land_requests_a_reset)
 {
     post(16, 0x82, 0x45, 16);
     gFailRxDoneWrites = 1;
     ASSERT_TRUE(hif_handle_isr() != M2M_SUCCESS);
     ASSERT_EQ(gRxDoneWrites, 0);
-    hif_handle_isr();               /* the driver's retry: CTRL_0 bit 0 is clear */
-    ASSERT_EQ(gRxDoneWrites, 1);
-    hif_handle_isr();               /* nothing pending any more: no extra write */
-    ASSERT_EQ(gRxDoneWrites, 1);
+    ASSERT_EQ(hif_handle_isr(), M2M_SUCCESS);       /* the driver's retry pass */
+    ASSERT_EQ(gRxDoneWrites, 0);                    /* never written twice */
+    ASSERT_EQ(resets(), 1);
+    ASSERT_EQ(hif_handle_isr(), M2M_SUCCESS);       /* resolved: no further request */
+    ASSERT_EQ(resets(), 1);
 }
 
-/* While the bus keeps failing, every pass must report an error: the WINC task
- * re-runs the handler only after an error, so a pass that swallowed its failed
- * retry would end the retries with the message still pending (codex r1). */
-TEST(acknowledgement_is_retried_until_it_succeeds)
+/* While CTRL_0 cannot even be read, the retry pass must keep failing: the WINC
+ * task re-runs the handler only after an error. */
+TEST(unreadable_ctrl0_keeps_the_retry_pass_failing)
 {
     post(16, 0x82, 0x45, 16);
-    gFailRxDoneWrites = 3;
+    gFailRxDoneWrites = 1;
+    ASSERT_TRUE(hif_handle_isr() != M2M_SUCCESS);
+    gFailCtrl0Reads = 2;
     ASSERT_TRUE(hif_handle_isr() != M2M_SUCCESS);
     ASSERT_TRUE(hif_handle_isr() != M2M_SUCCESS);
-    ASSERT_TRUE(hif_handle_isr() != M2M_SUCCESS);
-    ASSERT_EQ(gRxDoneWrites, 0);
+    ASSERT_EQ(resets(), 0);
     ASSERT_EQ(hif_handle_isr(), M2M_SUCCESS);
-    ASSERT_EQ(gRxDoneWrites, 1);
+    ASSERT_EQ(resets(), 1);
+    ASSERT_EQ(gRxDoneWrites, 0);
 }
 
-/* Same, for a good message whose post-callback acknowledgement fails. */
-TEST(failed_acknowledgement_of_a_good_message_is_retried)
+/* Same, for a good message whose acknowledgement (by the callback, through
+ * hif_receive) fails without landing. */
+TEST(failed_acknowledgement_of_a_good_message_requests_a_reset)
 {
     post(16, M2M_REQ_GROUP_IP, 0x45, 16);
+    gCbAcks = 1;
     gFailRxDoneWrites = 1;
-    ASSERT_TRUE(hif_handle_isr() != M2M_SUCCESS);
-    ASSERT_EQ(gIpCalls, 1);
-    ASSERT_EQ(gRxDoneWrites, 0);
     hif_handle_isr();
-    ASSERT_EQ(gRxDoneWrites, 1);
+    ASSERT_EQ(gIpCalls, 1);
+    hif_handle_isr();
+    ASSERT_EQ(gRxDoneWrites, 0);
+    ASSERT_EQ(resets(), 1);
 }
 
 /* codex r1 on #1259: the callback's RX done LANDS -- the WINC frees A and
@@ -283,12 +311,11 @@ TEST(landed_ack_not_yet_consumed_is_not_written_again)
     ASSERT_EQ(gIpCalls, 1);                         /* B dispatched */
 }
 
-/* codex r2 on #1259: the host's read-back must be the read it writes from.
- * A's RX done lands but is reported failed; the WINC consumes it and posts B
- * at the host's 4th CTRL_0 read -- in r2, between the read-back that found
- * nothing pending and the second read inside the write, which then
- * acknowledged B unread. Deciding and writing from one read never sees B
- * mid-acknowledgement: B is claimed and dispatched by the next pass. */
+/* codex r2 on #1259: the check and the write must not be separate reads.
+ * A's RX done lands but is reported failed; the WINC posts B at the host's
+ * 4th CTRL_0 read -- in r2, the second read inside the write, which then
+ * acknowledged B unread. (Deciding from one read does NOT by itself prevent
+ * an unread acknowledgement -- see the next test; not writing does.) */
 TEST(message_posted_after_the_read_back_is_not_acknowledged_unread)
 {
     post(16, M2M_REQ_GROUP_IP, 0x45, 16);           /* A */
@@ -303,6 +330,27 @@ TEST(message_posted_after_the_read_back_is_not_acknowledged_unread)
     ASSERT_EQ(gQueued, 0);
 }
 
+/* codex r3 on #1259: B is posted just after the read that found nothing
+ * pending, before any write. r3 then wrote that stale value with bit 1 set,
+ * which cleared B's interrupt and acknowledged it unread -- a read-modify-
+ * write race no read ordering closes. With no write after an ambiguous
+ * failure, B is dispatched; the price is a WINC reset that, in this schedule,
+ * was not needed. */
+TEST(message_posted_between_the_check_and_any_write_is_dispatched)
+{
+    post(16, M2M_REQ_GROUP_IP, 0x45, 16);           /* A */
+    queue_next(16, M2M_REQ_GROUP_IP, 0x46, 16);     /* B */
+    gCbAcks = 1;
+    gApplyLostRxDone = 1;
+    gPostAfterRead = 3;                             /* the fallback's check read */
+    hif_handle_isr();
+    ASSERT_EQ(gIpCalls, 1);
+    hif_handle_isr();                               /* B's interrupt */
+    ASSERT_EQ(gIpCalls, 2);                         /* B dispatched */
+    ASSERT_EQ(gRxDoneWrites, 2);                    /* A's (landed) and B's own */
+    ASSERT_EQ(gQueued, 0);
+}
+
 int main(void)
 {
     printf("#881 hif_isr RX done on error exits\n");
@@ -312,11 +360,12 @@ int main(void)
     RUN(zero_size_is_acknowledged);
     RUN(ctrl1_read_failure_is_acknowledged);
     RUN(header_read_failure_is_acknowledged);
-    RUN(failed_acknowledgement_is_retried_on_the_next_pass);
-    RUN(acknowledgement_is_retried_until_it_succeeds);
-    RUN(failed_acknowledgement_of_a_good_message_is_retried);
+    RUN(failed_acknowledgement_that_did_not_land_requests_a_reset);
+    RUN(unreadable_ctrl0_keeps_the_retry_pass_failing);
+    RUN(failed_acknowledgement_of_a_good_message_requests_a_reset);
     RUN(landed_ack_with_lost_response_does_not_release_the_next_message);
     RUN(landed_ack_not_yet_consumed_is_not_written_again);
     RUN(message_posted_after_the_read_back_is_not_acknowledged_unread);
+    RUN(message_posted_between_the_check_and_any_write_is_dispatched);
     return test_summary();
 }

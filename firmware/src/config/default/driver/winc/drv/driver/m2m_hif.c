@@ -75,31 +75,42 @@ typedef struct {
 volatile tstrHifContext gstrHifCxt;
 
 /* #881: set when an RX done write returned an error. A failed write is
- * AMBIGUOUS: the SPI layer reports failure when the response is lost, even
- * if the write reached the WINC (nm_spi_write_reg retries the same value for
- * that reason). Cleared when a write succeeds or a new message is claimed. */
+ * AMBIGUOUS: the SPI layer reports failure when only the response was lost,
+ * so the write may have reached the WINC. Cleared when the doubt is resolved,
+ * a new message is claimed, or the HIF layer is (de)initialised. */
 static uint8_t s_u8RxDoneUnsure;
+/* #881: count of WINC resets requested because an RX done could not be
+ * confirmed. Written only here (WINC task), read by wifi_manager, which
+ * performs the reset; see hif_rx_reset_requests(). */
+static volatile uint32_t s_u32RxResetRequests;
+
+uint32_t hif_rx_reset_requests(void)
+{
+    return s_u32RxResetRequests;
+}
 
 /* #881: acknowledge the message the host holds by setting RX done
- * (CTRL_0 bit 1).
+ * (CTRL_0 bit 1), with a read-modify-write of a register the WINC also writes.
  *
- * After a failed RX done write (s_u8RxDoneUnsure) the earlier write may have
- * landed, and writing again would acknowledge the WINC's NEXT message unread.
- * So the ONE read below both decides and supplies the value written:
+ * That is safe ONLY while the WINC certainly still holds this message: it
+ * posts nothing new until it consumes RX done, so CTRL_0 cannot change under
+ * the read-modify-write. After a failed write that is no longer certain -- the
+ * write may have landed, been consumed, and the WINC may post its next message
+ * at any moment. A second write would then race that post: if the WINC posts
+ * between our read and our write, the write overwrites the new message's
+ * CTRL_0 and acknowledges it unread. No ordering of host reads closes that,
+ * and the WINC1500 has no set-only form of RX done (the driver's only access
+ * is this read-modify-write; WINC3400 drivers use a separate register).
+ *
+ * So after a failed write this NEVER writes again. It reads CTRL_0 only:
  *  - bit 0 set: the WINC has posted a new message, which it does only after
- *    consuming our RX done -- so ours landed. Do not write; the new message is
- *    handled by the next hif_isr() pass (its interrupt is pending).
- *  - bit 1 set: our RX done is there, not yet consumed. Do not write. (The WINC
- *    clears bit 1 on consumption: hif_isr() writes back the register it read
- *    when it clears bit 0, which would re-acknowledge every message if bit 1
- *    lingered.)
- *  - neither: the write did not land, or it landed and was consumed with no
- *    new message yet; write.
- * What remains is the gap between that read and the write -- one SPI register
- * read to one register write, with the SPI lock released between them. A
- * message the WINC posts inside it (possible only if the earlier write landed)
- * is overwritten and acknowledged unread. nm_spi_write_reg's own retries,
- * which re-send the same value after a lost response, have the same exposure. */
+ *    consuming our RX done -- ours landed. The next hif_isr() pass takes it.
+ *  - bit 1 set: our RX done is there, not yet consumed -- it landed.
+ *  - neither: it did not land, or it landed and was consumed with nothing new
+ *    posted yet. That cannot be told apart without writing, so request a WINC
+ *    reset (wifi_manager performs it): an outage of seconds, logged, instead
+ *    of either a WINC waiting forever or a message silently acknowledged
+ *    unread. */
 static int8_t hif_set_rx_done(void)
 {
     uint32_t reg;
@@ -108,9 +119,14 @@ static int8_t hif_set_rx_done(void)
     gstrHifCxt.u8HifRXDone = 0;
     ret = nm_read_reg_with_ret(WIFI_HOST_RCV_CTRL_0,&reg);
     if(ret != M2M_SUCCESS)goto ERR1;
-    if(s_u8RxDoneUnsure && (reg & (NBIT0 | NBIT1)))
+    if(s_u8RxDoneUnsure)
     {
         s_u8RxDoneUnsure = 0;
+        if(!(reg & (NBIT0 | NBIT1)))
+        {
+            s_u32RxResetRequests++;
+            LOG_E("WiFi: WINC RX done unconfirmed after a bus error; resetting the WINC");
+        }
         return M2M_SUCCESS;
     }
     /* Set RX Done */
@@ -121,12 +137,11 @@ static int8_t hif_set_rx_done(void)
         s_u8RxDoneUnsure = 1;
         goto ERR1;
     }
-    s_u8RxDoneUnsure = 0;
     return ret;
 ERR1:
-    /* #881: keep the message marked pending so the write is tried again.
-     * Upstream cleared the flag even when the write failed, so a write that
-     * never reached the WINC was never retried and the WINC waited forever. */
+    /* #881: keep the message marked pending, so the next pass resolves it
+     * (above). Upstream cleared the flag even when the write failed, so an RX
+     * done that never reached the WINC left it waiting forever. */
     gstrHifCxt.u8HifRXDone = 1;
     return ret;
 }
@@ -148,21 +163,14 @@ static int8_t hif_drop_rx(const char *why)
     return ret;
 }
 
-/* #881: retry an RX done whose write failed. Runs on the WINC task's retry
- * pass, i.e. on every pass while the bus is failing, so it logs only the
- * outcome that ends the retries. */
+/* #881: resolve an RX done whose write failed (hif_set_rx_done() reads, and
+ * never writes again). Runs on the WINC task's retry pass; returns an error
+ * only while CTRL_0 cannot even be read, so the task keeps re-running it. */
 static int8_t hif_retry_rx_done(void)
 {
-    int8_t ret;
-
     if(!gstrHifCxt.u8HifRXDone)
         return M2M_SUCCESS;
-    ret = hif_set_rx_done();
-    if(M2M_SUCCESS == ret)
-    {
-        LOG_E("WiFi: WINC RX done retried, rc=%d", (int)ret);
-    }
-    return ret;
+    return hif_set_rx_done();
 }
 /**
 *   @fn         static void m2m_hif_cb(uint8_t u8OpCode, uint16_t u16DataSize, uint32_t u32Addr)
@@ -644,9 +652,9 @@ static int8_t hif_isr(void)
             M2M_ERR("(hif) False interrupt %lx\r\n",reg);
             /* #881: a message is still pending only if an RX done write
              * failed. The WINC task re-runs this handler after any error
-             * (wdrv_winc.c re-posts drvEventSemaphore), so retry it here --
-             * and report a failed retry as an error, or the task stops
-             * re-running the handler and the message stays pending. */
+             * (wdrv_winc.c re-posts drvEventSemaphore), so resolve it here.
+             * A failure to resolve is returned as an error, or the task
+             * stops re-running the handler with the message still pending. */
             ret = hif_retry_rx_done();
             goto ERR1;
         }

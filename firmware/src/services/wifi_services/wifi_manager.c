@@ -18,6 +18,7 @@
 #include "wdrv_winc_gpio.h"  // WDRV_WINC_GPIOChipEnable*/Reset* (#334 deep power-down)
 #include "semphr.h"
 #include "driver/winc/include/drv/driver/m2m_wifi.h"
+#include "driver/winc/include/drv/driver/m2m_hif.h"  // hif_rx_reset_requests (#881)
 
 #define UNUSED(x) (void)(x)
 /* WIFI_MANAGER_UDP_LISTEN_PORT moved to wifi_manager.h so the
@@ -3550,6 +3551,25 @@ size_t wifi_manager_WriteToBuffer(const char* pData, size_t len) {
 // disconnected.  The RssiEventCallback repairs the flag on a successful
 // response (chip confirms it knows about this assocHandle).  No-op when
 // the flag is in sync (the common case) — zero cost on a healthy link.
+// #881: the WINC HIF layer cannot always confirm that an RX done reached the
+// WINC after a bus error, and must not write it twice (m2m_hif.c,
+// hif_set_rx_done). It asks for a WINC reset instead; perform it here, on the
+// WifiTask, outside an APPLY. One reset per request.
+static void MaybeResetWincForRxDone(void) {
+    static uint32_t handled;
+    uint32_t requested = hif_rx_reset_requests();
+    if (requested == handled) {
+        return;
+    }
+    if (gApplyInProgress || IsWithinApplyTeardownWindow()) {
+        return;  // APPLY's own teardown resets the WINC; retry after it
+    }
+    handled = requested;
+    if (!wifi_manager_HardReset()) {
+        LOG_E("WiFi: WINC reset for an unconfirmed RX done failed to queue");
+    }
+}
+
 static void MaybeReconcileStaConnected(void) {
     // Phase 1: apply any pending repair signaled by RssiEventCallback.
     // Snapshot+clear pending state + handle atomically under a critical
@@ -3872,6 +3892,7 @@ static void wifi_manager_ProcessStateImpl(bool drainTcpRx) {
     // #382 sub-bug 1 — repair STA_CONNECTED flag if it drifted from chip
     // reality.  Runs at most every WIFI_STA_RECONCILE_PERIOD_TICKS.
     MaybeReconcileStaConnected();
+    MaybeResetWincForRxDone();
 
     wifi_tcp_server_TransmitBufferedData();
 

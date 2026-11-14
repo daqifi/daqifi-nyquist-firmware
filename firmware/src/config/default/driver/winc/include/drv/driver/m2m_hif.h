@@ -140,6 +140,10 @@ int8_t hif_send(uint8_t u8Gid,uint8_t u8Opcode,uint8_t *pu8CtrlBuf,uint16_t u16C
 */
 
 int8_t hif_receive(uint32_t u32Addr, uint8_t *pu8Buf, uint16_t u16Sz, uint8_t isDone);
+/* #881 (DAQiFi): number of WINC resets the HIF layer has requested because an
+ * RX done could not be confirmed after a bus error. wifi_manager performs a
+ * hard reset each time this count advances. */
+uint32_t hif_rx_reset_requests(void);
 /**
 *   @fn         hif_register_cb
 *   @brief
