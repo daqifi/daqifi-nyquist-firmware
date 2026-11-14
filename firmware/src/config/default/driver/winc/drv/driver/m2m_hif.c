@@ -755,9 +755,11 @@ int8_t hif_receive(uint32_t u32Addr, uint8_t *pu8Buf, uint16_t u16Sz, uint8_t is
          * so a TCP client was never re-armed with recv() and stalled until the
          * console idle timeout). The RX done itself stays pending and is
          * resolved by hif_isr()'s post-callback pass: confirmed, or a WINC
-         * reset. The alternative -- reset the WINC whenever this write fails
-         * after a payload was read -- costs a WiFi outage even when the
-         * acknowledgement landed and nothing was lost. */
+         * reset. Whether the WINC is reset is decided there, from CTRL_0,
+         * and is independent of this: on hardware a landed RX done is
+         * usually consumed before that read and so ALSO ends in a reset
+         * (#881, bench 2026-11-13, n=1). What delivering buys is the payload,
+         * which a reset alone would lose. */
         (void)hif_set_rx_done();
         ret = M2M_SUCCESS;
     }

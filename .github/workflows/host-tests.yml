@@ -485,6 +485,9 @@ on:
       # driver's m2m_hif.c, nmbus.c, nmspi.c and socket.c for real, against its
       # headers, so a DRIVER-ONLY change must run them.
       - 'firmware/src/config/default/driver/winc/**'
+      # #881: test_881_wifi_reset.c splices Iperf2_Stop()/MaybeAutoReset() out
+      # of this file (iperf2's auto-reset is one of the hard-reset callers).
+      - 'firmware/src/services/wifi_services/iperf2/iperf2.c'
   push:
     branches: [main]
     paths:
@@ -621,6 +624,9 @@ on:
       # driver's m2m_hif.c, nmbus.c, nmspi.c and socket.c for real, against its
       # headers, so a DRIVER-ONLY change must run them.
       - 'firmware/src/config/default/driver/winc/**'
+      # #881: test_881_wifi_reset.c splices Iperf2_Stop()/MaybeAutoReset() out
+      # of this file (iperf2's auto-reset is one of the hard-reset callers).
+      - 'firmware/src/services/wifi_services/iperf2/iperf2.c'
 
 permissions:
   contents: read   # checkout + gcc build + run only, no writes

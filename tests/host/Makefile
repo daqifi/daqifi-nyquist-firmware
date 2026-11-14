@@ -5418,30 +5418,38 @@ $(HIF881SPI_BIN): test_881_spi_socket.c test_framework.h $(HIF881SPI_SRC) \
                   stubs/hif_881_spi/wdrv_winc_common.h stubs/hif_881_spi/wdrv_winc_spi.h
 	$(CC) $(CFLAGS) -Istubs/hif_881_spi $(HIF881_INC) -I$(HIF881_DIR)/drv/socket -o $@ test_881_spi_socket.c
 
-# #881 (codex r4 on #1259, finding 3): a pending WINC reset request must not
-# re-power the WINC after LAN:POWer 0. wifi_manager.c is not host-includable,
-# so the four functions involved are spliced out of it (same technique as
-# $(LOGRING1248_GEN)) and compiled against test_881_wifi_reset.c's prelude.
-# Each must be found exactly once and end in a closing brace, or the build
-# fails: a test that compiles against nothing must not pass.
+# #881 (codex r4/r5 on #1259): nothing may re-arm a WINC hard reset after
+# LAN:POWer 0 -- not the HIF layer's reset request, not iperf2's auto-reset,
+# not LAN:HRESet. wifi_manager.c and iperf2.c are not host-includable, so the
+# functions involved are spliced out of BOTH (same technique as
+# $(LOGRING1248_GEN)) -- including the real Iperf2_Stop()/MaybeAutoReset(),
+# where the r5 finding lived -- and compiled against test_881_wifi_reset.c's
+# prelude. Each must be found exactly once and end in a closing brace, or the
+# build fails: a test that compiles against nothing must not pass.
 WIFI881_BIN := run_881_wifi_tests
 WIFI881_GEN := gen_881_wifi_reset.h
-WIFI881_FNS := 'bool wifi_manager_Deinit() {' 'bool wifi_manager_PowerOff(void) {' \
+IPERF2_SRC  := ../../firmware/src/services/wifi_services/iperf2/iperf2.c
+WIFI881_FNS := 'static bool ArmHardResetLocked(void) {' \
+               'static hard_reset_result_t HardResetImpl(void) {' \
+               'bool wifi_manager_Deinit() {' 'bool wifi_manager_PowerOff(void) {' \
                'bool wifi_manager_HardReset(void) {' 'static void MaybeResetWincForRxDone(void) {'
-$(WIFI881_BIN): test_881_wifi_reset.c test_framework.h $(WIFI_MGR_SRC) $(RECIPES)
+IPERF881_FNS := 'static void MaybeAutoReset(void) {' 'void Iperf2_Stop(void) {'
+$(WIFI881_BIN): test_881_wifi_reset.c test_framework.h $(WIFI_MGR_SRC) $(IPERF2_SRC) $(RECIPES)
 	@rm -f $(WIFI881_GEN); \
-	 for f in $(WIFI881_FNS); do \
-	   n=`tr -d '\r' < $(WIFI_MGR_SRC) | grep -cxF "$$f"`; \
+	 splice() { src=$$1; f=$$2; \
+	   n=`tr -d '\r' < $$src | grep -cxF "$$f"`; \
 	   test "$$n" = 1 || { echo "ERROR: '$$f' found $$n time(s) in"; \
-	     echo "       $(WIFI_MGR_SRC); test_881_wifi_reset needs exactly one."; \
-	     rm -f $(WIFI881_GEN); exit 1; }; \
-	   tr -d '\r' < $(WIFI_MGR_SRC) \
+	     echo "       $$src; test_881_wifi_reset needs exactly one."; \
+	     rm -f $(WIFI881_GEN) $(WIFI881_GEN).part; exit 1; }; \
+	   tr -d '\r' < $$src \
 	     | awk -v f="$$f" '$$0 == f { p = 1 } p { print } p && /^}/ { p = 0 }' > $(WIFI881_GEN).part; \
 	   last=`tail -1 $(WIFI881_GEN).part | tr -d '[:space:]'`; \
 	   test "$$last" = "}" || { echo "ERROR: '$$f' did not end in '}'"; \
 	     rm -f $(WIFI881_GEN) $(WIFI881_GEN).part; exit 1; }; \
-	   cat $(WIFI881_GEN).part >> $(WIFI881_GEN); \
-	 done; rm -f $(WIFI881_GEN).part
+	   cat $(WIFI881_GEN).part >> $(WIFI881_GEN); }; \
+	 for f in $(WIFI881_FNS); do splice $(WIFI_MGR_SRC) "$$f" || exit 1; done; \
+	 for f in $(IPERF881_FNS); do splice $(IPERF2_SRC) "$$f" || exit 1; done; \
+	 rm -f $(WIFI881_GEN).part
 	$(CC) $(CFLAGS) -o $@ test_881_wifi_reset.c
 
 run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) \
