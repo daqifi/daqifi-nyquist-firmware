@@ -481,6 +481,10 @@ on:
       # test_1217_sd_crc.c its CRC header. Whole directory: the driver's headers
       # are part of what gets compiled.
       - 'firmware/src/config/default/driver/sdspi/**'
+      # #881: test_881_hif_rx_done.c and test_881_spi_socket.c compile the WINC
+      # driver's m2m_hif.c, nmbus.c, nmspi.c and socket.c for real, against its
+      # headers, so a DRIVER-ONLY change must run them.
+      - 'firmware/src/config/default/driver/winc/**'
   push:
     branches: [main]
     paths:
@@ -613,6 +617,10 @@ on:
       # test_1217_sd_crc.c its CRC header. Whole directory: the driver's headers
       # are part of what gets compiled.
       - 'firmware/src/config/default/driver/sdspi/**'
+      # #881: test_881_hif_rx_done.c and test_881_spi_socket.c compile the WINC
+      # driver's m2m_hif.c, nmbus.c, nmspi.c and socket.c for real, against its
+      # headers, so a DRIVER-ONLY change must run them.
+      - 'firmware/src/config/default/driver/winc/**'
 
 permissions:
   contents: read   # checkout + gcc build + run only, no writes
