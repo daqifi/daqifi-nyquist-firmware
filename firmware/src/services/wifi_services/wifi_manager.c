@@ -3551,10 +3551,11 @@ size_t wifi_manager_WriteToBuffer(const char* pData, size_t len) {
 // disconnected.  The RssiEventCallback repairs the flag on a successful
 // response (chip confirms it knows about this assocHandle).  No-op when
 // the flag is in sync (the common case) — zero cost on a healthy link.
-// #881: the WINC HIF layer cannot always confirm that an RX done reached the
-// WINC after a bus error, and must not write it twice (m2m_hif.c,
-// hif_set_rx_done). It asks for a WINC reset instead; perform it here, on the
-// WifiTask, outside an APPLY. One reset per request.
+// #881: the WINC HIF layer asks for a WINC reset when it drops a message it
+// could not read (the layers above may be waiting for it), or cannot confirm
+// that an RX done reached the WINC after a bus error and must not write it
+// twice (m2m_hif.c). Perform it here, on the WifiTask, outside an APPLY.
+// Requests that arrive before one is served are served by one reset.
 static void MaybeResetWincForRxDone(void) {
     static uint32_t handled;
     uint32_t requested = hif_rx_reset_requests();

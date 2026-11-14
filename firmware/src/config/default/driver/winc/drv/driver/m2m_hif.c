@@ -79,9 +79,9 @@ volatile tstrHifContext gstrHifCxt;
  * so the write may have reached the WINC. Cleared when the doubt is resolved,
  * a new message is claimed, or the HIF layer is (de)initialised. */
 static uint8_t s_u8RxDoneUnsure;
-/* #881: count of WINC resets requested because an RX done could not be
- * confirmed. Written only here (WINC task), read by wifi_manager, which
- * performs the reset; see hif_rx_reset_requests(). */
+/* #881: count of WINC resets requested -- after a dropped message, or an RX
+ * done that could not be confirmed. Written only here (WINC task), read by
+ * wifi_manager, which performs the reset; see hif_rx_reset_requests(). */
 static volatile uint32_t s_u32RxResetRequests;
 
 uint32_t hif_rx_reset_requests(void)
@@ -146,11 +146,16 @@ ERR1:
     return ret;
 }
 
-/* #881: drop a received message the host could not read or parse, by giving
- * its buffer back to the WINC. Upstream's error exits in hif_isr() returned
- * with RX done unwritten: the WINC then raised no further interrupt and
- * granted no buffer, so WiFi stayed dead until the WINC was reset.
- * A single corrupted header read on the shared SPI bus was enough. */
+/* #881: drop a received message the host could not read or parse: give its
+ * buffer back to the WINC, then request a WINC reset. Upstream's error exits in
+ * hif_isr() returned with RX done unwritten: the WINC then raised no further
+ * interrupt and granted no buffer, so WiFi stayed dead until the WINC was
+ * reset. A single corrupted header read on the shared SPI bus was enough.
+ * RX done alone revives the WINC but not what sits above it: the lost message
+ * cannot be identified (its header is what failed), and the layers above may
+ * be waiting for exactly it. Measured on hardware: dropping one socket
+ * receive event left the TCP server's only client slot without a recv() for
+ * the 300 s console idle timeout. The reset resynchronises every layer. */
 static int8_t hif_drop_rx(const char *why)
 {
     int8_t ret;
@@ -158,8 +163,9 @@ static int8_t hif_drop_rx(const char *why)
     if(!gstrHifCxt.u8HifRXDone)
         return M2M_SUCCESS;
     ret = hif_set_rx_done();
+    s_u32RxResetRequests++;
     /* log_budget: max=11 */
-    LOG_E("WiFi: dropped unreadable WINC message (%s), RX done rc=%d", why, (int)ret);
+    LOG_E("WiFi: dropped unreadable WINC message (%s), RX done rc=%d; resetting the WINC", why, (int)ret);
     return ret;
 }
 

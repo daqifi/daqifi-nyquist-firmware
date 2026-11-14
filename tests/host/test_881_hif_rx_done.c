@@ -182,7 +182,12 @@ TEST(valid_message_is_dispatched_and_acknowledged)
     ASSERT_EQ(gTest881LogE, 0);
 }
 
-/* Hardware run C: gid 0x82 (IP with one extra bit), op 0x45, size 16. */
+/* Each unreadable message is acknowledged (so the WINC is not left waiting)
+ * AND a WINC reset is requested: the message is lost and nothing above the
+ * HIF layer can tell which one, so the layers above may be waiting for it.
+ * On hardware, dropping one socket receive event stalled the TCP server's
+ * only client slot for the 300 s console idle timeout.
+ * Hardware run C: gid 0x82 (IP with one extra bit), op 0x45, size 16. */
 TEST(invalid_group_id_is_acknowledged)
 {
     post(16, 0x82, 0x45, 16);
@@ -190,6 +195,7 @@ TEST(invalid_group_id_is_acknowledged)
     ASSERT_EQ(gIpCalls, 0);
     ASSERT_EQ(gRxDoneWrites, 1);
     ASSERT_EQ(gTest881LogE, 1);
+    ASSERT_EQ(resets(), 1);
 }
 
 /* Hardware run D: CTRL_0 = 0xC0 (size 48), header length disagrees by > 4. */
@@ -199,6 +205,7 @@ TEST(corrupted_size_is_acknowledged)
     ASSERT_TRUE(hif_handle_isr() != M2M_SUCCESS);
     ASSERT_EQ(gIpCalls, 0);
     ASSERT_EQ(gRxDoneWrites, 1);
+    ASSERT_EQ(resets(), 1);
 }
 
 TEST(zero_size_is_acknowledged)
@@ -206,6 +213,7 @@ TEST(zero_size_is_acknowledged)
     post(0, M2M_REQ_GROUP_IP, 0x45, 0);
     ASSERT_TRUE(hif_handle_isr() != M2M_SUCCESS);
     ASSERT_EQ(gRxDoneWrites, 1);
+    ASSERT_EQ(resets(), 1);
 }
 
 TEST(ctrl1_read_failure_is_acknowledged)
@@ -214,6 +222,7 @@ TEST(ctrl1_read_failure_is_acknowledged)
     gFailCtrl1Read = 1;
     ASSERT_TRUE(hif_handle_isr() != M2M_SUCCESS);
     ASSERT_EQ(gRxDoneWrites, 1);
+    ASSERT_EQ(resets(), 1);
 }
 
 TEST(header_read_failure_is_acknowledged)
@@ -222,6 +231,7 @@ TEST(header_read_failure_is_acknowledged)
     gFailHdrRead = 1;
     ASSERT_TRUE(hif_handle_isr() != M2M_SUCCESS);
     ASSERT_EQ(gRxDoneWrites, 1);
+    ASSERT_EQ(resets(), 1);
 }
 
 /* The acknowledgement itself can fail on a bad bus, and a failed write is
@@ -236,11 +246,12 @@ TEST(failed_acknowledgement_that_did_not_land_requests_a_reset)
     gFailRxDoneWrites = 1;
     ASSERT_TRUE(hif_handle_isr() != M2M_SUCCESS);
     ASSERT_EQ(gRxDoneWrites, 0);
+    ASSERT_EQ(resets(), 1);                         /* the drop's own request */
     ASSERT_EQ(hif_handle_isr(), M2M_SUCCESS);       /* the driver's retry pass */
     ASSERT_EQ(gRxDoneWrites, 0);                    /* never written twice */
-    ASSERT_EQ(resets(), 1);
+    ASSERT_EQ(resets(), 2);                         /* RX done unconfirmed */
     ASSERT_EQ(hif_handle_isr(), M2M_SUCCESS);       /* resolved: no further request */
-    ASSERT_EQ(resets(), 1);
+    ASSERT_EQ(resets(), 2);
 }
 
 /* While CTRL_0 cannot even be read, the retry pass must keep failing: the WINC
@@ -253,9 +264,9 @@ TEST(unreadable_ctrl0_keeps_the_retry_pass_failing)
     gFailCtrl0Reads = 2;
     ASSERT_TRUE(hif_handle_isr() != M2M_SUCCESS);
     ASSERT_TRUE(hif_handle_isr() != M2M_SUCCESS);
-    ASSERT_EQ(resets(), 0);
+    ASSERT_EQ(resets(), 1);                         /* only the drop's */
     ASSERT_EQ(hif_handle_isr(), M2M_SUCCESS);
-    ASSERT_EQ(resets(), 1);
+    ASSERT_EQ(resets(), 2);
     ASSERT_EQ(gRxDoneWrites, 0);
 }
 
