@@ -80,6 +80,26 @@ volatile tstrHifContext gstrHifCxt;
  * that reason). Cleared when a write succeeds or a new message is claimed. */
 static uint8_t s_u8RxDoneUnsure;
 
+/* #881: acknowledge the message the host holds by setting RX done
+ * (CTRL_0 bit 1).
+ *
+ * After a failed RX done write (s_u8RxDoneUnsure) the earlier write may have
+ * landed, and writing again would acknowledge the WINC's NEXT message unread.
+ * So the ONE read below both decides and supplies the value written:
+ *  - bit 0 set: the WINC has posted a new message, which it does only after
+ *    consuming our RX done -- so ours landed. Do not write; the new message is
+ *    handled by the next hif_isr() pass (its interrupt is pending).
+ *  - bit 1 set: our RX done is there, not yet consumed. Do not write. (The WINC
+ *    clears bit 1 on consumption: hif_isr() writes back the register it read
+ *    when it clears bit 0, which would re-acknowledge every message if bit 1
+ *    lingered.)
+ *  - neither: the write did not land, or it landed and was consumed with no
+ *    new message yet; write.
+ * What remains is the gap between that read and the write -- one SPI register
+ * read to one register write, with the SPI lock released between them. A
+ * message the WINC posts inside it (possible only if the earlier write landed)
+ * is overwritten and acknowledged unread. nm_spi_write_reg's own retries,
+ * which re-send the same value after a lost response, have the same exposure. */
 static int8_t hif_set_rx_done(void)
 {
     uint32_t reg;
@@ -88,6 +108,11 @@ static int8_t hif_set_rx_done(void)
     gstrHifCxt.u8HifRXDone = 0;
     ret = nm_read_reg_with_ret(WIFI_HOST_RCV_CTRL_0,&reg);
     if(ret != M2M_SUCCESS)goto ERR1;
+    if(s_u8RxDoneUnsure && (reg & (NBIT0 | NBIT1)))
+    {
+        s_u8RxDoneUnsure = 0;
+        return M2M_SUCCESS;
+    }
     /* Set RX Done */
     reg |= NBIT1;
     ret = nm_write_reg(WIFI_HOST_RCV_CTRL_0,reg);
@@ -99,45 +124,11 @@ static int8_t hif_set_rx_done(void)
     s_u8RxDoneUnsure = 0;
     return ret;
 ERR1:
-    /* #881: keep the message marked pending so the write is tried again
-     * (through hif_ack_rx(), which first checks whether it already landed).
+    /* #881: keep the message marked pending so the write is tried again.
      * Upstream cleared the flag even when the write failed, so a write that
      * never reached the WINC was never retried and the WINC waited forever. */
     gstrHifCxt.u8HifRXDone = 1;
     return ret;
-}
-
-/* #881: acknowledge the message the host holds. After a failed RX done write
- * (s_u8RxDoneUnsure), read CTRL_0 back first: writing again when the earlier
- * write DID land would acknowledge the WINC's NEXT message unread, losing it.
- *  - bit 0 set: the WINC has posted a new message, which it does only after
- *    consuming our RX done -- so ours landed; the new one is handled by the
- *    next hif_isr() pass (its interrupt is pending).
- *  - bit 1 set: our RX done is there, not yet consumed. (The WINC clears it on
- *    consumption: hif_isr() writes back the register it read when it clears
- *    bit 0, which would re-acknowledge every message if bit 1 lingered.)
- *  - neither: the write did not land, or it landed and was consumed with no
- *    new message yet; write it. The second case leaves a window of a few
- *    microseconds in which a message posted between this read and the write
- *    is acknowledged unread -- the same window nm_spi_write_reg's own
- *    same-value retries already have. */
-static int8_t hif_ack_rx(void)
-{
-    uint32_t reg;
-    int8_t ret;
-
-    if(!s_u8RxDoneUnsure)
-        return hif_set_rx_done();
-    ret = nm_read_reg_with_ret(WIFI_HOST_RCV_CTRL_0, &reg);
-    if(ret != M2M_SUCCESS)
-        return ret;
-    if(reg & (NBIT0 | NBIT1))
-    {
-        gstrHifCxt.u8HifRXDone = 0;
-        s_u8RxDoneUnsure = 0;
-        return M2M_SUCCESS;
-    }
-    return hif_set_rx_done();
 }
 
 /* #881: drop a received message the host could not read or parse, by giving
@@ -151,7 +142,7 @@ static int8_t hif_drop_rx(const char *why)
 
     if(!gstrHifCxt.u8HifRXDone)
         return M2M_SUCCESS;
-    ret = hif_ack_rx();
+    ret = hif_set_rx_done();
     /* log_budget: max=11 */
     LOG_E("WiFi: dropped unreadable WINC message (%s), RX done rc=%d", why, (int)ret);
     return ret;
@@ -166,7 +157,7 @@ static int8_t hif_retry_rx_done(void)
 
     if(!gstrHifCxt.u8HifRXDone)
         return M2M_SUCCESS;
-    ret = hif_ack_rx();
+    ret = hif_set_rx_done();
     if(M2M_SUCCESS == ret)
     {
         LOG_E("WiFi: WINC RX done retried, rc=%d", (int)ret);
@@ -633,9 +624,7 @@ static int8_t hif_isr(void)
                 if(gstrHifCxt.u8HifRXDone)
                 {
                     M2M_ERR("(hif) host app didn't set RX Done <%u><%X>\r\n", strHif.u8Gid, strHif.u8Opcode);
-                    /* #881: hif_ack_rx(), not hif_set_rx_done(): the callback's
-                     * own RX done may have failed after landing. */
-                    ret = hif_ack_rx();
+                    ret = hif_set_rx_done();
                     if(ret != M2M_SUCCESS)
                         return ret;
                 }
@@ -712,7 +701,7 @@ int8_t hif_receive(uint32_t u32Addr, uint8_t *pu8Buf, uint16_t u16Sz, uint8_t is
         if(isDone)
         {
             /* set RX done */
-            ret = hif_ack_rx();
+            ret = hif_set_rx_done();
         }
         else
         {
@@ -743,7 +732,7 @@ int8_t hif_receive(uint32_t u32Addr, uint8_t *pu8Buf, uint16_t u16Sz, uint8_t is
     if((((gstrHifCxt.u32RxAddr + gstrHifCxt.u32RxSize) - (u32Addr + u16Sz)) <= 0) || isDone)
     {
         /* set RX done */
-        ret = hif_ack_rx();
+        ret = hif_set_rx_done();
     }
 
 ERR1:

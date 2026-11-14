@@ -41,6 +41,10 @@ static unsigned gQueued;
 /* When set, the IP callback acknowledges through hif_receive(..., isDone=1),
  * as the socket layer does. */
 static int gCbAcks;
+/* When nonzero, a freed message's successor is not posted on consumption but
+ * at this CTRL_0 read (counted from post()), to place a post between two
+ * register accesses of the host. */
+static unsigned gPostOnRead, gCtrl0Reads;
 
 static void deliver(const struct msg *m)
 {
@@ -49,12 +53,14 @@ static void deliver(const struct msg *m)
     gHdr[2] = (uint8_t)m->len; gHdr[3] = (uint8_t)(m->len >> 8);
 }
 
-/* The WINC consumes RX done: frees the message and posts the next, if any. */
+/* The WINC consumes RX done: frees the message it has posted -- read or not:
+ * an RX done written while a new message's bit 0 is set releases THAT message
+ * unread -- and posts the next, if any. */
 static void wincConsume(void)
 {
     gAckPending = 0;
-    gCtrl0 &= ~NBIT1;
-    if (gQueued) {
+    gCtrl0 &= ~(NBIT1 | NBIT0);
+    if (gQueued && !gPostOnRead) {
         deliver(&gQueue[0]);
         memmove(gQueue, gQueue + 1, --gQueued * sizeof gQueue[0]);
     }
@@ -62,7 +68,14 @@ static void wincConsume(void)
 
 int8_t nm_read_reg_with_ret(uint32_t addr, uint32_t *val)
 {
-    if (addr == WIFI_HOST_RCV_CTRL_0) { *val = gCtrl0; return M2M_SUCCESS; }
+    if (addr == WIFI_HOST_RCV_CTRL_0) {
+        if (++gCtrl0Reads == gPostOnRead && gQueued && !gAckPending && !(gCtrl0 & NBIT0)) {
+            deliver(&gQueue[0]);
+            memmove(gQueue, gQueue + 1, --gQueued * sizeof gQueue[0]);
+        }
+        *val = gCtrl0;
+        return M2M_SUCCESS;
+    }
     if (addr == WIFI_HOST_RCV_CTRL_1) {
         if (gFailCtrl1Read) { gFailCtrl1Read--; return M2M_ERR_BUS_FAIL; }
         *val = RX_ADDR;
@@ -124,6 +137,7 @@ static void post(uint16_t size, uint8_t gid, uint8_t op, uint16_t len)
     gFailCtrl1Read = gFailHdrRead = gFailRxDoneWrites = 0;
     gApplyLostRxDone = gHoldAck = gAckPending = gCbAcks = 0;
     gQueued = 0;
+    gPostOnRead = gCtrl0Reads = 0;
 }
 
 /* The WINC has a further message queued behind the current one. */
@@ -269,6 +283,26 @@ TEST(landed_ack_not_yet_consumed_is_not_written_again)
     ASSERT_EQ(gIpCalls, 1);                         /* B dispatched */
 }
 
+/* codex r2 on #1259: the host's read-back must be the read it writes from.
+ * A's RX done lands but is reported failed; the WINC consumes it and posts B
+ * at the host's 4th CTRL_0 read -- in r2, between the read-back that found
+ * nothing pending and the second read inside the write, which then
+ * acknowledged B unread. Deciding and writing from one read never sees B
+ * mid-acknowledgement: B is claimed and dispatched by the next pass. */
+TEST(message_posted_after_the_read_back_is_not_acknowledged_unread)
+{
+    post(16, M2M_REQ_GROUP_IP, 0x45, 16);           /* A */
+    queue_next(16, M2M_REQ_GROUP_IP, 0x46, 16);     /* B, posted at read 4 */
+    gCbAcks = 1;
+    gApplyLostRxDone = 1;
+    gPostOnRead = 4;
+    hif_handle_isr();                               /* A, then the fallback ack */
+    ASSERT_EQ(gIpCalls, 1);
+    hif_handle_isr();                               /* B's interrupt */
+    ASSERT_EQ(gIpCalls, 2);                         /* B dispatched */
+    ASSERT_EQ(gQueued, 0);
+}
+
 int main(void)
 {
     printf("#881 hif_isr RX done on error exits\n");
@@ -283,5 +317,6 @@ int main(void)
     RUN(failed_acknowledgement_of_a_good_message_is_retried);
     RUN(landed_ack_with_lost_response_does_not_release_the_next_message);
     RUN(landed_ack_not_yet_consumed_is_not_written_again);
+    RUN(message_posted_after_the_read_back_is_not_acknowledged_unread);
     return test_summary();
 }
