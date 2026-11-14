@@ -11,4 +11,10 @@ static inline OSAL_RESULT OSAL_SEM_Create(OSAL_SEM_HANDLE_TYPE *s, OSAL_SEM_TYPE
 static inline OSAL_RESULT OSAL_SEM_Delete(OSAL_SEM_HANDLE_TYPE *s) { *s = 0; return OSAL_RESULT_TRUE; }
 static inline OSAL_RESULT OSAL_SEM_Pend(OSAL_SEM_HANDLE_TYPE *s, uint32_t w) { (void)s; (void)w; return OSAL_RESULT_TRUE; }
 static inline OSAL_RESULT OSAL_SEM_Post(OSAL_SEM_HANDLE_TYPE *s) { (void)s; return OSAL_RESULT_TRUE; }
+/* nmspi.c's bus lock (test_881_spi_socket.c): single-threaded, never blocks. */
+typedef void *OSAL_MUTEX_HANDLE_TYPE;
+static inline OSAL_RESULT OSAL_MUTEX_Create(OSAL_MUTEX_HANDLE_TYPE *m) { static int mtx; *m = &mtx; return OSAL_RESULT_TRUE; }
+static inline OSAL_RESULT OSAL_MUTEX_Delete(OSAL_MUTEX_HANDLE_TYPE *m) { *m = 0; return OSAL_RESULT_TRUE; }
+static inline OSAL_RESULT OSAL_MUTEX_Lock(OSAL_MUTEX_HANDLE_TYPE *m, uint32_t w) { (void)m; (void)w; return OSAL_RESULT_TRUE; }
+static inline OSAL_RESULT OSAL_MUTEX_Unlock(OSAL_MUTEX_HANDLE_TYPE *m) { (void)m; return OSAL_RESULT_TRUE; }
 #endif

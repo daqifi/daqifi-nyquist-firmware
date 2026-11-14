@@ -129,9 +129,11 @@ static int8_t hif_set_rx_done(void)
         }
         return M2M_SUCCESS;
     }
-    /* Set RX Done */
+    /* Set RX Done, in ONE SPI attempt: nm_write_reg() would resend a write
+     * whose response was lost, and a resend is exactly the second write this
+     * function must never make. Any failure must reach the code below. */
     reg |= NBIT1;
-    ret = nm_write_reg(WIFI_HOST_RCV_CTRL_0,reg);
+    ret = nm_write_reg_once(WIFI_HOST_RCV_CTRL_0,reg);
     if(ret != M2M_SUCCESS)
     {
         s_u8RxDoneUnsure = 1;
@@ -714,8 +716,10 @@ int8_t hif_receive(uint32_t u32Addr, uint8_t *pu8Buf, uint16_t u16Sz, uint8_t is
     {
         if(isDone)
         {
-            /* set RX done */
-            ret = hif_set_rx_done();
+            /* set RX done. #881: as below, a failure stays pending for
+             * hif_isr()'s post-callback pass and is not the caller's. */
+            (void)hif_set_rx_done();
+            ret = M2M_SUCCESS;
         }
         else
         {
@@ -745,8 +749,17 @@ int8_t hif_receive(uint32_t u32Addr, uint8_t *pu8Buf, uint16_t u16Sz, uint8_t is
     /* check if this is the last packet */
     if((((gstrHifCxt.u32RxAddr + gstrHifCxt.u32RxSize) - (u32Addr + u16Sz)) <= 0) || isDone)
     {
-        /* set RX done */
-        ret = hif_set_rx_done();
+        /* set RX done. #881: its failure is NOT this call's failure. The
+         * payload is already read and intact, and callers deliver it only on
+         * success (Socket_ReadSocketData() drops the app callback otherwise,
+         * so a TCP client was never re-armed with recv() and stalled until the
+         * console idle timeout). The RX done itself stays pending and is
+         * resolved by hif_isr()'s post-callback pass: confirmed, or a WINC
+         * reset. The alternative -- reset the WINC whenever this write fails
+         * after a payload was read -- costs a WiFi outage even when the
+         * acknowledgement landed and nothing was lost. */
+        (void)hif_set_rx_done();
+        ret = M2M_SUCCESS;
     }
 
 ERR1:

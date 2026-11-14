@@ -181,6 +181,12 @@ int8_t nm_write_reg(uint32_t u32Addr, uint32_t u32Val)
     return nm_spi_write_reg(u32Addr,u32Val);
 }
 
+/* #881 (DAQiFi): one attempt, never retried; see nm_spi_write_reg_once(). */
+int8_t nm_write_reg_once(uint32_t u32Addr, uint32_t u32Val)
+{
+    return nm_spi_write_reg_once(u32Addr,u32Val);
+}
+
 static int8_t p_nm_read_block(uint32_t u32Addr, uint8_t *puBuf, uint16_t u16Sz)
 {
     return nm_spi_read_block(u32Addr,puBuf,u16Sz);

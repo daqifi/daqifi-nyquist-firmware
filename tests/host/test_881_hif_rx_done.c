@@ -124,6 +124,10 @@ int8_t nm_write_reg(uint32_t addr, uint32_t val)
     return M2M_SUCCESS;
 }
 
+/* The RX done write is a single SPI attempt (nm_write_reg_once); this fake
+ * makes no retries either way. test_881_spi_socket.c runs the real SPI layer. */
+int8_t nm_write_reg_once(uint32_t addr, uint32_t val) { return nm_write_reg(addr, val); }
+
 int8_t nm_read_block(uint32_t addr, uint8_t *buf, uint32_t sz)
 {
     if (gFailHdrRead) { gFailHdrRead--; return M2M_ERR_BUS_FAIL; }

@@ -5405,13 +5405,55 @@ $(HIF881_BIN): test_881_hif_rx_done.c test_framework.h $(HIF881_DIR)/drv/driver/
                stubs/hif_881/osal/osal.h stubs/hif_881/Util/Logger.h stubs/hif_881/definitions.h
 	$(CC) $(CFLAGS) $(HIF881_INC) -o $@ test_881_hif_rx_done.c
 
+# #881 (codex r4 on #1259): the same RX done, through the REAL layers above and
+# below m2m_hif.c -- nmbus.c, nmspi.c (whose retry loop resends a write whose
+# response was lost) and socket.c (which drops the app callback when
+# hif_receive() fails). The fake sits at WDRV_WINC_SPISend/Receive and plays
+# the WINC's side of the SPI protocol. stubs/hif_881_spi replaces the two
+# Harmony headers nmspi.c includes.
+HIF881SPI_BIN := run_881_spi_tests
+HIF881SPI_SRC := $(addprefix $(HIF881_DIR)/drv/,driver/m2m_hif.c driver/nmbus.c driver/nmspi.c socket/socket.c)
+$(HIF881SPI_BIN): test_881_spi_socket.c test_framework.h $(HIF881SPI_SRC) \
+                  stubs/hif_881/osal/osal.h stubs/hif_881/Util/Logger.h stubs/hif_881/definitions.h \
+                  stubs/hif_881_spi/wdrv_winc_common.h stubs/hif_881_spi/wdrv_winc_spi.h
+	$(CC) $(CFLAGS) -Istubs/hif_881_spi $(HIF881_INC) -I$(HIF881_DIR)/drv/socket -o $@ test_881_spi_socket.c
+
+# #881 (codex r4 on #1259, finding 3): a pending WINC reset request must not
+# re-power the WINC after LAN:POWer 0. wifi_manager.c is not host-includable,
+# so the four functions involved are spliced out of it (same technique as
+# $(LOGRING1248_GEN)) and compiled against test_881_wifi_reset.c's prelude.
+# Each must be found exactly once and end in a closing brace, or the build
+# fails: a test that compiles against nothing must not pass.
+WIFI881_BIN := run_881_wifi_tests
+WIFI881_GEN := gen_881_wifi_reset.h
+WIFI881_FNS := 'bool wifi_manager_Deinit() {' 'bool wifi_manager_PowerOff(void) {' \
+               'bool wifi_manager_HardReset(void) {' 'static void MaybeResetWincForRxDone(void) {'
+$(WIFI881_BIN): test_881_wifi_reset.c test_framework.h $(WIFI_MGR_SRC) $(RECIPES)
+	@rm -f $(WIFI881_GEN); \
+	 for f in $(WIFI881_FNS); do \
+	   n=`tr -d '\r' < $(WIFI_MGR_SRC) | grep -cxF "$$f"`; \
+	   test "$$n" = 1 || { echo "ERROR: '$$f' found $$n time(s) in"; \
+	     echo "       $(WIFI_MGR_SRC); test_881_wifi_reset needs exactly one."; \
+	     rm -f $(WIFI881_GEN); exit 1; }; \
+	   tr -d '\r' < $(WIFI_MGR_SRC) \
+	     | awk -v f="$$f" '$$0 == f { p = 1 } p { print } p && /^}/ { p = 0 }' > $(WIFI881_GEN).part; \
+	   last=`tail -1 $(WIFI881_GEN).part | tr -d '[:space:]'`; \
+	   test "$$last" = "}" || { echo "ERROR: '$$f' did not end in '}'"; \
+	     rm -f $(WIFI881_GEN) $(WIFI881_GEN).part; exit 1; }; \
+	   cat $(WIFI881_GEN).part >> $(WIFI881_GEN); \
+	 done; rm -f $(WIFI881_GEN).part
+	$(CC) $(CFLAGS) -o $@ test_881_wifi_reset.c
+
 run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) \
      $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) \
      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(CAP1202_BIN) $(ISRLOG1197_BIN) $(STOP1201_BIN) $(CLAMP1231_BIN) \
      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(USECALTYPE_BIN) $(ARM_BIN) $(NAME_BIN) \
      $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) check-1200-parity check-885-savecal-claim \
-     $(NVM1153_BIN) $(ARMREFUSE_BIN) $(SDCRC_BIN) $(SDWRITE_BIN) $(LOGRING1248_BIN) $(HIF881_BIN)
+     $(NVM1153_BIN) $(ARMREFUSE_BIN) $(SDCRC_BIN) $(SDWRITE_BIN) $(LOGRING1248_BIN) $(HIF881_BIN) \
+     $(HIF881SPI_BIN) $(WIFI881_BIN)
 	./$(HIF881_BIN)
+	./$(HIF881SPI_BIN)
+	./$(WIFI881_BIN)
 	./$(LOGRING1248_BIN)
 	./$(SDCRC_BIN)
 	./$(SDWRITE_BIN)
@@ -5991,7 +6033,7 @@ $(NVM1153_BIN): test_1153_nvm_recursive_lock.c test_framework.h \
 	$(CC) $(CFLAGS) -o $(NVM1153_BIN) test_1153_nvm_recursive_lock.c
 
 clean:
-	rm -f $(HIF881_BIN)
+	rm -f $(HIF881_BIN) $(HIF881SPI_BIN) $(WIFI881_BIN) $(WIFI881_GEN)
 	rm -f $(LOGRING1248_BIN) $(LOGRING1248_GEN)
 	rm -f $(SDCRC_BIN) $(SDWRITE_BIN) $(SDWRITE_UUT_OBJ)
 	rm -f $(NVM1153_BIN)

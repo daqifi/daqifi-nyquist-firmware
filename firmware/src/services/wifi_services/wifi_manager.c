@@ -256,6 +256,14 @@ static volatile TickType_t gConsoleIdleDeadlineTicks =
 // SCPI task and read from app_WifiTask.
 static volatile bool gWincDeepPowerOff = false;
 
+// #881: the last WINC reset request from the HIF layer (hif_rx_reset_requests())
+// that is served or superseded. A request is superseded by any teardown the
+// user asked for (wifi_manager_Deinit, which PowerOff also runs): the next
+// bring-up re-initialises the WINC anyway, and serving the request after a
+// teardown would power the WINC back up against an explicit LAN:POWer 0.
+// Read and written only inside critical sections.
+static uint32_t gRxResetHandled = 0;
+
 
 
 // Recursive mutex serializing wifi_manager_ProcessState across callers.
@@ -3319,6 +3327,8 @@ bool wifi_manager_Deinit() {
     taskENTER_CRITICAL();
     gWifiReinitDeadlineTick = 0;
     gStateMachineContext.pWifiSettings->isEnabled = 0;
+    // #881: a pending HIF reset request must not re-power the WINC after this.
+    gRxResetHandled = hif_rx_reset_requests();
     // Explicit teardown — release APPLY gate so a follow-up APPLY isn't
     // blocked by the 30 s safety timeout.  Reverse store order (#425).
     gApplyInProgressDeadlineTick = 0;
@@ -3556,18 +3566,44 @@ size_t wifi_manager_WriteToBuffer(const char* pData, size_t len) {
 // that an RX done reached the WINC after a bus error and must not write it
 // twice (m2m_hif.c). Perform it here, on the WifiTask, outside an APPLY.
 // Requests that arrive before one is served are served by one reset.
+//
+// Only while WiFi is enabled and not powered off: a request is consumed, not
+// served, when the user has turned WiFi off (wifi_manager_Deinit supersedes
+// it too) or a reset is already in flight (its deferred INIT re-initialises
+// the WINC). The check and the arming of the reset share ONE critical
+// section, so a LAN:POWer 0 from the higher-priority USB SCPI task lands
+// either before it (no reset) or after it (its Deinit cancels the deferred
+// INIT, as for any HardReset) -- never in between.
 static void MaybeResetWincForRxDone(void) {
-    static uint32_t handled;
-    uint32_t requested = hif_rx_reset_requests();
-    if (requested == handled) {
+    bool doReset = false;
+    if (hif_rx_reset_requests() == gRxResetHandled) {
         return;
     }
     if (gApplyInProgress || IsWithinApplyTeardownWindow()) {
         return;  // APPLY's own teardown resets the WINC; retry after it
     }
-    handled = requested;
-    if (!wifi_manager_HardReset()) {
-        LOG_E("WiFi: WINC reset for an unconfirmed RX done failed to queue");
+    if (gStateMachineContext.pWifiSettings == NULL) {
+        return;
+    }
+    taskENTER_CRITICAL();
+    gRxResetHandled = hif_rx_reset_requests();
+    if (gStateMachineContext.pWifiSettings->isEnabled && !gWincDeepPowerOff) {
+        // Same arming as wifi_manager_HardReset(), under the check's lock.
+        gStateMachineContext.pWifiSettings->isEnabled = 0;
+        gWifiReinitDeadlineTick = xTaskGetTickCount() + pdMS_TO_TICKS(2000);
+        gApplyInProgressDeadlineTick = 0;
+        gApplyInProgress = false;
+        doReset = true;
+    }
+    taskEXIT_CRITICAL();
+    if (!doReset) {
+        return;
+    }
+    Iperf2_Stop();
+    LOG_I("WiFi: hard reset for the WINC HIF layer (DEINIT -> REINIT in 2 s)");
+    InvalidateStaLinkState();
+    if (!SendEvent(WIFI_MANAGER_EVENT_DEINIT)) {
+        LOG_E("WiFi: WINC reset for the HIF layer failed to queue");
     }
 }
 
