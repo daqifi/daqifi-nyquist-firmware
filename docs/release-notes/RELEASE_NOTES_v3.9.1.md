@@ -1,7 +1,7 @@
 # DAQiFi Nyquist Firmware v3.9.1
 
-**Release date:** not yet released
-**Status:** Candidate. Not tagged or published; tagging and publishing are the operator's.
+**Release date:** 2026-11-14
+**Status:** Released, tagged `v3.9.1` (Latest).
 **Baseline:** v3.9.0. Four commits on `main` since `v3.9.0`, besides this bump: three fixes and one documentation change.
 
 3.9.1 is a **bug-fix release**. It has no new features and no SCPI command changes. It fixes two SD driver defects behind field write abandons, and makes `SYSTem:LOG?` keep a record it could not send.
