@@ -433,7 +433,13 @@ extern "C" {
      * reassoc + DHCP) takes ~20 s — poll SYST:COMM:LAN:ADDR? to
      * confirm.
      *
-     * @return True on success, false if WiFi settings not initialized.
+     * Refused while WiFi is off by request -- powered off (LAN:POWer 0)
+     * or disabled with no reset already in flight -- so no caller can
+     * bring WiFi back against an explicit power-off (#881).
+     *
+     * @return True when the reset is armed and queued; false if WiFi
+     *         settings are not initialized, WiFi is off by request, or
+     *         DEINIT could not be queued.
      */
     bool wifi_manager_HardReset(void);
 

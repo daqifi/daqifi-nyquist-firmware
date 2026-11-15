@@ -929,6 +929,39 @@ int8_t nm_spi_write_reg(uint32_t u32Addr, uint32_t u32Val)
     return M2M_ERR_BUS_FAIL;
 }
 
+/* #881 (DAQiFi): write a register in ONE attempt. nm_spi_write_reg() retries
+ * a failed write up to SPI_RETRY_COUNT times with the same value, and a write
+ * reported as failed may have landed with only its response lost. For a
+ * read-modify-write of a register the WINC also writes (RX done in
+ * WIFI_HOST_RCV_CTRL_0, m2m_hif.c), a resend after the WINC has posted its next
+ * message acknowledges that message unread -- and, because the resend then
+ * succeeds, the caller never learns the first attempt was in doubt. Any
+ * failure here is returned to the caller, which owns the ambiguity. The bus is
+ * still resynchronised (spi_reset) after a failure, as the retry loop does. */
+int8_t nm_spi_write_reg_once(uint32_t u32Addr, uint32_t u32Val)
+{
+    int8_t ret = M2M_ERR_BUS_FAIL;
+
+    if (OSAL_RESULT_TRUE != OSAL_MUTEX_Lock(&s_spiLock, OSAL_WAIT_FOREVER))
+    {
+        return M2M_ERR_BUS_FAIL;
+    }
+
+    if (spi_write_reg(u32Addr, u32Val) == N_OK)
+    {
+        ret = M2M_SUCCESS;
+    }
+    else
+    {
+        M2M_ERR("Single write failed, no retry %" PRIx32 " %" PRIx32 "\r\n", u32Addr, u32Val);
+        spi_reset();
+    }
+
+    (void)OSAL_MUTEX_Unlock(&s_spiLock);
+
+    return ret;
+}
+
 /*
 *   @fn     nm_spi_read_block
 *   @brief  Read block of data

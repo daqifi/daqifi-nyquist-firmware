@@ -18,6 +18,7 @@
 #include "wdrv_winc_gpio.h"  // WDRV_WINC_GPIOChipEnable*/Reset* (#334 deep power-down)
 #include "semphr.h"
 #include "driver/winc/include/drv/driver/m2m_wifi.h"
+#include "driver/winc/include/drv/driver/m2m_hif.h"  // hif_rx_reset_requests (#881)
 
 #define UNUSED(x) (void)(x)
 /* WIFI_MANAGER_UDP_LISTEN_PORT moved to wifi_manager.h so the
@@ -254,6 +255,22 @@ static volatile TickType_t gConsoleIdleDeadlineTicks =
 // reads/writes are atomic on PIC32MZ; volatile because it is written from a
 // SCPI task and read from app_WifiTask.
 static volatile bool gWincDeepPowerOff = false;
+
+// #881: the last WINC reset request from the HIF layer (hif_rx_reset_requests())
+// that is served or superseded. A request is superseded by any teardown the
+// user asked for (wifi_manager_Deinit, which PowerOff also runs): the next
+// bring-up re-initialises the WINC anyway, and serving the request after a
+// teardown would power the WINC back up against an explicit LAN:POWer 0.
+// Read and written only inside critical sections.
+static uint32_t gRxResetHandled = 0;
+
+// #881: outcome of arming a hard reset; see HardResetImpl().
+typedef enum {
+    HARD_RESET_QUEUED,       // armed, DEINIT queued
+    HARD_RESET_REFUSED,      // WiFi is off by request: nothing armed
+    HARD_RESET_QUEUE_FAILED, // armed, but DEINIT could not be queued
+} hard_reset_result_t;
+static hard_reset_result_t HardResetImpl(void);
 
 
 
@@ -2436,7 +2453,10 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                         // an ERROR event so the manager retries instead of
                         // silently leaving the chip in a half-reset state.
                         ArmApplyTeardownDeadline();  // #423: HardReset triggers an async disconnect callback during deinit
-                        if (!wifi_manager_HardReset()) {
+                        // #881: REFUSED means a LAN:POWer 0 / disable got in
+                        // first; that teardown is already queued, so there
+                        // is nothing to retry.
+                        if (HardResetImpl() == HARD_RESET_QUEUE_FAILED) {
                             LOG_E("HardReset divert failed to queue DEINIT");
                             // Try ERROR fallback so the manager retries; if
                             // *that* enqueue also fails, the queue is wedged
@@ -3318,6 +3338,8 @@ bool wifi_manager_Deinit() {
     taskENTER_CRITICAL();
     gWifiReinitDeadlineTick = 0;
     gStateMachineContext.pWifiSettings->isEnabled = 0;
+    // #881: a pending HIF reset request must not re-power the WINC after this.
+    gRxResetHandled = hif_rx_reset_requests();
     // Explicit teardown — release APPLY gate so a follow-up APPLY isn't
     // blocked by the 30 s safety timeout.  Reverse store order (#425).
     gApplyInProgressDeadlineTick = 0;
@@ -3416,23 +3438,66 @@ bool wifi_manager_IsEnabled(void) {
 // CDC).  Full recovery (DEINIT settle + STA reassoc + DHCP)
 // typically takes ~20 s; poll SYST:COMM:LAN:ADDR? to confirm.
 bool wifi_manager_HardReset(void) {
-    if (gStateMachineContext.pWifiSettings == NULL) return false;
-    // Tear down iperf2 sockets before the WINC GPIO toggle (same reason
-    // as wifi_manager_Deinit).
-    Iperf2_Stop();
-    LOG_I("WiFi: hard reset (DEINIT -> REINIT in 2 s)");
-    // Set isEnabled=0 + arm deadline atomically so a concurrent Deinit
-    // can't race the (deadline, isEnabled) pair into an inconsistent
-    // state.
-    taskENTER_CRITICAL();
+    return HardResetImpl() == HARD_RESET_QUEUED;
+}
+
+// #881: arm a hard reset, inside the caller's critical section. EVERY path
+// that arms the deferred INIT comes through here -- wifi_manager_HardReset()
+// (SCPI LAN:HRESet, the APPLY divert in ProcessState, iperf2's auto-reset on
+// every session end) and MaybeResetWincForRxDone() -- so the power-off rule
+// lives in one place and no caller can bypass it.
+//
+// Refuses while WiFi is off by request: the deep-power-down latch is set
+// (LAN:POWer 0), or WiFi is disabled with no reset in flight (Deinit: user
+// disable, standby). Arming then would bring WiFi back 2 s later against the
+// user's explicit request -- e.g. iperf2's auto-reset firing after a LAN:POWer
+// 0 that preempted Iperf2_Stop() (codex r5 on #1259). A disabled WiFi WITH a
+// deadline pending is a reset in flight; re-arming it only restarts its 2 s.
+//
+// The deadline is never stored as 0, the "unarmed" sentinel: a tick count
+// that wraps to exactly 0 would otherwise leave the deferred INIT unscheduled
+// and WiFi off for good. Same rule as the APPLY gate's deadline. Expiry is
+// tested with the wrap-safe signed difference in ProcessState, so a deadline
+// of 1 instead of 0 is one tick late, nothing more.
+static bool ArmHardResetLocked(void) {
+    TickType_t deadline;
+    if (gWincDeepPowerOff) {
+        return false;
+    }
+    if (!gStateMachineContext.pWifiSettings->isEnabled && gWifiReinitDeadlineTick == 0) {
+        return false;
+    }
+    deadline = xTaskGetTickCount() + pdMS_TO_TICKS(2000);
+    if (deadline == 0) {
+        deadline = 1;
+    }
     gStateMachineContext.pWifiSettings->isEnabled = 0;
-    gWifiReinitDeadlineTick = xTaskGetTickCount() + pdMS_TO_TICKS(2000);
+    gWifiReinitDeadlineTick = deadline;
     // Explicit teardown — release APPLY gate (#425).  Reverse store order.
     gApplyInProgressDeadlineTick = 0;
     gApplyInProgress = false;
+    return true;
+}
+
+static hard_reset_result_t HardResetImpl(void) {
+    bool armed;
+    if (gStateMachineContext.pWifiSettings == NULL) return HARD_RESET_QUEUE_FAILED;
+    // Tear down iperf2 sockets before the WINC GPIO toggle (same reason
+    // as wifi_manager_Deinit). Its auto-reset re-enters here; the guard
+    // below is what keeps that nested call from undoing a power-off.
+    Iperf2_Stop();
+    // Check and arm atomically so a concurrent Deinit lands wholly before
+    // (refused) or wholly after (it cancels the deadline), never between.
+    taskENTER_CRITICAL();
+    armed = ArmHardResetLocked();
     taskEXIT_CRITICAL();
+    if (!armed) {
+        LOG_I("WiFi: hard reset refused - WiFi is off by request");
+        return HARD_RESET_REFUSED;
+    }
+    LOG_I("WiFi: hard reset (DEINIT -> REINIT in 2 s)");
     InvalidateStaLinkState();  // #517: same rationale as wifi_manager_Deinit
-    return SendEvent(WIFI_MANAGER_EVENT_DEINIT);
+    return SendEvent(WIFI_MANAGER_EVENT_DEINIT) ? HARD_RESET_QUEUED : HARD_RESET_QUEUE_FAILED;
 }
 
 bool wifi_manager_UpdateNetworkSettings(wifi_manager_settings_t * pSettings) {
@@ -3550,6 +3615,47 @@ size_t wifi_manager_WriteToBuffer(const char* pData, size_t len) {
 // disconnected.  The RssiEventCallback repairs the flag on a successful
 // response (chip confirms it knows about this assocHandle).  No-op when
 // the flag is in sync (the common case) — zero cost on a healthy link.
+// #881: the WINC HIF layer asks for a WINC reset when it drops a message it
+// could not read (the layers above may be waiting for it), or cannot confirm
+// that an RX done reached the WINC after a bus error and must not write it
+// twice (m2m_hif.c). Perform it here, on the WifiTask, outside an APPLY.
+// Requests that arrive before one is served are served by one reset.
+//
+// Only while WiFi is enabled: a request is consumed, not served, when the
+// user has turned WiFi off (ArmHardResetLocked refuses; wifi_manager_Deinit
+// also consumes it) or a reset is already in flight (its deferred INIT
+// re-initialises the WINC). Consuming and arming share one critical section.
+// A LAN:POWer 0 that lands after it cancels the deferred INIT, and any
+// nested reset after that -- iperf2's auto-reset inside Iperf2_Stop() below
+// -- is refused by ArmHardResetLocked().
+static void MaybeResetWincForRxDone(void) {
+    bool doReset = false;
+    if (hif_rx_reset_requests() == gRxResetHandled) {
+        return;
+    }
+    if (gApplyInProgress || IsWithinApplyTeardownWindow()) {
+        return;  // APPLY's own teardown resets the WINC; retry after it
+    }
+    if (gStateMachineContext.pWifiSettings == NULL) {
+        return;
+    }
+    taskENTER_CRITICAL();
+    gRxResetHandled = hif_rx_reset_requests();
+    if (gStateMachineContext.pWifiSettings->isEnabled) {
+        doReset = ArmHardResetLocked();
+    }
+    taskEXIT_CRITICAL();
+    if (!doReset) {
+        return;
+    }
+    Iperf2_Stop();
+    LOG_I("WiFi: hard reset for the WINC HIF layer (DEINIT -> REINIT in 2 s)");
+    InvalidateStaLinkState();
+    if (!SendEvent(WIFI_MANAGER_EVENT_DEINIT)) {
+        LOG_E("WiFi: WINC reset for the HIF layer failed to queue");
+    }
+}
+
 static void MaybeReconcileStaConnected(void) {
     // Phase 1: apply any pending repair signaled by RssiEventCallback.
     // Snapshot+clear pending state + handle atomically under a critical
@@ -3872,6 +3978,7 @@ static void wifi_manager_ProcessStateImpl(bool drainTcpRx) {
     // #382 sub-bug 1 — repair STA_CONNECTED flag if it drifted from chip
     // reality.  Runs at most every WIFI_STA_RECONCILE_PERIOD_TICKS.
     MaybeReconcileStaConnected();
+    MaybeResetWincForRxDone();
 
     wifi_tcp_server_TransmitBufferedData();
 

@@ -5392,12 +5392,76 @@ $(LOGRING1248_BIN): test_1248_log_ring.c test_framework.h $(FW_UTIL)/LogRing.h \
 	$(CC) $(CFLAGS) -I$(FW_UTIL) -DLOG_MAX_ENTRY_COUNT=$(LOG_MAX_ENTRIES) \
 	      -DLOG_MESSAGE_SIZE=$(LOG_MSG_SIZE) -o $(LOGRING1248_BIN) test_1248_log_ring.c
 
+# #881: a WINC message the host cannot read or parse must still get RX done,
+# or the WINC goes silent until reset. Builds the REAL m2m_hif.c (included
+# into the test, because its register addresses are file-private) against a
+# fake WINC register file. Stubs in stubs/hif_881 replace OSAL, Logger and the
+# Harmony definitions.h that wdrv_winc_debug.h would otherwise pull in.
+HIF881_BIN  := run_881_tests
+HIF881_DIR  := ../../firmware/src/config/default/driver/winc
+HIF881_INC  := -Istubs/hif_881 -Istubs/sdspi_1217 -I$(HIF881_DIR)/drv/driver \
+               $(addprefix -I,$(shell find $(HIF881_DIR)/include -type d))
+$(HIF881_BIN): test_881_hif_rx_done.c test_framework.h $(HIF881_DIR)/drv/driver/m2m_hif.c \
+               stubs/hif_881/osal/osal.h stubs/hif_881/Util/Logger.h stubs/hif_881/definitions.h
+	$(CC) $(CFLAGS) $(HIF881_INC) -o $@ test_881_hif_rx_done.c
+
+# #881 (codex r4 on #1259): the same RX done, through the REAL layers above and
+# below m2m_hif.c -- nmbus.c, nmspi.c (whose retry loop resends a write whose
+# response was lost) and socket.c (which drops the app callback when
+# hif_receive() fails). The fake sits at WDRV_WINC_SPISend/Receive and plays
+# the WINC's side of the SPI protocol. stubs/hif_881_spi replaces the two
+# Harmony headers nmspi.c includes.
+HIF881SPI_BIN := run_881_spi_tests
+HIF881SPI_SRC := $(addprefix $(HIF881_DIR)/drv/,driver/m2m_hif.c driver/nmbus.c driver/nmspi.c socket/socket.c)
+$(HIF881SPI_BIN): test_881_spi_socket.c test_framework.h $(HIF881SPI_SRC) \
+                  stubs/hif_881/osal/osal.h stubs/hif_881/Util/Logger.h stubs/hif_881/definitions.h \
+                  stubs/hif_881_spi/wdrv_winc_common.h stubs/hif_881_spi/wdrv_winc_spi.h
+	$(CC) $(CFLAGS) -Istubs/hif_881_spi $(HIF881_INC) -I$(HIF881_DIR)/drv/socket -o $@ test_881_spi_socket.c
+
+# #881 (codex r4/r5 on #1259): nothing may re-arm a WINC hard reset after
+# LAN:POWer 0 -- not the HIF layer's reset request, not iperf2's auto-reset,
+# not LAN:HRESet. wifi_manager.c and iperf2.c are not host-includable, so the
+# functions involved are spliced out of BOTH (same technique as
+# $(LOGRING1248_GEN)) -- including the real Iperf2_Stop()/MaybeAutoReset(),
+# where the r5 finding lived -- and compiled against test_881_wifi_reset.c's
+# prelude. Each must be found exactly once and end in a closing brace, or the
+# build fails: a test that compiles against nothing must not pass.
+WIFI881_BIN := run_881_wifi_tests
+WIFI881_GEN := gen_881_wifi_reset.h
+IPERF2_SRC  := ../../firmware/src/services/wifi_services/iperf2/iperf2.c
+WIFI881_FNS := 'static bool ArmHardResetLocked(void) {' \
+               'static hard_reset_result_t HardResetImpl(void) {' \
+               'bool wifi_manager_Deinit() {' 'bool wifi_manager_PowerOff(void) {' \
+               'bool wifi_manager_HardReset(void) {' 'static void MaybeResetWincForRxDone(void) {'
+IPERF881_FNS := 'static void MaybeAutoReset(void) {' 'void Iperf2_Stop(void) {'
+$(WIFI881_BIN): test_881_wifi_reset.c test_framework.h $(WIFI_MGR_SRC) $(IPERF2_SRC) $(RECIPES)
+	@rm -f $(WIFI881_GEN); \
+	 splice() { src=$$1; f=$$2; \
+	   n=`tr -d '\r' < $$src | grep -cxF "$$f"`; \
+	   test "$$n" = 1 || { echo "ERROR: '$$f' found $$n time(s) in"; \
+	     echo "       $$src; test_881_wifi_reset needs exactly one."; \
+	     rm -f $(WIFI881_GEN) $(WIFI881_GEN).part; exit 1; }; \
+	   tr -d '\r' < $$src \
+	     | awk -v f="$$f" '$$0 == f { p = 1 } p { print } p && /^}/ { p = 0 }' > $(WIFI881_GEN).part; \
+	   last=`tail -1 $(WIFI881_GEN).part | tr -d '[:space:]'`; \
+	   test "$$last" = "}" || { echo "ERROR: '$$f' did not end in '}'"; \
+	     rm -f $(WIFI881_GEN) $(WIFI881_GEN).part; exit 1; }; \
+	   cat $(WIFI881_GEN).part >> $(WIFI881_GEN); }; \
+	 for f in $(WIFI881_FNS); do splice $(WIFI_MGR_SRC) "$$f" || exit 1; done; \
+	 for f in $(IPERF881_FNS); do splice $(IPERF2_SRC) "$$f" || exit 1; done; \
+	 rm -f $(WIFI881_GEN).part
+	$(CC) $(CFLAGS) -o $@ test_881_wifi_reset.c
+
 run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) \
      $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) \
      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(CAP1202_BIN) $(ISRLOG1197_BIN) $(STOP1201_BIN) $(CLAMP1231_BIN) \
      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(USECALTYPE_BIN) $(ARM_BIN) $(NAME_BIN) \
      $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) check-1200-parity check-885-savecal-claim \
-     $(NVM1153_BIN) $(ARMREFUSE_BIN) $(SDCRC_BIN) $(SDWRITE_BIN) $(LOGRING1248_BIN)
+     $(NVM1153_BIN) $(ARMREFUSE_BIN) $(SDCRC_BIN) $(SDWRITE_BIN) $(LOGRING1248_BIN) $(HIF881_BIN) \
+     $(HIF881SPI_BIN) $(WIFI881_BIN)
+	./$(HIF881_BIN)
+	./$(HIF881SPI_BIN)
+	./$(WIFI881_BIN)
 	./$(LOGRING1248_BIN)
 	./$(SDCRC_BIN)
 	./$(SDWRITE_BIN)
@@ -5977,6 +6041,7 @@ $(NVM1153_BIN): test_1153_nvm_recursive_lock.c test_framework.h \
 	$(CC) $(CFLAGS) -o $(NVM1153_BIN) test_1153_nvm_recursive_lock.c
 
 clean:
+	rm -f $(HIF881_BIN) $(HIF881SPI_BIN) $(WIFI881_BIN) $(WIFI881_GEN)
 	rm -f $(LOGRING1248_BIN) $(LOGRING1248_GEN)
 	rm -f $(SDCRC_BIN) $(SDWRITE_BIN) $(SDWRITE_UUT_OBJ)
 	rm -f $(NVM1153_BIN)
