@@ -905,11 +905,16 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
     scpi_result_t result = SCPI_RES_ERR;
     sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
 
-    if (!pSDCardRuntimeConfig->enable) {
-        context->interface->write(context, SD_CARD_NOT_ENABLED_ERROR_MSG, strlen(SD_CARD_NOT_ENABLED_ERROR_MSG));
-        result = SCPI_RES_ERR;
-        goto __exit_point;
-    }
+    /* #1253: NOT gated on SD being enabled or on a card being detected. This
+     * command only stages the name the next log opens (see below), and a
+     * refusal here used to leave the PREVIOUS session's name staged, so the
+     * next start opened that file with WRITE_PLUS and truncated it: the old
+     * recording was destroyed and the requested file never created. (The
+     * refusal did reach the error queue -- libscpi pushes -200 for a failed
+     * callback that pushed nothing, parser.c -- but a client that does not
+     * poll SYST:ERR? after SD:FILE never sees it, and nothing stopped the
+     * next start from using the stale name.) Whether a card is really there is decided where it matters, at start:
+     * SCPI_StartStreaming refuses with -200 when the file cannot be opened. */
 
     // Check if SD card is busy with another operation
     /* NOT gated on the #589 suspension: this command only STAGES the logging
@@ -945,12 +950,6 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
         goto __exit_point;
     }
 
-    // Check if SD card is present
-    if (!SCPI_CheckSDCardPresent(context)) {
-        result = SCPI_RES_ERR;
-        goto __exit_point;
-    }
-
     SCPI_ParamCharacters(context, &pBuff, &fileLen, false);
     /* #747: accept the "<directory>/<name>" form SD:LISt? prints. Before the
      * length check, so a max-length name is not rejected for the prefix. */
@@ -960,6 +959,9 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
         if (fileLen > SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX) {
             LOG_E("SD:FILE - Filename too long: %zu bytes, max: %zu\r\n",
                   fileLen, (size_t)SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX);
+            /* #1253: the specific code, as the path validation below uses,
+             * rather than libscpi's generic -200 fallback. */
+            SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
@@ -977,8 +979,8 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
          * field; the reader side is SCPI_StorageSDBenchmark's restore. */
         /* Re-validate the benchmark guard HERE, under the same critical
          * section as the write. The check near the top of this function is
-         * only a fast path: SCPI_CheckSDCardPresent, SCPI_ParamCharacters and
-         * SD_ValidatePathParam all run between it and this point, and none of
+         * only a fast path: SCPI_ParamCharacters and
+         * SD_ValidatePathParam both run between it and this point, and none of
          * them is in a critical section. So WiFi SCPI (pri 2) can pass the
          * early check while no benchmark exists, be preempted by USB SCPI
          * (pri 7) starting one, and then resume PAST the now-stale check and
