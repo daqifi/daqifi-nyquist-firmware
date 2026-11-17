@@ -1523,16 +1523,13 @@ __exit_point:
  * Read under a critical section so the PAIR is one snapshot. Each flag is
  * individually atomic on PIC32MZ, but reading them a few instructions apart
  * can straddle a start that sets IsEnabled between the two loads. That is a
- * snapshot and not a lock -- see the arm site for what remains. */
+ * snapshot and not a lock -- see the arm site for what remains.
+ *
+ * fw#1265: the body moved to Streaming_SessionIsLive() so the SD manager's
+ * own late check asks the identical question. This stays as the name #854's
+ * call sites use, and as the place the reasoning above lives. */
 static bool SD_StreamingIsLive(void) {
-    const StreamingRuntimeConfig *cfg =
-            (const StreamingRuntimeConfig *)BoardRunTimeConfig_Get(
-                    BOARDRUNTIME_STREAMING_CONFIGURATION);
-    bool live;
-    taskENTER_CRITICAL();
-    live = (cfg->IsEnabled || (cfg->Running != 0u));
-    taskEXIT_CRITICAL();
-    return live;
+    return Streaming_SessionIsLive();
 }
 
 /**

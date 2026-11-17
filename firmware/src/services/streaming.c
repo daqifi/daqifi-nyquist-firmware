@@ -4993,3 +4993,32 @@ bool Streaming_IsActiveOnWifiInterface(void) {
     return (cfg->ActiveInterface == StreamingInterface_WiFi);
 }
 
+/* fw#1265: "is a streaming session live, on ANY interface?" -- the predicate
+ * #854 wrote as a file-static in SCPIStorageSD.c, moved here so the SD manager
+ * can ask the same question rather than composing an answer from the two
+ * interface-specific predicates above. Composing them would be two reads of
+ * IsEnabled, and a flip between them answers false from both -- the exact
+ * two-samples-of-one-state defect #860's comment is about.
+ *
+ * `IsEnabled || Running`, not `&&`: the two are set (and cleared) in separate
+ * steps at start and stop, so an `&&` leaves a window open in both
+ * directions. Same form as SCPI_SetStreamFormat's #619 guard.
+ *
+ * Under a critical section so the PAIR is one snapshot. Each flag is
+ * individually atomic on PIC32MZ, but reading them a few instructions apart
+ * can straddle a start that sets IsEnabled between the two loads. That is a
+ * snapshot and NOT a lock -- it says what was true at one instant, not what
+ * will still be true when the caller acts on it. */
+bool Streaming_SessionIsLive(void) {
+    const volatile StreamingRuntimeConfig* cfg =
+        (const volatile StreamingRuntimeConfig*)gpRuntimeConfigStream;
+    if (cfg == NULL) {
+        return false;
+    }
+    bool live;
+    taskENTER_CRITICAL();
+    live = (cfg->IsEnabled || (cfg->Running != 0u));
+    taskEXIT_CRITICAL();
+    return live;
+}
+

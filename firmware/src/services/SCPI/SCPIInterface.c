@@ -2738,7 +2738,13 @@ static scpi_result_t SCPI_RefuseSessionStartBusy(scpi_t * context,
  * refused. */
 static bool SCPI_RefuseStartIfSdWindowOpen(scpi_t * context,
                                            const char *what) {
-    if (!ScpiSdWindow_AnyOpen()) {
+    /* ⭐ TWO TERMS, BECAUSE THE WINDOW OPENS LATER THAN THE TRANSFER IS ARMED.
+     * The GET handler arms on the SCPI task and returns; the SD task opens the
+     * window on its next pass. A start arriving in that gap would see no open
+     * window, arm, and then stream into the block. The second term covers the
+     * gap from the arm onwards; the SD task also re-checks for a live stream
+     * once its window IS open (sd_get_open_window), so the two ends meet. */
+    if (!ScpiSdWindow_AnyOpen() && !sd_card_manager_TaggedGetPending()) {
         return false;
     }
     /* log_budget: max=24 */

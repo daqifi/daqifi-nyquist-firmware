@@ -1683,6 +1683,13 @@ bool Streaming_IsActiveOnNonWifiInterface(void);
 bool Streaming_IsActiveOnWifiInterface(void);
 
 /**
+ * True when a streaming session is live on ANY interface -- `IsEnabled ||
+ * Running`, read as one snapshot. fw#1265; see the implementation for why it
+ * is neither a lock nor composable from the two predicates above.
+ */
+bool Streaming_SessionIsLive(void);
+
+/**
  * Build channel mapping from current board config and runtime config.
  * Must be called before streaming starts (from SCPI_StartStreaming).
  * Stores mapping globally for ISR and encoder access.

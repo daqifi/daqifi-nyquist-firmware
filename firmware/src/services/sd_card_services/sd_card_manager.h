@@ -417,6 +417,16 @@ extern "C" {
      *         Bench/test diagnostic only -- see above. */
     bool sd_card_manager_FailNextWriteArmed(void);
 
+    /*! fw#1265: is a TAGGED SYSTem:STORage:SD:GET armed or running?
+     *
+     * True from the moment the GET handler arms the transfer (`mode` = READ,
+     * its last write under the #829 claim) until the SD task's teardown clears
+     * it. It is deliberately WIDER than "a data window is open": the window
+     * opens later, on the SD task, and a streaming start arriving in that gap
+     * would otherwise pass its own window check and then stream into the
+     * block. Read by SCPI_RefuseStartIfSdWindowOpen. */
+    bool sd_card_manager_TaggedGetPending(void);
+
     /** @brief #1031: arm/disarm the one-shot that fails the next write of a
      *         LIVE session (SYST:STOR:SD:FAILNext 2). Bench/test only; same
      *         rails as SetFailNextWrite, without its teardown-only gate --

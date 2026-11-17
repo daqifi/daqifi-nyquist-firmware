@@ -662,6 +662,20 @@ static const char transferErrorMarker[] = "__TRANSFER_ERROR__";
  * to the reply writer without a stack buffer on the SD task. */
 static const uint8_t sdGetPadByte[64] = { 0 };
 
+bool sd_card_manager_TaggedGetPending(void) {
+    bool pending;
+    /* One snapshot of the pair: `mode` is the LAST field SCPI_StorageSDGetData
+     * writes under the #829 claim (deliberately -- it is what arms the
+     * transfer), and opGetTagValid is written just before it, so reading them
+     * apart can see mode==READ with the PREVIOUS GET's tag validity. */
+    taskENTER_CRITICAL();
+    pending = (gpSDCardSettings != NULL) &&
+              gpSDCardSettings->opGetTagValid &&
+              (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_READ);
+    taskEXIT_CRITICAL();
+    return pending;
+}
+
 static ScpiSdWindowTransport_t sd_get_window_transport(void) {
     return ((gpSDCardSettings != NULL) &&
             (gpSDCardSettings->replyTarget == SD_CARD_REPLY_WIFI_TCP))
@@ -733,8 +747,12 @@ static void sd_get_pad_to_declared(uint32_t declared, uint32_t sent) {
  * not go idle means some other command is in flight, and the honest answer is
  * to refuse the download rather than frame it around foreign bytes.
  *
- * Wrap-safe deadline arithmetic: (now - start) < window. */
-static bool sd_get_open_window(void) {
+ * Wrap-safe deadline arithmetic: (now - start) < window.
+ *
+ * Returns NULL once the window is open, or the end-line reason to fail with.
+ * A reason rather than a bool because there are two ways to fail and the host
+ * should be told which. */
+static const char* sd_get_open_window(void) {
     const ScpiSdWindowTransport_t transport = sd_get_window_transport();
     /* #599's generation, captured when the GET was armed -- so the window
      * belongs to the connection that ASKED, not to whoever holds the slot by
@@ -746,11 +764,34 @@ static bool sd_get_open_window(void) {
     while (!ScpiSdWindow_TryOpen(transport, generation)) {
         if ((TickType_t)(xTaskGetTickCount() - start) >=
                 pdMS_TO_TICKS(SCPI_SD_WINDOW_IDLE_WAIT_MS)) {
-            return false;
+            return "busy";
         }
         vTaskDelay(pdMS_TO_TICKS(1));
     }
-    return true;
+
+    /* ⭐ THE LATE STREAMING CHECK, AND IT IS HERE FOR A REASON THE COMMAND
+     * BOUNDARY CANNOT GIVE. SCPI_StorageSDGetData refuses a tagged GET while a
+     * stream is live, and SCPI_RefuseStartIfSdWindowOpen refuses a stream
+     * while a window is open -- but those are two checks against two separate
+     * claims (#829's for SD, #850's for streaming), so a START on the other
+     * transport can pass its check in the gap between this GET's check and its
+     * arm. This runs AFTER the window is open, which is the point past which
+     * no further start can slip in: from here on AnyOpen() refuses them.
+     *
+     * ⚠ IT DOES NOT CLOSE THE RACE, IT BOUNDS THE DAMAGE, and the residual is
+     * stated rather than glossed: a START preempted between its own window
+     * check and publishing IsEnabled can still publish after this line, and
+     * then stream frames reach the block. Closing that needs the SD claim and
+     * the streaming claim to be ONE interlock, which is a design change rather
+     * than a guard. What this does buy is that every ordering where the start
+     * has published by the time the SD task gets here fails BEFORE a header,
+     * so the host is never handed a block with foreign frames in it and an OK
+     * end line. */
+    if (Streaming_SessionIsLive()) {
+        ScpiSdWindow_Close(transport);
+        return "stream";
+    }
+    return NULL;
 }
 
 /* Write `#SDGET <tag>` CRLF `#<digits><length>`.
@@ -4486,12 +4527,13 @@ void sd_card_manager_ProcessState() {
                      * the bound, end the transfer here -- before a header, so
                      * the host is never owed a block that cannot be kept clean,
                      * and never owed padding this exit cannot send. */
-                    if (!sd_get_open_window()) {
-                        headerFail = "busy";
-                        LOG_E("[SD] GET tag %u: transport still feeding after "
-                              "%u ms - refusing to frame",
-                              (unsigned) gpSDCardSettings->opGetTag,
-                              (unsigned) SCPI_SD_WINDOW_IDLE_WAIT_MS);
+                    headerFail = sd_get_open_window();
+                    if (headerFail != NULL) {
+                        /* log_budget: max=6 */
+                        LOG_E("[SD] GET tag %u: cannot frame (%s) - the "
+                              "transport would not go idle, or a stream went "
+                              "live", (unsigned) gpSDCardSettings->opGetTag,
+                              headerFail);
                     }
                 }
                 if (headerFail == NULL) {
