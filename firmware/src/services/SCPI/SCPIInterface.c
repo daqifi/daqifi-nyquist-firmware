@@ -2709,6 +2709,45 @@ static scpi_result_t SCPI_RefuseSessionStartBusy(scpi_t * context,
     return SCPI_RES_ERR;
 }
 
+/* fw#1265 round 2: REFUSE A SESSION START WHILE A TAGGED SD:GET DATA WINDOW
+ * IS OPEN. Returns true when it refused.
+ *
+ * ⭐ THE OTHER HALF OF THE EXCLUSION the tagged GET declares in
+ * SCPI_StorageSDGetData. One direction alone is not exclusion: the GET refuses
+ * when a stream is already live, and this refuses when a download is already
+ * framing. Without it a host could simply reverse the order and have the
+ * stream write into the definite-length block from the streaming task, which
+ * the GET's input pause cannot reach -- that task is not driven by input.
+ *
+ * ⛔ A FUNCTION WITH TWO CALL SITES, FOR THE SAME REASON
+ * SCPI_RefuseSessionStartBusy IS ONE: SCPI_StartStreaming does NOT go through
+ * SCPI_RunSessionStartClaimed (it must parse before claiming), so a check
+ * written into the runner alone would leave the headline command -- START --
+ * unguarded while the throughput bench and the WiFi finder were covered. That
+ * is precisely the drift #850's own comment was written about, and I had the
+ * check in the runner only until this was noticed.
+ *
+ * Either transport's window refuses either transport's arm, which is wider
+ * than strictly necessary and deliberately so: a window open on USB makes USB
+ * deaf, so the arm can only arrive over TCP, and a per-transport test would
+ * permit exactly the case the GET side cannot defend.
+ *
+ * Both callers invoke it BEFORE Streaming_BeginSessionStart(), so a refusal
+ * takes no claim it would have to release -- and, in START's case, after the
+ * `freq == 0` disable branch, because that path is a STOP and a stop is never
+ * refused. */
+static bool SCPI_RefuseStartIfSdWindowOpen(scpi_t * context,
+                                           const char *what) {
+    if (!ScpiSdWindow_AnyOpen()) {
+        return false;
+    }
+    /* log_budget: max=24 */
+    LOG_E("%s refused (fw#1265): a tagged SD:GET download is framing. "
+          "Retry after it ends.", what);
+    SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+    return true;
+}
+
 /* --- #850: the session-start claim runner ---------------------------------
  *
  * Every command that arms a streaming session runs its body through here, so
@@ -2824,33 +2863,9 @@ static scpi_result_t SCPI_RunSessionStartClaimed(scpi_t * context,
      * argument has no cross-transport clobber hazard to guard against, so both
      * the stamp and the refusal go away rather than being re-derived for the
      * next command added here. */
-    /* fw#1265 round 2: REFUSE WHILE A TAGGED SD:GET DATA WINDOW IS OPEN.
-     *
-     * ⭐ THE OTHER HALF OF THE EXCLUSION the tagged GET declares in
-     * SCPI_StorageSDGetData. One direction alone is not exclusion: the GET
-     * refuses when a stream is already live, and this refuses when a download
-     * is already framing. Without it the host could simply reverse the order
-     * and have the stream write into the block from the streaming task, which
-     * no input pause can reach.
-     *
-     * ⭐ HERE RATHER THAN IN STR:START, because this runner is the single
-     * chokepoint every session arm already passes through (#850) -- START, the
-     * throughput bench and the WiFi finder. A check in one of them would leave
-     * the other two able to open a stream mid-download, and the next arm added
-     * here would inherit the gap by default; this way it inherits the guard.
-     *
-     * Either transport's window refuses either transport's arm, which is wider
-     * than strictly necessary and deliberately so: a window open on USB makes
-     * USB deaf, so the arm can only arrive over TCP, and a per-transport test
-     * would permit exactly the case the GET side cannot defend.
-     *
-     * Ahead of the stop pin and the #850 claim: a refusal before either takes
-     * no claim to release and pins nothing. */
-    if (ScpiSdWindow_AnyOpen()) {
-        /* log_budget: max=24 */
-        LOG_E("%s refused (fw#1265): a tagged SD:GET download is framing. "
-              "Retry after it ends.", what);
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+    /* fw#1265 round 2: ahead of the stop pin and the #850 claim, so a refusal
+     * pins nothing and holds no claim. */
+    if (SCPI_RefuseStartIfSdWindowOpen(context, what)) {
         return SCPI_RES_ERR;
     }
 
@@ -7096,6 +7111,12 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
          * NOT close it; it closes the difference between them. */
         SCPI_PerformStreamingStop();
         return SCPI_RES_OK;
+    }
+
+    /* fw#1265 round 2: after the `freq == 0` disable branch above -- that path
+     * is a stop and must never be refused -- and before the claim. */
+    if (SCPI_RefuseStartIfSdWindowOpen(context, "SYSTem:STReam:START")) {
+        return SCPI_RES_ERR;
     }
 
     if (Streaming_BeginSessionStart() != STREAM_START_CLAIM_OK) {
