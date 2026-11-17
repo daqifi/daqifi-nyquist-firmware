@@ -9,6 +9,7 @@
 #include "Util/StreamingBufferPool.h"
 #include "sd_card_manager.h"
 #include "services/UsbCdc/UsbCdc.h"
+#include "services/SCPI/SCPIInterface.h"   /* fw#1265: ScpiSdWindow_* */
 #include "Util/CRC32.h"   /* #306 */
 #include "services/streaming.h"  // Streaming_GetSdFileHeader / Streaming_ReportSdDiscard
 #include <stddef.h>
@@ -625,6 +626,119 @@ static const char eofMarker[] = "__END_OF_FILE__";
  * by the SCPI error queue (sd_card_manager_LatchAsyncError) and SYST:LOG?, not
  * by the marker. */
 static const char transferErrorMarker[] = "__TRANSFER_ERROR__";
+
+/* ===== fw#1265: the TAGGED SD:GET wire format =============================
+ *
+ * An UNTAGGED GET stays BYTE-IDENTICAL to the pre-#1265 format: no header, no
+ * block, the bare eofMarker, prompt still ahead of the data. That is not
+ * conservatism, it is forced: each element #1265 proposed for the untagged
+ * stream breaks a shipped receiver, measured before the format was chosen.
+ * (Three elements were tested, below -- not "every conceivable change".)
+ *
+ *   - a definite-length block prefix puts 4 bytes ("#280") INSIDE the file on
+ *     daqifi-python-core ca5c6079 (measured);
+ *   - an `__END_OF_FILE__ OK <n>` suffix makes daqifi-core 97c1161 throw
+ *     SdCardAmbiguousTransferException: its HoldsFileContent accepts ONLY CR
+ *     or LF after the marker, and the confirmation runs for sized AND unsized
+ *     transfers (read in source);
+ *   - holding the prompt costs python-core 26 bytes, because its stripper
+ *     uses the prompt as the discriminator that proves the echo is an echo.
+ *
+ * So every new element is gated behind the tag and a host opts in. A tagged
+ * host gets: `#SDGET <tag>` CRLF, an IEEE 488.2 definite-length block, then
+ * `__END_OF_FILE__ OK <n>` or `__END_OF_FILE__ FAILED <reason>`. The bare
+ * token stays the prefix so a host that only searches for it still finds it.
+ */
+static ScpiSdWindowTransport_t sd_get_window_transport(void) {
+    return ((gpSDCardSettings != NULL) &&
+            (gpSDCardSettings->replyTarget == SD_CARD_REPLY_WIFI_TCP))
+            ? SCPI_SD_WINDOW_TCP : SCPI_SD_WINDOW_USB;
+}
+
+static bool sd_get_is_tagged(void) {
+    return (gpSDCardSettings != NULL) && gpSDCardSettings->opGetTagValid;
+}
+
+/* Open the data window, then write `#SDGET <tag>` CRLF `#<digits><length>`.
+ *
+ * ORDER MATTERS: the window opens FIRST. The header goes out through the
+ * bypass, which yields on a partial write, so a SCPI write can land while it
+ * is in flight -- with the window already open that output is held and
+ * delivered after the end line, instead of landing between the header and the
+ * first data byte where it would shift the whole block. */
+static void sd_get_send_header(uint32_t length) {
+    char hdr[48];
+    int n;
+
+    ScpiSdWindow_Open(sd_get_window_transport());
+    n = snprintf(hdr, sizeof(hdr), "#SDGET %u\r\n",
+                 (unsigned) gpSDCardSettings->opGetTag);
+    if ((n > 0) && ((size_t) n < sizeof(hdr))) {
+        /* IEEE 488.2 definite-length block: '#', the DIGIT COUNT of the
+         * length, then the length itself. */
+        char lenStr[12];
+        const int ln = snprintf(lenStr, sizeof(lenStr), "%u", (unsigned) length);
+        if ((ln > 0) && ((size_t) ln < sizeof(lenStr))) {
+            const int m = snprintf(&hdr[n], sizeof(hdr) - (size_t) n,
+                                   "#%u%s", (unsigned) ln, lenStr);
+            if ((m > 0) && ((size_t)(n + m) < sizeof(hdr))) {
+                n += m;
+            }
+        }
+        sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
+                                    (uint8_t*) hdr, (size_t) n);
+    }
+}
+
+/* The end line, and the ONE place the data window closes.
+ *
+ * Closing here rather than at each teardown is deliberate: the READ state has
+ * several exits and at least two hand-duplicated teardowns, so a close placed
+ * per-exit is a close that will eventually be missed -- and a window left open
+ * silences that transport for good. Every exit DOES reach an end line, and
+ * ScpiSdWindow_Service()'s staleness bound is the independent backstop for any
+ * path that somehow does not.
+ *
+ * Held SCPI output is delivered by Service() on the SD task's next loop pass,
+ * i.e. strictly AFTER this end line -- same task, so no interleaving is
+ * possible between the two. */
+static void sd_get_send_end(bool ok, uint32_t count, const char* reason) {
+    const ScpiSdWindowTransport_t transport = sd_get_window_transport();
+    const bool tagged = sd_get_is_tagged();
+
+    if (!tagged) {
+        /* Untagged: exactly what every shipped host already parses. */
+        ScpiSdWindow_Close(transport);
+        sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
+                                    (uint8_t*) eofMarker,
+                                    sizeof(eofMarker) - 1);
+        return;
+    }
+
+    /* Foreign output arrived mid-block and could not be held, so the block is
+     * already short: it must NOT report OK. */
+    if (ScpiSdWindow_Overflowed(transport)) {
+        ok = false;
+        if (reason == NULL) {
+            reason = "interleave";
+        }
+    }
+    ScpiSdWindow_Close(transport);
+
+    char line[64];
+    int n;
+    if (ok) {
+        n = snprintf(line, sizeof(line), "%s OK %u\r\n", eofMarker,
+                     (unsigned) count);
+    } else {
+        n = snprintf(line, sizeof(line), "%s FAILED %s\r\n", eofMarker,
+                     (reason != NULL) ? reason : "error");
+    }
+    if ((n > 0) && ((size_t) n < sizeof(line))) {
+        sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
+                                    (uint8_t*) line, (size_t) n);
+    }
+}
 
 /* #914: per-transport, one-deep latch for a failure the SD TASK detects AFTER
  * the SCPI handler that armed the operation has already returned SCPI_RES_OK
@@ -3575,8 +3689,21 @@ void sd_card_manager_ProcessState() {
                         sd_card_manager_LatchAsyncError(
                                 SdAsyncErrorForFsError(openFsError),
                                 replyTarget, replyGeneration);
-                        sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
-                                (uint8_t*)eofMarker, sizeof(eofMarker) - 1);
+                        /* fw#1265: #914 deliberately kept the bare marker here
+                         * so a missing file still ENDS the reply for shipped
+                         * hosts, and made the failure loud through the latched
+                         * error instead. That stays exactly so for untagged.
+                         * A tagged host gets what #1265 asked for: FAILED in
+                         * the stream, distinguishable from an empty file
+                         * without a round trip to SYST:ERR?. */
+                        if (sd_get_is_tagged()) {
+                            sd_get_send_end(false, 0u, "open");
+                        } else {
+                            sd_card_manager_DataReadyCB(
+                                    SD_CARD_MANAGER_MODE_READ,
+                                    (uint8_t*)eofMarker,
+                                    sizeof(eofMarker) - 1);
+                        }
                     }
                     gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
                     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
@@ -4169,6 +4296,38 @@ void sd_card_manager_ProcessState() {
             TickType_t lastYieldTime = xTaskGetTickCount();
             const TickType_t yieldInterval = pdMS_TO_TICKS(1000);
 
+            /* fw#1265: a TAGGED GET announces itself before any data, with the
+             * length the host will read. Here, not at the open: this state is
+             * only reached with a VALID handle, so the length comes from the
+             * handle itself rather than a second lookup by name that a rename
+             * could race.
+             *
+             * A negative size means the FS could not answer. Refuse loudly
+             * rather than send a block header the data cannot match: a wrong
+             * length desyncs a host that trusts it. */
+            if (sd_get_is_tagged()) {
+                const int32_t fileSize =
+                        SYS_FS_FileSize(gSDCardData.fileHandle);
+                if (fileSize < 0) {
+                    LOG_E("[SD] GET tag %u: file size unavailable - failing",
+                          (unsigned) gpSDCardSettings->opGetTag);
+                    sd_get_send_end(false, 0u, "size");
+                    if (gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
+                        (void) SYS_FS_FileClose(gSDCardData.fileHandle);
+                        gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
+                    }
+                    vTaskPrioritySet(currentTask, originalPriority);
+                    if (gSDOpMutex) {
+                        xSemaphoreGive(gSDOpMutex);
+                    }
+                    gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
+                    gSDCardData.currentProcessState =
+                            SD_CARD_MANAGER_PROCESS_STATE_IDLE;
+                    break;
+                }
+                sd_get_send_header((uint32_t) fileSize);
+            }
+
             // eofMarker / transferErrorMarker: file-scope now (#914), so the
             // open-failure path above can send eofMarker without a second copy
             // of the literal. transferErrorMarker is used only here, in the
@@ -4190,8 +4349,10 @@ void sd_card_manager_ProcessState() {
                 LOG_E("[SD] Buffer too small for read (%u < %u) - aborting GET",
                       (unsigned)gSdSharedBufferSize, (unsigned)SD_READ_ALIGNMENT_SIZE);
                 sd_wait_usb_drain();
-                sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
-                        (uint8_t*)eofMarker, sizeof(eofMarker) - 1);
+                /* fw#1265: same end line as every other exit, so a tagged
+                 * host never has to distinguish "no data" from "no
+                 * terminator". Closes the window too. */
+                sd_get_send_end(false, 0u, "buffer");
                 if (gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
                     (void)SYS_FS_FileClose(gSDCardData.fileHandle);
                     gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
@@ -4308,9 +4469,18 @@ void sd_card_manager_ProcessState() {
                      *
                      * A separate marker lets the host do the right thing: stop
                      * waiting, and know the data is incomplete. */
-                    sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
-                            (uint8_t*)transferErrorMarker,
-                            sizeof(transferErrorMarker) - 1);
+                    /* fw#1265: untagged keeps __TRANSFER_ERROR__, which is
+                     * what #725 shipped and hosts recognise. A tagged host
+                     * gets the FAILED end line instead -- one end-line shape
+                     * to parse, with the reason in it, rather than two
+                     * different terminators. */
+                    if (sd_get_is_tagged()) {
+                        sd_get_send_end(false, totalBytesRead, "read");
+                    } else {
+                        sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
+                                (uint8_t*)transferErrorMarker,
+                                sizeof(transferErrorMarker) - 1);
+                    }
 
                     // Close file handle to prevent resource leak
                     if (SYS_FS_FileClose(gSDCardData.fileHandle) == SYS_FS_RES_FAILURE) {
@@ -4325,10 +4495,12 @@ void sd_card_manager_ProcessState() {
                     // End of file - wait for USB to drain before sending EOF marker
                     sd_wait_usb_drain();
 
-                    // Send EOF marker using literal constant (safer than sprintf)
-                    sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
-                            (uint8_t*)eofMarker,
-                            sizeof(eofMarker) - 1);
+                    /* fw#1265: untagged sends the bare marker exactly as
+                     * before; tagged sends `__END_OF_FILE__ OK <n>` with the
+                     * count ACTUALLY sent, so a host can compare it against
+                     * the length in the header and catch a file that changed
+                     * under it mid-transfer. This also closes the window. */
+                    sd_get_send_end(true, totalBytesRead, NULL);
 
                     // Close file handle
                     if (SYS_FS_FileClose(gSDCardData.fileHandle) == SYS_FS_RES_FAILURE) {
@@ -4348,6 +4520,10 @@ void sd_card_manager_ProcessState() {
                     sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
                             gSdSharedBuffer,
                             bytesRead);
+                    /* fw#1265: keep a progressing transfer clear of the
+                     * window's staleness backstop. Unconditional: a no-op when
+                     * no window is open. */
+                    ScpiSdWindow_NoteProgress(sd_get_window_transport());
 
                     // Delay every 1 second to allow lower priority tasks to run
                     if ((xTaskGetTickCount() - lastYieldTime) >= yieldInterval) {

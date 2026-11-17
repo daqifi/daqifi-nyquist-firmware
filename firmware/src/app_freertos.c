@@ -614,6 +614,22 @@ static void app_SDCardTask(void* p_arg) {
         SpiBusHealth_SetSdSuspended(state == APP_SD_STATE_SUSPENDED ||
                                     app_SDCard_SpiOwnedByWifi());
 
+        /* fw#1265: deliver any SCPI output that was held during a tagged
+         * SD:GET, and close a window that has gone stale.
+         *
+         * HERE because this runs on EVERY iteration in EVERY state -- so it
+         * is reached however the transfer ended, including when the task is
+         * parked in APP_SD_STATE_SUSPENDED with a window still nominally
+         * open. A flush placed per-exit inside the state machine would be a
+         * flush that the one unanticipated exit skips, and held output that
+         * is never delivered silences that transport exactly as a refusal
+         * with no way back does.
+         *
+         * On the SD task, never on a transport task: ruling #756 forbids
+         * parking app_USBDeviceTask, and the flush can block in
+         * SCPI_WriteWithRetry's retry loop. */
+        ScpiSdWindow_Service();
+
         /* ⛔ #1055 r4 finding 1: THE OWED SESSION SUMMARY IS EMITTED HERE.
          *
          * Streaming_Stop() snapshots the session's counters into a pending

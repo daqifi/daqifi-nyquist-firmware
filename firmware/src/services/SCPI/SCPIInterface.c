@@ -10881,6 +10881,129 @@ scpi_result_t SCPI_Help(scpi_t* context) {
 #define SCPI_WRITE_MAX_RETRIES      200
 #define SCPI_WRITE_RETRY_DELAY_MS   5
 
+/* ===== fw#1265: the SD:GET data window =====================================
+ * Rationale and the two independent anti-lockout mechanisms are documented on
+ * the API in SCPIInterface.h. This is the mechanism only. */
+typedef struct {
+    ScpiTransportWriteFn writeFn;   /* registered once at transport init */
+    volatile bool open;
+    volatile bool overflow;
+    volatile TickType_t lastProgress;
+    volatile size_t held;
+    char buf[SCPI_SD_WINDOW_HOLD_BYTES];
+} ScpiSdWindowState_t;
+
+static ScpiSdWindowState_t gScpiSdWindow[SCPI_SD_WINDOW_COUNT];
+
+static ScpiSdWindowState_t* ScpiSdWindow_For(ScpiSdWindowTransport_t t) {
+    /* A bad enum must not index the array: return NULL and let every entry
+     * point no-op, rather than corrupting the other transport's state. */
+    if ((t != SCPI_SD_WINDOW_USB) && (t != SCPI_SD_WINDOW_TCP)) {
+        return NULL;
+    }
+    return &gScpiSdWindow[t];
+}
+
+void ScpiSdWindow_Register(ScpiSdWindowTransport_t transport,
+                           ScpiTransportWriteFn writeFn) {
+    ScpiSdWindowState_t* w = ScpiSdWindow_For(transport);
+    if ((w != NULL) && (writeFn != NULL)) {
+        w->writeFn = writeFn;
+    }
+}
+
+void ScpiSdWindow_Open(ScpiSdWindowTransport_t transport) {
+    ScpiSdWindowState_t* w = ScpiSdWindow_For(transport);
+    if (w == NULL) {
+        return;
+    }
+    taskENTER_CRITICAL();
+    w->held = 0u;
+    w->overflow = false;
+    w->lastProgress = xTaskGetTickCount();
+    w->open = true;
+    taskEXIT_CRITICAL();
+}
+
+void ScpiSdWindow_NoteProgress(ScpiSdWindowTransport_t transport) {
+    ScpiSdWindowState_t* w = ScpiSdWindow_For(transport);
+    if (w != NULL) {
+        w->lastProgress = xTaskGetTickCount();
+    }
+}
+
+void ScpiSdWindow_Close(ScpiSdWindowTransport_t transport) {
+    ScpiSdWindowState_t* w = ScpiSdWindow_For(transport);
+    if (w != NULL) {
+        w->open = false;        /* Service() delivers whatever was held */
+    }
+}
+
+bool ScpiSdWindow_Overflowed(ScpiSdWindowTransport_t transport) {
+    const ScpiSdWindowState_t* w = ScpiSdWindow_For(transport);
+    return (w != NULL) && w->overflow;
+}
+
+bool ScpiSdWindow_Capture(ScpiSdWindowTransport_t transport,
+                          const char* data, size_t len) {
+    ScpiSdWindowState_t* w = ScpiSdWindow_For(transport);
+    if ((w == NULL) || (data == NULL) || (len == 0u)) {
+        return false;
+    }
+    bool captured = false;
+    taskENTER_CRITICAL();
+    if (w->open) {
+        if (len <= (size_t)(SCPI_SD_WINDOW_HOLD_BYTES - w->held)) {
+            memcpy(&w->buf[w->held], data, len);
+            w->held += len;
+            captured = true;
+        } else {
+            /* More output than framing. Do NOT block (ruling #756: nothing may
+             * park the USB task) and do NOT drop: abandon the window, let this
+             * write through, and leave `overflow` set so the SD side reports
+             * FAILED. The block is short by construction once foreign bytes
+             * are in it, so reporting OK would be a lie. */
+            w->overflow = true;
+            w->open = false;
+        }
+    }
+    taskEXIT_CRITICAL();
+    return captured;
+}
+
+void ScpiSdWindow_Service(void) {
+    for (unsigned i = 0; i < (unsigned)SCPI_SD_WINDOW_COUNT; i++) {
+        ScpiSdWindowState_t* w = &gScpiSdWindow[i];
+        char pending[SCPI_SD_WINDOW_HOLD_BYTES];
+        size_t pendingLen = 0u;
+
+        taskENTER_CRITICAL();
+        /* A window with no data progress inside the bound has been abandoned
+         * by whatever was feeding it. Close it so the held bytes go out --
+         * a window left open silences this transport for good -- and record
+         * the overflow so the transfer cannot still claim OK. */
+        if (w->open) {
+            const TickType_t elapsed =
+                    (TickType_t)(xTaskGetTickCount() - w->lastProgress);
+            if (elapsed >= pdMS_TO_TICKS(SCPI_SD_WINDOW_STALE_MS)) {
+                w->open = false;
+                w->overflow = true;
+            }
+        }
+        if (!w->open && (w->held > 0u)) {
+            pendingLen = w->held;
+            memcpy(pending, w->buf, pendingLen);
+            w->held = 0u;
+        }
+        taskEXIT_CRITICAL();
+
+        /* OUTSIDE the critical section: writeFn retries with vTaskDelay. */
+        if ((pendingLen > 0u) && (w->writeFn != NULL)) {
+            (void)SCPI_WriteWithRetry(w->writeFn, pending, pendingLen);
+        }
+    }
+}
+
 size_t SCPI_WriteWithRetry(ScpiTransportWriteFn writeFn,
                            const char* data, size_t len) {
     size_t written = 0;

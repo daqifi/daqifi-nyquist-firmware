@@ -1202,6 +1202,27 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
      * prefix the device itself emitted. */
     pBuff = SD_StripConfiguredDir(pBuff, &fileLen, pSDCardRuntimeConfig->directory);
 
+    /* fw#1265: the OPTIONAL host-chosen tag. READ here, from the parameter
+     * list, but STORED below under the #829 claim with the other operands --
+     * the claim is what stops a concurrent GET swapping them.
+     *
+     * Absent is not an error: with mandatory == FALSE libscpi returns FALSE
+     * and pushes nothing (parser.c:711-718), so TRUE means "a tag was
+     * supplied". A malformed one IS an error: DAQiFi #880's
+     * DaqifiIntTokenFullyConsumed rejects a truncated prefix such as `7abc`
+     * with -104, so a typo cannot silently become tag 7. */
+    int32_t tagParam = 0;
+    const bool haveTag =
+            (SCPI_ParamInt32(context, &tagParam, FALSE) == TRUE);
+    if (haveTag && (tagParam < 0)) {
+        /* Refuse at the COMMAND boundary, where a refusal costs the caller
+         * one error and nothing is in flight -- not mid-transfer, where a
+         * refusal would have to abandon a window. */
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
     /* #829: claim before the operand and replyTarget writes below. replyTarget
      * decides which interface this file is delivered to, so a lost race here
      * sends a client's file to the OTHER transport. The two validation paths
@@ -1233,6 +1254,13 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
         snprintf(pSDCardRuntimeConfig->opFile, sizeof(pSDCardRuntimeConfig->opFile),
                  "%s", pSDCardRuntimeConfig->file);
     }
+    /* fw#1265: BOTH fields, on every armed GET, so a previous tagged GET
+     * cannot leak its tag into this one. The earlier validation bails release
+     * the claim and return WITHOUT arming, so `mode` never becomes READ on
+     * those paths and these fields are never read with stale contents -- they
+     * are only consulted by an armed transfer, and arming happens below. */
+    pSDCardRuntimeConfig->opGetTag = haveTag ? (uint32_t) tagParam : 0u;
+    pSDCardRuntimeConfig->opGetTagValid = haveTag;
     /* #598: route the async file data back to the interface that asked.
      * #599: capture the requesting TCP connection's generation so the SD
      * reply can't leak into a different client that later inherits the slot. */

@@ -1197,6 +1197,19 @@ static size_t UsbCdc_ScpiWrite(const char* data, size_t len) {
  */
 static size_t SCPI_USB_Write(scpi_t * context, const char* data, size_t len) {
     UNUSED(context);
+    /* fw#1265: while a TAGGED SD:GET's definite-length block is being
+     * delivered to THIS transport, hold SCPI output instead of interleaving it
+     * into the block -- the host reads <n> bytes blindly, so an interleaved
+     * byte shifts the file undetectably.
+     *
+     * Reporting the held bytes as WRITTEN is correct, not a short-write lie:
+     * ScpiSdWindow_Service() delivers them after the end line, in order. A
+     * short return here would latch an error (see the ScpiBoundedWrite policy)
+     * for output that is merely deferred. Nothing is held when no window is
+     * open, which is every untagged GET and every other command. */
+    if (ScpiSdWindow_Capture(SCPI_SD_WINDOW_USB, data, len)) {
+        return len;
+    }
     return SCPI_WriteWithRetry(UsbCdc_ScpiWrite, data, len);
 }
 
@@ -1258,6 +1271,14 @@ static scpi_result_t SCPI_USB_Control(scpi_t * context, scpi_ctrl_name_t ctrl, s
         //fprintf(stderr, "**CTRL %02x: 0x%X (%d)\r\n", ctrl, val, val);
     }
     return SCPI_RES_OK;
+}
+
+/* fw#1265: the window flushes held bytes through the same path this
+ * transport's SCPI output normally takes. Registered from the interface
+ * definition's own file so both sit in one place; nothing enforces that, so
+ * a reviewer moving one should move the other. */
+static void UsbCdc_RegisterSdWindow(void) {
+    ScpiSdWindow_Register(SCPI_SD_WINDOW_USB, UsbCdc_ScpiWrite);
 }
 
 static scpi_interface_t scpi_interface = {
@@ -1371,6 +1392,7 @@ void UsbCdc_Initialize() {
     gRunTimeUsbSttings.scpiContext = CreateSCPIContext(&scpi_interface,
                                                        &gRunTimeUsbSttings,
                                                        &gUsbScpiStorage);
+    UsbCdc_RegisterSdWindow();      /* fw#1265 */
 
     // Allocate DMA write staging buffer from coherent pool (auto-sized at stream start)
     gRunTimeUsbSttings.dmaWriteBufferSize = USBCDC_DMA_WBUFFER_MAX;

@@ -87,6 +87,23 @@ extern "C" {
          * just-referenced file. The READ/CRC/DELETE path construction and the INIT
          * filename validation use this field for those modes; WRITE uses `file`. */
         char opFile[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX + 1];
+        /* fw#1265: the OPTIONAL host-chosen tag from
+         * `SYSTem:STORage:SD:GET "f.bin",<tag>`, and whether one was given.
+         *
+         * A SEPARATE validity flag rather than a sentinel: tag 0 is a legal
+         * host choice, and "0 means absent" is exactly the trap that would
+         * hand a host passing 0 the untagged wire format without saying so.
+         *
+         * BOTH fields are written on every ARMED GET -- the earlier bails
+         * (SD disabled, busy, suspended, no card, bad name, claim refused)
+         * return before the store, and an unarmed GET never reads them. So a
+         * tagged GET cannot leak its tag into a later untagged one, which
+         * would otherwise open a data
+         * window for a host that never asked for one, and an untagged GET
+         * must stay byte-identical to the pre-#1265 wire format. Transient
+         * operands, written under the #829 claim like opFile. */
+        uint32_t opGetTag;
+        bool opGetTagValid;
         uint64_t maxFileSizeBytes;  // Max file size before auto-split (0 = unlimited)
         // Pre-start free-space floor (#498).  When > 0, SYST:STR:START
         // for SD-output sessions runs a SYS_FS_DriveSectorGet() check

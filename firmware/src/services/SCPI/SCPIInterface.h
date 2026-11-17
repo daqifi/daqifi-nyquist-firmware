@@ -208,6 +208,95 @@ extern "C" {
     /*! Function pointer type for transport-level write (no SCPI context) */
     typedef size_t (*ScpiTransportWriteFn)(const char* data, size_t len);
 
+    /* ===== fw#1265: the SD:GET data window ================================
+     *
+     * A TAGGED SYSTem:STORage:SD:GET delivers a definite-length block, so the
+     * host reads exactly <n> bytes without inspecting them. SCPI output landing
+     * between the block's first and nth byte would SHIFT the file, and the host
+     * can neither detect nor undo that. File bytes come from the SD task via
+     * the bypass writers (sd_reply_write_usb/_tcp); SCPI output goes through
+     * SCPI_WriteWithRetry. Two producers, one circular buffer per transport,
+     * appended in call order -- and during a READ the SD task raises itself to
+     * priority 7 (sd_card_manager.c:4166), the same as the USB tasks, so they
+     * genuinely interleave rather than one always finishing first.
+     *
+     * While the window is open, this transport's SCPI output is HELD and
+     * delivered after the end line, in order.
+     *
+     * NOT A PUMPED WAIT. Making the GET callback wait for the transfer (as
+     * SD:LISt? does) parks app_USBDeviceTask, which is both the SCPI host and
+     * the USB drain. Operator ruling 2026-10-25 (#756 item 4 -> A) withdrew a
+     * bounded wait on that task because parking it during a USB stream filled
+     * the ring, blocked the encoder and LOST ACQUIRED SAMPLES, recording that
+     * pumping "reduced the window 20x and did not change the kind of defect".
+     * A GET is three orders of magnitude longer than that re-check (#750
+     * measured 245,464 B at 3.7 s). Holding blocks no task.
+     *
+     * A REFUSAL MUST LEAVE A WAY BACK (carried in from python-core #266, where
+     * this shape cost four audited rounds): a window left open silences that
+     * transport forever. TWO independent things prevent it -- every path that
+     * ends a transfer closes the window, AND an open window with no data
+     * progress for SCPI_SD_WINDOW_STALE_MS closes itself. The second makes a
+     * missed close non-fatal rather than permanent, so the guarantee does not
+     * rest on having enumerated every exit of a state machine that has several.
+     */
+
+    /*! Which transport's window. Only the transport that asked for the file is
+     *  ever held; the other transport is untouched. */
+    typedef enum {
+        SCPI_SD_WINDOW_USB = 0,
+        SCPI_SD_WINDOW_TCP = 1,
+        SCPI_SD_WINDOW_COUNT = 2
+    } ScpiSdWindowTransport_t;
+
+    /*! Bytes of SCPI output held while a window is open. Sized as FRAMING, not
+     *  as a buffer: what can legitimately arrive mid-transfer is a compound
+     *  message's tail (`SD:GET "f";*OPC?` -> "1"), a prompt, and at most a
+     *  short status -- tens of bytes. More than this is not framing, so it
+     *  fails the transfer loudly instead of growing without bound. */
+#define SCPI_SD_WINDOW_HOLD_BYTES 256u
+
+    /*! How long an open window may see no data progress before closing itself.
+     *  Must exceed the longest legitimate gap: the SD reply writers retry a
+     *  full buffer for up to ten seconds before giving up on a chunk, so a
+     *  ten-second gap is normal and this is deliberately clear of it. */
+#define SCPI_SD_WINDOW_STALE_MS 15000u
+
+    /*! Register a transport's raw write function once, at transport init. Held
+     *  bytes are flushed through it, so it must be the path that transport's
+     *  SCPI output normally takes. */
+    void ScpiSdWindow_Register(ScpiSdWindowTransport_t transport,
+                               ScpiTransportWriteFn writeFn);
+
+    /*! Open the window: the block header is written and the data is next. */
+    void ScpiSdWindow_Open(ScpiSdWindowTransport_t transport);
+
+    /*! Record data progress, so a transfer that is MAKING progress does not
+     *  trip the staleness bound. (Not "never looks stale": the bound is 15 s
+     *  against a legitimate per-chunk gap of up to ~10 s, so the margin is
+     *  finite and a pathological card could still trip it -- loudly, which is
+     *  the direction this errs in.) */
+    void ScpiSdWindow_NoteProgress(ScpiSdWindowTransport_t transport);
+
+    /*! Close the window. Held bytes go out via ScpiSdWindow_Service(). */
+    void ScpiSdWindow_Close(ScpiSdWindowTransport_t transport);
+
+    /*! True if the window was abandoned because more output arrived than
+     *  SCPI_SD_WINDOW_HOLD_BYTES. The SD side turns this into a FAILED end
+     *  line: the block is already corrupt, so it must not report OK. */
+    bool ScpiSdWindow_Overflowed(ScpiSdWindowTransport_t transport);
+
+    /*! Hold `data` if this transport's window is open.
+     *  @return true when the bytes were held (and will be delivered later),
+     *          false when the caller must write them itself. */
+    bool ScpiSdWindow_Capture(ScpiSdWindowTransport_t transport,
+                              const char* data, size_t len);
+
+    /*! Deliver held bytes whose window has closed, and close a window that has
+     *  gone stale. Called from the SD task's loop: one place, reached whatever
+     *  the transfer did, and never from a transport task. */
+    void ScpiSdWindow_Service(void);
+
     /*!
      * Write SCPI response data with retry on buffer-full backpressure.
      * Retries up to 200 times with 5ms between attempts (1s max).
