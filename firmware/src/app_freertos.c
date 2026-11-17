@@ -217,10 +217,10 @@ static size_t sd_reply_write_tcp(const char* data, size_t len)
     return wifi_tcp_server_WriteBuffer(data, len);
 }
 
-void sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff, size_t dataLen) {
+size_t sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff, size_t dataLen) {
     // Defensive checks
     if (pDataBuff == NULL || dataLen == 0) {
-        return;
+        return 0u;
     }
 
     const sd_card_manager_settings_t* pSet =
@@ -239,7 +239,7 @@ void sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff
         sd_card_manager_AbortTransfer();
         LOG_E("[SD reply] TCP client changed/gone (gen %u) - reply aborted",
               (unsigned)pSet->replyGeneration);
-        return;
+        return 0u;
     }
 
     size_t (*writeFn)(const char*, size_t) = toTcp ? sd_reply_write_tcp : sd_reply_write_usb;
@@ -306,6 +306,10 @@ void sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff
         LOG_E("[USB] Incomplete transfer: sent %u/%u bytes",
               (unsigned)transferredLength, (unsigned)dataLen);
     }
+    /* fw#1265 / #1267 round-2 audit defect 2: the caller needs the DELIVERED
+     * count, not the offered one. `transferredLength` is incremented only by
+     * what the transport shim returned, so it is exactly that. */
+    return transferredLength;
 }
 
 static void app_USBDeviceTask(void* p_arg) {

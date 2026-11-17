@@ -302,6 +302,14 @@ extern "C" {
      * the caller retries within a bounded wait and fails the transfer if the
      * transport never goes idle.
      *
+     * ⭐ IT ALSO REFUSES WHILE A STREAMING SESSION IS ARMING (fw#1269), which
+     * is the other half of one interlock -- Streaming_BeginSessionStart
+     * refuses while a window is open or a tagged GET is armed. Both tests sit
+     * inside a taskENTER_CRITICAL, which masks interrupts and so admits no
+     * task switch, so the two decisions are serialized and an arm in progress
+     * can never coexist with an open window. Neither side keeps new state:
+     * each reads a flag the other already releases on every path out.
+     *
      * `generation` is the TCP connection generation that asked (0 for USB), so
      * a window cannot outlive the client that opened it. */
     bool ScpiSdWindow_TryOpen(ScpiSdWindowTransport_t transport,

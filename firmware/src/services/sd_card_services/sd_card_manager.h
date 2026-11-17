@@ -424,7 +424,9 @@ extern "C" {
      * it. It is deliberately WIDER than "a data window is open": the window
      * opens later, on the SD task, and a streaming start arriving in that gap
      * would otherwise pass its own window check and then stream into the
-     * block. Read by SCPI_RefuseStartIfSdWindowOpen. */
+     * block. Read by Streaming_BeginSessionStart (fw#1269), inside the
+     * critical section that takes the session-start claim, so that an arm and
+     * a tagged GET can never both be admitted. */
     bool sd_card_manager_TaggedGetPending(void);
 
     /** @brief #1031: arm/disarm the one-shot that fails the next write of a
@@ -666,7 +668,23 @@ bool sd_card_manager_WriteIsStreamingLog(void);
      * @note This function is called from the context of the SD card manager's state machine.
      *       Processing within this callback should be kept minimal to prevent blocking the state machine.
      */
-    void sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff, size_t dataLen);
+    /*! @return the number of bytes the transport ACTUALLY ACCEPTED, which can
+     *  be less than dataLen and can be 0.
+     *
+     * ⛔ IT WAS `void`, AND THAT COST A DEFECT (#1267 round-2 audit, 2). The
+     * callback writes through an all-or-nothing transport shim that clamps one
+     * write to 1024 bytes and gives up after a bounded retry, so a partial
+     * write is a normal outcome, not an error case. With no return value the
+     * caller could only assume the whole chunk had gone -- and the tagged
+     * SD:GET path did: it advanced its delivered-bytes counter by the chunk it
+     * OFFERED, so the padding that keeps the end line outside the advertised
+     * block came out short by the difference and the terminator landed INSIDE
+     * the block, where the host reads it as file data and then waits forever.
+     *
+     * Same shape as the `writeBytesTotal` defect (documented as confirmed,
+     * counts attempted): a counter named for delivery that increments on
+     * submission. Callers that do not care may ignore the value. */
+    size_t sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff, size_t dataLen);
 
     /**
      * @brief SD write metrics for diagnosing performance and errors.

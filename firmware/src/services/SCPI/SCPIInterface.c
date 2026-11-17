@@ -2696,62 +2696,30 @@ static inline void StreamFreq_Set(StreamingRuntimeConfig* c, uint64_t f) {
  * is unchanged: -200, which is what the arm-time cfgChanging refusal this
  * supersedes already answered -- the difference is that the refusal now lands
  * before PrepareStreamingBuffers instead of after it. */
-static scpi_result_t SCPI_RefuseSessionStartBusy(scpi_t * context,
-                                                 const char *what) {
-    /* 105 characters at the longest `what` this is called with
-     * ("SYSTem:STReam:THRoughput", 24), against Logger.c's usable 125.
-     * "on the other SCPI transport" was dropped to fit rather than "Retry.":
-     * the remedy is the actionable half, and WHICH transport holds it is in
-     * the Streaming_Begin* line this one follows. */
-    LOG_E("%s refused (#850/#977): another session start or config change is "
-          "in flight. Retry.", what);
+/* fw#1269: it now also reports a refusal by a tagged SD:GET, which is why it
+ * takes the claim result rather than being called only on BUSY. One function
+ * for every way the claim can be refused, for the #850 reason above: two
+ * refusal sites that build their own messages drift. */
+static scpi_result_t SCPI_RefuseSessionStart(scpi_t * context,
+                                             const char *what,
+                                             StreamingStartClaim claim) {
+    if (claim == STREAM_START_CLAIM_SD_GET) {
+        /* 102 characters at the longest `what` (24). */
+        /* log_budget: max=24 */
+        LOG_E("%s refused (#1269): a tagged SD:GET is framing a block. Retry "
+              "after it ends.", what);
+    } else {
+        /* 105 characters at the longest `what` this is called with
+         * ("SYSTem:STReam:THRoughput", 24), against Logger.c's usable 125.
+         * "on the other SCPI transport" was dropped to fit rather than
+         * "Retry.": the remedy is the actionable half, and WHICH transport
+         * holds it is in the Streaming_Begin* line this one follows. */
+        /* log_budget: max=24 */
+        LOG_E("%s refused (#850/#977): another session start or config change "
+              "is in flight. Retry.", what);
+    }
     SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
     return SCPI_RES_ERR;
-}
-
-/* fw#1265 round 2: REFUSE A SESSION START WHILE A TAGGED SD:GET DATA WINDOW
- * IS OPEN. Returns true when it refused.
- *
- * ⭐ THE OTHER HALF OF THE EXCLUSION the tagged GET declares in
- * SCPI_StorageSDGetData. One direction alone is not exclusion: the GET refuses
- * when a stream is already live, and this refuses when a download is already
- * framing. Without it a host could simply reverse the order and have the
- * stream write into the definite-length block from the streaming task, which
- * the GET's input pause cannot reach -- that task is not driven by input.
- *
- * ⛔ A FUNCTION WITH TWO CALL SITES, FOR THE SAME REASON
- * SCPI_RefuseSessionStartBusy IS ONE: SCPI_StartStreaming does NOT go through
- * SCPI_RunSessionStartClaimed (it must parse before claiming), so a check
- * written into the runner alone would leave the headline command -- START --
- * unguarded while the throughput bench and the WiFi finder were covered. That
- * is precisely the drift #850's own comment was written about, and I had the
- * check in the runner only until this was noticed.
- *
- * Either transport's window refuses either transport's arm, which is wider
- * than strictly necessary and deliberately so: a window open on USB makes USB
- * deaf, so the arm can only arrive over TCP, and a per-transport test would
- * permit exactly the case the GET side cannot defend.
- *
- * Both callers invoke it BEFORE Streaming_BeginSessionStart(), so a refusal
- * takes no claim it would have to release -- and, in START's case, after the
- * `freq == 0` disable branch, because that path is a STOP and a stop is never
- * refused. */
-static bool SCPI_RefuseStartIfSdWindowOpen(scpi_t * context,
-                                           const char *what) {
-    /* ⭐ TWO TERMS, BECAUSE THE WINDOW OPENS LATER THAN THE TRANSFER IS ARMED.
-     * The GET handler arms on the SCPI task and returns; the SD task opens the
-     * window on its next pass. A start arriving in that gap would see no open
-     * window, arm, and then stream into the block. The second term covers the
-     * gap from the arm onwards; the SD task also re-checks for a live stream
-     * once its window IS open (sd_get_open_window), so the two ends meet. */
-    if (!ScpiSdWindow_AnyOpen() && !sd_card_manager_TaggedGetPending()) {
-        return false;
-    }
-    /* log_budget: max=24 */
-    LOG_E("%s refused (fw#1265): a tagged SD:GET download is framing. "
-          "Retry after it ends.", what);
-    SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-    return true;
 }
 
 /* --- #850: the session-start claim runner ---------------------------------
@@ -2869,12 +2837,6 @@ static scpi_result_t SCPI_RunSessionStartClaimed(scpi_t * context,
      * argument has no cross-transport clobber hazard to guard against, so both
      * the stamp and the refusal go away rather than being re-derived for the
      * next command added here. */
-    /* fw#1265 round 2: ahead of the stop pin and the #850 claim, so a refusal
-     * pins nothing and holds no claim. */
-    if (SCPI_RefuseStartIfSdWindowOpen(context, what)) {
-        return SCPI_RES_ERR;
-    }
-
     uint32_t stopGenPinned;
     bool     stopActivePinned;
     taskENTER_CRITICAL();
@@ -2882,8 +2844,13 @@ static scpi_result_t SCPI_RunSessionStartClaimed(scpi_t * context,
     stopActivePinned = (gStreamStopsActive != 0u);
     taskEXIT_CRITICAL();
 
-    if (Streaming_BeginSessionStart() != STREAM_START_CLAIM_OK) {
-        return SCPI_RefuseSessionStartBusy(context, what);
+    /* fw#1269: the claim's admission test now also refuses while a tagged
+     * SD:GET is framing or armed, so the round-2 pre-check that used to sit
+     * above is gone -- one decision, in the critical section that takes the
+     * claim, instead of a check before it that an arm could race. */
+    const StreamingStartClaim claim = Streaming_BeginSessionStart();
+    if (claim != STREAM_START_CLAIM_OK) {
+        return SCPI_RefuseSessionStart(context, what, claim);
     }
     scpi_result_t result = body(context, stopGenPinned, stopActivePinned);
     Streaming_EndSessionStart();
@@ -7119,14 +7086,12 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         return SCPI_RES_OK;
     }
 
-    /* fw#1265 round 2: after the `freq == 0` disable branch above -- that path
-     * is a stop and must never be refused -- and before the claim. */
-    if (SCPI_RefuseStartIfSdWindowOpen(context, "SYSTem:STReam:START")) {
-        return SCPI_RES_ERR;
-    }
-
-    if (Streaming_BeginSessionStart() != STREAM_START_CLAIM_OK) {
-        return SCPI_RefuseSessionStartBusy(context, "SYSTem:STReam:START");
+    /* fw#1269: refused here, by the claim itself, rather than by a check
+     * ahead of it. The `freq == 0` disable branch above has already returned,
+     * so a STOP is still never refused. */
+    const StreamingStartClaim claim = Streaming_BeginSessionStart();
+    if (claim != STREAM_START_CLAIM_OK) {
+        return SCPI_RefuseSessionStart(context, "SYSTem:STReam:START", claim);
     }
     scpi_result_t result = SCPI_StartStreamingClaimed(context, freq,
                                                       freqProvided,
@@ -11015,7 +10980,8 @@ bool ScpiSdWindow_TryOpen(ScpiSdWindowTransport_t transport,
      * neither the USB read-complete event nor the WINC receive callback can
      * set `feeding` between them, and no other task can run either. */
     taskENTER_CRITICAL();
-    if ((!w->open) && (!w->feeding)) {
+    if ((!w->open) && (!w->feeding) &&
+            (!Streaming_SessionStartInProgress())) {
         w->generation = generation;
         w->lastProgress = xTaskGetTickCount();
         w->open = true;
