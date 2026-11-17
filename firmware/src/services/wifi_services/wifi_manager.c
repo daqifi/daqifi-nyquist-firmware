@@ -6,6 +6,7 @@
 #include "wdrv_winc_client_api.h"
 #include "Util/Logger.h"
 #include "wifi_tcp_server.h"
+#include "services/SCPI/SCPIInterface.h"       // fw#1265 SD:GET input pause
 #include "state/data/BoardData.h"
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "wifi_serial_bridge.h"
@@ -782,6 +783,29 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                 // was bound to the previous connection stops writing to us.
                 // Single-writer (this callback only) -> plain ++ is safe.
                 gStateMachineContext.pTcpServerContext->client.connGeneration++;
+                /* fw#1265: DROP ANY RX LEFT PENDING BY THE PREVIOUS CLIENT.
+                 *
+                 * The deferred-rx design (#353) stores a length and a flag and
+                 * drains them on a later WifiTask pass. If the client that
+                 * sent them disappears before that pass, the flag is still set
+                 * and readBuffer still holds THEIR bytes -- so the drain would
+                 * feed one client's command line to the next client's console
+                 * and answer it on their socket.
+                 *
+                 * ⚠ THE SD:GET INPUT PAUSE IS WHAT MAKES THIS WORTH FIXING
+                 * HERE. The pending span used to be one WifiTask pass (~5 ms),
+                 * narrow enough that it had never been seen; an open data
+                 * window holds the drain for as long as the download takes, so
+                 * the same gap becomes seconds wide. Clearing at the moment the
+                 * generation bumps is the one place that cannot be missed,
+                 * because that is the definition of "a different client".
+                 *
+                 * `feeding` is cleared for the same reason: a client that
+                 * vanished mid-feed must not leave this transport looking
+                 * permanently busy to ScpiSdWindow_TryOpen. */
+                gTcpRxPending = false;
+                gStateMachineContext.pTcpServerContext->client.readBufferLength = 0;
+                ScpiSdWindow_FeedEnd(SCPI_SD_WINDOW_TCP);
                 LOG_D("Connection from %s:%d\r\n", inet_ntop(AF_INET, &pAcceptMessage->strAddr.sin_addr.s_addr, s, sizeof (s)), pAcceptMessage->strAddr.sin_port);
                 recv(gStateMachineContext.pTcpServerContext->client.clientSocket, gStateMachineContext.pTcpServerContext->client.readBuffer, WIFI_RBUFFER_SIZE, 0);
 
@@ -814,6 +838,12 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                 gStateMachineContext.pTcpServerContext->client.readBufferLength = pRecvMessage->s16BufferSize;
                 gStateMachineContext.pTcpServerContext->client.lastActivityTick = xTaskGetTickCount(); // #663: RX activity resets the idle clock
                 gTcpRxPending = true;
+                /* fw#1265: this transport now holds input it has not handed to
+                 * SCPI, so it is not idle and a tagged SD:GET window must not
+                 * open over the top of it. Cleared at the end of
+                 * wifi_tcp_server_ProcessReceivedBuff. gTcpRxPending alone
+                 * cannot serve: it is cleared BEFORE the feed runs. */
+                ScpiSdWindow_FeedBegin(SCPI_SD_WINDOW_TCP);
 
             } else {
                 LOG_E("[%s:%d]Error Socket MSG Recv", __FILE__, __LINE__);
@@ -4002,7 +4032,28 @@ static void wifi_manager_ProcessStateImpl(bool drainTcpRx) {
     // Always clear the flag under the socket-valid guard, so a RECV that
     // arrived just before the client disconnected doesn't leave stale data
     // queued for the next client.
-    if (drainTcpRx && gTcpRxPending) {
+    /* fw#1265: FEED NOTHING AND RE-ARM NOTHING while a tagged SD:GET window
+     * is open for the CURRENT client.
+     *
+     * This is the TCP half of the input pause. Feeding here would run microrl
+     * and SCPI_Input, whose echo, prompt and reply would land inside the
+     * definite-length block the host is reading blindly. Leaving gTcpRxPending
+     * SET is the whole mechanism: the data waits, and the normal drain below
+     * delivers it in order on the first pass after the window closes.
+     *
+     * Loss-free, on the authority this site already carries: #353's own
+     * comment records that "the WINC driver buffers subsequent TCP data
+     * internally until we call recv() again, so missing this tick's re-arm is
+     * safe" -- the deferral is the pre-existing design, and a window merely
+     * extends how long it lasts. Beyond WINC's buffer the TCP window closes,
+     * which is flow control rather than a drop.
+     *
+     * The generation test is what stops a dead client's window gagging its
+     * replacement: ScpiSdWindow_IsOpenFor compares the window's owner against
+     * the connection that is live now. */
+    if (drainTcpRx && gTcpRxPending &&
+        !ScpiSdWindow_IsOpenFor(SCPI_SD_WINDOW_TCP,
+                                wifi_tcp_server_GetConnGeneration())) {
         gTcpRxPending = false;
         if (gStateMachineContext.pTcpServerContext != NULL &&
             gStateMachineContext.pTcpServerContext->client.clientSocket >= 0) {

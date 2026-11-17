@@ -318,6 +318,17 @@ USB_DEVICE_CDC_EVENT_RESPONSE UsbCdc_CDCEventHandler
             USB_DEVICE_CDC_EVENT_DATA_READ_COMPLETE* readResult = (USB_DEVICE_CDC_EVENT_DATA_READ_COMPLETE*) pData;
             pUsbCdcDataObject->readBufferLength = readResult->length;
             pUsbCdcDataObject->readTransferHandle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
+            /* fw#1265: this transport now holds input it has not handed to
+             * SCPI, so it is NOT idle and a tagged SD:GET window must not open
+             * over the top of it -- the reply to whatever is in this packet
+             * would land inside the block. Cleared in UsbCdc_Tasks once the
+             * whole buffer has been fed and SCPI_Input has returned.
+             *
+             * Set unconditionally, including for a zero-length packet: the
+             * clear site runs on every pass through the read branch, so a
+             * spurious `feeding` costs at most one retry of TryOpen, while a
+             * missed one costs the block's integrity. */
+            ScpiSdWindow_FeedBegin(SCPI_SD_WINDOW_USB);
             break;
         }
         case USB_DEVICE_CDC_EVENT_CONTROL_TRANSFER_DATA_RECEIVED:
@@ -758,6 +769,19 @@ static bool UsbCdc_BeginRead(UsbCdcData_t* client) {
     if (client->state != USB_CDC_STATE_PROCESS) {
         return false;
     }
+    /* fw#1265: ARM NO READ WHILE A TAGGED SD:GET WINDOW IS OPEN ON USB.
+     *
+     * This is the pause. Returning TRUE rather than false is load-bearing:
+     * UsbCdc_Tasks treats false as "something is wrong, leave the state" and
+     * BREAKS before UsbCdc_BeginWrite -- which is the call that actually pushes
+     * the file's bytes to the host, so a false here would stall the very
+     * transfer this window exists to protect.
+     *
+     * Not arming is loss-free: the host's bytes stay in the CDC endpoint and
+     * the hardware NAKs when it fills, which is flow control, not a drop. */
+    if (ScpiSdWindow_IsOpenFor(SCPI_SD_WINDOW_USB, 0u)) {
+        return true;
+    }
     // Schedule the next read
     if (gRunTimeUsbSttings.readTransferHandle ==
             USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID &&
@@ -1197,19 +1221,16 @@ static size_t UsbCdc_ScpiWrite(const char* data, size_t len) {
  */
 static size_t SCPI_USB_Write(scpi_t * context, const char* data, size_t len) {
     UNUSED(context);
-    /* fw#1265: while a TAGGED SD:GET's definite-length block is being
-     * delivered to THIS transport, hold SCPI output instead of interleaving it
-     * into the block -- the host reads <n> bytes blindly, so an interleaved
-     * byte shifts the file undetectably.
-     *
-     * Reporting the held bytes as WRITTEN is correct, not a short-write lie:
-     * ScpiSdWindow_Service() delivers them after the end line, in order. A
-     * short return here would latch an error (see the ScpiBoundedWrite policy)
-     * for output that is merely deferred. Nothing is held when no window is
-     * open, which is every untagged GET and every other command. */
-    if (ScpiSdWindow_Capture(SCPI_SD_WINDOW_USB, data, len)) {
-        return len;
-    }
+    /* fw#1265: NO WINDOW GATE HERE, DELIBERATELY, AND THAT IS THE ROUND-2
+     * REDESIGN. An earlier revision held SCPI output here while a tagged
+     * SD:GET block was being delivered. The round-1 audit of PR #1267 found
+     * six defects in it, and the first is why no gate on this path can work:
+     * microrl_echo writes straight to UsbCdc_WriteToBuffer (below) and never
+     * passes through here, so the echo of whatever the host typed during the
+     * transfer went into the block anyway. A gate on the output side cannot
+     * see every writer. Pausing this transport's INPUT while its window is
+     * open means no echo, no prompt and no reply is PRODUCED -- see
+     * UsbCdc_Tasks and UsbCdc_BeginRead. */
     return SCPI_WriteWithRetry(UsbCdc_ScpiWrite, data, len);
 }
 
@@ -1271,14 +1292,6 @@ static scpi_result_t SCPI_USB_Control(scpi_t * context, scpi_ctrl_name_t ctrl, s
         //fprintf(stderr, "**CTRL %02x: 0x%X (%d)\r\n", ctrl, val, val);
     }
     return SCPI_RES_OK;
-}
-
-/* fw#1265: the window flushes held bytes through the same path this
- * transport's SCPI output normally takes. Registered from the interface
- * definition's own file so both sit in one place; nothing enforces that, so
- * a reviewer moving one should move the other. */
-static void UsbCdc_RegisterSdWindow(void) {
-    ScpiSdWindow_Register(SCPI_SD_WINDOW_USB, UsbCdc_ScpiWrite);
 }
 
 static scpi_interface_t scpi_interface = {
@@ -1392,7 +1405,6 @@ void UsbCdc_Initialize() {
     gRunTimeUsbSttings.scpiContext = CreateSCPIContext(&scpi_interface,
                                                        &gRunTimeUsbSttings,
                                                        &gUsbScpiStorage);
-    UsbCdc_RegisterSdWindow();      /* fw#1265 */
 
     // Allocate DMA write staging buffer from coherent pool (auto-sized at stream start)
     gRunTimeUsbSttings.dmaWriteBufferSize = USBCDC_DMA_WBUFFER_MAX;
@@ -1488,8 +1500,32 @@ void UsbCdc_ProcessState() {
             // If a write operation is not in progress
             if (gRunTimeUsbSttings.readTransferHandle ==
                     USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID) {
-                // Process any input
-                UsbCdc_FinalizeRead(&gRunTimeUsbSttings);
+                /* fw#1265: FEED NOTHING WHILE A TAGGED SD:GET WINDOW IS OPEN.
+                 *
+                 * UsbCdc_BeginRead's own gate stops the NEXT read being armed;
+                 * this one stops a read that was ALREADY armed when the window
+                 * opened from being fed when it completes. Both are needed and
+                 * neither is redundant -- they guard different actions -- and
+                 * this half has to be at the call site because the FeedEnd
+                 * below is only correct when the feed actually happened.
+                 *
+                 * Feeding here would produce echo, a prompt and a reply in the
+                 * middle of the block, which is the whole thing the window
+                 * exists to prevent. Instead the buffer waits: readBuffer
+                 * keeps its bytes, readBufferLength stays non-zero, and
+                 * everything the host sent reaches SCPI in order on the first
+                 * pass after the window closes. */
+                if (!ScpiSdWindow_IsOpenFor(SCPI_SD_WINDOW_USB, 0u)) {
+                    // Process any input
+                    UsbCdc_FinalizeRead(&gRunTimeUsbSttings);
+                    /* fw#1265: UNCONDITIONAL, and only here. FinalizeRead has
+                     * returned, so the whole buffer has been fed and every
+                     * SCPI_Input it triggered has returned: this transport is
+                     * idle and a window may open. One site, on the path that
+                     * always runs after a feed, rather than a clear at each of
+                     * FinalizeRead's several returns. */
+                    ScpiSdWindow_FeedEnd(SCPI_SD_WINDOW_USB);
+                }
 
                 // Schedule the next read
                 if (!UsbCdc_BeginRead(&gRunTimeUsbSttings)) {

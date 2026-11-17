@@ -2824,6 +2824,36 @@ static scpi_result_t SCPI_RunSessionStartClaimed(scpi_t * context,
      * argument has no cross-transport clobber hazard to guard against, so both
      * the stamp and the refusal go away rather than being re-derived for the
      * next command added here. */
+    /* fw#1265 round 2: REFUSE WHILE A TAGGED SD:GET DATA WINDOW IS OPEN.
+     *
+     * ⭐ THE OTHER HALF OF THE EXCLUSION the tagged GET declares in
+     * SCPI_StorageSDGetData. One direction alone is not exclusion: the GET
+     * refuses when a stream is already live, and this refuses when a download
+     * is already framing. Without it the host could simply reverse the order
+     * and have the stream write into the block from the streaming task, which
+     * no input pause can reach.
+     *
+     * ⭐ HERE RATHER THAN IN STR:START, because this runner is the single
+     * chokepoint every session arm already passes through (#850) -- START, the
+     * throughput bench and the WiFi finder. A check in one of them would leave
+     * the other two able to open a stream mid-download, and the next arm added
+     * here would inherit the gap by default; this way it inherits the guard.
+     *
+     * Either transport's window refuses either transport's arm, which is wider
+     * than strictly necessary and deliberately so: a window open on USB makes
+     * USB deaf, so the arm can only arrive over TCP, and a per-transport test
+     * would permit exactly the case the GET side cannot defend.
+     *
+     * Ahead of the stop pin and the #850 claim: a refusal before either takes
+     * no claim to release and pins nothing. */
+    if (ScpiSdWindow_AnyOpen()) {
+        /* log_budget: max=24 */
+        LOG_E("%s refused (fw#1265): a tagged SD:GET download is framing. "
+              "Retry after it ends.", what);
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+
     uint32_t stopGenPinned;
     bool     stopActivePinned;
     taskENTER_CRITICAL();
@@ -10882,15 +10912,27 @@ scpi_result_t SCPI_Help(scpi_t* context) {
 #define SCPI_WRITE_RETRY_DELAY_MS   5
 
 /* ===== fw#1265: the SD:GET data window =====================================
- * Rationale and the two independent anti-lockout mechanisms are documented on
- * the API in SCPIInterface.h. This is the mechanism only. */
+ * The contract, and why this pauses INPUT rather than holding OUTPUT, is on
+ * the API in SCPIInterface.h. This is the mechanism only, and it is small on
+ * purpose: four booleans and a tick stamp, no buffer, no deferred delivery.
+ *
+ * ⛔ NOTHING HERE WRITES TO A TRANSPORT. That is the whole point of the
+ * round-2 redesign: the output-hold version had to capture, store and replay
+ * bytes in order, and every ordering defect the round-1 audit found lived in
+ * that replay. */
 typedef struct {
-    ScpiTransportWriteFn writeFn;   /* registered once at transport init */
     volatile bool open;
-    volatile bool overflow;
+    /* "input received on this transport and not yet fully handed to SCPI".
+     * Set when the transport takes delivery of a packet, cleared once it has
+     * been fed through microrl and SCPI_Input has returned. It is the IDLE
+     * test TryOpen makes, and it has to cover the whole packet so a second
+     * command sharing one write is processed BEFORE the header. */
+    volatile bool feeding;
+    /* The TCP connection that owns an open window; 0 for USB. */
+    volatile uint32_t generation;
     volatile TickType_t lastProgress;
-    volatile size_t held;
-    char buf[SCPI_SD_WINDOW_HOLD_BYTES];
+    /* Set only by the staleness backstop -- see ScpiSdWindow_WasForceClosed. */
+    volatile bool forceClosed;
 } ScpiSdWindowState_t;
 
 static ScpiSdWindowState_t gScpiSdWindow[SCPI_SD_WINDOW_COUNT];
@@ -10904,25 +10946,66 @@ static ScpiSdWindowState_t* ScpiSdWindow_For(ScpiSdWindowTransport_t t) {
     return &gScpiSdWindow[t];
 }
 
-void ScpiSdWindow_Register(ScpiSdWindowTransport_t transport,
-                           ScpiTransportWriteFn writeFn) {
+void ScpiSdWindow_FeedBegin(ScpiSdWindowTransport_t transport) {
     ScpiSdWindowState_t* w = ScpiSdWindow_For(transport);
-    if ((w != NULL) && (writeFn != NULL)) {
-        w->writeFn = writeFn;
+    if (w != NULL) {
+        w->feeding = true;
     }
 }
 
-void ScpiSdWindow_Open(ScpiSdWindowTransport_t transport) {
+void ScpiSdWindow_FeedEnd(ScpiSdWindowTransport_t transport) {
+    ScpiSdWindowState_t* w = ScpiSdWindow_For(transport);
+    if (w != NULL) {
+        w->feeding = false;
+    }
+}
+
+bool ScpiSdWindow_IsOpenFor(ScpiSdWindowTransport_t transport,
+                            uint32_t generation) {
+    const ScpiSdWindowState_t* w = ScpiSdWindow_For(transport);
+    /* One read of each, no critical section: both are plain aligned loads and
+     * the caller is deciding whether to feed on THIS pass. A decision made
+     * from a value that changed a microsecond later is not wrong -- the window
+     * opens and closes around whole packets, not single bytes. */
+    return (w != NULL) && w->open && (w->generation == generation);
+}
+
+bool ScpiSdWindow_AnyOpen(void) {
+    for (unsigned i = 0; i < (unsigned) SCPI_SD_WINDOW_COUNT; i++) {
+        if (gScpiSdWindow[i].open) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ScpiSdWindow_TryOpen(ScpiSdWindowTransport_t transport,
+                          uint32_t generation) {
     ScpiSdWindowState_t* w = ScpiSdWindow_For(transport);
     if (w == NULL) {
-        return;
+        return false;
     }
+    bool opened = false;
+    /* ONE critical section for the test AND the set. Interrupts are masked, so
+     * neither the USB read-complete event nor the WINC receive callback can
+     * set `feeding` between them, and no other task can run either. */
     taskENTER_CRITICAL();
-    w->held = 0u;
-    w->overflow = false;
-    w->lastProgress = xTaskGetTickCount();
-    w->open = true;
+    if ((!w->open) && (!w->feeding)) {
+        w->generation = generation;
+        w->lastProgress = xTaskGetTickCount();
+        w->forceClosed = false;
+        w->open = true;
+        opened = true;
+    }
     taskEXIT_CRITICAL();
+    return opened;
+}
+
+void ScpiSdWindow_Close(ScpiSdWindowTransport_t transport) {
+    ScpiSdWindowState_t* w = ScpiSdWindow_For(transport);
+    if (w != NULL) {
+        w->open = false;
+    }
 }
 
 void ScpiSdWindow_NoteProgress(ScpiSdWindowTransport_t transport) {
@@ -10932,75 +11015,47 @@ void ScpiSdWindow_NoteProgress(ScpiSdWindowTransport_t transport) {
     }
 }
 
-void ScpiSdWindow_Close(ScpiSdWindowTransport_t transport) {
-    ScpiSdWindowState_t* w = ScpiSdWindow_For(transport);
-    if (w != NULL) {
-        w->open = false;        /* Service() delivers whatever was held */
-    }
-}
-
-bool ScpiSdWindow_Overflowed(ScpiSdWindowTransport_t transport) {
+bool ScpiSdWindow_WasForceClosed(ScpiSdWindowTransport_t transport) {
     const ScpiSdWindowState_t* w = ScpiSdWindow_For(transport);
-    return (w != NULL) && w->overflow;
-}
-
-bool ScpiSdWindow_Capture(ScpiSdWindowTransport_t transport,
-                          const char* data, size_t len) {
-    ScpiSdWindowState_t* w = ScpiSdWindow_For(transport);
-    if ((w == NULL) || (data == NULL) || (len == 0u)) {
-        return false;
-    }
-    bool captured = false;
-    taskENTER_CRITICAL();
-    if (w->open) {
-        if (len <= (size_t)(SCPI_SD_WINDOW_HOLD_BYTES - w->held)) {
-            memcpy(&w->buf[w->held], data, len);
-            w->held += len;
-            captured = true;
-        } else {
-            /* More output than framing. Do NOT block (ruling #756: nothing may
-             * park the USB task) and do NOT drop: abandon the window, let this
-             * write through, and leave `overflow` set so the SD side reports
-             * FAILED. The block is short by construction once foreign bytes
-             * are in it, so reporting OK would be a lie. */
-            w->overflow = true;
-            w->open = false;
-        }
-    }
-    taskEXIT_CRITICAL();
-    return captured;
+    return (w != NULL) && w->forceClosed;
 }
 
 void ScpiSdWindow_Service(void) {
-    for (unsigned i = 0; i < (unsigned)SCPI_SD_WINDOW_COUNT; i++) {
+    for (unsigned i = 0; i < (unsigned) SCPI_SD_WINDOW_COUNT; i++) {
         ScpiSdWindowState_t* w = &gScpiSdWindow[i];
-        char pending[SCPI_SD_WINDOW_HOLD_BYTES];
-        size_t pendingLen = 0u;
-
-        taskENTER_CRITICAL();
-        /* A window with no data progress inside the bound has been abandoned
-         * by whatever was feeding it. Close it so the held bytes go out --
-         * a window left open silences this transport for good -- and record
-         * the overflow so the transfer cannot still claim OK. */
-        if (w->open) {
-            const TickType_t elapsed =
-                    (TickType_t)(xTaskGetTickCount() - w->lastProgress);
-            if (elapsed >= pdMS_TO_TICKS(SCPI_SD_WINDOW_STALE_MS)) {
-                w->open = false;
-                w->overflow = true;
-            }
+        if (!w->open) {
+            continue;
         }
-        if (!w->open && (w->held > 0u)) {
-            pendingLen = w->held;
-            memcpy(pending, w->buf, pendingLen);
-            w->held = 0u;
+        /* Wrap-safe: (now - start) >= window, never now >= deadline. */
+        const TickType_t elapsed =
+                (TickType_t)(xTaskGetTickCount() - w->lastProgress);
+        if (elapsed < pdMS_TO_TICKS(SCPI_SD_WINDOW_STALE_MS)) {
+            continue;
         }
-        taskEXIT_CRITICAL();
-
-        /* OUTSIDE the critical section: writeFn retries with vTaskDelay. */
-        if ((pendingLen > 0u) && (w->writeFn != NULL)) {
-            (void)SCPI_WriteWithRetry(w->writeFn, pending, pendingLen);
-        }
+        /* ⭐ THE LOCKOUT GUARD. While this window is open the transport feeds
+         * nothing, so it is DEAF: the host cannot even send an abort. If
+         * whatever owned the window has stopped making progress, the window is
+         * what has to yield -- a deaf transport is unrecoverable, while a
+         * transfer that ends FAILED is merely a failed download.
+         *
+         * ⚠ IN PRACTICE EVERY WINDOW THIS SEES IS AN ORPHAN. The caller is the
+         * SD task's loop and the transfer runs on that same task, so this
+         * cannot run while a transfer is in flight -- see
+         * ScpiSdWindow_NoteProgress for the full argument. So this is the
+         * guard for a window a FINISHED transfer left open (round-1 finding 4
+         * was exactly that), not a watchdog over a live one.
+         *
+         * Not a critical section: this is the only writer of forceClosed and
+         * the only task that force-closes, and `open` is a plain aligned
+         * store. A close racing the transfer's own close is the same outcome
+         * twice. */
+        w->open = false;
+        w->forceClosed = true;
+        /* log_budget: max=3 */
+        LOG_E("[SD] data window on %s closed after %u ms without progress - "
+              "the transfer will report FAILED",
+              (i == (unsigned) SCPI_SD_WINDOW_TCP) ? "TCP" : "USB",
+              (unsigned) SCPI_SD_WINDOW_STALE_MS);
     }
 }
 

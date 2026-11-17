@@ -614,20 +614,29 @@ static void app_SDCardTask(void* p_arg) {
         SpiBusHealth_SetSdSuspended(state == APP_SD_STATE_SUSPENDED ||
                                     app_SDCard_SpiOwnedByWifi());
 
-        /* fw#1265: deliver any SCPI output that was held during a tagged
-         * SD:GET, and close a window that has gone stale.
+        /* fw#1265: close a tagged SD:GET data window that has gone stale.
          *
-         * HERE because this runs on EVERY iteration in EVERY state -- so it
-         * is reached however the transfer ended, including when the task is
-         * parked in APP_SD_STATE_SUSPENDED with a window still nominally
-         * open. A flush placed per-exit inside the state machine would be a
-         * flush that the one unanticipated exit skips, and held output that
-         * is never delivered silences that transport exactly as a refusal
-         * with no way back does.
+         * HERE because this runs on EVERY iteration in EVERY state -- so it is
+         * reached however the transfer ended, including when the task is
+         * parked in APP_SD_STATE_SUSPENDED with a window still nominally open.
+         * That is the round-1 finding-4 shape: one exit (the READ abort) left
+         * the window open, and an open window now makes its transport DEAF, so
+         * a close placed per-exit is a close the one unanticipated exit skips.
+         *
+         * ⚠ WHAT THIS DOES AND DOES NOT COVER, stated precisely because the
+         * backstop is load-bearing. It fires once the SD task is back in this
+         * loop, which is after sd_card_manager_ProcessState() has returned --
+         * so it catches a window LEFT open by a transfer that ended, which is
+         * the case it exists for. It does NOT fire while the task is still
+         * inside a transfer, because that transfer is this same task: what
+         * bounds that is the transfer's own bounded retries and its single
+         * sd_get_send_end, not this call.
          *
          * On the SD task, never on a transport task: ruling #756 forbids
-         * parking app_USBDeviceTask, and the flush can block in
-         * SCPI_WriteWithRetry's retry loop. */
+         * parking app_USBDeviceTask, and the SD task is the one that owns the
+         * transfer whose window this is. Note also that the owed session
+         * summary below writes to a transport from THIS loop -- it therefore
+         * cannot overlap a READ, for the same single-task reason. */
         ScpiSdWindow_Service();
 
         /* ⛔ #1055 r4 finding 1: THE OWED SESSION SUMMARY IS EMITTED HERE.

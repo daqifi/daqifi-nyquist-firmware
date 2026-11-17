@@ -715,18 +715,56 @@ static void sd_get_pad_to_declared(uint32_t declared, uint32_t sent) {
     }
 }
 
-/* Open the data window, then write `#SDGET <tag>` CRLF `#<digits><length>`.
+/* Pause the requesting transport, within a bound.
  *
- * ORDER MATTERS: the window opens FIRST. The header goes out through the
- * bypass, which yields on a partial write, so a SCPI write can land while it
- * is in flight -- with the window already open that output is held and
- * delivered after the end line, instead of landing between the header and the
- * first data byte where it would shift the whole block. */
+ * ⭐ THE WINDOW MUST OPEN WHILE THAT TRANSPORT IS IDLE, which is why this is a
+ * retry loop rather than one call. ScpiSdWindow_TryOpen refuses while the
+ * transport is still handing a received packet to SCPI, and refusing is the
+ * point: a host that puts `SD:GET "f",7` and `*IDN?` in ONE write must get the
+ * *IDN? answer BEFORE the header, not inside the block. So the SD task waits
+ * for that packet to finish instead of opening over the top of it.
+ *
+ * ⛔ BOUNDED, AND NOTHING IS PARKED. Operator ruling 2026-10-25 (#756 item 4
+ * -> A) withdrew a bounded wait that parked a TRANSPORT task because it lost
+ * acquired samples. This waits on the SD task -- the task that owns this
+ * transfer and nothing else -- and vTaskDelay here lets both transport tasks
+ * and the streaming task run, which is exactly how the condition clears. On
+ * expiry the caller reports FAILED before any header: a transport that will
+ * not go idle means some other command is in flight, and the honest answer is
+ * to refuse the download rather than frame it around foreign bytes.
+ *
+ * Wrap-safe deadline arithmetic: (now - start) < window. */
+static bool sd_get_open_window(void) {
+    const ScpiSdWindowTransport_t transport = sd_get_window_transport();
+    /* #599's generation, captured when the GET was armed -- so the window
+     * belongs to the connection that ASKED, not to whoever holds the slot by
+     * the time the SD task gets here. */
+    const uint32_t generation = (transport == SCPI_SD_WINDOW_TCP)
+            ? gpSDCardSettings->replyGeneration : 0u;
+    const TickType_t start = xTaskGetTickCount();
+
+    while (!ScpiSdWindow_TryOpen(transport, generation)) {
+        if ((TickType_t)(xTaskGetTickCount() - start) >=
+                pdMS_TO_TICKS(SCPI_SD_WINDOW_IDLE_WAIT_MS)) {
+            return false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+    return true;
+}
+
+/* Write `#SDGET <tag>` CRLF `#<digits><length>`.
+ *
+ * The window is ALREADY OPEN when this runs (sd_get_open_window, called by the
+ * READ state before it gets here). That order matters: the header goes out
+ * through the bypass writer, which yields on a partial write, so the
+ * requesting transport must already be paused before the first header byte --
+ * otherwise a reply could land between the header and the first data byte and
+ * shift the whole block. */
 static void sd_get_send_header(uint32_t length) {
     char hdr[48];
     int n;
 
-    ScpiSdWindow_Open(sd_get_window_transport());
     n = snprintf(hdr, sizeof(hdr), "#SDGET %u\r\n",
                  (unsigned) gpSDCardSettings->opGetTag);
     if ((n > 0) && ((size_t) n < sizeof(hdr))) {
@@ -755,25 +793,26 @@ static void sd_get_send_header(uint32_t length) {
  * ScpiSdWindow_Service()'s staleness bound is the independent backstop for any
  * path that somehow does not.
  *
- * Held SCPI output is delivered by Service() on the SD task's next loop pass,
- * i.e. strictly AFTER this end line -- same task, so no interleaving is
- * possible between the two. */
+ * Nothing is held or replayed: the requesting transport produced no output at
+ * all while its window was open, and resumes feeding input -- and so
+ * answering -- on its first pass after this close. */
 static void sd_get_send_end(bool ok, uint32_t count, const char* reason) {
     const ScpiSdWindowTransport_t transport = sd_get_window_transport();
     const bool tagged = sd_get_is_tagged();
 
     if (!tagged) {
-        /* Untagged: exactly what every shipped host already parses. */
-        ScpiSdWindow_Close(transport);
+        /* Untagged: exactly what every shipped host already parses, and no
+         * window is ever opened for one, so there is nothing to close. */
         sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
                                     (uint8_t*) eofMarker,
                                     sizeof(eofMarker) - 1);
         return;
     }
 
-    /* Foreign output arrived mid-block and could not be held, so the block is
-     * already short: it must NOT report OK. */
-    if (ScpiSdWindow_Overflowed(transport)) {
+    /* The staleness backstop took the window away mid-transfer, so from that
+     * moment the transport was free to feed input again and foreign bytes CAN
+     * be inside the block. It must NOT report OK. */
+    if (ScpiSdWindow_WasForceClosed(transport)) {
         ok = false;
         if (reason == NULL) {
             reason = "interleave";
@@ -4442,6 +4481,20 @@ void sd_card_manager_ProcessState() {
                 }
                 if (headerFail == NULL) {
                     declaredLen = (uint32_t) fileSize;
+                    /* fw#1265 round 2: PAUSE THE TRANSPORT BEFORE THE HEADER,
+                     * and only once it is idle. If it will not go idle inside
+                     * the bound, end the transfer here -- before a header, so
+                     * the host is never owed a block that cannot be kept clean,
+                     * and never owed padding this exit cannot send. */
+                    if (!sd_get_open_window()) {
+                        headerFail = "busy";
+                        LOG_E("[SD] GET tag %u: transport still feeding after "
+                              "%u ms - refusing to frame",
+                              (unsigned) gpSDCardSettings->opGetTag,
+                              (unsigned) SCPI_SD_WINDOW_IDLE_WAIT_MS);
+                    }
+                }
+                if (headerFail == NULL) {
                     sd_get_send_header(declaredLen);
                     if (gTransferAbortRequested) {
                         /* Raised while the header was going out, so the host

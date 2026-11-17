@@ -251,14 +251,10 @@ static size_t SCPI_TCP_Write(scpi_t * context, const char* data, size_t len) {
     if (gpServerData == NULL || gpServerData->client.clientSocket < 0) {
         return 0;
     }
-    /* fw#1265: hold SCPI output while a TAGGED SD:GET block is being delivered
-     * to THIS transport. See the note in SCPI_USB_Write for why returning
-     * `len` for held bytes is correct rather than a short write. The
-     * disconnect check stays ABOVE this: a gone client gets no hold, so a
-     * window cannot be fed by a socket that no longer exists. */
-    if (ScpiSdWindow_Capture(SCPI_SD_WINDOW_TCP, data, len)) {
-        return len;
-    }
+    /* fw#1265: no window gate on this path -- see SCPI_USB_Write for why an
+     * output-side hold cannot work (microrl_echo bypasses it). A tagged
+     * SD:GET pauses this transport's INPUT instead, at the recv() re-arm in
+     * wifi_manager.c, so no reply is produced during the block. */
     return SCPI_WriteWithRetry(wifi_tcp_server_WriteBuffer, data, len);
 }
 
@@ -320,11 +316,6 @@ static scpi_result_t SCPI_TCP_Control(scpi_t * context, scpi_ctrl_name_t ctrl, s
     }
     return SCPI_RES_OK;
 }
-/* fw#1265: see UsbCdc_RegisterSdWindow -- same contract for TCP. */
-static void WifiTcp_RegisterSdWindow(void) {
-    ScpiSdWindow_Register(SCPI_SD_WINDOW_TCP, wifi_tcp_server_WriteBuffer);
-}
-
 static scpi_interface_t scpi_interface = {
     .write = SCPI_TCP_Write,
     .error = SCPI_TCP_Error,
@@ -442,7 +433,6 @@ void wifi_tcp_server_Initialize(wifi_tcp_server_context_t *pServerData) {
         gpServerData->client.scpiContext = CreateSCPIContext(&scpi_interface,
                                                              &gpServerData->client,
                                                              &gTcpScpiStorage);
-        WifiTcp_RegisterSdWindow();     /* fw#1265 */
         {
             uint8_t* buf; uint32_t len;
             StreamingBufferPool_GetWifi(&buf, &len);
@@ -687,6 +677,13 @@ bool wifi_tcp_server_ProcessReceivedBuff() {
     }
     gpServerData->client.readBufferLength = 0;
     gpServerData->client.readBuffer[gpServerData->client.readBufferLength] = '\0';
+    /* fw#1265: the whole packet has been fed and every SCPI_Input it triggered
+     * has returned, so this transport is idle again and a tagged SD:GET window
+     * may open. Paired with the ScpiSdWindow_FeedBegin at SOCKET_MSG_RECV in
+     * wifi_manager.c -- the span between them is what TryOpen refuses to open
+     * inside, so that a second command sharing one TCP segment with the GET is
+     * answered BEFORE the header goes out. */
+    ScpiSdWindow_FeedEnd(SCPI_SD_WINDOW_TCP);
     return true;
 }
 

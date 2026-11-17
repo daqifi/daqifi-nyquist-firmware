@@ -1145,6 +1145,12 @@ scpi_result_t SCPI_StorageSDCrcGet(scpi_t * context) {
     return SCPI_RES_ERR;
 }
 
+/* Defined further down with the other streaming-interlock helpers (#854), and
+ * declared here because the tagged-GET refusal below is the first caller in
+ * the file. Moving the definition up would relocate its #854 rationale away
+ * from the two sites that share it. */
+static bool SD_StreamingIsLive(void);
+
 scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
     /* #747: NULL, not indeterminate. SCPI_ParamCharacters(..., mandatory=false)
      * leaves pBuff untouched when the argument is omitted, and the operand
@@ -1241,6 +1247,42 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
     }
     if (haveTag && (tagParam < 0)) {
         SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    /* fw#1265 round 2: A TAGGED GET IS REFUSED WHILE A STREAM IS LIVE.
+     *
+     * ⭐ EXPLICIT EXCLUSION AT THE COMMAND BOUNDARY, which is this codebase's
+     * existing pattern (#850, #854, #977) and is what the round-1 audit asked
+     * for in place of trying to police every writer. A tagged transfer
+     * promises that the bytes between the header and the end line are the
+     * file: the input pause stops this transport ANSWERING during the block,
+     * but a streaming session writes to it unprompted, from another task, and
+     * no input gate can reach that. So the two are made mutually exclusive --
+     * loud, cheap, and it holds nothing.
+     *
+     * Most stream/GET combinations are already refused upstream: a WiFi stream
+     * suspends SD entirely (SD_RefuseIfSuspended, above) and a USB stream with
+     * SD logging staged arms an SD WRITE, which READ excludes. This covers the
+     * remainder in one place rather than reasoning case by case about which
+     * combinations survive.
+     *
+     * ⛔ ONLY FOR A TAGGED GET. An untagged GET keeps its exact pre-#1265
+     * behaviour, refusals included -- adding one here would break hosts that
+     * download during a stream today, and the compatibility promise is the
+     * reason the whole feature is behind the tag. An untagged stream makes no
+     * framing promise, so it has nothing to protect.
+     *
+     * Placed BEFORE the #829 claim: nothing is in flight yet, so the refusal
+     * costs one error and no transfer. */
+    if (haveTag && SD_StreamingIsLive()) {
+        /* 63 bytes at a 10-digit tag, against Logger.c's usable 125. The
+         * reasoning stays in the comment above: a log line that explains
+         * itself at the cost of its own remedy is the #1039 defect. */
+        LOG_E("[SD] GET tag %d refused: streaming is live - SYST:STR:STOP "
+              "first", (int) tagParam);
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
