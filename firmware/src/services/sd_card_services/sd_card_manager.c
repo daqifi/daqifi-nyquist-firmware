@@ -649,6 +649,19 @@ static const char transferErrorMarker[] = "__TRANSFER_ERROR__";
  * `__END_OF_FILE__ OK <n>` or `__END_OF_FILE__ FAILED <reason>`. The bare
  * token stays the prefix so a host that only searches for it still finds it.
  */
+/* fw#1265 r1 finding 7: an IEEE 488.2 definite-length block spends ONE digit
+ * on the length's digit COUNT, so the length itself is 1-9 digits. A file of
+ * 1,000,000,000 bytes or more cannot be framed at all -- "#10..." is not a
+ * conforming block and a parser reading one digit would take the "1" as the
+ * count and then misread everything after it. Such a file is refused BEFORE
+ * any header rather than mis-framed. */
+#define SD_GET_MAX_BLOCK_BYTES 1000000000u
+
+/* fw#1265: the filler a short read is padded with, so the block's declared
+ * length is still delivered in full. Static and const: the pad can be handed
+ * to the reply writer without a stack buffer on the SD task. */
+static const uint8_t sdGetPadByte[64] = { 0 };
+
 static ScpiSdWindowTransport_t sd_get_window_transport(void) {
     return ((gpSDCardSettings != NULL) &&
             (gpSDCardSettings->replyTarget == SD_CARD_REPLY_WIFI_TCP))
@@ -657,6 +670,49 @@ static ScpiSdWindowTransport_t sd_get_window_transport(void) {
 
 static bool sd_get_is_tagged(void) {
     return (gpSDCardSettings != NULL) && gpSDCardSettings->opGetTagValid;
+}
+
+/* fw#1265: ONE teardown for the exits this feature adds.
+ *
+ * The READ state already carries two hand-duplicated teardowns and the r1
+ * audit found that a third (the abort branch) skipped the window close
+ * entirely. Rather than add two more copies, the new exits share this. The
+ * pre-existing teardowns are deliberately left alone: their ordering carries
+ * #703's comment about mirroring the normal exit, and rewriting them would put
+ * unrelated churn in this diff. */
+static void sd_get_read_teardown(TaskHandle_t task, UBaseType_t prio) {
+    if (gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
+        (void) SYS_FS_FileClose(gSDCardData.fileHandle);
+        gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
+    }
+    vTaskPrioritySet(task, prio);
+    if (gSDOpMutex) {
+        xSemaphoreGive(gSDOpMutex);
+    }
+    gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
+    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
+}
+
+/* fw#1265 r1 finding 8: AFTER THE HEADER, THE LENGTH IS A PROMISE. Deliver
+ * the balance of `declared - sent` so the host's blind read of <n> bytes still
+ * lands on the end line.
+ *
+ * ⚠ BEST EFFORT, AND THAT IS WHY THE VERDICT IS SEPARATE. Delivery can fail:
+ * the reply writers are bounded-retry and all-or-nothing, so a host that has
+ * stopped reading gets neither the pad nor the end line, and on the
+ * TCP-client-gone path DataReadyCB bails before writing anything at all. What
+ * is NOT best effort is the verdict -- a transfer whose declared length was
+ * not met by REAL bytes reports FAILED, never OK -- so a host can be left
+ * waiting, but it cannot be told a short file is complete. */
+static void sd_get_pad_to_declared(uint32_t declared, uint32_t sent) {
+    while (sent < declared) {
+        const uint32_t owed = declared - sent;
+        const uint32_t chunk = (owed < sizeof(sdGetPadByte))
+                ? owed : (uint32_t) sizeof(sdGetPadByte);
+        sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
+                                    (uint8_t*) sdGetPadByte, (size_t) chunk);
+        sent += chunk;
+    }
 }
 
 /* Open the data window, then write `#SDGET <tag>` CRLF `#<digits><length>`.
@@ -4296,37 +4352,13 @@ void sd_card_manager_ProcessState() {
             TickType_t lastYieldTime = xTaskGetTickCount();
             const TickType_t yieldInterval = pdMS_TO_TICKS(1000);
 
-            /* fw#1265: a TAGGED GET announces itself before any data, with the
-             * length the host will read. Here, not at the open: this state is
-             * only reached with a VALID handle, so the length comes from the
-             * handle itself rather than a second lookup by name that a rename
-             * could race.
-             *
-             * A negative size means the FS could not answer. Refuse loudly
-             * rather than send a block header the data cannot match: a wrong
-             * length desyncs a host that trusts it. */
-            if (sd_get_is_tagged()) {
-                const int32_t fileSize =
-                        SYS_FS_FileSize(gSDCardData.fileHandle);
-                if (fileSize < 0) {
-                    LOG_E("[SD] GET tag %u: file size unavailable - failing",
-                          (unsigned) gpSDCardSettings->opGetTag);
-                    sd_get_send_end(false, 0u, "size");
-                    if (gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
-                        (void) SYS_FS_FileClose(gSDCardData.fileHandle);
-                        gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
-                    }
-                    vTaskPrioritySet(currentTask, originalPriority);
-                    if (gSDOpMutex) {
-                        xSemaphoreGive(gSDOpMutex);
-                    }
-                    gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
-                    gSDCardData.currentProcessState =
-                            SD_CARD_MANAGER_PROCESS_STATE_IDLE;
-                    break;
-                }
-                sd_get_send_header((uint32_t) fileSize);
-            }
+            /* fw#1265: the declared block length (0 when untagged), how many
+             * REAL file bytes have gone out under it, and whether the promise
+             * still holds. Set below, after the pre-transfer bails -- see the
+             * header block for why the order is load-bearing. */
+            uint32_t declaredLen = 0u;
+            uint32_t sentReal = 0u;
+            const char* lenFail = NULL;
 
             // eofMarker / transferErrorMarker: file-scope now (#914), so the
             // open-failure path above can send eofMarker without a second copy
@@ -4372,6 +4404,62 @@ void sd_card_manager_ProcessState() {
             // Clear abort flag at start of transfer
             gTransferAbortRequested = false;
 
+            /* fw#1265 r1 findings 7 and 9: THE HEADER GOES OUT HERE -- after
+             * the pre-transfer bails, and after the abort flag is cleared.
+             *
+             * ⛔ NOT EARLIER, which is where I first put it. Two defects, both
+             * found by the r1 audit:
+             *
+             *   (9) the clear above ERASED an abort raised BY the header write
+             *       itself. sd_card_manager_DataReadyCB aborts the transfer
+             *       when a TCP client has gone, so writing the header could
+             *       set the flag and this line then wiped it: the transfer ran
+             *       on and ended OK with no header ever delivered. Clearing
+             *       first and writing second cannot lose it, and the explicit
+             *       check below catches one raised DURING the write.
+             *
+             *   (8) the buffer-too-small bail now precedes any header, so it
+             *       can no longer leave the host owed padding that this exit
+             *       has no way to send.
+             *
+             *   (7) the block's length field is 1-9 digits (see
+             *       SD_GET_MAX_BLOCK_BYTES), so a file that cannot be framed
+             *       is refused BEFORE a header instead of being emitted as a
+             *       malformed "#10...". */
+            if (sd_get_is_tagged()) {
+                const int32_t fileSize =
+                        SYS_FS_FileSize(gSDCardData.fileHandle);
+                const char* headerFail = NULL;
+                if (fileSize < 0) {
+                    headerFail = "size";
+                    LOG_E("[SD] GET tag %u: file size unavailable",
+                          (unsigned) gpSDCardSettings->opGetTag);
+                } else if ((uint32_t) fileSize >= SD_GET_MAX_BLOCK_BYTES) {
+                    headerFail = "size";
+                    LOG_E("[SD] GET tag %u: %u bytes cannot be framed in a "
+                          "9-digit block", (unsigned) gpSDCardSettings->opGetTag,
+                          (unsigned) fileSize);
+                }
+                if (headerFail == NULL) {
+                    declaredLen = (uint32_t) fileSize;
+                    sd_get_send_header(declaredLen);
+                    if (gTransferAbortRequested) {
+                        /* Raised while the header was going out, so the host
+                         * may never have received it. End the transfer rather
+                         * than follow a header nobody saw with an OK. */
+                        gTransferAbortRequested = false;
+                        headerFail = "abort";
+                        LOG_E("[SD] GET tag %u: aborted during the header",
+                              (unsigned) gpSDCardSettings->opGetTag);
+                    }
+                }
+                if (headerFail != NULL) {
+                    sd_get_send_end(false, 0u, headerFail);
+                    sd_get_read_teardown(currentTask, originalPriority);
+                    break;
+                }
+            }
+
             // Read entire file in continuous loop
             while (1) {
                 // Check for user-requested abort
@@ -4405,7 +4493,20 @@ void sd_card_manager_ProcessState() {
                      * Skipping the emit on the partial path also avoids a
                      * second stall: DataReadyCB retries for 10 s, and the abort
                      * is reached precisely when the peer is not draining. */
-                    if (totalBytesRead == 0u) {
+                    if (sd_get_is_tagged()) {
+                        /* fw#1265, and r1 finding 4: a TAGGED transfer always
+                         * ends with an end line, and #725's reasoning for
+                         * staying silent does not apply to it. That reasoning
+                         * is about a BARE terminator after partial data, which
+                         * a host cannot tell from a complete file. `FAILED
+                         * abort` is distinguishable by construction, so the
+                         * honest move is to deliver the promised length and
+                         * say what happened -- and it is also what closes the
+                         * data window on this path, which r1 found was the one
+                         * exit that never closed it. */
+                        sd_get_pad_to_declared(declaredLen, sentReal);
+                        sd_get_send_end(false, sentReal, "abort");
+                    } else if (totalBytesRead == 0u) {
                         sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
                                 (uint8_t*)eofMarker, sizeof(eofMarker) - 1);
                     } else {
@@ -4440,6 +4541,14 @@ void sd_card_manager_ProcessState() {
                 // Abort if file handle became invalid
                 if (gSDCardData.fileHandle == SYS_FS_HANDLE_INVALID) {
                     LOG_E("[SD] Transfer ABORTED: file handle invalid");
+                    /* fw#1265 r1 finding 8: this exit sent NOTHING, which for
+                     * a tagged transfer leaves the host blocked part-way
+                     * through a block it was told the length of. Untagged
+                     * behaviour is unchanged (silence, per #725). */
+                    if (sd_get_is_tagged()) {
+                        sd_get_pad_to_declared(declaredLen, sentReal);
+                        sd_get_send_end(false, sentReal, "handle");
+                    }
                     totalBytesRead = 0;
                     readCount = 0;
                     break;
@@ -4475,7 +4584,12 @@ void sd_card_manager_ProcessState() {
                      * to parse, with the reason in it, rather than two
                      * different terminators. */
                     if (sd_get_is_tagged()) {
-                        sd_get_send_end(false, totalBytesRead, "read");
+                        /* r1 finding 8: the end line must not land INSIDE the
+                         * block. Deliver the balance of the promise first, so
+                         * the host's blind read of <n> bytes finishes before
+                         * it starts looking for a terminator. */
+                        sd_get_pad_to_declared(declaredLen, sentReal);
+                        sd_get_send_end(false, sentReal, "read");
                     } else {
                         sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
                                 (uint8_t*)transferErrorMarker,
@@ -4496,11 +4610,25 @@ void sd_card_manager_ProcessState() {
                     sd_wait_usb_drain();
 
                     /* fw#1265: untagged sends the bare marker exactly as
-                     * before; tagged sends `__END_OF_FILE__ OK <n>` with the
-                     * count ACTUALLY sent, so a host can compare it against
-                     * the length in the header and catch a file that changed
-                     * under it mid-transfer. This also closes the window. */
-                    sd_get_send_end(true, totalBytesRead, NULL);
+                     * before. Tagged owes the declared length first.
+                     *
+                     * r1 finding 8: a file that SHRANK (truncated by a
+                     * rotation, or never as long as its directory entry said)
+                     * leaves the host blocked mid-block waiting for bytes that
+                     * will never come. Pad the balance so its read completes
+                     * and lands on the end line -- and report FAILED, because
+                     * the promise was not met by real bytes. OK is emitted
+                     * only when exactly <n> REAL bytes went out. */
+                    if (declaredLen > 0u && sentReal < declaredLen) {
+                        LOG_E("[SD] GET tag %u: file ended at %u of %u bytes "
+                              "- padding and failing",
+                              (unsigned) gpSDCardSettings->opGetTag,
+                              (unsigned) sentReal, (unsigned) declaredLen);
+                        sd_get_pad_to_declared(declaredLen, sentReal);
+                        sd_get_send_end(false, sentReal, "short");
+                    } else {
+                        sd_get_send_end(true, totalBytesRead, NULL);
+                    }
 
                     // Close file handle
                     if (SYS_FS_FileClose(gSDCardData.fileHandle) == SYS_FS_RES_FAILURE) {
@@ -4517,13 +4645,43 @@ void sd_card_manager_ProcessState() {
                     totalBytesRead += bytesRead;
                     readCount++;
 
-                    sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
-                            gSdSharedBuffer,
-                            bytesRead);
+                    /* fw#1265 r1 finding 8: NEVER EXCEED THE DECLARED
+                     * LENGTH. A file being appended to by a logging session
+                     * grows after its size was read, and the host reads
+                     * exactly <n> bytes: the surplus would land where the end
+                     * line should be and desync it. Cap here and fail the
+                     * transfer -- a file that grew is not the file whose
+                     * length we promised. */
+                    size_t toHost = (size_t) bytesRead;
+                    if (declaredLen > 0u) {
+                        const uint32_t room = declaredLen - sentReal;
+                        if ((uint32_t) toHost > room) {
+                            toHost = (size_t) room;
+                            lenFail = "grew";
+                        }
+                    }
+                    if (toHost > 0u) {
+                        sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
+                                gSdSharedBuffer,
+                                toHost);
+                        sentReal += (uint32_t) toHost;
+                    }
                     /* fw#1265: keep a progressing transfer clear of the
                      * window's staleness backstop. Unconditional: a no-op when
                      * no window is open. */
                     ScpiSdWindow_NoteProgress(sd_get_window_transport());
+                    if (lenFail != NULL) {
+                        /* ⛔ NO sd_get_read_teardown HERE. This `break` leaves
+                         * the while(1) and falls into the case's own teardown
+                         * at the bottom, so calling the shared one as well
+                         * would give gSDOpMutex TWICE and set the priority
+                         * back twice. Only the PRE-loop exits use the shared
+                         * teardown, because their `break` leaves the switch
+                         * and never reaches the bottom. */
+                        sd_wait_usb_drain();
+                        sd_get_send_end(false, sentReal, lenFail);
+                        break;
+                    }
 
                     // Delay every 1 second to allow lower priority tasks to run
                     if ((xTaskGetTickCount() - lastYieldTime) >= yieldInterval) {

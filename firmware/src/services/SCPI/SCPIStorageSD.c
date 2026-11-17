@@ -1212,12 +1212,34 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
      * DaqifiIntTokenFullyConsumed rejects a truncated prefix such as `7abc`
      * with -104, so a typo cannot silently become tag 7. */
     int32_t tagParam = 0;
+    /* ⛔ r1 FINDING 10: FALSE MEANS TWO DIFFERENT THINGS AND THEY MUST NOT BE
+     * CONFLATED. `SCPI_ParamInt32(..., FALSE)` returns FALSE both when the
+     * parameter is ABSENT (fine: an untagged GET) and when it is PRESENT BUT
+     * MALFORMED (`,7abc`, `,1e9`, a suffix). My first version treated both as
+     * "no tag", so a host that asked for a framed download got an UNTAGGED
+     * one -- it then waited for a `#SDGET` header that was never coming while
+     * the file streamed past it, with only a queued error to explain why.
+     *
+     * libscpi distinguishes them: a parse failure goes through
+     * SCPI_ErrorPushEx, which sets `context->cmd_error` (error.c:199), and
+     * the flag is cleared per command in parser.c:137. Snapshot it around the
+     * call rather than reading it absolutely, so an error already pushed by
+     * THIS command (a bad filename) is not misread as a bad tag.
+     *
+     * A malformed tag is refused at the COMMAND boundary, before the #829
+     * claim and before arming -- nothing is in flight there, so the refusal
+     * costs the caller one error and no transfer. libscpi has already pushed
+     * the specific parse error, so pushing another would bury it. */
+    const scpi_bool_t tagErrBefore = context->cmd_error;
     const bool haveTag =
             (SCPI_ParamInt32(context, &tagParam, FALSE) == TRUE);
+    const bool tagMalformed =
+            (!haveTag) && context->cmd_error && (!tagErrBefore);
+    if (tagMalformed) {
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
     if (haveTag && (tagParam < 0)) {
-        /* Refuse at the COMMAND boundary, where a refusal costs the caller
-         * one error and nothing is in flight -- not mid-transfer, where a
-         * refusal would have to abandon a window. */
         SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
         result = SCPI_RES_ERR;
         goto __exit_point;
