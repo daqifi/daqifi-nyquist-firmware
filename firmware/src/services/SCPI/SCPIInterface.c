@@ -10958,8 +10958,6 @@ typedef struct {
     /* The TCP connection that owns an open window; 0 for USB. */
     volatile uint32_t generation;
     volatile TickType_t lastProgress;
-    /* Set only by the staleness backstop -- see ScpiSdWindow_WasForceClosed. */
-    volatile bool forceClosed;
 } ScpiSdWindowState_t;
 
 static ScpiSdWindowState_t gScpiSdWindow[SCPI_SD_WINDOW_COUNT];
@@ -11020,7 +11018,6 @@ bool ScpiSdWindow_TryOpen(ScpiSdWindowTransport_t transport,
     if ((!w->open) && (!w->feeding)) {
         w->generation = generation;
         w->lastProgress = xTaskGetTickCount();
-        w->forceClosed = false;
         w->open = true;
         opened = true;
     }
@@ -11042,11 +11039,6 @@ void ScpiSdWindow_NoteProgress(ScpiSdWindowTransport_t transport) {
     }
 }
 
-bool ScpiSdWindow_WasForceClosed(ScpiSdWindowTransport_t transport) {
-    const ScpiSdWindowState_t* w = ScpiSdWindow_For(transport);
-    return (w != NULL) && w->forceClosed;
-}
-
 void ScpiSdWindow_Service(void) {
     for (unsigned i = 0; i < (unsigned) SCPI_SD_WINDOW_COUNT; i++) {
         ScpiSdWindowState_t* w = &gScpiSdWindow[i];
@@ -11060,27 +11052,24 @@ void ScpiSdWindow_Service(void) {
             continue;
         }
         /* ⭐ THE LOCKOUT GUARD. While this window is open the transport feeds
-         * nothing, so it is DEAF: the host cannot even send an abort. If
-         * whatever owned the window has stopped making progress, the window is
-         * what has to yield -- a deaf transport is unrecoverable, while a
-         * transfer that ends FAILED is merely a failed download.
+         * nothing, so it is DEAF: the host cannot even send an abort. A window
+         * left open is therefore not a stalled download, it is a connection
+         * that can never be talked to again -- so the window is what has to
+         * yield.
          *
-         * ⚠ IN PRACTICE EVERY WINDOW THIS SEES IS AN ORPHAN. The caller is the
-         * SD task's loop and the transfer runs on that same task, so this
-         * cannot run while a transfer is in flight -- see
-         * ScpiSdWindow_NoteProgress for the full argument. So this is the
-         * guard for a window a FINISHED transfer left open (round-1 finding 4
-         * was exactly that), not a watchdog over a live one.
+         * ⚠ EVERY WINDOW THIS SEES IS AN ORPHAN, and that bounds what it can
+         * usefully do. The caller is the SD task's loop and the transfer runs
+         * on that same task, so this cannot run while a transfer is in flight;
+         * see the API comment in SCPIInterface.h for why that makes a verdict
+         * term here impossible rather than merely unnecessary.
          *
-         * Not a critical section: this is the only writer of forceClosed and
-         * the only task that force-closes, and `open` is a plain aligned
-         * store. A close racing the transfer's own close is the same outcome
-         * twice. */
+         * Not a critical section: this is the only task that force-closes and
+         * `open` is a plain aligned store. A close racing the transfer's own
+         * close is the same outcome twice. */
         w->open = false;
-        w->forceClosed = true;
         /* log_budget: max=3 */
-        LOG_E("[SD] data window on %s closed after %u ms without progress - "
-              "the transfer will report FAILED",
+        LOG_E("[SD] data window on %s left open, closed after %u ms without "
+              "progress - the transport was deaf until now",
               (i == (unsigned) SCPI_SD_WINDOW_TCP) ? "TCP" : "USB",
               (unsigned) SCPI_SD_WINDOW_STALE_MS);
     }

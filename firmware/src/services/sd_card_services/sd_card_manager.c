@@ -850,15 +850,14 @@ static void sd_get_send_end(bool ok, uint32_t count, const char* reason) {
         return;
     }
 
-    /* The staleness backstop took the window away mid-transfer, so from that
-     * moment the transport was free to feed input again and foreign bytes CAN
-     * be inside the block. It must NOT report OK. */
-    if (ScpiSdWindow_WasForceClosed(transport)) {
-        ok = false;
-        if (reason == NULL) {
-            reason = "interleave";
-        }
-    }
+    /* ⛔ NO "THE BACKSTOP TOOK MY WINDOW" TERM HERE, and its absence is
+     * deliberate rather than an omission. This used to force FAILED when
+     * ScpiSdWindow_Service had force-closed the window, which reads as the
+     * right guard and is unreachable: Service runs on the SD task's loop and
+     * so does this transfer, so a window Service can see is always one a
+     * FINISHED transfer left behind. The term could never be true, which made
+     * it dead code carrying a false claim. See ScpiSdWindow_Service's comment
+     * for the whole argument. */
     ScpiSdWindow_Close(transport);
 
     char line[64];

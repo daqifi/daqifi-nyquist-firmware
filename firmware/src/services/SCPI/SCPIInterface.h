@@ -328,20 +328,22 @@ extern "C" {
      * SCPI_SD_WINDOW_STALE_MS past the last byte instead of past the open. */
     void ScpiSdWindow_NoteProgress(ScpiSdWindowTransport_t transport);
 
-    /*! Did the staleness backstop close this window out from under the
-     *  transfer?
-     *
-     * ⛔ IT IS NOT A DIAGNOSTIC, IT DECIDES THE VERDICT. A force-closed window
-     * lets the transport resume feeding input while the block is still being
-     * delivered, so from that moment foreign bytes CAN land inside it. The
-     * transfer must therefore not report OK -- the same rule as every other
-     * path that could not deliver `<n>` real bytes. Cleared by the next
-     * TryOpen. */
-    bool ScpiSdWindow_WasForceClosed(ScpiSdWindowTransport_t transport);
-
     /*! The staleness backstop: close a window that has gone quiet. Called from
      *  the SD task's loop -- one place, reached whatever the transfer did, and
-     *  never from a transport task. */
+     *  never from a transport task.
+     *
+     * ⛔ IT DOES NOT AFFECT ANY TRANSFER'S VERDICT, and an earlier revision of
+     * this API wrongly said it did. It carried a `WasForceClosed` flag that
+     * sd_get_send_end turned into `FAILED interleave`, on the reasoning that a
+     * force-closed window lets input resume while the block is still going
+     * out. That reasoning is sound and the situation is unreachable: this runs
+     * on the SD task's loop and so does the transfer, so a window this can see
+     * is always one a FINISHED transfer left behind -- the verdict was decided
+     * while the window was still open and input still paused, so it was
+     * correct. The flag could never be read as true by anything, which makes
+     * it dead code and its comment a false claim, so both are gone. What
+     * remains is the one thing this is for: a missed close cannot leave the
+     * transport permanently deaf. */
     void ScpiSdWindow_Service(void);
 
     /*!
