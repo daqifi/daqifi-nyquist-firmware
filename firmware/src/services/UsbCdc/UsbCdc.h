@@ -259,6 +259,17 @@ uint64_t UsbCdc_GetWireBytesSent(void);
      */
     void UsbCdc_SetWriteBuffer(uint8_t* buf, uint32_t size);
 
+    /*! fw#1265: bytes queued for the host and not yet transmitted. Twin of
+     *  wifi_tcp_server_GetCircularBufferAvailable. */
+    uint32_t UsbCdc_GetCircularBufferAvailable(void);
+
+    /*! fw#1265: ask for the CDC session to be torn down and re-established,
+     *  because a tagged SD:GET left a definite-length block short and the
+     *  host's framing context can no longer be trusted. Safe to call from any
+     *  task; the USB task performs it. See the implementation for why nothing
+     *  sent on the pipe could fix this instead. */
+    void UsbCdc_RequestSessionReset(void);
+
     /**
      * Set the USB CDC DMA write staging buffer.
      * Called at each stream start to auto-size for active interfaces.

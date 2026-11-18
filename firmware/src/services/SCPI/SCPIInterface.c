@@ -8781,6 +8781,55 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
         return false;
     }
 
+    /* ⛔ fw#1265 / #1267 round-4 audit A: DO NOT DISCARD BYTES THAT ARE QUEUED
+     * BUT NOT YET TRANSMITTED.
+     *
+     * This function re-partitions the pool and then pointer-swaps both
+     * transports' write rings (UsbCdc_SetWriteBuffer /
+     * wifi_tcp_server_SetWriteBuffer below), which resets insert/remove and
+     * discards everything queued. The audit's scenario: a tagged SD:GET
+     * queues its tail and end line and closes its window; the USB task then
+     * runs a SYST:MEM:AUTO that had been deferred during the window, BEFORE
+     * it gets to BeginWrite; the re-partition lands; the tail and the end
+     * line are gone and the host waits forever.
+     *
+     * ⭐ THE PREDICATE IS "THE RING IS NON-EMPTY", NOT "A GET IS IN FLIGHT",
+     * and that distinction is the fix. By the time the deferred command runs,
+     * the window is closed and the transfer is torn down, so a GET-shaped
+     * predicate is already false -- it was my first instinct and it misses
+     * this entirely. Queued-and-undelivered is the property that actually
+     * matters, and it protects every writer, not just this feature's.
+     *
+     * ⭐ PLACED AFTER TryLockBuffer AND BEFORE StreamingBufferPool_Partition,
+     * which is what makes the wait sound rather than decorative: the SD task
+     * is the only other writer to these rings (SCPI replies and echo come
+     * from the task that is executing THIS command, and #857's wrapper
+     * rejects while a stream is live), and the #703 buffer lock excludes it
+     * for the whole span. So nothing can add bytes between the ring going
+     * empty and the swap. The partition itself re-carves the memory the rings
+     * read from, so the wait must precede it, not just the swap.
+     *
+     * Bounded, and on expiry this refuses rather than proceeding -- the same
+     * trade every other abort in this function makes, and all four callers
+     * already handle false. */
+    {
+        const TickType_t qStart = xTaskGetTickCount();
+        while ((UsbCdc_GetCircularBufferAvailable() > 0u) ||
+               (wifi_tcp_server_GetCircularBufferAvailable() > 0u)) {
+            if ((TickType_t)(xTaskGetTickCount() - qStart) >=
+                    pdMS_TO_TICKS(SCPI_PREPARE_DRAIN_WAIT_MS)) {
+                LOG_E("Buffer re-partition refused (fw#1265): %u USB + %u TCP "
+                      "bytes still queued after %u ms",
+                      (unsigned) UsbCdc_GetCircularBufferAvailable(),
+                      (unsigned) wifi_tcp_server_GetCircularBufferAvailable(),
+                      (unsigned) SCPI_PREPARE_DRAIN_WAIT_MS);
+                sd_card_manager_UnlockBuffer();
+                return false;
+            }
+            vTaskDelay(1);
+        }
+    }
+
     StreamingBufferPool_Partition(usbSize, wifiSize, encSize,
                                   sdCircSize, poolCount, sampleElemSize);
 

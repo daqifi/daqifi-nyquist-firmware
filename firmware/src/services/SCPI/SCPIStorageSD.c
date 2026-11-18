@@ -1190,12 +1190,6 @@ static bool SD_TagEchoesExactly(const scpi_parameter_t *tok, int32_t value) {
     return (n > 0) && ((size_t) n == len) && (memcmp(echo, p, len) == 0);
 }
 
-/* Defined further down with the other streaming-interlock helpers (#854), and
- * declared here because the tagged-GET refusal below is the first caller in
- * the file. Moving the definition up would relocate its #854 rationale away
- * from the two sites that share it. */
-static bool SD_StreamingIsLive(void);
-
 scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
     /* #747: NULL, not indeterminate. SCPI_ParamCharacters(..., mandatory=false)
      * leaves pBuff untouched when the argument is omitted, and the operand
@@ -1332,7 +1326,13 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
         }
     }
 
-    /* fw#1265 round 2: A TAGGED GET IS REFUSED WHILE A STREAM IS LIVE.
+    /* fw#1265 round 2, re-sited in round 5: A TAGGED GET IS REFUSED WHILE A
+     * STREAM IS LIVE **OR ARMING**, and the test is now ATOMIC WITH THE ARM --
+     * see the critical section further down. This early copy is gone, not
+     * moved-and-duplicated: a check here and an arm forty lines later is the
+     * check-then-act pair the round-4 audit exploited.
+     *
+     * The original reasoning, which still holds:
      *
      * ⭐ EXPLICIT EXCLUSION AT THE COMMAND BOUNDARY, which is this codebase's
      * existing pattern (#850, #854, #977) and is what the round-1 audit asked
@@ -1357,17 +1357,6 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
      *
      * Placed BEFORE the #829 claim: nothing is in flight yet, so the refusal
      * costs one error and no transfer. */
-    if (haveTag && SD_StreamingIsLive()) {
-        /* 63 bytes at a 10-digit tag, against Logger.c's usable 125. The
-         * reasoning stays in the comment above: a log line that explains
-         * itself at the cost of its own remedy is the #1039 defect. */
-        LOG_E("[SD] GET tag %d refused: streaming is live - SYST:STR:STOP "
-              "first", (int) tagParam);
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-        result = SCPI_RES_ERR;
-        goto __exit_point;
-    }
-
     /* #829: claim before the operand and replyTarget writes below. replyTarget
      * decides which interface this file is delivered to, so a lost race here
      * sends a client's file to the OTHER transport. The two validation paths
@@ -1414,7 +1403,58 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
             ? SD_CARD_REPLY_WIFI_TCP : SD_CARD_REPLY_USB;
     pSDCardRuntimeConfig->replyGeneration =
             getOverTcp ? wifi_tcp_server_GetConnGeneration() : 0u;
-    pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_READ;  /* #829: LAST write */
+    /* ⭐ THE ARM AND THE STREAM TEST ARE ONE DECISION (#1267 round-4 audit C).
+     *
+     * `mode = READ` is the #829 arm -- the last write, and the single store
+     * that makes sd_card_manager_TaggedGetPending() true. Round 4 tested
+     * "is a stream live" forty lines above this, which the audit broke like
+     * this: a TCP START passes PrepareStreamingBuffers but has not published
+     * IsEnabled yet; a higher-priority USB GET sees IsEnabled and Running
+     * both false and arms anyway, even though gSessionStartBusy is held;
+     * streaming then starts and the SD task's graceful shutdown sets mode to
+     * NONE, tearing the accepted GET down with no header and no FAILED line.
+     * The host waits forever.
+     *
+     * ⛔ TWO FIXES IN ONE, AND BOTH ARE NEEDED. The predicate gains
+     * `Streaming_SessionStartInProgress()`, because the claim is held across
+     * the publication while IsEnabled is not -- testing IsEnabled alone can
+     * never see an arm in flight. And the test moves INSIDE the critical
+     * section that performs the arm, because a correct predicate evaluated
+     * before the store is still a check-then-act.
+     *
+     * ⭐ THE EXCLUSION ARGUMENT, BOTH ORDERS, since the audit disproved the
+     * last one I wrote. taskENTER_CRITICAL masks interrupts, so neither
+     * section can be entered while the other runs:
+     *   - GET first: this section sets mode = READ, so TaggedGetPending() is
+     *     true from that instant. START's own admission
+     *     (Streaming_BeginSessionStart) tests it inside ITS critical section
+     *     and refuses.
+     *   - START first: BeginSessionStart has set gSessionStartBusy, so
+     *     SessionStartInProgress() is true here and this section does NOT
+     *     arm -- the GET is refused at the command boundary, before anything
+     *     is in flight to be torn down.
+     * There is no interleaving left in which both proceed, because each
+     * side's observable effect is published inside the same section that
+     * tests the other's. */
+    bool armBlocked = false;
+    taskENTER_CRITICAL();
+    if (pSDCardRuntimeConfig->opGetTagValid &&
+            (Streaming_SessionIsLive() ||
+             Streaming_SessionStartInProgress())) {
+        armBlocked = true;
+    } else {
+        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_READ;  /* #829: LAST write */
+    }
+    taskEXIT_CRITICAL();
+    if (armBlocked) {
+        sd_card_manager_ReleaseClaim();  /* #829 release */
+        /* 71 bytes at a 10-digit tag, against Logger.c's usable 125. */
+        LOG_E("[SD] GET tag %d refused: streaming is live or arming - "
+              "SYST:STR:STOP first", (int) tagParam);
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
     if (!SD_ArmOrRefuse(context, "GET", pSDCardRuntimeConfig)) {
         /* #955: `mode` is cleared inside SD_ArmOrRefuse, under the claim. */
         result = SCPI_RES_ERR;

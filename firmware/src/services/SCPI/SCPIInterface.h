@@ -229,10 +229,17 @@ extern "C" {
      * ⭐ SO PAUSE THE INPUT INSTEAD. While a window is open on a transport,
      * that transport feeds nothing to microrl or SCPI, which means it
      * generates no echo, no prompt and no reply -- at source, rather than
-     * catching them afterwards. Everything the host sends waits in the
-     * transport's own receive path and is processed, in order, after the end
-     * line. All six defects go away by construction instead of being patched
-     * one at a time.
+     * catching them afterwards. All six of those defects go away by
+     * construction instead of being patched one at a time.
+     *
+     * ⚠ AND THE FOLLOW-ON PROMISE HOLDS ONLY FOR A COMPLETED BLOCK. Everything
+     * the host sent waits in the transport's own receive path and is processed,
+     * in order, after the end line -- WHEN the block was delivered in full.
+     * When it was not (the host stopped reading), processing that input would
+     * append replies behind a partial block, where a host resuming its blind
+     * read counts them as file data; so that case ends the host's SESSION
+     * instead, and the waiting input dies with it. Round 4 promised the
+     * unqualified version and the round-4 audit disproved it.
      *
      * ⚠ NOT A PUMPED WAIT, AND NOTHING IS PARKED. Pausing means the transport
      * does not ARM its next read: USB skips USB_DEVICE_CDC_Read, TCP skips the
@@ -271,6 +278,13 @@ extern "C" {
      *  host to do anything. */
 #define SCPI_SD_WINDOW_IDLE_WAIT_MS 2000u
 
+    /*! How long PrepareStreamingBuffers waits for both transports' write rings
+     *  to drain before refusing to re-partition. Re-partitioning discards
+     *  whatever is queued, so a tagged SD:GET's tail and end line would be
+     *  thrown away -- see the wait itself for the audit scenario. One second
+     *  matches the USB-DMA quiesce wait the same function already performs. */
+#define SCPI_PREPARE_DRAIN_WAIT_MS 1000u
+
     /*! The span in which a transport is feeding received bytes to microrl and
      *  SCPI. The window cannot open inside it -- see ScpiSdWindow_TryOpen. */
     void ScpiSdWindow_FeedBegin(ScpiSdWindowTransport_t transport);
@@ -303,11 +317,19 @@ extern "C" {
      * transport never goes idle.
      *
      * ⭐ IT ALSO REFUSES WHILE A STREAMING SESSION IS ARMING (fw#1269), which
-     * is the other half of one interlock -- Streaming_BeginSessionStart
-     * refuses while a window is open or a tagged GET is armed. Both tests sit
-     * inside a taskENTER_CRITICAL, which masks interrupts and so admits no
-     * task switch, so the two decisions are serialized and an arm in progress
-     * can never coexist with an open window. Neither side keeps new state:
+     * is one half of an interlock whose other halves are
+     * Streaming_BeginSessionStart (refuses while a window is open or a tagged
+     * GET is armed) and the arm site in SCPI_StorageSDGetData, which tests the
+     * same predicate inside the critical section that performs the arm.
+     *
+     * ⚠ THREE SITES, NOT TWO, AND THAT IS WHY. Round 4 had only the first two
+     * and claimed "whichever admission runs first excludes the other"; the
+     * round-4 audit disproved it, because the GET's own stream test sat forty
+     * lines before its arm, so a START that had taken the claim but not yet
+     * published IsEnabled was invisible to it -- the GET armed, streaming
+     * started, and the SD task's shutdown tore the accepted GET down with no
+     * header and no end line. The exclusion argument for both preemption
+     * orders is written out at that arm site. Neither side keeps new state:
      * each reads a flag the other already releases on every path out.
      *
      * `generation` is the TCP connection generation that asked (0 for USB), so

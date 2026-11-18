@@ -761,8 +761,11 @@ static void sd_get_read_teardown(TaskHandle_t task, UBaseType_t prio) {
  * ⚠ WHAT IS PROMISED, AND TO WHOM. Delivery is guaranteed to a host that KEEPS
  * READING -- at whatever pace it likes, for as long as it takes. It is not
  * guaranteed to a host that stops: there the pad ends at the first short write
- * and the transfer sends no end line at all, closing the TCP connection
- * instead (USB has no equivalent signal; see sd_get_send_end).
+ * and the transfer sends no end line at all, ending the host's session instead
+ * -- a TCP close or a CDC session reset, whichever transport asked. See
+ * sd_get_send_end. (An earlier version of this line said USB had no equivalent
+ * signal, which was wrong; UsbCdc.c has handled the CDC control-line state all
+ * along.)
  *
  * ⛔ AN EARLIER VERSION OF THIS COMMENT CLAIMED THE OPPOSITE OF THE CODE, and
  * the round-3 audit quoted it as the thing it disproved. It said the 10 s total
@@ -969,26 +972,30 @@ static void sd_get_send_end(bool ok, uint32_t count, const char* reason,
      * it would turn a recoverable stall into a desync the host cannot detect:
      * it would believe it had a complete file.
      *
-     * So the terminator is withheld and the host is left waiting, which IS
-     * recoverable -- it times out, and by then the window is closed so its
-     * next command is answered. The reason reaches it out of band, through
-     * SYST:ERR? and SYST:LOG?, which is where this product puts failures
-     * anyway (the #914 queue-only rule).
+     * ⛔ WITHHOLDING THE TERMINATOR IS NECESSARY AND IS NOT SUFFICIENT, and
+     * round 4's comment here claimed otherwise. It said the host is "left
+     * waiting, which IS recoverable". The round-4 audit disproved that: the
+     * window still closed, so a command the host had queued during the
+     * transfer was fed, and ITS echo, reply and prompt were appended behind
+     * the partial block -- counted inside the block by a host that resumes,
+     * with the query losing its answer. The bytes that break the frame are the
+     * NEXT ones, not ours, so no decision about our own terminator can fix it.
      *
-     * ⭐ TCP GETS A REAL SIGNAL: the connection is closed, guarded by the #599
-     * generation. A closed connection cannot be read as file bytes, so the
-     * host learns immediately rather than on a timeout.
+     * ⭐ SO THE SESSION IS ENDED ON BOTH TRANSPORTS. The host's framing
+     * context is the thing that is broken and it cannot be repaired over the
+     * same pipe, so it is destroyed: TCP closes the connection (guarded by the
+     * #599 generation) and USB tears down and re-establishes the CDC session.
+     * Neither signal can be read as file bytes, and both are bounded and
+     * symmetric. See UsbCdc_RequestSessionReset for the USB half.
      *
-     * ⚠ USB HAS NO EQUIVALENT AND THIS IS THE IRREDUCIBLE RESIDUAL. There is
-     * no out-of-band channel on the CDC: no connection to drop, and a ZLP or a
-     * break is not something a host reading <n> bytes would notice. The choice
-     * is between "no end line" and "end line anyway", and it is "no end line"
-     * because the two failures are not equally bad -- a host left waiting
-     * knows it did not finish, while a host handed a terminator inside the
-     * block believes a short file is complete. Silence is recoverable;
-     * corruption that reports OK is not. So on USB the guarantee is narrowed
-     * and stated plainly, here and in the PR body: the end line is delivered
-     * only to a host that keeps reading. */
+     * The reason still reaches the host out of band, through SYST:ERR? and
+     * SYST:LOG?, which is where this product puts failures anyway (the #914
+     * queue-only rule).
+     *
+     * What remains true from before: the verdict is never conditional. A
+     * transfer that did not deliver <n> real bytes reports FAILED, never OK --
+     * a host can lose its session, but it cannot be told a short file is
+     * complete. */
     if (!blockDelivered) {
         /* log_budget: max=6 */
         LOG_E("[SD] GET: block left short, no end line sent (%s)",
@@ -996,6 +1003,32 @@ static void sd_get_send_end(bool ok, uint32_t count, const char* reason,
         if (transport == SCPI_SD_WINDOW_TCP) {
             wifi_tcp_server_RequestClientClose(
                     gpSDCardSettings->replyGeneration);
+        } else {
+            /* ⭐ THE USB ANSWER, AND ROUND 4's WAS WRONG. Round 4 withheld the
+             * end line and called what followed "recoverable silence". The
+             * round-4 audit disproved it: the window still CLOSED, so a
+             * command the host had queued during the transfer was then fed,
+             * and its echo, reply and prompt were appended behind the partial
+             * block -- where a host resuming its blind read of <n> bytes
+             * counts them as file data and the query loses its answer.
+             * Withholding our own terminator never addressed that, because
+             * the bytes that corrupt the frame are the NEXT ones, not ours.
+             *
+             * So the session goes instead: the host's framing context is what
+             * is broken, and it cannot be repaired over the same pipe. This is
+             * the CDC analogue of the TCP close beside it -- bounded,
+             * unambiguous, and symmetric. UsbCdc_RequestSessionReset closes
+             * the window itself as part of the teardown, which is why nothing
+             * else is needed here.
+             *
+             * ⛔ AND "THE CDC HAS NO OUT-OF-BAND CHANNEL" WAS SIMPLY FALSE --
+             * my round-4 wording, contradicted by code 250 lines above the
+             * file I was editing: UsbCdc.c handles
+             * USB_DEVICE_CDC_EVENT_SET_CONTROL_LINE_STATE and already drives
+             * the state machine on a DTR deassert. A session reset is
+             * therefore not even the only option; it is the one that does not
+             * wait on the host. */
+            UsbCdc_RequestSessionReset();
         }
     } else {
         char line[64];
@@ -1026,8 +1059,17 @@ static void sd_get_send_end(bool ok, uint32_t count, const char* reason,
      *
      * Queueing first makes the ordering structural rather than lucky: the
      * terminator is in the transport's buffer before any deferred input can
-     * be fed, so "pending input is processed AFTER the end line" holds however
-     * the scheduler behaves.
+     * be fed, so a reply cannot be queued AHEAD of the end line.
+     *
+     * ⚠ QUEUED IS NOT TRANSMITTED, AND THE ORIGINAL WORDING HERE OVERCLAIMED.
+     * It said the ordering "holds however the scheduler behaves", and the
+     * round-4 audit disproved that twice over: between queueing and
+     * transmission the ring can still be DISCARDED by a pool re-partition
+     * (closed by the drain wait in PrepareStreamingBuffers) or APPENDED to
+     * behind a short block (closed by ending the session). What this ordering
+     * alone buys is the narrower and true statement above -- relative order
+     * within the ring -- and the two mechanisms just named are what make the
+     * ring's contents survive to the host.
      *
      * Unconditional, and after the write rather than inside its `if`: a
      * malformed snprintf or a refused write must still release the transport.
