@@ -835,15 +835,30 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                 // WINC driver buffers subsequent TCP data internally until
                 // we call recv() again, so missing this tick's re-arm is
                 // safe.
+                /* ⛔ FEEDBEGIN FIRST, BEFORE gTcpRxPending IS PUBLISHED, and
+                 * the order is the fix for #1267 round-3 audit defect 2.
+                 *
+                 * It used to come last. gTcpRxPending is what tells WifiTask a
+                 * packet is waiting, and WifiTask runs at a higher priority
+                 * than this callback's context -- so between the publication
+                 * and the FeedBegin it could consume the packet, arm the GET
+                 * and run FeedEnd. The FeedBegin then landed on an empty
+                 * transport and `feeding` stuck TRUE with nothing left to
+                 * clear it, so the next tagged GET's window wait expired and a
+                 * perfectly good download ended `FAILED busy`.
+                 *
+                 * Setting the flag before publishing the work makes the pair
+                 * ordered the only way round that cannot strand it: a
+                 * FeedBegin with no packet behind it is corrected by the very
+                 * next drain, while a FeedEnd with no FeedBegin is permanent.
+                 *
+                 * Cleared at the end of wifi_tcp_server_ProcessReceivedBuff.
+                 * gTcpRxPending cannot serve as the flag itself: it is cleared
+                 * BEFORE the feed runs. */
+                ScpiSdWindow_FeedBegin(SCPI_SD_WINDOW_TCP);
                 gStateMachineContext.pTcpServerContext->client.readBufferLength = pRecvMessage->s16BufferSize;
                 gStateMachineContext.pTcpServerContext->client.lastActivityTick = xTaskGetTickCount(); // #663: RX activity resets the idle clock
                 gTcpRxPending = true;
-                /* fw#1265: this transport now holds input it has not handed to
-                 * SCPI, so it is not idle and a tagged SD:GET window must not
-                 * open over the top of it. Cleared at the end of
-                 * wifi_tcp_server_ProcessReceivedBuff. gTcpRxPending alone
-                 * cannot serve: it is cleared BEFORE the feed runs. */
-                ScpiSdWindow_FeedBegin(SCPI_SD_WINDOW_TCP);
 
             } else {
                 LOG_E("[%s:%d]Error Socket MSG Recv", __FILE__, __LINE__);
@@ -4011,6 +4026,13 @@ static void wifi_manager_ProcessStateImpl(bool drainTcpRx) {
     MaybeResetWincForRxDone();
 
     wifi_tcp_server_TransmitBufferedData();
+
+    /* fw#1265 round 4: perform any client close the SD task asked for (a
+     * tagged GET whose padding stopped short, leaving the host mid-way
+     * through a definite-length read with no in-band way to be told).
+     * Unconditional -- it touches no SCPI state, so unlike the rx drain
+     * below it is safe on the active-pump path too. */
+    wifi_tcp_server_DrainPendingClientClose();
 
     // #377 iperf2 now runs in its own dedicated task with adaptive 2 ms
     // (active) / 50 ms (idle) cadence — see Iperf2_StartTask() in iperf2.c.

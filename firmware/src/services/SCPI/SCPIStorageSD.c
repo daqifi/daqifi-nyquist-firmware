@@ -1145,6 +1145,51 @@ scpi_result_t SCPI_StorageSDCrcGet(scpi_t * context) {
     return SCPI_RES_ERR;
 }
 
+/* fw#1265 / #1267 round-3 audit defect 3: IS THE TAG ECHOED EXACTLY AS SENT?
+ *
+ * ⛔ libscpi SATURATES AND REPORTS SUCCESS. SCPI_ParamToInt32 reaches
+ * strBaseToInt32, which calls strtol and never checks errno for ERANGE, so
+ * `SD:GET "f.bin",2147483648` consumes the whole token, yields 2147483647 and
+ * returns TRUE. The transfer was then framed `#SDGET 2147483647`: a header the
+ * host cannot match against the tag it sent, and every overflowing tag
+ * collapsing to the same one. Silent, and indistinguishable on the wire from a
+ * host that really asked for 2147483647.
+ *
+ * ⭐ SO COMPARE THE TOKEN WITH WHAT WE WOULD ECHO. If rendering the parsed
+ * value does not reproduce the digits the host wrote, the value is not the
+ * host's tag and the GET is refused. That is the whole guarantee the tag
+ * exists for -- a reply carrying it cannot be mistaken for another request's
+ * -- expressed as the check rather than as a comment. It needs no range
+ * constant, it cannot drift from INT32_MAX, and it keeps the full
+ * 0..2147483647 range rather than trading a defect for a narrower API.
+ *
+ * libscpi's shared strBaseToInt32 is deliberately NOT touched: it is used by
+ * every numeric parameter in the firmware and fixing it there is a wider
+ * change than this PR (the round-4 brief says so explicitly).
+ *
+ * ⚠ WHAT THIS NARROWS, stated because it is wire-visible: a tag must be a
+ * plain decimal integer. An optional leading `+` is skipped (IEEE 488.2
+ * allows it, and it round-trips), but LEADING ZEROS (`007`) and the `#H`/`#B`
+ * radix forms are refused -- none of them can be echoed back as written, so
+ * accepting them would break the guarantee this function exists to keep. No
+ * shipped host passes a tag at all yet (python-core #260 is the first
+ * adopter), so the narrowing costs nothing today and is documented in the
+ * wiki row. */
+static bool SD_TagEchoesExactly(const scpi_parameter_t *tok, int32_t value) {
+    if ((tok == NULL) || (tok->ptr == NULL) || (tok->len <= 0)) {
+        return false;
+    }
+    const char *p = tok->ptr;
+    size_t len = (size_t) tok->len;
+    if (*p == '+') {
+        p++;
+        len--;
+    }
+    char echo[12];
+    const int n = snprintf(echo, sizeof(echo), "%ld", (long) value);
+    return (n > 0) && ((size_t) n == len) && (memcmp(echo, p, len) == 0);
+}
+
 /* Defined further down with the other streaming-interlock helpers (#854), and
  * declared here because the tagged-GET refusal below is the first caller in
  * the file. Moving the definition up would relocate its #854 rationale away
@@ -1237,18 +1282,54 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
      * costs the caller one error and no transfer. libscpi has already pushed
      * the specific parse error, so pushing another would bury it. */
     const scpi_bool_t tagErrBefore = context->cmd_error;
-    const bool haveTag =
-            (SCPI_ParamInt32(context, &tagParam, FALSE) == TRUE);
+    /* fw#1265 / round-3 defect 3: taken as a TOKEN, not straight to an int32,
+     * because the raw digits are needed to prove the parse did not saturate --
+     * see SD_TagEchoesExactly. Same two-step shape SCPI_StartStreaming uses
+     * for its frequency (#674), and the same absent-vs-malformed
+     * discriminator. */
+    /* Not pre-initialized, and that is checked rather than assumed:
+     * SCPI_Parameter's FIRST action is invalidateToken(parameter, NULL)
+     * (libscpi parser.c:686/707), which writes all three fields, so `.type` is
+     * defined on every path that returns here. The ABSENT path then overwrites
+     * it with SCPI_TOKEN_PROGRAM_MNEMONIC (parser.c:715) while a malformed
+     * token leaves SCPI_TOKEN_UNKNOWN -- which is what makes the two
+     * distinguishable below. */
+    scpi_parameter_t tagTok;
+    const bool haveTag = (SCPI_Parameter(context, &tagTok, FALSE) == TRUE);
     const bool tagMalformed =
-            (!haveTag) && context->cmd_error && (!tagErrBefore);
+            (!haveTag) &&
+            ((tagTok.type == SCPI_TOKEN_UNKNOWN) ||
+             (context->cmd_error && (!tagErrBefore)));
     if (tagMalformed) {
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
-    if (haveTag && (tagParam < 0)) {
-        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
-        result = SCPI_RES_ERR;
-        goto __exit_point;
+    if (haveTag) {
+        if ((!SCPI_ParamIsNumber(&tagTok, FALSE)) ||
+                (!SCPI_ParamToInt32(context, &tagTok, &tagParam))) {
+            /* #880's guard: only push if the layer below did not already. */
+            if (!SCPI_ParamErrorOccurred(context)) {
+                SCPI_ErrorPush(context, SCPI_ERROR_DATA_TYPE_ERROR);
+            }
+            result = SCPI_RES_ERR;
+            goto __exit_point;
+        }
+        if (tagParam < 0) {
+            SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+            result = SCPI_RES_ERR;
+            goto __exit_point;
+        }
+        if (!SD_TagEchoesExactly(&tagTok, tagParam)) {
+            /* -222 "Data out of range": the value cannot be echoed as the
+             * host wrote it, which for an overflowing tag is exactly what
+             * happened. Refused HERE, before the #829 claim and before
+             * anything is armed, so no transfer starts. */
+            LOG_E("[SD] GET tag refused: not echoable as sent (%d digits)",
+                  (int) tagTok.len);
+            SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+            result = SCPI_RES_ERR;
+            goto __exit_point;
+        }
     }
 
     /* fw#1265 round 2: A TAGGED GET IS REFUSED WHILE A STREAM IS LIVE.

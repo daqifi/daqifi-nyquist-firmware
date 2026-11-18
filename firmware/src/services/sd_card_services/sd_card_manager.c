@@ -12,6 +12,9 @@
 #include "services/SCPI/SCPIInterface.h"   /* fw#1265: ScpiSdWindow_* */
 #include "Util/CRC32.h"   /* #306 */
 #include "services/streaming.h"  // Streaming_GetSdFileHeader / Streaming_ReportSdDiscard
+/* fw#1265 round 4: wifi_tcp_server_RequestClientClose -- the out-of-band
+ * signal for a tagged GET whose block was left short. */
+#include "services/wifi_services/wifi_tcp_server.h"
 #include <stddef.h>
 #include "ff.h"   /* #810: FILINFO, for the layout assert below */
 
@@ -669,22 +672,26 @@ static const char transferErrorMarker[] = "__TRANSFER_ERROR__";
  * COUNT, not just the byte count, is what mattered. */
 static const uint8_t sdGetPadByte[1024] = { 0 };
 
-/* The whole pad's budget, not one chunk's.
+/* ⛔ THERE IS NO WALL-CLOCK BUDGET ON THE PAD, AND ADDING ONE IS A DEFECT.
  *
- * ⛔ THIS BOUND IS THE FIX FOR A ~45-HOUR STALL (#1267 round-2 audit, 1). Each
- * sd_card_manager_DataReadyCB call carries its OWN ~10 s retry budget, so a
- * per-chunk bound is not a bound at all: a host that stops reading but holds
- * the connection open made every one of ~15,000 pads wait out its own 10 s,
- * with the SD mutex held and the requesting transport's input paused the whole
- * time. ScpiSdWindow_Service could not recover it either, because it runs on
- * the same blocked SD task.
+ * Round 3 of #1267 had `SD_GET_PAD_BUDGET_MS` here, 10 s for the whole pad.
+ * The round-3 audit found what that costs: a host reading SLOWLY but steadily
+ * (the audit used ~1 KiB/s) gets cut off mid-block. The pad returns with most
+ * of the balance still owed, the end line goes out anyway, and the host --
+ * still inside its definite-length read -- consumes the terminator and the
+ * replies after it as file bytes, then waits for a balance that will never
+ * come. A total budget cannot tell "the reader stopped" from "the reader is
+ * slow", and those need opposite answers.
  *
- * 10 s matches one DataReadyCB budget, which is the smallest bound that cannot
- * cut short a pad the host IS draining. The true worst case is this plus one
- * in-flight call (the deadline is tested before a call, not inside it), so
- * ~20 s -- and in the stalled-host case the short-write test below ends it
- * after the first call instead. */
-#define SD_GET_PAD_BUDGET_MS 10000u
+ * The ~45-hour stall that budget was meant to fix is fixed by the OTHER half,
+ * which is kept: stop at the first short write. Each DataReadyCB call already
+ * carries its own ~10 s no-progress bound, so a host that genuinely stops
+ * reading ends the pad in about one such bound -- no total budget needed.
+ *
+ * What remains unbounded is the pad's duration against a reader that keeps
+ * accepting, and that is correct rather than merely tolerable: it is bounded
+ * by the reader's own pace, and it is no longer than the un-aborted transfer
+ * that reader had already asked for. */
 
 /* Hand bytes to the requesting transport and report how many it TOOK.
  *
@@ -743,56 +750,60 @@ static void sd_get_read_teardown(TaskHandle_t task, UBaseType_t prio) {
     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
 }
 
-/* fw#1265 r1 finding 8: AFTER THE HEADER, THE LENGTH IS A PROMISE. Deliver
- * the balance of `declared - sent` so the host's blind read of <n> bytes still
+/* fw#1265 r1 finding 8: AFTER THE HEADER, THE LENGTH IS A PROMISE. Deliver the
+ * balance of `declared - sent` so the host's blind read of <n> bytes still
  * lands on the end line.
  *
- * ⚠ BEST EFFORT, AND THAT IS WHY THE VERDICT IS SEPARATE. Delivery can fail:
- * the reply writers are bounded-retry and all-or-nothing, so a host that has
- * stopped reading gets neither the pad nor the end line, and on the
- * TCP-client-gone path DataReadyCB bails before writing anything at all. What
- * is NOT best effort is the verdict -- a transfer whose declared length was
- * not met by REAL bytes reports FAILED, never OK -- so a host can be left
- * waiting, but it cannot be told a short file is complete. */
-static void sd_get_pad_to_declared(uint32_t declared, uint32_t sent) {
-    const TickType_t start = xTaskGetTickCount();
-
+ * @return true when the FULL balance reached the transport. The caller must
+ *         act on it: an end line may only be written when this is true, or it
+ *         lands inside the block. sd_get_send_end enforces that.
+ *
+ * ⚠ WHAT IS PROMISED, AND TO WHOM. Delivery is guaranteed to a host that KEEPS
+ * READING -- at whatever pace it likes, for as long as it takes. It is not
+ * guaranteed to a host that stops: there the pad ends at the first short write
+ * and the transfer sends no end line at all, closing the TCP connection
+ * instead (USB has no equivalent signal; see sd_get_send_end).
+ *
+ * ⛔ AN EARLIER VERSION OF THIS COMMENT CLAIMED THE OPPOSITE OF THE CODE, and
+ * the round-3 audit quoted it as the thing it disproved. It said the 10 s total
+ * budget "cannot cut short a pad the host IS draining", which was exactly what
+ * the budget did to a slow reader. The budget is gone; what remains is a
+ * guarantee narrow enough to be true and stated in terms of the host's
+ * behaviour rather than the device's effort.
+ *
+ * The verdict stays separate from delivery, which is the part that was always
+ * right: a transfer whose declared length was not met by REAL bytes reports
+ * FAILED, never OK. A host can be left waiting; it cannot be told a short file
+ * is complete. */
+static bool sd_get_pad_to_declared(uint32_t declared, uint32_t sent) {
     while (sent < declared) {
-        /* A FRESH abort stops the pad. The caller cleared the flag before
-         * padding, so a set flag here is a NEW request -- and the audit's
-         * note on this defect was that further abort requests did not stop it.
-         * The host is owed the declared length, but a host that asks twice is
-         * telling us it has stopped caring. */
-        if (gTransferAbortRequested) {
-            LOG_E("[SD] GET pad stopped at %u of %u bytes - abort requested",
-                  (unsigned) sent, (unsigned) declared);
-            break;
-        }
-        /* Wrap-safe: (now - start) >= window, never now >= deadline. */
-        if ((TickType_t)(xTaskGetTickCount() - start) >=
-                pdMS_TO_TICKS(SD_GET_PAD_BUDGET_MS)) {
-            LOG_E("[SD] GET pad gave up at %u of %u bytes after %u ms",
-                  (unsigned) sent, (unsigned) declared,
-                  (unsigned) SD_GET_PAD_BUDGET_MS);
-            break;
-        }
         const uint32_t owed = declared - sent;
         const uint32_t chunk = (owed < sizeof(sdGetPadByte))
                 ? owed : (uint32_t) sizeof(sdGetPadByte);
         const uint32_t took = sd_get_emit(sdGetPadByte, chunk);
         sent += took;
         if (took < chunk) {
-            /* ⭐ STOP ON THE FIRST SHORT WRITE, which is the half of the fix
-             * that actually ends the stalled-host case quickly. The shim is
-             * all-or-nothing after a bounded retry, so a short return means
-             * the peer is not draining -- and the next 1024 bytes will not
-             * fare better. Padding on would buy nothing and cost another
-             * budget per chunk. */
+            /* ⭐ THE ONE STOP CONDITION: THE READER'S TRANSPORT STOPPED
+             * ACCEPTING. The shim is all-or-nothing after its own ~10 s
+             * no-progress retry, so a short return means the peer is not
+             * draining -- and the next 1024 bytes will not fare better.
+             *
+             * ⛔ DELIBERATELY NOT `gTransferAbortRequested`. Round 3 stopped
+             * here on a fresh abort too, which is the same defect as the
+             * wall-clock budget wearing a different hat: while this pad runs
+             * the REQUESTING transport's input is paused, so an abort arriving
+             * now can only have come from the OTHER transport -- never from
+             * the host that is reading. Honouring it cuts a draining reader
+             * short and puts the end line inside its block. The one abort that
+             * CAN be the reader's own problem (its transport died) already
+             * reaches us as a short write, because DataReadyCB requests the
+             * abort and returns short in the same breath. */
             LOG_E("[SD] GET pad stopped at %u of %u bytes - peer not draining",
                   (unsigned) sent, (unsigned) declared);
-            break;
+            return false;
         }
     }
+    return true;
 }
 
 /* Pause the requesting transport, within a bound.
@@ -864,7 +875,14 @@ static const char* sd_get_open_window(void) {
      * owns the transfer, and it fails BEFORE any header rather than trusting a
      * check made earlier on another task. */
     if (Streaming_SessionIsLive()) {
-        ScpiSdWindow_Close(transport);
+        /* ⛔ DO NOT CLOSE THE WINDOW HERE. An earlier revision did, out of
+         * tidiness, and that put this one path back under the defect round 3
+         * had just fixed: the caller's sd_get_send_end then queued
+         * `FAILED stream` with input ALREADY RESUMED, so a pending packet's
+         * echo and reply could be queued ahead of the terminator. Leave it
+         * open; sd_get_send_end closes it after queueing, like every other
+         * path. ONE place closes the window -- that is the whole discipline,
+         * and the count is greppable: one call in this file. */
         return "stream";
     }
     return NULL;
@@ -919,7 +937,8 @@ static bool sd_get_send_header(uint32_t length) {
  * Nothing is held or replayed: the requesting transport produced no output at
  * all while its window was open, and resumes feeding input -- and so
  * answering -- on its first pass after this close. */
-static void sd_get_send_end(bool ok, uint32_t count, const char* reason) {
+static void sd_get_send_end(bool ok, uint32_t count, const char* reason,
+                            bool blockDelivered) {
     const ScpiSdWindowTransport_t transport = sd_get_window_transport();
     const bool tagged = sd_get_is_tagged();
 
@@ -941,17 +960,56 @@ static void sd_get_send_end(bool ok, uint32_t count, const char* reason) {
      * it dead code carrying a false claim. See ScpiSdWindow_Service's comment
      * for the whole argument. */
 
-    char line[64];
-    int n;
-    if (ok) {
-        n = snprintf(line, sizeof(line), "%s OK %u\r\n", eofMarker,
-                     (unsigned) count);
+    /* ⛔ NO END LINE INTO A BLOCK WE KNOW IS SHORT (#1267 round-3 audit, 1).
+     *
+     * `blockDelivered` false means a header advertised <n> bytes and fewer
+     * than <n> reached the transport, because the reader stopped accepting.
+     * The host is still inside its blind read of <n>, so a terminator written
+     * now is consumed AS FILE DATA -- and so is every reply after it. Writing
+     * it would turn a recoverable stall into a desync the host cannot detect:
+     * it would believe it had a complete file.
+     *
+     * So the terminator is withheld and the host is left waiting, which IS
+     * recoverable -- it times out, and by then the window is closed so its
+     * next command is answered. The reason reaches it out of band, through
+     * SYST:ERR? and SYST:LOG?, which is where this product puts failures
+     * anyway (the #914 queue-only rule).
+     *
+     * ⭐ TCP GETS A REAL SIGNAL: the connection is closed, guarded by the #599
+     * generation. A closed connection cannot be read as file bytes, so the
+     * host learns immediately rather than on a timeout.
+     *
+     * ⚠ USB HAS NO EQUIVALENT AND THIS IS THE IRREDUCIBLE RESIDUAL. There is
+     * no out-of-band channel on the CDC: no connection to drop, and a ZLP or a
+     * break is not something a host reading <n> bytes would notice. The choice
+     * is between "no end line" and "end line anyway", and it is "no end line"
+     * because the two failures are not equally bad -- a host left waiting
+     * knows it did not finish, while a host handed a terminator inside the
+     * block believes a short file is complete. Silence is recoverable;
+     * corruption that reports OK is not. So on USB the guarantee is narrowed
+     * and stated plainly, here and in the PR body: the end line is delivered
+     * only to a host that keeps reading. */
+    if (!blockDelivered) {
+        /* log_budget: max=6 */
+        LOG_E("[SD] GET: block left short, no end line sent (%s)",
+              (reason != NULL) ? reason : "error");
+        if (transport == SCPI_SD_WINDOW_TCP) {
+            wifi_tcp_server_RequestClientClose(
+                    gpSDCardSettings->replyGeneration);
+        }
     } else {
-        n = snprintf(line, sizeof(line), "%s FAILED %s\r\n", eofMarker,
-                     (reason != NULL) ? reason : "error");
-    }
-    if ((n > 0) && ((size_t) n < sizeof(line))) {
-        (void) sd_get_emit((const uint8_t*) line, (uint32_t) n);
+        char line[64];
+        int n;
+        if (ok) {
+            n = snprintf(line, sizeof(line), "%s OK %u\r\n", eofMarker,
+                         (unsigned) count);
+        } else {
+            n = snprintf(line, sizeof(line), "%s FAILED %s\r\n", eofMarker,
+                         (reason != NULL) ? reason : "error");
+        }
+        if ((n > 0) && ((size_t) n < sizeof(line))) {
+            (void) sd_get_emit((const uint8_t*) line, (uint32_t) n);
+        }
     }
 
     /* ⭐ THE END LINE IS QUEUED FIRST AND THE WINDOW CLOSES AFTER IT, AND THAT
@@ -3940,7 +3998,9 @@ void sd_card_manager_ProcessState() {
                          * the stream, distinguishable from an empty file
                          * without a round trip to SYST:ERR?. */
                         if (sd_get_is_tagged()) {
-                            sd_get_send_end(false, 0u, "open");
+                            /* No header went out on this path, so the end
+                             * line cannot be inside a block: delivered. */
+                            sd_get_send_end(false, 0u, "open", true);
                         } else {
                             sd_card_manager_DataReadyCB(
                                     SD_CARD_MANAGER_MODE_READ,
@@ -4575,7 +4635,7 @@ void sd_card_manager_ProcessState() {
                 /* fw#1265: same end line as every other exit, so a tagged
                  * host never has to distinguish "no data" from "no
                  * terminator". Closes the window too. */
-                sd_get_send_end(false, 0u, "buffer");
+                sd_get_send_end(false, 0u, "buffer", true);
                 if (gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
                     (void)SYS_FS_FileClose(gSDCardData.fileHandle);
                     gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
@@ -4705,10 +4765,14 @@ void sd_card_manager_ProcessState() {
                      * out the host is reading <declared> bytes blindly and
                      * must get them before the end line; if none did, padding
                      * would be bytes the host never asked for. */
-                    if (headerSent) {
-                        sd_get_pad_to_declared(declaredLen, 0u);
-                    }
-                    sd_get_send_end(false, 0u, headerFail);
+                    /* `headerSent` decides whether anything is owed, and the
+                     * pad's RESULT decides whether an end line may be sent --
+                     * the two questions the round-3 audit showed are
+                     * different. With no header, nothing is owed and nothing
+                     * can be short. */
+                    const bool padOk = (!headerSent) ||
+                            sd_get_pad_to_declared(declaredLen, 0u);
+                    sd_get_send_end(false, 0u, headerFail, padOk);
                     sd_get_read_teardown(currentTask, originalPriority);
                     break;
                 }
@@ -4758,8 +4822,11 @@ void sd_card_manager_ProcessState() {
                          * say what happened -- and it is also what closes the
                          * data window on this path, which r1 found was the one
                          * exit that never closed it. */
-                        sd_get_pad_to_declared(declaredLen, sentReal);
-                        sd_get_send_end(false, sentReal, "abort");
+                        {
+                            const bool padOk = sd_get_pad_to_declared(
+                                    declaredLen, sentReal);
+                            sd_get_send_end(false, sentReal, "abort", padOk);
+                        }
                     } else if (totalBytesRead == 0u) {
                         sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
                                 (uint8_t*)eofMarker, sizeof(eofMarker) - 1);
@@ -4800,8 +4867,11 @@ void sd_card_manager_ProcessState() {
                      * through a block it was told the length of. Untagged
                      * behaviour is unchanged (silence, per #725). */
                     if (sd_get_is_tagged()) {
-                        sd_get_pad_to_declared(declaredLen, sentReal);
-                        sd_get_send_end(false, sentReal, "handle");
+                        {
+                            const bool padOk = sd_get_pad_to_declared(
+                                    declaredLen, sentReal);
+                            sd_get_send_end(false, sentReal, "handle", padOk);
+                        }
                     }
                     totalBytesRead = 0;
                     readCount = 0;
@@ -4842,8 +4912,11 @@ void sd_card_manager_ProcessState() {
                          * block. Deliver the balance of the promise first, so
                          * the host's blind read of <n> bytes finishes before
                          * it starts looking for a terminator. */
-                        sd_get_pad_to_declared(declaredLen, sentReal);
-                        sd_get_send_end(false, sentReal, "read");
+                        {
+                            const bool padOk = sd_get_pad_to_declared(
+                                    declaredLen, sentReal);
+                            sd_get_send_end(false, sentReal, "read", padOk);
+                        }
                     } else {
                         sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
                                 (uint8_t*)transferErrorMarker,
@@ -4878,8 +4951,11 @@ void sd_card_manager_ProcessState() {
                               "- padding and failing",
                               (unsigned) gpSDCardSettings->opGetTag,
                               (unsigned) sentReal, (unsigned) declaredLen);
-                        sd_get_pad_to_declared(declaredLen, sentReal);
-                        sd_get_send_end(false, sentReal, "short");
+                        {
+                            const bool padOk = sd_get_pad_to_declared(
+                                    declaredLen, sentReal);
+                            sd_get_send_end(false, sentReal, "short", padOk);
+                        }
                     } else {
                         /* `sentReal` rather than `totalBytesRead`: the audit's
                          * note on defect 2 was to check every counter on the
@@ -4892,7 +4968,7 @@ void sd_card_manager_ProcessState() {
                          * this changes no wire byte; it makes the equality a
                          * property of the expression instead of an argument
                          * about reachability. */
-                        sd_get_send_end(true, sentReal, NULL);
+                        sd_get_send_end(true, sentReal, NULL, true);
                     }
 
                     // Close file handle
@@ -4959,7 +5035,21 @@ void sd_card_manager_ProcessState() {
                          * teardown, because their `break` leaves the switch
                          * and never reaches the bottom. */
                         sd_wait_usb_drain();
-                        sd_get_send_end(false, sentReal, lenFail);
+                        /* ⛔ PAD AND USE THE RESULT, like every other in-loop
+                         * exit. I first wrote `true` here, reasoning that
+                         * `grew` caps the delivery AT declaredLen so the block
+                         * must be complete. That is only true if the capped
+                         * write was fully ACCEPTED -- and the write above
+                         * advances sentReal by what the transport took, which
+                         * is the whole point of the round-2 fix. A short
+                         * accept leaves the block short while this branch
+                         * claimed it was whole, which is the very defect
+                         * `blockDelivered` exists to prevent. When the accept
+                         * was full the pad loop does not run and returns true,
+                         * so this costs nothing in the normal case. */
+                        const bool padOk = sd_get_pad_to_declared(declaredLen,
+                                                                  sentReal);
+                        sd_get_send_end(false, sentReal, lenFail, padOk);
                         break;
                     }
 

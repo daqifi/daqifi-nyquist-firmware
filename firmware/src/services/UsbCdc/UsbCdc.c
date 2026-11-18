@@ -316,19 +316,28 @@ USB_DEVICE_CDC_EVENT_RESPONSE UsbCdc_CDCEventHandler
         {
             /* This means that the host has sent some data*/
             USB_DEVICE_CDC_EVENT_DATA_READ_COMPLETE* readResult = (USB_DEVICE_CDC_EVENT_DATA_READ_COMPLETE*) pData;
-            pUsbCdcDataObject->readBufferLength = readResult->length;
-            pUsbCdcDataObject->readTransferHandle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
-            /* fw#1265: this transport now holds input it has not handed to
-             * SCPI, so it is NOT idle and a tagged SD:GET window must not open
-             * over the top of it -- the reply to whatever is in this packet
-             * would land inside the block. Cleared in UsbCdc_Tasks once the
-             * whole buffer has been fed and SCPI_Input has returned.
+            /* ⛔ FEEDBEGIN FIRST, FOR THE SAME REASON AS THE TCP TWIN -- and
+             * the USB side is MORE exposed, not less (#1267 round-3 audit
+             * defect 2, whose main leg raised only the TCP site).
+             *
+             * I checked whether this ordering was safe here by construction
+             * and it is not. This handler runs on F_USB_DEVICE_Tasks, which
+             * tasks.c raises to priority 6; the consumer of readBufferLength
+             * is UsbCdc_ProcessState on app_USBDeviceTask, which app_freertos.c
+             * raises to 7. The consumer is the HIGHER priority of the two and
+             * gates on `readTransferHandle == INVALID`, so the store below is
+             * the publication -- and a preemption right after it lets the
+             * consumer feed the packet and run FeedEnd before this FeedBegin
+             * executes, stranding `feeding` TRUE and failing the next tagged
+             * GET with `FAILED busy`.
              *
              * Set unconditionally, including for a zero-length packet: the
              * clear site runs on every pass through the read branch, so a
              * spurious `feeding` costs at most one retry of TryOpen, while a
-             * missed one costs the block's integrity. */
+             * stranded one is permanent. */
             ScpiSdWindow_FeedBegin(SCPI_SD_WINDOW_USB);
+            pUsbCdcDataObject->readBufferLength = readResult->length;
+            pUsbCdcDataObject->readTransferHandle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
             break;
         }
         case USB_DEVICE_CDC_EVENT_CONTROL_TRANSFER_DATA_RECEIVED:
