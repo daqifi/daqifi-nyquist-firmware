@@ -1,0 +1,22 @@
+# Indirect calls inside the non-query closure that this gate cannot resolve.
+#
+# An unresolvable indirection is the ONE way a response write can hide from
+# this gate, so each is declared here with the issue that tracks it, and a NEW
+# one fails the gate rather than passing quietly. Shrink-only, like the
+# allowlist: a declaration that no longer matches must be deleted.
+#
+# A member whose assignments ARE findable is followed instead of declared --
+# `.flush = SCPI_USB_Flush` and `gStateMachineContext.active = MainState` both
+# resolve, and neither target writes.
+#
+# Format: <file>\t<function>\t<member>\t#<issue>
+
+# `cirbuf->process_callback = fp` takes its target from a PARAMETER, so no
+# assignment names a function. Verified by hand at 4ec4f91c: the only two
+# registered targets are CircularBufferToSDWrite (sd_card_manager.c) and
+# UsbCdc_Wrapper_Write (UsbCdc.c), and NEITHER reaches scpi_printf,
+# SCPI_Result*, SCPI_Write* or a ->write() call. They move bytes to the SD
+# card and to the USB DMA buffer, which are not the SCPI response stream.
+# The pointer-argument rule also edges from each registration site, so a
+# response write added to either target would still be reported there.
+Util/CircularBuffer.c	CircularBuf_ProcessBytes	process_callback	#1274
