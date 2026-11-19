@@ -57,10 +57,30 @@ directory makes every caller of a libscpi helper a "writer" -- in an earlier
 throwaway scan `SCPI_ParamCopyText` reached `SCPI_Result*` and dragged
 innocent callbacks in with it. So the scan set excludes `libraries/`, exactly
 as `cppcheck.sh` does, and the sinks are matched as CALLS rather than followed
-into. A vendor or PLIB function cannot write to the SCPI stream because it has
-no access to the context, so treating an unresolved callee as a leaf is sound
-for THIS property -- but only as long as every one of our own sources is in
-the scan set, which `_require_scan_set` enforces.
+into.
+
+⛔ An earlier revision of this paragraph justified that exclusion by claiming
+"a vendor or PLIB function cannot write to the SCPI stream because it has no
+access to the context, so treating an unresolved callee as a leaf is sound".
+**That was FALSE in the one case that matters, and the audit caught it.** A
+registered table callback is HANDED the context by libscpi, and eight live
+non-query registrations (`*CLS`, `*ESE`, `*OPC`, `*SRE`, `*WAI`,
+`STATus:PRESet`, `STATus:OPERation:ENABle`, `STATus:QUEStionable:ENABle`)
+resolve into exactly that excluded code. They were being SKIPPED while the
+gate reported clean -- a silent pass on commands it never looked at.
+
+Two things make the exclusion sound now instead of merely convenient:
+
+* an unresolved NON-QUERY callback is REFUSED, and the eight are declared in
+  `scpi_nonquery_write-unresolved.txt` against a reason that was CHECKED --
+  the same reachability built over `libscpi/src` (228 functions, 21 of them
+  direct writers) finds no sink from any of the eight, with a control proving
+  that analysis does detect libscpi's real writers (every `*Q` query reaches
+  one);
+* an ordinary unresolved CALLEE deeper in a chain is still treated as a leaf,
+  which is sound for a vendor/PLIB function that genuinely never receives the
+  context -- and only while every one of our own sources is in the scan set,
+  which `_require_scan_set` enforces and which now includes HEADERS.
 
 ## Why a function-pointer argument must be followed or refused
 
@@ -191,7 +211,14 @@ def _joined_literal(group):
 # The call graph over OUR sources.
 # ---------------------------------------------------------------------------
 def source_files(root):
-    """Every `.c` of ours under `root`, excluding the vendored trees."""
+    """Every `.c` AND `.h` of ours under `root`, excluding the vendored trees.
+
+    ⛔ HEADERS ARE NOT OPTIONAL (audit r1). A `.c`-only sweep made every
+    header-defined helper a silent LEAF, and live non-query callbacks already
+    reach into `SCPIInterface.h` -- `SCPI_RejectCfgClaim`,
+    `SCPI_OptionalParamInt32`. A write behind one of those would have passed
+    the gate, which is the failure direction that matters: silence.
+    """
     out = []
     for base, dirs, files in os.walk(root):
         dirs[:] = [d for d in dirs if d not in _EXCLUDED]
@@ -199,7 +226,7 @@ def source_files(root):
         if any(part in _EXCLUDED for part in rel.split("/")):
             continue
         for f in sorted(files):
-            if f.endswith(".c"):
+            if f.endswith(".c") or f.endswith(".h"):
                 out.append(os.path.join(base, f))
     return sorted(out)
 
@@ -398,9 +425,20 @@ def analyse(root, scpi_c):
                     break
 
     rows = registered(scpi_c)
-    findings, qwrites = [], []
+    findings, qwrites, unresolved = [], [], set()
     for pattern, cb in rows:
         nodes = g.by_name.get(cb, [])
+        # ⛔ AN UNRESOLVED CALLBACK IS NOT A SILENT PASS (audit r1). This used
+        # to `continue` here, so a registered callback whose definition is
+        # outside the scan set was dropped and reported clean. Eight live
+        # non-query registrations resolve into excluded libscpi code, and the
+        # docstring's old justification -- "a vendor function cannot write,
+        # it has no access to the context" -- is FALSE for exactly these: a
+        # table callback is HANDED the context by libscpi. They are declared,
+        # each against a checked reason, and a new one fails the gate.
+        if not nodes and "?" not in pattern:
+            unresolved.add((pattern, cb))
+            continue
         hit = next((n for n in nodes if n in reaches), None)
         if hit is None:
             continue
@@ -432,7 +470,7 @@ def analyse(root, scpi_c):
              "registrations": len(rows),
              "non_query": sum(1 for p, _ in rows if "?" not in p),
              "writers": len(g.writes), "examined": len(examined),
-             "indirect": sorted(indirect)}
+             "indirect": sorted(indirect), "unresolved": sorted(unresolved)}
     return findings, qwrites, sorted(set(g.refusals)), stats
 
 
@@ -498,6 +536,39 @@ def read_indirect(path):
     return allow, problems
 
 
+def read_unresolved(path):
+    """{(pattern, callback)} -> note, plus parse problems.
+
+    A registered non-query callback whose definition is outside the scan set
+    cannot be analysed, so it is DECLARED here against a reason that was
+    checked, never assumed. The eight entries today are libscpi's own
+    minimal-interface callbacks; each was verified by building the same
+    reachability over `libscpi/src` and confirming it reaches no sink, with a
+    control proving that analysis does detect libscpi's real writers (every
+    `*Q` query reaches one).
+    """
+    allow, problems = {}, []
+    if not os.path.exists(path):
+        return allow, ["unresolved-callback list %r not found" % path]
+    with open(path, encoding="utf-8") as fh:
+        for n, line in enumerate(fh, 1):
+            s = line.strip()
+            if not s or s.startswith("#"):
+                continue
+            parts = [p.strip() for p in s.split("\t") if p.strip()]
+            if len(parts) != 3:
+                problems.append("%s:%d: expected '<pattern>\\t<callback>\\t"
+                                "#<issue>', got %r" % (path, n, s))
+                continue
+            pattern, cb, note = parts
+            if not re.match(r"^#\d+$", note):
+                problems.append("%s:%d: third field must be the issue that "
+                                "tracks it, got %r" % (path, n, note))
+                continue
+            allow[(pattern, cb)] = note
+    return allow, problems
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--root", default="firmware/src",
@@ -510,6 +581,9 @@ def main():
     ap.add_argument("--indirect",
                     default="tools/lint/scpi_nonquery_write-indirect.txt",
                     help="declared unresolvable indirections in the closure")
+    ap.add_argument("--unresolved",
+                    default="tools/lint/scpi_nonquery_write-unresolved.txt",
+                    help="declared callbacks defined outside the scan set")
     ap.add_argument("--list", action="store_true",
                     help="print every finding and every query that writes")
     ap.add_argument("--self-test", action="store_true",
@@ -522,6 +596,7 @@ def main():
     findings, qwrites, refusals, stats = analyse(args.root, args.scpi)
     allow, allow_problems = read_allow(args.allow)
     indirect_allow, indirect_problems = read_indirect(args.indirect)
+    unresolved_allow, unresolved_problems = read_unresolved(args.unresolved)
 
     if stats:
         print("scanned %d file(s), %d function(s); %d registration(s), %d "
@@ -543,7 +618,23 @@ def main():
     bad = []
     bad.extend(allow_problems)
     bad.extend(indirect_problems)
+    bad.extend(unresolved_problems)
     bad.extend(refusals)
+
+    # A non-query callback the gate could not analyse at all. Undeclared, this
+    # used to be a silent pass -- the gate reporting clean on a command it
+    # never looked at.
+    seen_unresolved = set(stats.get("unresolved", []))
+    for key in sorted(seen_unresolved - set(unresolved_allow)):
+        bad.append("%s (%s) is registered without '?' but its callback is "
+                   "defined outside the scanned sources, so this gate did NOT "
+                   "analyse it. Declare it in %s against a CHECKED reason, or "
+                   "bring its definition into the scan set."
+                   % (key[0], key[1], args.unresolved))
+    for key in sorted(set(unresolved_allow) - seen_unresolved):
+        bad.append("%s (%s) now resolves inside the scanned sources. Remove "
+                   "the line from %s so it is analysed rather than exempted."
+                   % (key[0], key[1], args.unresolved))
 
     # An indirection inside the non-query closure is the one way a write can
     # hide from this gate, so an undeclared one FAILS rather than passing
@@ -687,7 +778,28 @@ static scpi_result_t CbText(scpi_t * context) {
     return SCPI_RES_OK;
 }
 '''), []),
+
+    # Audit r1, finding 1/5: a write reached through a HEADER-defined helper.
+    # With a `.c`-only scan set this was a silent leaf, and live non-query
+    # callbacks already reach `SCPIInterface.h` helpers today. The helper is
+    # written into the fixture's header by `_case_header` below.
+    ("a write through a HEADER-defined helper is REFUSED",
+     _case('    {.pattern = "SYST:HDR", .callback = CbHdr,},',
+           '''
+static scpi_result_t CbHdr(scpi_t * context) {
+    HeaderWrite(context);
+    return SCPI_RES_OK;
+}
+'''), ["SYST:HDR"]),
 ]
+
+# Fixture header for the case above: the writer lives in a `.h`, which is the
+# whole point of the case.
+_CASE_HEADER = '''
+static inline void HeaderWrite(scpi_t * context) {
+    scpi_printf(context, "from a header\\n");
+}
+'''
 
 
 def _ck(why, got, want):
@@ -711,12 +823,52 @@ def self_test():
             # synthetic fixture supplies the second as an empty stub.
             with open(os.path.join(d, "SCPIStorageSD.c"), "w") as fh:
                 fh.write("/* stub */\n")
-            findings, _, refusals, _ = analyse(td, scpi_c)
+            with open(os.path.join(d, "SCPIInterface.h"), "w") as fh:
+                fh.write(_CASE_HEADER)
+            findings, _, refusals, stats = analyse(td, scpi_c)
             checks += 1
             failures.extend(_ck(why, sorted(p for p, _, _ in findings),
                                 sorted(expect)))
             if refusals:
                 failures.append("%s: unexpected refusals %r" % (why, refusals))
+            # No synthetic case registers a callback it does not define, so
+            # any unresolved entry here is a fixture bug, not a finding.
+            if stats.get("unresolved"):
+                failures.append("%s: unexpected unresolved callbacks %r"
+                                % (why, stats["unresolved"]))
+
+    # Audit r1, finding 0/4: a registered non-query callback DEFINED NOWHERE
+    # in the scan set must be reported as unanalysed, never skipped. This is
+    # the shape of libscpi's eight table callbacks.
+    with tempfile.TemporaryDirectory() as td:
+        d = os.path.join(td, "services", "SCPI")
+        os.makedirs(d)
+        scpi_c = os.path.join(d, "SCPIInterface.c")
+        with open(scpi_c, "w") as fh:
+            fh.write(_TABLE % '    {.pattern = "SYST:GONE", .callback = CbElsewhere,},')
+        with open(os.path.join(d, "SCPIStorageSD.c"), "w") as fh:
+            fh.write("/* stub */\n")
+        findings, _, _, stats = analyse(td, scpi_c)
+        checks += 2
+        failures.extend(_ck("a callback defined nowhere is reported unresolved",
+                            stats.get("unresolved"), [("SYST:GONE", "CbElsewhere")]))
+        failures.extend(_ck("...and is NOT reported as a silent pass",
+                            sorted(p for p, _, _ in findings), []))
+
+    # The same, but as a QUERY: a '?' callback we cannot analyse is not this
+    # gate's business, so it must NOT be reported.
+    with tempfile.TemporaryDirectory() as td:
+        d = os.path.join(td, "services", "SCPI")
+        os.makedirs(d)
+        scpi_c = os.path.join(d, "SCPIInterface.c")
+        with open(scpi_c, "w") as fh:
+            fh.write(_TABLE % '    {.pattern = "SYST:GONE?", .callback = CbElsewhere,},')
+        with open(os.path.join(d, "SCPIStorageSD.c"), "w") as fh:
+            fh.write("/* stub */\n")
+        _, _, _, stats = analyse(td, scpi_c)
+        checks += 1
+        failures.extend(_ck("an unresolved QUERY callback is not reported",
+                            stats.get("unresolved"), []))
 
     # ---- vacuity: each of these MUST be refused ----
     with tempfile.TemporaryDirectory() as td:

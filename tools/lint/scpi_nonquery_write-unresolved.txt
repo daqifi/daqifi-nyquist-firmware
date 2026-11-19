@@ -1,0 +1,33 @@
+# Non-query callbacks defined OUTSIDE the scanned sources (#1274).
+#
+# The scan set excludes firmware/src/libraries (as cppcheck.sh does), because
+# the response sinks are DEFINED in libscpi/src and following calls into it
+# makes every caller of a libscpi helper a "writer". The cost is that
+# libscpi's own minimal-interface callbacks, registered in our table, cannot
+# be analysed here.
+#
+# ⛔ They are NOT assumed safe. The first version of this checker silently
+# SKIPPED them, on the stated grounds that "a vendor function cannot write
+# because it has no access to the context" -- which is FALSE for precisely
+# these, since libscpi hands a table callback the context. The audit caught
+# it; it failed toward silence.
+#
+# Each entry below was CHECKED, not reasoned about: the same reachability was
+# built over firmware/src/libraries/scpi/libscpi/src (228 functions, 21 of
+# which write directly) and none of these eight reaches a sink. Control for
+# that analysis, so its zeros mean something: every libscpi `*Q` query --
+# SCPI_CoreIdnQ, SCPI_CoreEseQ, SCPI_CoreStbQ, SCPI_SystemErrorNextQ,
+# SCPI_SystemVersionQ -- DOES reach one, as a query should.
+#
+# Shrink-only: if one of these later resolves inside the scan set, the gate
+# fails until its line is removed, so it gets analysed instead of exempted.
+#
+# Format: <pattern>\t<callback>\t#<issue>
+*CLS	SCPI_CoreCls	#1274
+*ESE	SCPI_CoreEse	#1274
+*OPC	SCPI_CoreOpc	#1274
+*SRE	SCPI_CoreSre	#1274
+*WAI	SCPI_CoreWai	#1274
+STATus:OPERation:ENABle	SCPI_StatusOperationEnable	#1274
+STATus:PRESet	SCPI_StatusPreset	#1274
+STATus:QUEStionable:ENABle	SCPI_StatusQuestionableEnable	#1274

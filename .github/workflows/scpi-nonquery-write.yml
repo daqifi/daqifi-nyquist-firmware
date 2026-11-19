@@ -31,10 +31,20 @@ name: scpi-nonquery-write
 # graph with no control flow, so a write behind an impossible condition still
 # counts, and the preprocessor is not evaluated, so a call inside `#if 0`
 # counts. Both over-approximate -- a false positive costs an argument, the
-# opposite costs a missed defect. The one place a write could HIDE is an
-# indirect call the checker cannot resolve; those are enumerated in
-# tools/lint/scpi_nonquery_write-indirect.txt and a new one FAILS the gate
-# rather than passing quietly.
+# opposite costs a missed defect.
+#
+# Two things the checker genuinely CANNOT analyse, so both are DECLARED and a
+# new one fails the gate rather than passing quietly:
+#   - an indirect call whose target no assignment names
+#     (tools/lint/scpi_nonquery_write-indirect.txt);
+#   - a registered non-query callback defined outside the scan set, i.e.
+#     libscpi's own eight (tools/lint/scpi_nonquery_write-unresolved.txt).
+# Round 1 of the adversarial audit found BOTH of these failing toward
+# silence -- the second was being skipped outright, under a docstring claim
+# that a vendor function "cannot write because it has no access to the
+# context", which is false for a table callback since libscpi hands it the
+# context. Each of the eight was then checked against libscpi's own call
+# graph rather than assumed safe.
 
 on:
   pull_request:
@@ -51,6 +61,7 @@ on:
       - 'tools/lint/scpi_nonquery_write.py'
       - 'tools/lint/scpi_nonquery_write-allow.txt'
       - 'tools/lint/scpi_nonquery_write-indirect.txt'
+      - 'tools/lint/scpi_nonquery_write-unresolved.txt'
       # The checker IMPORTS this. Without it, a change that gutted the shared
       # splice/mask/span primitives would pass this gate without the gate ever
       # running.
@@ -63,6 +74,7 @@ on:
       - 'tools/lint/scpi_nonquery_write.py'
       - 'tools/lint/scpi_nonquery_write-allow.txt'
       - 'tools/lint/scpi_nonquery_write-indirect.txt'
+      - 'tools/lint/scpi_nonquery_write-unresolved.txt'
       - 'tools/lint/cdef.py'
       - '.github/workflows/scpi-nonquery-write.yml'
 
