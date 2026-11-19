@@ -152,7 +152,7 @@ def joined_text(raw):
             if out[j] != "\n":
                 out[j] = " "                 # length and lines preserved
         i = end
-    return "".join(out), text
+    return "".join(out)
 
 
 def registered(scpi_c):
@@ -163,7 +163,7 @@ def registered(scpi_c):
                  ".github/workflows/scpi-nonquery-write.yml." % scpi_c)
     with open(scpi_c, encoding="utf-8", errors="replace") as fh:
         raw = fh.read()
-    live_src, _ = joined_text(raw)
+    live_src = joined_text(raw)
     rows = [(_joined_literal(g), cb)
             for g, cb in _REGISTRATION.findall(live_src)]
     declared = (len(_PATTERN_FIELD.findall(live_src))
