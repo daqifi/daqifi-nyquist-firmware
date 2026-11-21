@@ -86,14 +86,19 @@ When the gate fails:
   regenerate the baseline (`bash tools/lint/cppcheck.sh`) and commit
   the updated `cppcheck-baseline.txt`.
 
-The current baseline is **empty** — `tools/lint/cppcheck-baseline.txt`
-is a 0-line file, so any new finding fails the gate. (An earlier
-revision of this file said "2 style findings, both in
-`firmware/src/services/wifi_services/wifi_serial_bridge.c`"; those were
-fixed and the baseline regenerated. Verified 2026-08-21 against
-cppcheck 2.13.0, the CI version.) The suppression file documents the
-DioProbe.c array-bounds false positive and the FreeRTOS portmacro
-FPU-guard `#error` (chip-specific macro that cppcheck doesn't see).
+The baseline is **NOT empty**: it records the 233 pre-existing findings
+accepted at #1309 Phase 1 (226 style, 4 warning, 2 error, 1 portability;
+triage tracked in a follow-up issue). Until #1309 the gate silently skipped
+every FreeRTOS-including file (portmacro.h's FPU `#error` fired without
+`-D__mips_hard_float=1`, and the error was suppressed), so the old empty
+baseline was not evidence of cleanliness. `cppcheck.sh` now passes the define
+in every pass. The comparison is **line-insensitive**
+(`tools/lint/cppcheck_compare.py`: strips `:line:col`, compares the multiset),
+so a line shift does not fail it but a new or duplicated finding does.
+Residual: within one file, removing one finding and adding another with the
+identical message and id nets to zero and passes. The portmacro.h
+`preprocessorErrorDirective` suppression still exists, so a future missing
+define would again be silent (narrowing it is #1309 Phase 2).
 
 ### LOG_E budget (log_budget)
 
