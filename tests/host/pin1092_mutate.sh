@@ -12,13 +12,20 @@
 # Usage:  bash tests/host/pin1092_mutate.sh [WORKTREE]
 set -u
 
+# Every refusal path prints a terminal RESULT line (#1183): a caller that
+# filters for ^RESULT must never read a refused run as a clean one.
+refuse() {      # refuse <exit-code> <reason>
+    echo "RESULT: 0 passed, 0 failed (REFUSED: $2)"
+    exit "$1"
+}
+
 W="${1:-$(git rev-parse --show-toplevel)}"
 P="$W/firmware/src/HAL/Power/PowerApi.c"
 U="$W/firmware/src/HAL/UI/UI.c"
 S="$W/firmware/src/services/SCPI/SCPIInterface.c"
 
 for f in "$P" "$U" "$S"; do
-    [ -f "$f" ] || { echo "FATAL: $f missing."; exit 2; }
+    [ -f "$f" ] || { echo "FATAL: $f missing."; refuse 2 "source file missing"; }
 done
 
 echo "################################################################"
@@ -30,7 +37,7 @@ if [ -n "$(git -C "$W" status --porcelain -- "$P" "$U" "$S" 2>/dev/null)" ]; the
     echo "FATAL: uncommitted changes in the files this mutates. Commit or set"
     echo "       them aside first -- restore here is a byte copy and cannot"
     echo "       arbitrate between your edits and the mutants'."
-    exit 2
+    refuse 2 "uncommitted changes in the mutated files"
 fi
 
 # Every mktemp and cp CHECKED, and each backup verified byte-identical, BEFORE
@@ -42,7 +49,7 @@ backup_failed() {
     echo "       Nothing mutated and no trap installed; the worktree is"
     echo "       untouched."
     rm -f "$BP" "$BU" "$BS"
-    exit 2
+    refuse 2 "backup failed: $1"
 }
 for v in BP BU BS; do
     tmp=$(mktemp 2>/dev/null) || backup_failed "mktemp failed for $v"
@@ -62,10 +69,10 @@ cleanup() { restore; rm -f "$BP" "$BU" "$BS"; }
 # The signal handlers exit EXPLICITLY: on INT/TERM bash runs the handler and
 # then RESUMES, so a plain `trap ... EXIT INT TERM` restores and re-mutates.
 trap cleanup EXIT
-trap 'printf "\n** INTERRUPTED -- restoring **\n" >&2; exit 130' INT
-trap 'printf "\n** TERMINATED -- restoring **\n" >&2; exit 143' TERM
+trap 'printf "\n** INTERRUPTED -- restoring **\n" >&2; echo "RESULT: ${pass:-0} passed, ${fail:-0} failed (INTERRUPTED)"; exit 130' INT
+trap 'printf "\n** TERMINATED -- restoring **\n" >&2; echo "RESULT: ${pass:-0} passed, ${fail:-0} failed (TERMINATED)"; exit 143' TERM
 
-cd "$W/tests/host" || exit 2
+cd "$W/tests/host" || refuse 2 "cannot cd to tests/host"
 pass=0; fail=0
 
 run_guard() {
@@ -127,7 +134,7 @@ SCPI_NEW="            pPowerData->autoPromotedThisVbusSession =
 echo "== setup: baseline must be clean or every result below is noise =="
 expect "baseline" CLEAN
 if [ "$fail" -ne 0 ]; then
-    echo "ABORT: baseline not clean; mutants meaningless."; exit 1
+    echo "ABORT: baseline not clean; mutants meaningless."; refuse 1 "baseline not clean"
 fi
 
 echo "== M1: restore the clear in the common DO_POWER_DOWN handler.           =="
