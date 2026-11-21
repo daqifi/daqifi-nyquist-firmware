@@ -34,7 +34,7 @@ prints every command the `run` target would execute with every variable, -I
 and -D already expanded BY MAKE, so nothing here parses Makefile text for flags
 (#1298 spent six rounds re-implementing make's expansion and lost to one more
 spelling each time). Each command that compiles a .c file is re-run as
-`gcc -MM -MG` with only its own -I/-D/-U/-iquote/-isystem/-include/-std flags,
+`gcc -M -MG` with only its own -I/-D/-U/-iquote/-isystem/-include/-std flags,
 and every firmware/src file the preprocessor reports is required in both
 filters too. That includes the headers of firmware .c files the Makefile
 compiles, and -D-conditional #includes under the flags the target really passes.
@@ -45,7 +45,7 @@ FAILS CLOSED, with exit 2 and a message, on: make exiting non-zero or timing
 out; zero compile commands found; a recipe line shlex cannot tokenise; a
 `cc`/`gcc` line that is neither a compile nor a preprocess-only (-E) run; a
 source that does not exist and is not the target of a `cp`; any source whose
--MM output is empty. There is no note-and-pass path.
+-M output is empty. There is no note-and-pass path.
 
 THE TRUE BOUNDARY. `make -n` prints commands; it does not run them. So a path
 the SHELL composes when the recipe runs is invisible here: a source named with a
@@ -82,7 +82,7 @@ def referenced(makefile_text):
 
 
 class CheckError(Exception):
-    """A condition under which the -MM pass cannot vouch for completeness."""
+    """A condition under which the -M pass cannot vouch for completeness."""
 
 
 _CMD_END = {";", ";;", "&&", "||", "|", "|&", "(", ")", "`", "&"}
@@ -176,9 +176,15 @@ def parse_compile(argv):
 
 def header_deps(base, make_output):
     """(firmware/src files reached, number of compile commands, shell-composed
-    sources skipped). -MM still prints its dependency list when a #error fires,
+    sources skipped). -M still prints its dependency list when a #error fires,
     so the exit status is NOT the success test; an EMPTY list for a source is,
-    and is fatal."""
+    and is fatal.
+
+    -M, NOT -MM: -MM omits every header found through a system directory, and
+    gcc classes a directory given with -isystem / -idirafter as one, so a
+    firmware header reached only through such a flag would be dropped while the
+    .c still appeared (the empty-list guard cannot see that). -M keeps them;
+    the firmware/src relpath filter below drops /usr/include and friends."""
     from concurrent.futures import ThreadPoolExecutor
     cmds = split_commands(make_output)
     copies = {}
@@ -209,7 +215,7 @@ def header_deps(base, make_output):
 
     def run(job):
         kept, src = job
-        cmd = ["gcc", "-MM", "-MG"] + list(kept)
+        cmd = ["gcc", "-M", "-MG"] + list(kept)
         stdin = None
         if os.path.isfile(os.path.join(base, src)):
             cmd.append(src)
@@ -223,7 +229,7 @@ def header_deps(base, make_output):
                            stderr=subprocess.DEVNULL)
         toks = r.stdout.decode("utf-8", "replace").replace("\\\n", " ").split()
         if not toks or not toks[0].endswith(":"):
-            raise CheckError("gcc -MM produced no dependency list for %s (%s)"
+            raise CheckError("gcc -M produced no dependency list (empty output or no `target:` token) for %s (%s)"
                              % (src, " ".join(kept)))
         return toks[1:]
 
@@ -342,6 +348,28 @@ def self_test():
         ck("WITHOUT -DFOO_1300 (the c4ed1fb9 pass) Cond1300.h is missed",
            "Cond1300.h" in r.stdout, False)
         ck("make reported 1 compile command, 0 skipped", (n, sk), (1, 0))
+    # -isystem / -idirafter: gcc classes these dirs as SYSTEM, so -MM drops the
+    # header; -M keeps it. One case per flag, each shown missed by -MM.
+    for flag in ("-isystem", "-idirafter"):
+        with tempfile.TemporaryDirectory() as td:
+            host = tree(td, "run:\n\t$(CC) %s ../../firmware/src/Util -o x test_x.c\n" % flag,
+                        {"test_x.c": '#include "Hidden1300.h"\nint main(void){return 0;}\n'})
+            got, _, _ = header_deps(host, run_make(host))
+            ck("%s: a firmware header reached only through it is harvested" % flag,
+               got, ["firmware/src/Util/Hidden1300.h"])
+            ck("%s: ...and reported uncovered when the filter lacks it" % flag,
+               uncovered(got, ["firmware/src/Util/Other.h"]), got)
+            r = subprocess.run(["gcc", "-MM", "-MG", flag, "../../firmware/src/Util",
+                                "test_x.c"], cwd=host, stdout=subprocess.PIPE,
+                               universal_newlines=True)
+            ck("%s: the old -MM pass MISSES it (why -M is used)" % flag,
+               "Hidden1300.h" in r.stdout, False)
+    # the empty-list guard: gcc yielding no list at all must still be fatal
+    with tempfile.TemporaryDirectory() as td:
+        host = tree(td, "run:\n\t$(CC) -std=bogus1300 -o x test_x.c\n",
+                    {"test_x.c": "int main(void){return 0;}\n"})
+        ck("gcc producing no dependency list -> CheckError",
+           fails(lambda: header_deps(host, run_make(host))), True)
     with tempfile.TemporaryDirectory() as td:
         host = tree(td, "run:\n\t@echo nothing\n", srcs)
         ck("a run target with no compile -> CheckError",
@@ -379,7 +407,7 @@ def main():
         print("ERROR: check_ci_path_filters cannot vouch for completeness "
               "(failing closed):\n%s" % e)
         return 2
-    print("  -MM pass: %d compile command(s), %d firmware/src header/source(s)"
+    print("  -M pass: %d compile command(s), %d firmware/src header/source(s)"
           " reached, %d shell-composed source(s) not preprocessed"
           % (ncompile, len(via_inc), skipped))
     paths = sorted(set(paths) | set(via_inc))
