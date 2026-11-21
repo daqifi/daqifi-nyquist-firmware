@@ -10188,14 +10188,12 @@ static scpi_result_t SCPI_DiagSpiBusStatsGet(scpi_t * context)
      * corruption #1262 traced to an SD card still driving MISO. */
     uint32_t rspErr = nm_spi_rsp_state_errors();
 
-    /* 248: the worst case is 241 characters plus the NUL (242),
-     * which 192 truncates. Field-by-field, with every counter at its
-     * 10-digit maximum -- RejStale 20, RejExclusive 24, RejLock 19,
-     * RejQueueFull 24, ExclusiveHeld 16, ExclusiveDepth 26,
-     * ExclusiveHolder 25, SdHoldsBus 13, SdBusRecoveries 27,
-     * SdBusHoldMaxMs 26, WincRspErr 21 (no trailing comma, it is now
-     * last). Recompute
-     * this if a field is added. Stays a stack local rather than the
+    /* 248: the worst case is 241 characters plus the NUL (242).
+     * Field-by-field, with every counter at its 10-digit maximum --
+     * RejStale 20, RejExclusive 24, RejLock 19, RejQueueFull 24,
+     * ExclusiveHeld 16, ExclusiveDepth 26, ExclusiveHolder 25,
+     * SdHoldsBus 13, SdBusRecoveries 27, SdBusHoldMaxMs 26, WincRspErr 21
+     * (no trailing comma, it is last). Recompute this if a field is added. Stays a stack local rather than the
      * shared response buffer because it is under the 256 B threshold
      * that rule applies to. */
     char out[248];
