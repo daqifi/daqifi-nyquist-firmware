@@ -401,6 +401,22 @@ static volatile uint32_t gDryTicks = 0;
  * flag would have silently removed (Qodo #746). */
 static volatile bool gPrimingPending = false;
 
+/* #1319: latched TRUE at Streaming_Start when at least one ENABLED USER channel
+ * takes its value from the shared MODULE7 scan (same count as gPrimingPending),
+ * and FALSE when the scan carries only OBDiag monitoring channels. Unlike
+ * gPrimingPending it is NOT cleared on the first scan: it answers "does a
+ * scan that fails to complete freeze USER data?" for the whole session.
+ *
+ * Gates only the STEADY stale counter (the one the session-end summary books
+ * as sample loss). The raw ScanStaleDropped still counts every tick whose scan
+ * did not complete, because that is a true statement about the scan. But in a
+ * T1-only OBDiag=1 session the user's channels are read directly via ARDY, so
+ * nothing the user streams is stale; booking those ticks as lost samples made
+ * the summary read 142% (E: 5xT1, benchmark 1, 30 kHz, ScanStaleDropped =
+ * TimerISRCalls - 1 with 51k samples streamed). Written by Streaming_Start
+ * while the timer is stopped; read by the timer ISR (byte, atomic). */
+static volatile bool gScanFeedsUser = false;
+
 /* #691: was SD logging expected when this session STARTED?
  *
  * The skipped-byte accounting below used to read the SD manager's LIVE mode.
@@ -1816,7 +1832,10 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
                 /* #1018: gate lives INSIDE the stale branch, not beside it —
                  * staleness is ~0 with the cap in place, so the extra tick
                  * read costs nothing on the normal (non-frozen) path. */
-                if (Streaming_PastStartupGraceFromISR()) {
+                /* #1319: ...and only when a USER channel rides the scan; a
+                 * monitoring-only scan (T1-only, OBDiag=1) freezes no streamed
+                 * sample, so it is not loss. Raw counter above is unchanged. */
+                if (gScanFeedsUser && Streaming_PastStartupGraceFromISR()) {
                     gScanStaleDroppedSteady++;
                 }
             }
@@ -2360,6 +2379,7 @@ static void Streaming_Start(void) {
                  * excluded, no registers written (pure count). */
                 gPrimingPending =
                         (MC12b_ComputeScanList(true, false, NULL, NULL) > 0u);
+                gScanFeedsUser = gPrimingPending;   /* #1319 */
                 /* #691: decide the SD expectation ONCE, here, from what this
                  * session actually asked for.
                  *
@@ -3048,6 +3068,16 @@ static void Streaming_EmitSessionSummaryImpl(bool recordDying) {
                                   snap.encoderDroppedSamplesSteady +
                                   snap.dioDroppedSamplesSteady +
                                   snap.scanStaleDroppedSteady;
+        /* #1319: the numerator and totalAttempted must count the same ticks.
+         * totalAttempted is streamed + queueDropped == TimerISRCalls, and a
+         * stale tick is one of THOSE ticks (it either streamed frozen data or
+         * was also queue-dropped), so stale can overlap queueDropped and the
+         * raw sum may exceed the ticks (E: 127444/89494 = 142%). Cap it: no
+         * session loses more than every tick it attempted. A cap rather than a
+         * subtraction because the overlap is not recorded. */
+        if (totalAttempted > 0 && totalSampleLoss > totalAttempted) {
+            totalSampleLoss = (uint32_t)totalAttempted;
+        }
         /* #1301: nothing attempted but stale ticks booked is total loss, not 0%. */
         uint32_t lossPercent = totalAttempted > 0
             ? (uint32_t)((totalSampleLoss * 100ULL) / totalAttempted)
@@ -3199,6 +3229,7 @@ void Streaming_Init(tStreamingConfig* pStreamingConfigInit,
     gClipLiveMask = 0;
     gDryTicks = 0;
     gPrimingPending = false;
+    gScanFeedsUser = false;  // #1319
     gScanEosSeq = 1u;       // #557/#563: prime seq one ahead of "seen" so the
     gScanEosSeqSeen = 0u;   // first post-start tick (no scan completed yet) reads fresh
     memset(gFlowWindow, 0, sizeof(gFlowWindow));
