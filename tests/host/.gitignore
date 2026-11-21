@@ -62,6 +62,7 @@ run_*
 !run_*.h
 !run_*.py
 run_904_tests
+run_995_tests
 
 # ⛔ #1201 and #1231 BOTH ADDED THIS PATTERN INDEPENDENTLY, which is the
 # strongest evidence it was needed: every gen_*.h had been listed here
