@@ -4846,9 +4846,9 @@ $(SEQ908_BIN): test_908_cal_source_seqlock.c test_framework.h $(SETTINGS_SRC) $(
 	       echo "       cannot interpret is something it knows nothing about."; \
 	       exit 1; }
 	@$(CC) -fpreprocessed -E -P -x c - < $(SCPIADC_SRC) > /tmp/.fw908_fp.$$$$ 2>/dev/null; \
-	 tot=`grep -cE 'daqifi_settings_(Clear|Mark)FactoryCalMissing\(' /tmp/.fw908_fp.$$$$`; \
+	 tot=`grep -cE 'daqifi_settings_((Clear|Mark)FactoryCalMissing|PublishFactoryCal)\(' /tmp/.fw908_fp.$$$$`; \
 	 inref=`sed -n '/^static void RefreshFactoryCalPresence/,/^}/p' /tmp/.fw908_fp.$$$$ \
-	        | grep -cE 'daqifi_settings_(Clear|Mark)FactoryCalMissing\('`; \
+	        | grep -cE 'daqifi_settings_((Clear|Mark)FactoryCalMissing|PublishFactoryCal)\('`; \
 	 val=`sed -n '/^static void RefreshFactoryCalPresence/,/^}/p' /tmp/.fw908_fp.$$$$ \
 	      | grep -c 'daqifi_settings_ValidateADCCalBank('`; \
 	 sav=`sed -n '/^static scpi_result_t CalSaveCommon/,/^}/p' /tmp/.fw908_fp.$$$$ \
@@ -4856,15 +4856,15 @@ $(SEQ908_BIN): test_908_cal_source_seqlock.c test_framework.h $(SETTINGS_SRC) $(
 	 lod=`sed -n '/^static scpi_result_t CalLoadCommon/,/^}/p' /tmp/.fw908_fp.$$$$ \
 	      | grep -c 'RefreshFactoryCalPresence()'`; \
 	 rm -f /tmp/.fw908_fp.$$$$; \
-	 test "$$tot" = "2" && test "$$inref" = "2" && test "$$val" = "1" \
+	 test "$$tot" = "1" && test "$$inref" = "1" && test "$$val" = "1" \
 	   && test "$$sav" = "1" && test "$$lod" = "1" \
 	  || { echo "ERROR: factory_present is no longer derived from the PAGE by a"; \
 	       echo "       single writer in $(SCPIADC_SRC)."; \
-	       echo "       (Clear/Mark calls: $$tot in the file, $$inref inside"; \
+	       echo "       (presence writers: $$tot in the file, $$inref inside"; \
 	       echo "        RefreshFactoryCalPresence; ValidateADCCalBank in it:"; \
 	       echo "        $$val; RefreshFactoryCalPresence calls -- save: $$sav"; \
-	       echo "        load: $$lod. Want 2 / 2 / 1 / 1 / 1.)"; \
-	       echo "       ⛔ EQUAL COUNTS ARE THE POINT: every Clear/Mark in the"; \
+	       echo "        load: $$lod. Want 1 / 1 / 1 / 1 / 1.)"; \
+	       echo "       ⛔ EQUAL COUNTS ARE THE POINT: every presence writer in the"; \
 	       echo "       file must be INSIDE the one helper. factory_present is a"; \
 	       echo "       claim about what is ON THE PAGE, and any other call site"; \
 	       echo "       would be deriving it from something else -- which is the"; \

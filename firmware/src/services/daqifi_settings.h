@@ -509,6 +509,23 @@ extern "C" {
     /** #1185: the state recorded by the last probe (UNKNOWN before any). */
     DaqifiFactorySlotState daqifi_settings_GetFactoryCalSlot(void);
 
+    /** #1185 r1: classify the factory page WITHOUT publishing the result. */
+    DaqifiFactorySlotState daqifi_settings_ClassifyFactoryCalSlot(void);
+
+    /**
+     * #1185 r1: publish factory_present (inverted: `missing`) and
+     * factory_slot together, in ONE store, so no reader sees one updated
+     * and the other not.
+     */
+    void daqifi_settings_PublishFactoryCal(bool missing,
+                                           DaqifiFactorySlotState slot);
+
+    /**
+     * #1185 r1: read both from ONE load. Returns the slot state and, if
+     * `missing` is non-NULL, stores the missing flag consistent with it.
+     */
+    DaqifiFactorySlotState daqifi_settings_GetFactoryCal(bool* missing);
+
     /**
      * #908 (Qodo item 3): which calibration bank the live coefficients were
      * last successfully loaded from.

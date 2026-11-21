@@ -9669,7 +9669,11 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
      * source then names the bank the overlay was applied on top of, which is
      * the closest true statement a single key can make about provenance.
      * The second closing brace closes identity{}. */
-    const bool factoryCalMissing = daqifi_settings_FactoryCalIsMissing();
+    /* #1185 r1: factory_present and factory_slot from ONE load, so the pair
+     * is one the device actually had. */
+    bool factoryCalMissing = false;
+    const DaqifiFactorySlotState factorySlotState =
+        daqifi_settings_GetFactoryCal(&factoryCalMissing);
     /* ONE coherent read, not two. Pairing CalIsIdentity() with
      * GetActiveCalBank() here let a higher-priority LOADcal/LOADFcal land
      * between them and produce a source the device never had -- codex-r6
@@ -9707,7 +9711,7 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
      * never "blank", for the same reason as calSource above. Appended after
      * factory_present so existing parsers are unaffected. */
     const char * factorySlot;
-    switch (daqifi_settings_GetFactoryCalSlot()) {
+    switch (factorySlotState) {
         case DAQIFI_FACTORY_SLOT_BLANK:   factorySlot = "blank";   break;
         case DAQIFI_FACTORY_SLOT_VALID:   factorySlot = "valid";   break;
         case DAQIFI_FACTORY_SLOT_INVALID: factorySlot = "invalid"; break;
