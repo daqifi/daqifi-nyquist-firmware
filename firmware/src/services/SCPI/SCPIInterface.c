@@ -8813,6 +8813,13 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
     }
     // All allocations succeeded — now apply every buffer pointer together
     // (circular pool + coherent DMA) so the config is all-or-nothing.
+    //
+    // #1223: the WiFi ring's queued output (this command's own echo, when it
+    // came in over TCP) is staged out of the pool BEFORE the USB swap, which
+    // can hand USB the bytes it sits in, and the WiFi write lock stays held
+    // until the WiFi swap re-queues it. No return may come between the two.
+    // No abort path needs undoing: every one is above, before anything moved.
+    wifi_tcp_server_BeginWriteBufferSwap();
     UsbCdc_SetWriteBuffer(usbBuf, usbLen);
     wifi_tcp_server_SetWriteBuffer(wifiBuf, wifiLen);
     Streaming_SetEncoderBuffer(encBuf, encLen);

@@ -709,8 +709,83 @@ bool wifi_tcp_server_ResizeWriteBuffer(uint32_t newSize) {
     return true;
 }
 
-void wifi_tcp_server_SetWriteBuffer(uint8_t* buf, uint32_t size) {
-    if (gpServerData == NULL || buf == NULL || size == 0) return;
+/* #1223: re-pointing the TX ring at a new pool slice must not discard what it
+ * still holds.  It used to: the swap reset insert/remove and zeroed the
+ * counters, so a reply, prompt or pushed `**ERROR` line queued on this
+ * transport -- most visibly the echo of the very SYSTem:STReam:THRoughput /
+ * WIFI:FINd? that asked for the swap -- never reached the client, and nothing
+ * counted it.
+ *
+ * The swap is TWO calls with wMutex held between them, because the queued
+ * bytes can only be read while the OLD slice is still intact:
+ *
+ *   * StreamingBufferPool_Partition only rewrites the pool's offsets
+ *     (StreamingBufferPool.c), so until a subsystem is pointed at its new slice
+ *     every user still writes inside its old, mutually disjoint, one.
+ *   * The FIRST pointer PrepareStreamingBuffers installs is USB's.  A larger
+ *     USB slice overlaps the start of the old WiFi slice, so once USB writes
+ *     there the old WiFi bytes are gone -- and until USB is moved, a WiFi
+ *     slice that now starts lower overlaps the region USB is still writing.
+ *
+ * So BeginWriteBufferSwap runs before the USB swap: it takes wMutex and moves
+ * the queued bytes out of the pool into client.writeBuffer.  SetWriteBuffer
+ * runs after it: it installs the new slice, re-queues those bytes ahead of
+ * anything written later, and only then releases wMutex.  Every wCirbuf
+ * producer and consumer takes wMutex, so none can touch the ring in between.
+ *
+ * client.writeBuffer is free to borrow while wMutex is held: its only reader
+ * and writer is CircularBufferToTcpWrite -> TcpServerFlush, which runs only as
+ * the ring's process callback inside TransmitBufferedData's wMutex region, and
+ * it refills the buffer from the ring on every call, so nothing in it survives
+ * between calls.  send() does not keep the pointer -- hif_send copies the
+ * payload to the WINC before returning (m2m_hif.c, nm_write_block).  It also
+ * lives in gTcpServerContext, not in the pool, so no slice can overlap it.
+ *
+ * It holds WIFI_WBUFFER_SIZE bytes.  With more queued than that, the oldest
+ * WIFI_WBUFFER_SIZE are kept and the rest dropped, as is anything a smaller
+ * new ring cannot take; either way the count goes to LOG_E, never silently.
+ *
+ * Accessed only by the wMutex holder. */
+static uint32_t gSwapStagedLen = 0;      /* bytes parked in client.writeBuffer */
+static uint32_t gSwapDroppedBytes = 0;   /* queued bytes that did not fit it */
+static uint32_t gSwapConnGeneration = 0; /* connection the staged bytes belong to */
+
+/* Moves every queued byte of `ring` into `stage` (oldest first, at most `cap`)
+ * and leaves the ring empty.  Returns the count staged; `*dropped` receives the
+ * count that did not fit.  Pure: the caller provides the exclusion. */
+static uint32_t TxSwap_Stage(CircularBuf_t* ring, uint8_t* stage, uint32_t cap,
+                             uint32_t* dropped) {
+    int err = 0;
+    uint32_t pending = CircularBuf_NumBytesAvailable(ring);
+    /* Copy mode stitches a wrapped ring into one linear run. */
+    uint32_t staged = CircularBuf_ProcessBytes(ring, stage, cap, &err);
+    *dropped = pending - staged;
+    CircularBuf_Reset(ring);
+    return staged;
+}
+
+/* Points `ring` at (buf, size), empty, then re-queues `staged` bytes of
+ * `stage`.  Returns the count a smaller ring could not take.  The callback and
+ * every other field are left as they are, as the swap always did.  Pure: the
+ * caller provides the exclusion. */
+static uint32_t TxSwap_Install(CircularBuf_t* ring, uint8_t* buf, uint32_t size,
+                               uint8_t* stage, uint32_t staged) {
+    ring->buf_ptr = buf;
+    ring->buf_size = size;
+    ring->insertPtr = buf;
+    ring->removePtr = buf;
+    ring->producedBytes = 0;
+    ring->consumedBytes = 0;
+    ring->_ownsMemory = false;
+    uint32_t fit = (staged < size) ? staged : size;
+    if (fit > 0) {
+        (void)CircularBuf_AddBytes(ring, stage, fit);
+    }
+    return staged - fit;
+}
+
+void wifi_tcp_server_BeginWriteBufferSwap(void) {
+    if (gpServerData == NULL || gpServerData->client.wMutex == NULL) return;
 
     // Wait for any in-flight TCP sends to drain before swapping buffers
     TickType_t start = xTaskGetTickCount();
@@ -723,20 +798,60 @@ void wifi_tcp_server_SetWriteBuffer(uint8_t* buf, uint32_t size) {
     }
 
     xSemaphoreTake(gpServerData->client.wMutex, portMAX_DELAY);
-    // Buffer swap completely replaces wCirbuf state below — any pending
-    // deferred reset is implicitly satisfied.  Clear the flag.
-    gpServerData->client.pendingBufferReset = false;
+    /* A close that could not take wMutex left its reset to us (#437).  Apply
+     * it rather than clearing the flag: those bytes belong to a connection
+     * that is gone, and the reset also zeroes tcpInFlight and the in-flight
+     * ring, which merely clearing the flag -- as the swap used to -- did not. */
+    DrainPendingBufferReset();
+    gSwapConnGeneration = gpServerData->client.connGeneration;
+    gSwapStagedLen = TxSwap_Stage(&gpServerData->client.wCirbuf,
+                                  gpServerData->client.writeBuffer,
+                                  WIFI_WBUFFER_SIZE, &gSwapDroppedBytes);
+    gpServerData->client.writeBufferLength = 0;
+    /* wMutex stays HELD: wifi_tcp_server_SetWriteBuffer releases it. */
+}
+
+void wifi_tcp_server_SetWriteBuffer(uint8_t* buf, uint32_t size) {
+    if (gpServerData == NULL || gpServerData->client.wMutex == NULL) return;
+
+    /* Reliable for "does the CALLING task hold it" (FreeRTOS API reference
+     * for xSemaphoreGetMutexHolder), which is the only question asked. */
+    bool begun = (xSemaphoreGetMutexHolder(gpServerData->client.wMutex) ==
+                  xTaskGetCurrentTaskHandle());
+    if (buf == NULL || size == 0) {
+        if (!begun) return;
+        /* Begun but nothing valid to install: keep the current slice, still
+         * re-queue what was staged, and release wMutex. */
+        buf = gpServerData->client.wCirbuf.buf_ptr;
+        size = gpServerData->client.wCirbuf.buf_size;
+    } else if (!begun) {
+        wifi_tcp_server_BeginWriteBufferSwap();
+    }
+
+    /* A close during the swap could not take wMutex and deferred its reset;
+     * a new connection bumps the generation.  Either way the staged bytes have
+     * no recipient any more, so they are discarded, not lost. */
+    bool connGone = gpServerData->client.pendingBufferReset ||
+                    gpServerData->client.connGeneration != gSwapConnGeneration ||
+                    gpServerData->client.clientSocket < 0;
+    uint32_t staged = connGone ? 0u : gSwapStagedLen;
 
     uint32_t oldSize = gpServerData->client.wCirbuf.buf_size;
-    gpServerData->client.wCirbuf.buf_ptr = buf;
-    gpServerData->client.wCirbuf.buf_size = size;
-    gpServerData->client.wCirbuf.insertPtr = buf;
-    gpServerData->client.wCirbuf.removePtr = buf;
-    gpServerData->client.wCirbuf.producedBytes = 0;
-    gpServerData->client.wCirbuf.consumedBytes = 0;
-    gpServerData->client.wCirbuf._ownsMemory = false;
+    uint32_t notRequeued = TxSwap_Install(&gpServerData->client.wCirbuf, buf, size,
+                                          gpServerData->client.writeBuffer, staged);
+    DrainPendingBufferReset();
+    uint32_t dropped = connGone ? 0u : (gSwapDroppedBytes + notRequeued);
+    uint32_t kept = staged - notRequeued;
+    gSwapStagedLen = 0;
+    gSwapDroppedBytes = 0;
+    gpServerData->client.writeBufferLength = 0;
 
     xSemaphoreGive(gpServerData->client.wMutex);
 
-    LOG_I("WiFi circular buffer: %u -> %u bytes", (unsigned)oldSize, (unsigned)size);
+    if (dropped > 0) {
+        LOG_E("WiFi buffer swap: dropped %u of %u queued TCP bytes (#1223)",
+              (unsigned)dropped, (unsigned)(dropped + kept));
+    }
+    LOG_I("WiFi circular buffer: %u -> %u bytes, %u queued kept",
+          (unsigned)oldSize, (unsigned)size, (unsigned)kept);
 }
