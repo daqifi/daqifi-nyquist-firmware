@@ -79,7 +79,7 @@ jobs:
           echo ""
           echo "If existing findings were resolved (lines starting with '-'):"
           echo "  - Regenerate the baseline:"
-          echo "      bash tools/lint/cppcheck.sh"
+          echo "      bash tools/lint/cppcheck.sh --write-baseline"
           echo "    and commit the updated tools/lint/cppcheck-baseline.txt"
           echo ""
           exit 1

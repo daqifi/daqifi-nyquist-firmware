@@ -65,10 +65,12 @@ third-party (`third_party/`, `libraries/`, `config/`). The committed
 baseline `tools/lint/cppcheck-baseline.txt` is the accepted finding
 set; suppressions live in `tools/lint/cppcheck-suppress.txt`.
 
-Run locally:
+Run locally (the default CHECKS: diffs against the baseline, exits 1 on
+any difference, writes nothing — #1169):
 
 ```bash
-bash tools/lint/cppcheck.sh
+bash tools/lint/cppcheck.sh                   # check
+bash tools/lint/cppcheck.sh --write-baseline  # regenerate; refuses on any new finding
 ```
 
 CI gate: `.github/workflows/cppcheck.yml` runs on every PR push that
@@ -83,7 +85,7 @@ When the gate fails:
   it's a false positive, add a suppression to
   `tools/lint/cppcheck-suppress.txt` and regenerate the baseline.
 - Removed findings (`-` lines) → someone fixed an existing finding;
-  regenerate the baseline (`bash tools/lint/cppcheck.sh`) and commit
+  regenerate the baseline (`bash tools/lint/cppcheck.sh --write-baseline`) and commit
   the updated `cppcheck-baseline.txt`.
 
 The current baseline is **empty** — `tools/lint/cppcheck-baseline.txt`
