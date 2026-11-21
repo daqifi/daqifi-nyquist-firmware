@@ -135,6 +135,51 @@ becomes an edge, and an indirection this file cannot resolve is REFUSED
 (reported, gate fails) rather than assumed harmless. A refusal costs a human
 five minutes; a silent miss is the defect shipping.
 
+## Round 4: accept what is understood, refuse the rest
+
+Rounds 2 and 3 each added matchers for the shapes an audit had reproduced,
+and each next audit found more (r2: 4, r3: 9 in 5 classes). So the rule is
+inverted. Inside the examined closure a call is accepted only as one of the
+forms this file positively understands -- a NAMED callee that resolves (into
+our sources or libscpi's), a sink, a word on `_NOT_CALLEES`, a cast, a local
+or parameter pointer whose every value is named, a declared sourceless
+callee -- and the remaining forms are refused by CLASS, not by shape:
+
+* **Macro uses.** Every macro a function body NAMES is followed, called or
+  not: `AUDIT_ACK;` and `REPLY;` (a `do {} while (0)` body) expand in place
+  exactly like `REPLY(...)`. A macro naming a macro is followed again, so
+  the chain is transitive. A macro inherits its user's context names, since
+  it expands in the user's scope.
+* **Computed callees.** A callee that is not a plain name -- `hooks[0](...)`,
+  `hooks[i](...)`, `get()(...)`, `(a ? f : g)(...)` -- is REFUSED, with or
+  without a context argument (a global context needs none). The real tree
+  has none.
+* **Members.** A member call is followed through every function assigned to
+  that member, and is resolved only when EVERY value it can hold is named:
+  each store and designated initialiser names a function, NULL, a constant
+  or another complete member; its address is never taken; a struct or union
+  declaring it is in the scan set; and no POSITIONAL initialiser (or compound
+  literal) of such a type, or of one embedding it, names anything. Otherwise
+  it is an indirection, declared or refused as before.
+* **Aliases.** An lvalue assigned or initialised from the context itself (a
+  name, or a member/element chain ending in one, under casts, `&`, `*` and
+  `?:`) carries it, to a flow-insensitive fixed point, so `c2 = c1; c1 =
+  context; fp(c2);` is refused like `fp(context)`.
+
+Measured on the real tree at 74131e64 + E, the inversion adds ZERO
+refusals and the same 15 allowlisted writers remain. Its first draft added
+23 (20 from treating DATA read through a context, `n = context->idx`, as an
+alias; 2 from reading `&&` as address-of; 1 from a same-named `bool active`
+being assigned `false`); each was a defect of the draft, not of the tree,
+and was narrowed in a way that cannot hide a function value.
+
+What it still does NOT claim (each is a stated residual, not a silent one):
+a function that RETURNS its context argument is not an alias; a struct
+reached through its own address (`memcpy(&s, buf, n)`, a union) is not
+treated as a store to its members; and a call through a named but
+unresolved pointer that receives NO context is not refused (round 3's scope,
+unchanged -- computed callees are the exception above).
+
 ## Why a definition the grammar misreads is refused
 
 `cdef.compiler_view` raises `UnreadDefinition` when a body at file scope is
@@ -369,6 +414,197 @@ def _mentions(text, names):
     return any(w in names for w in _IDENT.findall(text))
 
 
+# ---------------------------------------------------------------------------
+# Round 4: the INVERSION's text primitives.
+#
+# Rounds 2 and 3 each refused the call SHAPES an audit had reproduced, and
+# each following audit found more (r2: 4, r3: 9 in 5 classes). So round 4
+# stops enumerating shapes that are bad and enumerates the forms that are
+# understood; every other form that can carry a context is refused. These
+# helpers are what lets a body be read as a list of forms at all.
+# ---------------------------------------------------------------------------
+def _match_open(text, close):
+    """Index of the bracket opening the one at `close` (or -1)."""
+    depth, i = 0, close
+    while i >= 0:
+        if text[i] in ")]}":
+            depth += 1
+        elif text[i] in "([{":
+            depth -= 1
+            if depth == 0:
+                return i
+        i -= 1
+    return -1
+
+
+def _expr_end(text, i):
+    """End of the expression starting at `i`: the first top-level `,` or
+    `;`, or an unbalanced closing bracket."""
+    depth = 0
+    while i < len(text):
+        c = text[i]
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            if depth == 0:
+                return i
+            depth -= 1
+        elif c in ",;" and depth == 0:
+            return i
+        i += 1
+    return i
+
+
+def _postfix_start(text, p):
+    """Start of the postfix expression that ENDS at `p` -- `tbl[i].fn`,
+    `get()`, `a->b[2]` -- walked back over brackets, names, `.` and `->`."""
+    start = p + 1
+    while p >= 0:
+        c = text[p]
+        if c in ")]":
+            o = _match_open(text, p)
+            if o < 0:
+                break
+            start, p = o, _prev_index(text, o)
+            continue
+        if c.isalnum() or c in "_$":
+            s = p
+            while s >= 0 and (text[s].isalnum() or text[s] in "_$"):
+                s -= 1
+            start, p = s + 1, _prev_index(text, s + 1)
+            if p >= 0 and text[p] == ".":
+                p = _prev_index(text, p)
+                continue
+            if p >= 1 and text[p] == ">" and text[p - 1] == "-":
+                p = _prev_index(text, p - 1)
+                continue
+            break
+        break
+    return start
+
+
+def _lvalue_base(text, eq):
+    """The base name of the lvalue left of the `=` at `eq`: `alias` in
+    `void *alias =`, `s` in `s.ctx[2] =`, `p` in `*p =`. None for a
+    parenthesised declarator (`void (*fp)(...) =`), which declares a
+    function pointer, not a context."""
+    p = _prev_index(text, eq)
+    base = None
+    while p >= 0:
+        c = text[p]
+        if c == "]":
+            o = _match_open(text, p)
+            if o < 0:
+                return base
+            p = _prev_index(text, o)
+            continue
+        if c.isalnum() or c in "_$":
+            s = p
+            while s >= 0 and (text[s].isalnum() or text[s] in "_$"):
+                s -= 1
+            base = text[s + 1:p + 1]
+            p = _prev_index(text, s + 1)
+            if p >= 0 and text[p] == ".":
+                p = _prev_index(text, p)
+                continue
+            if p >= 1 and text[p] == ">" and text[p - 1] == "-":
+                p = _prev_index(text, p - 1)
+                continue
+            return base
+        return base
+    return base
+
+
+_ASSIGN_OP = re.compile(r"(?<![=!<>+\-*/%&|^])=(?!=)")
+
+
+def _assignments(body):
+    """[(lvalue base, right-hand side)] for every plain `=` in `body` --
+    assignments, declarations' initialisers, designated initialisers."""
+    out = []
+    for m in _ASSIGN_OP.finditer(body):
+        base = _lvalue_base(body, m.start())
+        if base:
+            out.append((base, body[m.end():_expr_end(body, m.end())]))
+    return out
+
+
+_DECL_INTRO = frozenset(("struct", "union", "enum"))
+
+
+def _is_type_expr(inner, is_type):
+    """True when a parenthesised group is a TYPE -- `(uint8_t)`, `(const
+    char *)`, `(void (*)(scpi_t *))`, `(struct foo *)` -- i.e. a cast."""
+    if re.search(r"[^\w\s*()\[\],]", inner):
+        return False
+    # `(NAME *)` cannot be an expression (`a *` has no right operand), so it
+    # is a cast even when NAME is a type from a directory this graph does
+    # not index (`config/`'s Harmony typedefs).
+    if re.match(r"\s*(?:(?:const|volatile|struct|union|enum)\s+)*"
+                r"[A-Za-z_]\w*(?:\s*\*|\s+const\b|\s+volatile\b)*\s*\*\s*\Z",
+                inner):
+        return True
+    words = _IDENT.findall(inner)
+    if not words:
+        return False
+    for k, w in enumerate(words):
+        if not (w in _C_TYPE_WORDS or is_type(w)
+                or (k and words[k - 1] in _DECL_INTRO)):
+            return False
+    return True
+
+
+def _computed_calls(body, is_type):
+    """[(callee start, callee text, [arg text])] for every call whose
+    callee is NOT a plain name (round 4): `hooks[0](ctx)`, `hooks[i](ctx)`,
+    `get()(ctx)`, `(a ? f : g)(ctx)`, `((cb_t)fp)(ctx)`.
+
+    A `(` after `]` is always a call. A `(` after `)` is a call unless the
+    group before it is a cast (`(uint8_t)(x)`), a statement's condition
+    (`if (a) (void)x`), an operator's operand (`sizeof (x)`), or a
+    declarator (`void (*fp)(scpi_t *)`). `(f)(x)` and `(*f)(x)` never get
+    here: `normalise_callees` has already made them `f(x)`.
+    """
+    out = []
+    i = body.find("(")
+    while i >= 0:
+        p = _prev_index(body, i)
+        computed = False
+        if p >= 0 and body[p] == "]":
+            computed = True
+        elif p >= 0 and body[p] == ")":
+            o = _match_open(body, p)
+            if o >= 0:
+                inner = body[o + 1:p]
+                if _starts_expression(body, o):
+                    computed = not _is_type_expr(inner, is_type)
+                else:
+                    q = _prev_index(body, o)
+                    if q >= 0 and body[q] == ")" and _is_type_expr(
+                            body[_match_open(body, q) + 1:q], is_type):
+                        # `(void)(T *)(x)`: after a cast, a group is an
+                        # operand -- a cast again, or a computed callee.
+                        computed = not _is_type_expr(inner, is_type)
+                    elif q >= 0 and body[q] in ")]":
+                        computed = True          # `f()()`, `a[0]()()`
+                    elif q >= 0 and (body[q].isalnum() or body[q] in "_$"):
+                        w = _word_ending(body, q)
+                        k = _prev_index(body, q - len(w) + 1)
+                        before = _word_ending(body, k) if k >= 0 else ""
+                        computed = not (
+                            w in _COND_KEYWORDS or w in _NOT_CALLEES
+                            or w in _C_TYPE_WORDS or is_type(w)
+                            or before in _DECL_INTRO)
+        if computed:
+            close = _match_paren(body, i)
+            inner = body[i + 1:close]
+            start = _postfix_start(body, p)
+            out.append((start, body[start:p + 1],
+                        _split_top_level(inner) if inner.strip() else []))
+        i = body.find("(", i + 1)
+    return out
+
+
 # A parenthesised callee: `(f)`, `(*f)`, `(s->cb)`, the inner layer of `((f))`.
 _PAREN_NAME = re.compile(
     r"\(\s*\**\s*([A-Za-z_]\w*(?:\s*(?:->|\.)\s*[A-Za-z_]\w*)*)\s*\)")
@@ -546,6 +782,53 @@ def _is_libscpi(relpath):
     return relpath.startswith(_LIBSCPI)
 
 
+def _pick(cands, from_file):
+    """`Graph.resolve_all`'s layer rule over a candidate list."""
+    local = [n for n in cands if n[0] == from_file]
+    if local:
+        return local
+    if _is_libscpi(from_file):
+        return [n for n in cands if _is_libscpi(n[0])]
+    ours = [n for n in cands if not _is_libscpi(n[0])]
+    return ours if ours else cands       # [] = no source anywhere
+
+
+_INIT_NEUTRAL = frozenset(("NULL", "true", "false", "TRUE", "FALSE"))
+# A numeric literal, or a string/char literal (blanked to quotes and spaces in
+# the compiler view): never a function.
+_CONSTANT = re.compile(r"\A(?:[-+~]?\s*(?:0[xX][0-9a-fA-F]+|\d[\w.]*)"
+                       r"|[\"'][\s\"']*)\Z")
+
+
+def _positional(text, open_brace, is_type):
+    """True when the brace initialiser at `open_brace` has a POSITIONAL
+    element that could be a function -- one naming anything other than
+    NULL or a type. `{0}`, `{ NULL }` and `{ .run = X }` are not; `{ Writer
+    }`, `{ { Writer } }`, `{ [0] = Writer }` and `{ .h = { Writer } }` are.
+    A member-designated value is checked by the member-store rule; nested
+    braces are checked here, recursively."""
+    close = _match_paren(text, open_brace)
+    for el in _split_top_level(text[open_brace + 1:close]):
+        s = el.strip()
+        if not s:
+            continue
+        d = re.match(r"(?:\s*(?:\.\s*[A-Za-z_]\w*|\[[^\]]*\]))+\s*=(?!=)", s)
+        if d:
+            member_designated = "." in re.sub(r"\[[^\]]*\]", "", s[:d.end()])
+            s = s[d.end():].strip()
+            if member_designated and not s.startswith("{"):
+                continue
+        if s.startswith("{"):
+            if _positional(s, 0, is_type):
+                return True
+            continue
+        words = [w for w in _IDENT.findall(s) if not (
+            w in _INIT_NEUTRAL or w in _C_TYPE_WORDS or is_type(w))]
+        if words:
+            return True
+    return False
+
+
 class Graph(object):
     """Function and macro bodies, call edges and sink ownership."""
 
@@ -604,7 +887,11 @@ class Graph(object):
     def _add(self, relpath, name, body, start, params, ctx):
         node = (relpath, name)
         # A name defined twice in one file (an #if/#else pair) keeps BOTH
-        # bodies, so neither is silently dropped.
+        # bodies, so neither is silently dropped. They are joined by a `;`
+        # (r4): run together, `isfinite(n)` + `((n) == (n))` read as one
+        # call through `isfinite(n)`, and `foo` + `(x)` as a call of foo.
+        if node in self.bodies:
+            body, start = ";" + body, start - 1
         self.bodies[node] = self.bodies.get(node, "") + body
         self.segments.setdefault(node, []).append((relpath, start, len(body)))
         if node not in self.params or len(params) > len(self.params[node]):
@@ -642,20 +929,37 @@ class Graph(object):
         (it does not call our code by name); our calls prefer our own
         definition and fall back to libscpi's.
         """
-        cands = self.by_name.get(name, [])
-        local = [n for n in cands if n[0] == from_file]
-        if local:
-            return local
-        if _is_libscpi(from_file):
-            return [n for n in cands if _is_libscpi(n[0])]
-        ours = [n for n in cands if not _is_libscpi(n[0])]
-        return ours if ours else cands       # [] = no source anywhere
+        return _pick(self.by_name.get(name, []), from_file)
+
+    def resolve_macros(self, name, from_file):
+        """The MACRO definitions a use of `name` from `from_file` expands."""
+        return _pick([n for n in self.by_name.get(name, [])
+                      if n in self.macros], from_file)
+
+    def macro_uses(self, node):
+        """Macros `node` names, called or NOT (round 4).
+
+        `AUDIT_ACK;` and `REPLY;` expand in place exactly like `REPLY(...)`
+        does, but no `(` follows them, so the call rule never saw them and a
+        writing object-like macro was a silent leaf in a function body
+        (audit r3, findings 0 and 5). Following them is the one case where
+        following beats refusing: the body is right here, and a macro that
+        names another macro is followed again, transitively, by the
+        macro-body rule in `edges`."""
+        relpath, fn = node
+        out = set()
+        for word in set(_IDENT.findall(self.bodies.get(node, ""))):
+            if word != fn:
+                out.update(self.resolve_macros(word, relpath))
+        out.discard(node)
+        return out
 
     def edges(self, node):
         """Callees of `node`: direct calls, function-pointer arguments, calls
         through a member whose assignments we could find, the targets of a
-        local function pointer, and -- in a macro -- any function it names.
-        Declared cuts (`set_cuts`) are not followed."""
+        local function pointer, every macro it names (round 4), and -- in a
+        macro -- any function it names. Declared cuts (`set_cuts`) are not
+        followed."""
         if node in self._edges:
             return self._edges[node]
         body = self.bodies.get(node, "")
@@ -669,6 +973,7 @@ class Graph(object):
         for m in _MEMBER_CALL.finditer(body):
             if (relpath, fn, m.group(1)) not in self.cuts:
                 out.update(self.by_member.get(m.group(1), ()))
+        out.update(self.macro_uses(node))
         if node in self.macros:
             for word in _IDENT.findall(body):
                 if word in self.by_name and word != fn:
@@ -683,13 +988,174 @@ class Graph(object):
         return out
 
     def unresolved_members(self, node):
-        """Member calls in `node` that no assignment explains."""
+        """Member calls in `node` whose every value is not accounted for
+        (`member_why`)."""
         out = set()
         for m in _MEMBER_CALL.finditer(self.bodies.get(node, "")):
             member = m.group(1)
-            if member != "write" and member not in self.by_member:
+            if member != "write" and self.member_why(member):
                 out.add(member)
         return out
+
+    # -- member completeness (round 4) --------------------------------------
+    def _texts(self):
+        """(relpath, text) for every file view and every macro body: where a
+        member can be assigned or a struct initialised."""
+        for relpath, code in self.file_code.items():
+            yield relpath, code
+        for node in self.macros:
+            yield node[0], self.bodies.get(node, "")
+
+    def member_why(self, member, _seen=None):
+        """None when EVERY value member `member` can hold is a function this
+        graph names; otherwise why not (round 4).
+
+        Round 3 counted a member resolved once ANY assignment to its name
+        was found, so `{ .run = Quiet }` in one place certified
+        `loud.run(context)` where `loud = { Writer }` (audit r3, findings 2
+        and 7). Now each of these makes it incomplete:
+
+        * an assignment or designated initialiser whose value is not NULL, 0,
+          a sink, a known function, or another member that is itself
+          complete (`.active = ctx.nextState`);
+        * the member's ADDRESS taken (`&s.run`), since a store through it is
+          invisible;
+        * no struct or union in the scan set declaring it -- then its
+          initialisers cannot be found;
+        * a POSITIONAL initialiser (`{ Writer }`, brace-elided or nested) of
+          any type that declares it or embeds one that does, or a compound
+          literal of one.
+        """
+        cache = self.__dict__.setdefault("_member_cache", {})
+        if member in cache:
+            return cache[member]
+        seen = set(_seen or ())
+        if member in seen:
+            return None                  # a cycle adds no new value
+        seen.add(member)
+        why = self._member_why(member, seen)
+        if _seen is None:
+            cache[member] = why
+        return why
+
+    def _member_why(self, member, seen):
+        esc = re.escape(member)
+        store = re.compile(r"(?:->|\.)\s*" + esc + r"\s*=(?!=)")
+        addr = re.compile(r"(?<!&)&(?!&)[^;,(){}=&|]*?(?:->|\.)\s*" + esc
+                          + r"\b(?!\s*\()")
+        for relpath, text in self._texts():
+            for m in store.finditer(text):
+                rhs = text[m.end():_expr_end(text, m.end())]
+                arms = _split_top_level(rhs, "?:")
+                for arm in (arms[1:] if len(arms) > 1 else arms):
+                    c = _clean_arg(arm)
+                    # A constant cannot be a function, so it adds no target
+                    # (only 0 converts to a pointer, but any constant of a
+                    # SAME-NAMED data member elsewhere is equally inert).
+                    if c in _INIT_NEUTRAL or _CONSTANT.match(c) \
+                            or _SINK_NAME.match(c) or c in self.by_name:
+                        continue
+                    via = re.search(r"(?:->|\.)\s*([A-Za-z_]\w*)\Z", c)
+                    if via and not self.member_why(via.group(1), seen):
+                        continue
+                    return ("%s assigns it %r, which is not a function this "
+                            "checker can name" % (relpath, c.strip()))
+            if addr.search(text):
+                return "%s takes its address" % relpath
+        types = self._types_declaring(member)
+        if not types:
+            return "no struct or union in the scan set declares it"
+        hit = self._positional_init(types)
+        if hit:
+            return hit
+        return None
+
+    def _struct_bodies(self):
+        """[(relpath, names, body)] for every struct/union definition: its
+        tag and every typedef name for it."""
+        if hasattr(self, "_structs"):
+            return self._structs
+        out = []
+        head = re.compile(r"\b(?:struct|union)\s*([A-Za-z_]\w*)?\s*\{")
+        alias = re.compile(r"\btypedef\s+(?:struct|union)\s+([A-Za-z_]\w*)"
+                           r"\s+([^;{}]*);")
+        aliases = {}
+        for relpath, code in self.file_code.items():
+            for m in alias.finditer(code):
+                for part in _split_top_level(m.group(2)):
+                    ids = _IDENT.findall(part)
+                    if ids:
+                        aliases.setdefault(m.group(1), set()).add(ids[-1])
+        for relpath, code in self.file_code.items():
+            for m in head.finditer(code):
+                close = _match_paren(code, m.end() - 1)
+                names = {m.group(1)} if m.group(1) else set()
+                k = _prev_index(code, m.start())
+                if k >= 0 and _word_ending(code, k) == "typedef":
+                    semi = code.find(";", close)
+                    for part in _split_top_level(
+                            code[close + 1:semi if semi > 0 else len(code)]):
+                        ids = _IDENT.findall(part)
+                        if ids:
+                            names.add(ids[-1])
+                for n in list(names):
+                    names |= aliases.get(n, set())
+                out.append((relpath, names, code[m.end():close]))
+        self._structs = out
+        return out
+
+    def _types_declaring(self, member):
+        """Every type name that declares `member`, or embeds (by value) a
+        type that does, to a fixed point."""
+        decl = re.compile(r"\(\s*\*\s*" + re.escape(member) + r"\s*\)|\b"
+                          + re.escape(member) + r"\s*[;,\[:]")
+        structs = self._struct_bodies()
+        types = set()
+        for _, names, body in structs:
+            if decl.search(body):
+                types |= names
+        changed = True
+        while changed:
+            changed = False
+            for _, names, body in structs:
+                if names <= types:
+                    continue
+                for t in types:
+                    if re.search(r"\b" + re.escape(t) + r"\b\s+[A-Za-z_]",
+                                 body):
+                        types |= names
+                        changed = True
+                        break
+        return types
+
+    def _positional_init(self, types):
+        """Where a positional initialiser of one of `types` is, or None."""
+        names = "|".join(re.escape(t) for t in sorted(types))
+        decl = re.compile(r"\b(?:" + names + r")\b")
+        lit = re.compile(r"\(\s*(?:(?:struct|union)\s+)?(?:" + names
+                         + r")\s*\)\s*\{")
+        for relpath, text in self._texts():
+            for m in lit.finditer(text):
+                if _positional(text, m.end() - 1, self.is_type):
+                    return "%s has a positional compound literal of it" % relpath
+            for m in decl.finditer(text):
+                # The declaration this type name heads: up to `=` then `{`.
+                j = m.end()
+                while j < len(text) and text[j] not in "=;{}()":
+                    j += 1
+                if j >= len(text) or text[j] != "=":
+                    continue
+                k = j + 1
+                while k < len(text) and text[k] in _WS:
+                    k += 1
+                if k < len(text) and text[k] == "{" and _positional(
+                        text, k, self.is_type):
+                    line = (self.views[relpath].line(m.start())
+                            if text is self.file_code.get(relpath) else 0)
+                    return ("%s:%d initialises it POSITIONALLY, so which "
+                            "function lands in which member is not named"
+                            % (relpath, line))
+        return None
 
     def pointer_targets(self, node, name):
         """-> (targets, complete) for a LOCAL function pointer `name` in
@@ -774,8 +1240,12 @@ class Graph(object):
                 continue                 # stale: reported by the caller
             members = {m.group(1) for m in _MEMBER_CALL.finditer(body)}
             if callee in members:
-                if callee not in self.by_member or _is_libscpi(relpath):
+                if _is_libscpi(relpath):
                     self.cuts.add((relpath, fn, callee))
+                elif self.member_why(callee):
+                    # r4: declared, NOT cut -- a member not every value of
+                    # which is named still has its named targets followed.
+                    pass
                 else:
                     problems.append(
                         "%s: %s() calls through member %r, which IS "
@@ -864,13 +1334,48 @@ def _context_names(g, examined):
     carries a context. The binding is what follows a context into a macro
     (`REPLY(context, ...)` binds REPLY's first parameter) or into a helper
     that took it as `void *`.
+
+    Round 4 adds two more routes, both to the same fixed point:
+
+    * ALIASES. An lvalue assigned or initialised from the context ITSELF --
+      a name, or a member/element chain ending in one, under any casts,
+      `&`, `*` or `?:` arm -- carries it too: `void *alias = context;`,
+      then `c2 = c1;` with `c1 = context;` later in the body (the order
+      does not matter -- this is flow-insensitive). Audit r3 findings 3 and
+      8 passed `alias` to an unnamed callee and the refusal never fired.
+      DATA read through the context (`n = context->idx`) is not an alias:
+      measured on the real tree, treating it as one tainted every length
+      and index in libscpi's parser and refused `strlen`/`memcpy` calls by
+      the dozen. A function RETURNING its context argument is not followed
+      either -- that is stated in the module docstring as a residual.
+    * MACRO SCOPE. A macro expands in its user's scope, so it inherits every
+      context name its user has, and a macro whose body names one that is
+      not its own parameter is itself a carrier wherever it is used
+      (`#define ALIAS context`). Its parameters are excluded because the
+      ARGUMENT is what the caller's own check already sees.
     """
     ctx = {n: set(g.ctx_decl.get(n, ())) | g.ctx_globals for n in examined}
     changed = True
     while changed:
         changed = False
         for node in examined:
-            for name, _, args, member in _calls(g.bodies.get(node, "")):
+            body = g.bodies.get(node, "")
+            for base, rhs in _assignments(body):
+                if base not in ctx[node] and _is_context(rhs, ctx[node]):
+                    ctx[node].add(base)
+                    changed = True
+            for macro in _macro_scope(g, node):
+                if macro not in ctx:
+                    continue
+                if not ctx[node] <= ctx[macro]:
+                    ctx[macro] |= ctx[node]
+                    changed = True
+                own = set(g.params.get(macro, ()))
+                if macro[1] not in ctx[node] and _mentions(
+                        g.bodies.get(macro, ""), ctx[macro] - own):
+                    ctx[node].add(macro[1])
+                    changed = True
+            for name, _, args, member in _calls(body):
                 if member or name in _NOT_CALLEES:
                     continue
                 flags = [_mentions(a, ctx[node]) for a in args]
@@ -889,6 +1394,31 @@ def _context_names(g, examined):
                             ctx[callee].add(p)
                             changed = True
     return ctx
+
+
+_CHAIN = re.compile(r"[A-Za-z_]\w*(?:\s*(?:->|\.)\s*[A-Za-z_]\w*"
+                    r"|\s*\[[^\]]*\])*\Z")
+
+
+def _is_context(expr, names):
+    """True when `expr` evaluates to a context (not to data read through
+    one): some `?:` arm is, under casts, `&`, `*` and parentheses, a name
+    or a member/element chain whose LAST name is in `names`."""
+    arms = _split_top_level(expr, "?:")
+    for arm in (arms[1:] if len(arms) > 1 else arms):
+        c, prev = arm.strip(), None
+        while c != prev:
+            prev, c = c, _clean_arg(c)
+        if _CHAIN.match(c):
+            last = _IDENT.findall(re.sub(r"\[[^\]]*\]", " ", c))
+            if last and last[-1] in names:
+                return True
+    return False
+
+
+def _macro_scope(g, node):
+    """The macros `node` expands -- called or named bare."""
+    return {n for n in g.edges(node) if n in g.macros}
 
 
 def _unnamed_context_calls(g, examined):
@@ -940,6 +1470,21 @@ def _unnamed_context_calls(g, examined):
                     "named functions, or make the call direct." % (where, name))
                 continue
             declarable.add((relpath, line, name))
+        # r4: a callee that is not a name at all -- `hooks[0](ctx)`,
+        # `hooks[i](ctx)`, `get()(ctx)` -- is never resolvable, so it is
+        # REFUSED. No shape-specific follower: audit r3 findings 1 and 6
+        # were this class, invisible to `_calls`. Refused whether or not an
+        # argument carries the context, because the target can reach the
+        # stream through a GLOBAL one (`gClient.scpiContext`) with no
+        # argument at all; measured: the real tree has NO computed callee
+        # anywhere, so this costs nothing.
+        for pos, callee, args in _computed_calls(body, g.is_type):
+            refusals.append(
+                "%s:%d: %s() calls through the computed callee %r. A callee "
+                "that is not a plain name cannot be resolved, so a write "
+                "behind it would be MISSED. Call a named function instead."
+                % (relpath, g.line_of(node, pos), fn,
+                   " ".join(callee.split())))
     return declarable, refusals
 
 
@@ -1488,7 +2033,12 @@ scpi_bool_t SCPI_Input(scpi_t * context, const char * data, int len) {
 }
 ''',
 }
-_CUT_OURS = '''
+_IFACE_STRUCT = '''
+struct _scpi_interface_t {
+    size_t (*error)(scpi_t * context, int16_t err);
+};
+'''
+_CUT_OURS = _IFACE_STRUCT + '''
 static size_t ErrWriter(scpi_t * context, int16_t err) {
     scpi_printf(context, "**ERROR\\n");
     return 0;
@@ -1733,7 +2283,7 @@ static scpi_result_t CbMs(scpi_t * context) {
         "declaring OUR OWN resolvable `->error(` member does not cut it: the "
         "write is still reported and the declaration refused",
         '    {.pattern = "SYST:ERR", .callback = CbErr,},',
-        '''
+        _IFACE_STRUCT + '''
 static size_t ErrWriter(scpi_t * context, int16_t err) {
     scpi_printf(context, "**ERROR\\n");
     return 0;
@@ -1783,6 +2333,176 @@ static scpi_result_t CbIdn(scpi_t * context) {
         _CUT_OURS, files=_FAKE_LIBSCPI_ERR,
         indirect={("services/SCPI/SCPIInterface.c", "CommandComplete",
                    "SCPI_Input"): "#1274"}),
+]
+
+
+# ---- round 4 (the r3 audit's misses, and the INVERSION's generalisation) --
+# Every row is red on 74131e64 (the r3 head) unless its `why` says CONTROL;
+# a control must PASS on both. The audit's exact constructs come first, then
+# one construct per class that the audit did NOT report -- the proof that
+# the rule refuses a class, not a list.
+_AUDIT_REG = '    {.pattern = "SYST:AUDIT", .callback = CbAudit,},'
+_WRITER = '''
+static void Writer(scpi_t * context) {
+    scpi_printf(context, "ack\\n");
+}
+static void Quiet(scpi_t * context) {
+    (void)context;
+}
+'''
+_HOOKS = _WRITER + '''
+static void (*hooks[])(scpi_t *) = { Writer };
+'''
+_HOOK = _WRITER + '''
+static void (*hook)(scpi_t *) = Writer;
+'''
+
+
+def _cb(body):
+    return ('static scpi_result_t CbAudit(scpi_t * context) {\n%s\n'
+            '    return SCPI_RES_OK;\n}\n' % body)
+
+
+def _hook_struct(member, decls):
+    return ("struct Hook { void (*%s)(scpi_t *); };\n" % member) + _WRITER \
+        + decls
+
+
+_SELFTEST_R4 = [
+    # A: object-like macros, followed from a function body.
+    _r3("r4-f0-macro-expr",
+        "audit r3 finding 0: `AUDIT_ACK;` where the macro is an expression "
+        "that writes. R3: bare macro names were followed only inside macros",
+        _AUDIT_REG, '#define AUDIT_ACK scpi_printf(context, "ack\\n")\n'
+        + _cb("    AUDIT_ACK;"), expect=["SYST:AUDIT"]),
+    _r3("r4-f5-macro-stmt",
+        "audit r3 finding 5: a `do { } while (0)` statement macro that writes",
+        _AUDIT_REG, '#define REPLY do { scpi_printf(context, "unexpected\\n");'
+        ' } while (0)\n' + _cb("    REPLY;"), expect=["SYST:AUDIT"]),
+    _r3("r4-macro-of-macro",
+        "NEW: a bare macro wrapping a bare macro that writes, followed "
+        "transitively",
+        _AUDIT_REG, '#define INNER scpi_printf(context, "x\\n")\n'
+        '#define OUTER INNER\n' + _cb("    OUTER;"), expect=["SYST:AUDIT"]),
+    _r3("r4-macro-of-macro-ctx",
+        "NEW: a macro wrapping a macro that IS the context, handed to an "
+        "unnamed pointer -- the context is followed through both expansions",
+        _AUDIT_REG, _HOOK + '#define CTX context\n#define FIRE hook(CTX)\n'
+        + _cb("    FIRE;"), problem="calls through 'hook' with the context"),
+    _r3("r4-macro-control",
+        "CONTROL: bare macros that are constants or flow (`LIMIT`, `DONE`) "
+        "are followed and the gate still passes",
+        _AUDIT_REG, '#define LIMIT 5\n#define DONE return SCPI_RES_OK\n'
+        'static scpi_result_t CbAudit(scpi_t * context) {\n'
+        '    int n = LIMIT;\n    (void)n;\n    DONE;\n}\n'),
+
+    # B: computed callees.
+    _r3("r4-f1-hooks0",
+        "audit r3 finding 1: `hooks[0](context)` through an initialised "
+        "array. R3: invisible to `_calls` and to the refusal",
+        _AUDIT_REG, _HOOKS + _cb("    hooks[0](context);"),
+        problem="computed callee 'hooks[0]'"),
+    _r3("r4-f6-hooks0",
+        "audit r3 finding 6 (blind duplicate of 1), its own text",
+        _AUDIT_REG, _HOOKS.replace('"ack', '"unexpected')
+        + _cb("    hooks[0](context);"), problem="computed callee 'hooks[0]'"),
+    _r3("r4-hooks-i",
+        "NEW: `hooks[i](context)` with `i` a variable",
+        _AUDIT_REG, _HOOKS + _cb("    int i = 0;\n    hooks[i](context);"),
+        problem="computed callee 'hooks[i]'"),
+    _r3("r4-call-result",
+        "NEW: `get()(context)` -- a callee that is a call's result",
+        _AUDIT_REG, _WRITER + 'typedef void (*hook_fn)(scpi_t *);\n'
+        'static hook_fn get(void) {\n    return Writer;\n}\n'
+        + _cb("    get()(context);"), problem="computed callee 'get()'"),
+    _r3("r4-computed-noarg",
+        "NEW: `hooks[0]()` with NO argument, whose target writes through "
+        "the GLOBAL context",
+        _AUDIT_REG, 'static void GWriter(void) {\n'
+        '    scpi_printf(&gClient.scpiContext, "ack\\n");\n}\n'
+        'static void (*hooks[])(void) = { GWriter };\n'
+        + _cb("    hooks[0]();"), problem="computed callee 'hooks[0]'"),
+    _r3("r4-computed-control",
+        "CONTROL: `(void)(context)`, `(void)(USB_EVT *)(context)` (a type "
+        "this graph does not index) and `if (context) (void)Quiet(context)` "
+        "are casts and a statement, not computed calls -- the gate passes",
+        _AUDIT_REG, _WRITER + _cb("    (void)(context);\n"
+                                  "    (void)(USB_EVT *)(context);\n"
+                                  "    if (context) (void)Quiet(context);")),
+
+    # C: a member is resolved only when EVERY value it can hold is named.
+    _r3("r4-f2-run",
+        "audit r3 finding 2: `{ .run = Quiet }` elsewhere certified "
+        "`loud.run`, where `loud = { Writer }` positionally",
+        _AUDIT_REG, _hook_struct("run", "static struct Hook quiet = "
+                                 "{ .run = Quiet };\nstatic struct Hook loud ="
+                                 " { Writer };\n")
+        + _cb("    loud.run(context);"), problem="calls through member 'run'"),
+    _r3("r4-f7-cb",
+        "audit r3 finding 7: the `.cb` variant (`safe`/`active`)",
+        _AUDIT_REG, _hook_struct("cb", "static struct Hook safe = "
+                                 "{ .cb = Quiet };\nstatic struct Hook active ="
+                                 " { Writer };\n")
+        + _cb("    active.cb(context);"), problem="calls through member 'cb'"),
+    _r3("r4-member-nested",
+        "NEW: the positional value hidden one level down, in an EMBEDDING "
+        "struct's designated initialiser: `.h = { Writer }`",
+        _AUDIT_REG, _hook_struct("cb", "static struct Hook safe = "
+                                 "{ .cb = Quiet };\nstruct Outer { struct Hook "
+                                 "h; };\nstatic struct Outer o = { .h = "
+                                 "{ Writer } };\n")
+        + _cb("    o.h.cb(context);"), problem="calls through member 'cb'"),
+    _r3("r4-member-store",
+        "NEW: a runtime store of an unnamed value, `safe.cb = hooks[0]`",
+        _AUDIT_REG, _hook_struct("cb", "static void (*hooks[])(scpi_t *) = "
+                                 "{ Writer };\nstatic struct Hook safe = "
+                                 "{ .cb = Quiet };\n")
+        + _cb("    safe.cb = hooks[0];\n    safe.cb(context);"),
+        problem="calls through member 'cb'"),
+    _r3("r4-member-addr",
+        "NEW: the member's ADDRESS taken, then stored through: `pp = "
+        "&safe.cb; *pp = hooks[0];`",
+        _AUDIT_REG, _hook_struct("cb", "static void (*hooks[])(scpi_t *) = "
+                                 "{ Writer };\nstatic struct Hook safe = "
+                                 "{ .cb = Quiet };\n")
+        + _cb("    void (**pp)(scpi_t *) = &safe.cb;\n    *pp = hooks[0];\n"
+              "    safe.cb(context);"),
+        problem="calls through member 'cb'"),
+    _r3("r4-member-control",
+        "CONTROL: every initialiser designated and naming a silent "
+        "function -- the member is complete, followed, and the gate passes",
+        _AUDIT_REG, _hook_struct("cb", "static struct Hook safe = "
+                                 "{ .cb = Quiet };\nstatic struct Hook active ="
+                                 " { .cb = Quiet };\n")
+        + _cb("    active.cb(context);")),
+
+    # D: aliases of the context.
+    _r3("r4-f3-alias",
+        "audit r3 finding 3: `void *alias = context; hook(alias);` with a "
+        "file-scope `hook = Writer`",
+        _AUDIT_REG, _HOOK + _cb("    void *alias = context;\n"
+                                "    hook(alias);"),
+        problem="calls through 'hook' with the context"),
+    _r3("r4-f8-alias-array",
+        "audit r3 finding 8: `void *alias = context; void (*fp)(scpi_t *) = "
+        "hooks[0]; fp(alias);`",
+        _AUDIT_REG, _HOOKS + _cb("    void *alias = context;\n"
+                                 "    void (*fp)(scpi_t *) = hooks[0];\n"
+                                 "    fp(alias);"),
+        problem="calls through 'fp' with the context"),
+    _r3("r4-alias-of-alias",
+        "NEW: an aliased alias, assigned in the 'wrong' order -- `c2 = c1; "
+        "c1 = context; hook(c2);`",
+        _AUDIT_REG, _HOOK + _cb("    void *c1 = 0;\n    void *c2;\n"
+                                "    c2 = c1;\n    c1 = context;\n"
+                                "    hook(c2);"),
+        problem="calls through 'hook' with the context"),
+    _r3("r4-alias-control",
+        "CONTROL: an alias handed to a NAMED silent function, and data read "
+        "through the context handed to a sourceless one, both pass",
+        _AUDIT_REG, _WRITER + _cb("    void *alias = context;\n"
+                                  "    int n = context->idx;\n"
+                                  "    Quiet(alias);\n    memset(&n, 0, 4);")),
 ]
 
 
@@ -1868,7 +2588,7 @@ def self_test():
                 failures.append("%s: unexpected unresolved callbacks %r"
                                 % (why, stats["unresolved"]))
 
-    for row in _SELFTEST_R3:
+    for row in _SELFTEST_R3 + _SELFTEST_R4:
         checks += 1
         failures.extend(check_r3_row(row, *run_r3_row(row)))
 
