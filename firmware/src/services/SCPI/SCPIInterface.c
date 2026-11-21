@@ -2638,7 +2638,8 @@ static scpi_result_t SCPI_GetBenchmarkMode(scpi_t * context) {
 // Shared streaming-buffer setup (partition + DMA pool + sample pool).  Defined
 // near SCPI_MemAutoBalance; forward-declared here for the throughput bench, the
 // WiFi finder, and SCPI_StartStreaming, which all route through it.
-static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize);
+static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize,
+                                    bool idleLayout);
 
 // #520/Qodo: PrepareStreamingBuffers() quiesces SD by forcing WRITE->NONE so
 // f_write can't be mid-DMA during the coherent-pool reset (see
@@ -2962,7 +2963,8 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context,
         uint8_t ec = (chMap != NULL && chMap->count > 0) ? chMap->count : 1;
         MemoryConfig* mcfg = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
         if (!PrepareStreamingBuffers(mcfg->samplePoolCount,
-                                     AInSampleList_ElementSize(ec))) {
+                                     AInSampleList_ElementSize(ec),
+                                     false)) {
             Streaming_SetBenchmarkMode(savedBenchmark);
             Streaming_SetTestPattern(savedPattern);
             StreamFreq_Set(pStreamCfg, savedFrequency);     // no-op here (poke is later), kept for consistency
@@ -4043,7 +4045,8 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context,
         uint8_t ec = (chMap != NULL && chMap->count > 0) ? chMap->count : 1;
         MemoryConfig* mcfg = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
         if (!PrepareStreamingBuffers(mcfg->samplePoolCount,
-                                     AInSampleList_ElementSize(ec))) {
+                                     AInSampleList_ElementSize(ec),
+                                     false)) {
             Streaming_SetBenchmarkMode(savedBenchmark);
             Streaming_SetTestPattern(savedPattern);
             RestoreSdMode(savedSdMode);
@@ -6138,7 +6141,8 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
         uint8_t enabledChannels = (chMapping->count > 0) ? chMapping->count : 1;
         MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
         if (!PrepareStreamingBuffers(mc->samplePoolCount,
-                                     AInSampleList_ElementSize(enabledChannels))) {
+                                     AInSampleList_ElementSize(enabledChannels),
+                                     false)) {
             /* An SD file can still be open here -- PrepareStreamingBuffers can
              * fail BEFORE the quiesce that tears it down (its USB-DMA wait
              * times out first). Every sibling abort releases it; this one did
@@ -8672,7 +8676,10 @@ static scpi_result_t SCPI_GetMemFree(scpi_t * context) {
 // 16ch default; or the real values after Streaming_BuildChannelMapping.
 // Returns false on partition/quiesce failure (caller pushes the SCPI error).
 // NOTE: duplicates SCPI_MemAutoBalance's body for now — DRY once verified.
-static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
+// idleLayout (#1279): carve the layout the device has when NO stream is being
+// set up -- see SCPI_RestoreIdleSdBuffers. false for every streaming caller.
+static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize,
+                                    bool idleLayout) {
     uint32_t usbSize, wifiSize, sdCircSize;
     uint32_t sdDmaSize, usbDmaSize, wifiDmaSize, encSize;
 
@@ -8709,7 +8716,17 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
                        mc->usbCircularBufSize == 0 &&
                        mc->encoderBufSize == 0 &&
                        mc->samplePoolCount == 0);
-    if (isAutoMode) {
+    /* #1279: auto-balance sizes every region for the stream being set up, so
+     * it starves whatever that stream does not use -- including the SD
+     * circular and SD DMA write buffer when SD is not a consumer. The idle
+     * layout is the fixed-size branch below instead: with an all-zero
+     * MemoryConfig those are the boot SIZES (app_freertos.c's
+     * StreamingBufferPool_Init arguments, and the 64 KB SD, 16 KB USB and
+     * 32 KB WiFi DMA buffers the drivers allocate at init -- the coherent
+     * ORDER differs, the sizes do not), and with a static
+     * SYSTem:MEMory:* config it is the user's sizes, honoured as they are for
+     * a stream. */
+    if (isAutoMode && !idleLayout) {
         Streaming_ComputeAutoBuffers(&usbSize, &wifiSize, &sdCircSize,
                                      &sdDmaSize, &usbDmaSize, &wifiDmaSize, &encSize);
     } else {
@@ -8878,6 +8895,91 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
     return true;
 }
 
+/* #1279: are the SD buffers smaller than the idle layout gives them?
+ *
+ * Pure, on purpose: tests/host splices it out of this file and drives it with
+ * the sizes the real Streaming_ComputeAutoBuffers produces for each interface.
+ *
+ * TWO buffers, because both collapse when a stream does not use SD and either
+ * one alone throttles SD:BENCHmark. The SD circular falls to
+ * STREAMING_SD_CIRCULAR_MIN (4 KB), and the SD DMA write buffer to
+ * SD_CARD_MANAGER_MIN_WBUFFER_SIZE (512 B) -- and the drain extracts at most
+ * one write buffer per card write (sd_card_manager.c, the #738 `wbufCap`
+ * bound), so after a WiFi or USB stream every card write was ONE sector.
+ *
+ * `sdCircConfigured` is MemoryConfig.sdCircularBufSize: 0 in auto mode, else
+ * the user's SYSTem:MEMory:SD:BUFfer, which is then the idle size -- a user who
+ * asked for 4096 gets 4096, and is not re-partitioned for having asked. The
+ * DMA bound is the same in both modes because PrepareStreamingBuffers' fixed
+ * branch always installs SD_CARD_MANAGER_CONF_WBUFFER_SIZE, and every
+ * auto-balanced layout with SD as a consumer installs more than that.
+ *
+ * `<`, never `!=`: a buffer LARGER than idle (an SD session's partition) is
+ * not a defect, and re-carving it would only cost time. */
+static bool SdIdleRestoreDue(uint32_t sdCircNow, uint32_t sdWriteBufNow,
+                             uint32_t sdCircConfigured) {
+    uint32_t sdCircIdle = (sdCircConfigured != 0u)
+            ? sdCircConfigured : SD_CARD_MANAGER_DEFAULT_CIRCULAR_SIZE;
+    return (sdCircNow < sdCircIdle) ||
+           (sdWriteBufNow < SD_CARD_MANAGER_CONF_WBUFFER_SIZE);
+}
+
+/* #1279: give an SD operation the idle-size SD buffers before it arms.
+ *
+ * Auto-balance shrinks the SD buffers for any stream SD does not consume, and
+ * nothing grew them back when that stream stopped, so SD:BENCHmark measured
+ * the leftover partition (~4.5x slow) until the next SD stream or a reboot.
+ *
+ * WHY HERE AND NOT AT STREAM STOP. A stream ends on at least six paths
+ * (SYSTem:STReam:STOP, START 0, the #397 transport-dead auto-stop in the
+ * streaming task, the THRoughput and WiFi-finder teardowns, a failed START),
+ * one of them on the streaming task, which cannot run this: the re-partition
+ * waits for that very task to go quiescent. Restoring at stop would also take
+ * the config claim at the end of EVERY session, so a START sent right after a
+ * STOP on the other transport would be refused -200 by the #977 interlock,
+ * and it would re-carve the pool under an SD session's still-draining
+ * teardown. Asking at the point of use asks about the STATE, which no stop path
+ * can skip, and costs nothing unless the buffers are actually small.
+ *
+ * Under the config-change claim, like SYSTem:MEMory:AUTO -- this is that
+ * re-partition with the idle layout -- so it cannot overlap a session start or
+ * another SYSTem:MEMory:* change on the other transport, and it refuses while a
+ * stream is live. The predicate is asked again under the claim so a restore
+ * that the other transport just finished is not repeated.
+ *
+ * Also refuses while the SD manager has any mode armed: the re-partition's
+ * coherent-pool quiesce forces a WRITE to NONE and waits for the manager to
+ * go idle, which would cancel an armed write or time out behind a FORMAT.
+ *
+ * Returns true when the buffers are at idle size (already, or now), false when
+ * they are small and could not be restored. SD:BENCHmark refuses on false,
+ * because measuring the small buffers is the defect; SD:GET proceeds, because
+ * a read through them is correct, only slower, and that includes a GET during
+ * a live non-SD stream, which must keep working. */
+bool SCPI_RestoreIdleSdBuffers(void) {
+    MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
+    if (!SdIdleRestoreDue(StreamingBufferPool_SdCircularSize(),
+                          sd_card_manager_GetWriteBufferSize(),
+                          mc->sdCircularBufSize)) {
+        return true;
+    }
+    if (Streaming_BeginConfigChange() != STREAM_CFG_CLAIM_OK) {
+        return false;
+    }
+    bool ok = true;
+    if (SdIdleRestoreDue(StreamingBufferPool_SdCircularSize(),
+                         sd_card_manager_GetWriteBufferSize(),
+                         mc->sdCircularBufSize)) {
+        ok = !sd_card_manager_IsBusy() &&
+             PrepareStreamingBuffers(mc->samplePoolCount
+                                         ? mc->samplePoolCount
+                                         : DEFAULT_AIN_SAMPLE_COUNT,
+                                     0, true);
+    }
+    Streaming_EndConfigChange();
+    return ok;
+}
+
 static scpi_result_t SCPI_MemAutoBalanceClaimed(scpi_t * context) {
     /* #857: the stream-state rejection lives in this command's
      * SCPI_MemRunClaimed wrapper below, not here. */
@@ -8889,7 +8991,7 @@ static scpi_result_t SCPI_MemAutoBalanceClaimed(scpi_t * context) {
     // StartStreamData stays in auto mode.  poolCount/elemSize 0/0 = generic
     // 16ch default (actual channel count isn't known until StartStreamData).
     memset(mc, 0, sizeof(MemoryConfig));
-    if (!PrepareStreamingBuffers(0, 0)) {
+    if (!PrepareStreamingBuffers(0, 0, false)) {
         SCPI_ExecutionError(context, "SYST:MEM:AUTO: buffer partition failed");
         return SCPI_RES_ERR;
     }

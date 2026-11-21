@@ -5375,6 +5375,12 @@ bool sd_card_manager_ReadBufferReady(void) {
     return gSdSharedBufferSize >= SD_READ_ALIGNMENT_SIZE;
 }
 
+/* #1279: a 32-bit aligned scalar, so a plain load is atomic on PIC32MZ; its
+ * only writers are sd_card_manager_SetWriteBuffer (under wMutex) and init. */
+uint32_t sd_card_manager_GetWriteBufferSize(void) {
+    return gSDCardData.writeBufferSize;
+}
+
 /* #703: is an async SD op in flight that touches a STREAMING-POOL buffer the
  * partitioner (PrepareStreamingBuffers -> StreamingBufferPool_Partition) re-sizes
  * and pointer-swaps? TWO distinct-but-real hazards, hence three modes:
