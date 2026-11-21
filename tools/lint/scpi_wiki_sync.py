@@ -262,7 +262,8 @@ _PATTERN_FIELD = re.compile(r"\.pattern\s*=")
 _NULL_SENTINEL = re.compile(r"\.pattern\s*=\s*NULL\b")
 _NULL_ENTRY = re.compile(
     r"\{\s*\.pattern\s*=\s*NULL\s*,\s*\.callback\s*=\s*[A-Za-z_]\w*\s*,?\s*\}")
-_TABLE_DECL = re.compile(r"scpi_command_t\s+scpi_commands\s*\[\s*\]\s*=\s*\{")
+_TABLE_DECL = re.compile(
+    r"scpi_command_t\s+scpi_commands\s*\[[^\]\n]*\]\s*=\s*\{")
 _DEFINE = re.compile(r"^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)", re.M)
 # `%:` is the digraph spelling of `#` (C99 6.4.6p3); at the start of a line
 # it introduces a directive exactly as `#` does (#1196 r6).
@@ -384,6 +385,16 @@ def _require_canonical_table(scpi_c, live_src):
     An `#include` INSIDE the table braces is refused outright (r5): the
     included text is initializer syntax this check never reads.
     Both hold on main today, so neither refuses anything real.
+
+    THREAT MODEL. This is a DRIFT check: it catches a wiki row that names a
+    callback the table does not register, when both were edited honestly.
+    It is not a C preprocessor, and source written to defeat it can. The
+    constructs it does model (splices, comments, the `%:` digraph, `#include`
+    inside the table, a callback renamed by `#define` anywhere in .c/.h,
+    a second live table declaration) are refused. ACCEPTED RESIDUALS, each
+    needing deliberately crafted source: a `#define` alias in an included
+    file with another suffix (#1316); macros supplied with -D on the
+    compiler command line; trigraphs (off in gnu99, which XC32 uses).
     """
     # Preprocessor lines are blanked first: they are not initializer syntax,
     # an unterminated literal in an `#if 0` line must not swallow the table's
@@ -446,10 +457,12 @@ def _require_canonical_table(scpi_c, live_src):
         with open(path, encoding="utf-8", errors="replace") as fh:
             # Phase 2 ONCE, via the shared splice(): a second pass would join
             # a line onto a `//` comment the compiler leaves it out of (r6).
-            text = _directives_as_hash(splice(fh.read())[0])
+            text = splice(fh.read())[0]
         if "define" not in text or not named.search(text):
             continue
-        src = strip_c_comments(text, spliced=True)
+        # Comments are stripped BEFORE the digraph is respelled: a directive
+        # may follow a comment on its line (`/* c */ %:define`), r7.
+        src = _directives_as_hash(strip_c_comments(text, spliced=True))
         aliased = sorted(set(_DEFINE.findall(src)) & callbacks)
         if aliased:
             sys.exit(f"error: {path!r} #defines registered callback name(s) "
@@ -495,6 +508,10 @@ def clean_callback_cell(cell):
     identifier is taken, so trailing prose ("SCPI_X (see note)") is ignored.
     """
     s = cell.replace("`", "").replace("\\_", "_").replace("*", "").strip()
+    # `_x_` / `__x__` is Markdown emphasis around the name, not part of it.
+    em = re.fullmatch(r"(_{1,2})([A-Za-z]\w*?)\1", s)
+    if em:
+        s = em.group(2)
     m = re.match(r"[A-Za-z_]\w*", s)
     return m.group(0) if m else s
 
@@ -1636,6 +1653,12 @@ def _self_test_callbacks():
          "markdown-escaped nonexistent callback (not cut at the backslash)"),
         (hdr4 + "| SYSTem:DEVice:NAME | x | y | SCPI\\_Real |\n", 0,
          "markdown-escaped real callback"),
+        (hdr4 + "| SYSTem:DEVice:NAME | x | y | _SCPI_Real_ |\n", 0,
+         "underscore-emphasised real callback"),
+        (hdr4 + "| SYSTem:DEVice:NAME | x | y | __SCPI_Real__ |\n", 0,
+         "double-underscore-emphasised real callback"),
+        (hdr4 + "| SYSTem:DEVice:NAME | x | y | _SCPI_Bogus_ |\n", 1,
+         "underscore-emphasised nonexistent callback"),
         ("| SCPI Command | Description | Example | **Firmware Callback** |\n"
          "| -- | -- | -- | -- |\n"
          "| SYSTem:DEVice:NAME | x | y | SCPI_Imaginary |\n", 1,
@@ -1738,6 +1761,15 @@ def _self_test_callbacks():
         ('%:define SCPI_Old SCPI_New\n'
          'const scpi_command_t scpi_commands[] = {\n' + entry + sentinel
          + '};\n', True, "alias spelled with the %: digraph"),
+        ('/* note */ %:define SCPI_Old SCPI_New\n'
+         'const scpi_command_t scpi_commands[] = {\n' + entry + sentinel
+         + '};\n', True, "digraph alias after a comment on its line"),
+        ('#if 0\nconst scpi_command_t scpi_commands[] = {};\n#endif\n'
+         'const scpi_command_t scpi_commands[2] = {\n'
+         '    [0] = {.pattern = "SYSTem:DEVice:NAME", .callback = SCPI_Old},\n'
+         '    [0].callback = SCPI_New,\n    [1] = {.pattern = NULL, '
+         '.callback = SCPI_NotImplemented},\n};\n', True,
+         "#if 0 decoy before a SIZED real table"),
         ('const char *s = "scpi_command_t scpi_commands[] = {}";\n'
          'const scpi_command_t scpi_commands[] = {\n'
          '    [0] = {.pattern = "SYSTem:DEVice:NAME", .callback = SCPI_Old},\n'
