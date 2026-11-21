@@ -70,6 +70,11 @@ TARGET_ASSIGN = re.compile(
 # #1303: make's `shell` and `file` functions hide a path from every oracle here
 # (make replaces the call by its RESULT before the database or dry run exists).
 SHELL_FN = re.compile(r"\$[({]\s*(?:shell|file)(?![A-Za-z0-9_])")
+EVAL_FN = re.compile(r"\$[({]\s*eval(?![A-Za-z0-9_])")
+# `VAR != cmd` (also `override`/`export` prefixes, and target-specific): GNU make
+# runs the right-hand side in a shell at parse time, exactly like $(shell).
+# Recipe lines (leading tab) are shell text, not assignments.
+BANG_ASSIGN = re.compile(r"^(?!\t)[^#=]*?!=(.*)$")
 PATHISH = re.compile(r"[^\s'\"();|&<>=,]*(?:firmware|\.\./)[^\s'\"();|&<>=,]*")
 CLEAN_FW = re.compile(r"^(?:-[A-Za-z])?\.\./\.\./(firmware/src(?:/(?!\.{1,2}(?:/|$))[A-Za-z0-9_.-]+)*)/?$")
 MAKE_ERRORS = re.compile(r"\*\*\*|No rule to make target|missing separator|Stop\.|Circular")
@@ -124,6 +129,10 @@ REFUSED = {
     "shell glob [": ("X := $(shell cat %s/A[a].h)\nall:\n\t@:\n" % _UTIL, 1),
     "shell .. after firmware/src": ("X := $(shell cat %s/../Other/A.h)\nall:\n\t@:\n" % _UTIL, 1),
     "file read with a $(VAR) path": ("FW := %s\nX := $(file <$(FW)/A.h)\nall:\n\t@:\n" % _UTIL, 2),
+    "!= with a $(VAR) path": ("FW := %s\nX != grep -c x $(FW)/A.h\nall:\n\t@:\n" % _UTIL, 2),
+    "!= with backticks": ("X != cat `printf %%s %s/A`.h\nall:\n\t@:\n" % _UTIL, 1),
+    "override != with a $(VAR) path": ("FW := %s\noverride X != grep -c x $(FW)/A.h\nall:\n\t@:\n" % _UTIL, 2),
+    "$(eval) is refused outright": ("$(eval X := 1)\nall:\n\t@:\n", 1),
     "continuation: reported at its FIRST line": (
         "A := 1\nX := $(shell cat \\\n  $(FW)/A.h)\nall:\n\t@:\n", 2),
 }
@@ -131,6 +140,8 @@ PASSING_SHELL = {
     "shell with literal paths": "X := $(shell grep -c x %s/A.h)\nall:\n\t@:\n" % _UTIL,
     "file read with a literal path": "X := $(file <%s/A.h)\nall:\n\t@:\n" % _UTIL,
     "a commented-out shell is not read": "# X := $(shell cat $(FW)/A.h)\nall:\n\t@:\n",
+    "!= with a literal file": "X != grep -c x %s/A.h\nall:\n\t@:\n" % _UTIL,
+    "a != inside a recipe is shell text": "all:\n\t[ a != b ] && cat $(FW)/A.h\n",
     "shell with no firmware path": "X := $(shell echo hi)\nall:\n\t@:\n",
 }
 # label -> (Makefile text, number of `problems` the fixed checker reports)
@@ -188,35 +199,47 @@ def _call_args(text, at):
 
 
 def shell_file_paths(raw, name="Makefile"):
-    """Firmware paths named by $(shell ...)/$(file ...) in the raw Makefile, as
-    (display, path-to-test) pairs; raises Refusal (with file:line) for any call
-    that is not spelled with LITERAL `../../firmware/src/...` paths only.
+    """Firmware paths named by $(shell ...)/$(file ...) calls and by the right-hand
+    side of a `VAR != cmd` assignment (also a shell run at parse time) in the raw
+    Makefile, as (display, path-to-test) pairs; raises Refusal (with file:line)
+    for any such text not spelled with LITERAL `../../firmware/src/...` paths
+    only, and for any `$(eval` (it can build any refused form at expansion time).
     A path with no extension is a DIRECTORY (a `find` root): it is tested via a
     synthetic child, so the filter must cover everything beneath it."""
     found = []
+
+    def check(arg, what, refuse):
+        if re.search(r"\$[({$]|`", arg):
+            refuse("%s builds a path through a variable, $$ or backticks; "
+                   "spell every firmware path as a literal "
+                   "../../firmware/src/..." % what)
+        for tok in PATHISH.findall(arg):
+            cm = CLEAN_FW.match(tok)
+            if not cm:
+                if "firmware" in tok or re.search(r"[*?\[]", tok):
+                    refuse("%s names a firmware path that is not a plain "
+                           "literal (%r)" % (what, tok))
+                continue
+            path = cm.group(1)
+            if "." in path.rsplit("/", 1)[-1]:
+                found.append((path, path))
+            else:
+                found.append((path + "/", path + "/__child__.h"))
+
     for line, text in _logical_lines(raw):
+        def refuse(why, line=line, text=text):
+            raise Refusal("%s:%d: %s: %s" % (name, line, why, text.strip()[:140]))
+        if EVAL_FN.search(text):
+            refuse("$(eval is refused: it can construct any refused form at "
+                   "expansion time")
+        bang = BANG_ASSIGN.match(text)
+        if bang:
+            check(bang.group(1), "`!=` shell assignment", refuse)
         for m in SHELL_FN.finditer(text):
-            def refuse(why):
-                raise Refusal("%s:%d: %s: %s" % (name, line, why, text.strip()[:140]))
             arg = _call_args(text, m.start())
             if arg is None:
                 refuse("unbalanced $(shell/$(file expression")
-            if re.search(r"\$[({$]|`", arg):
-                refuse("$(shell/$(file argument builds a path through a "
-                       "variable, $$ or backticks; spell every firmware path "
-                       "as a literal ../../firmware/src/...")
-            for tok in PATHISH.findall(arg):
-                cm = CLEAN_FW.match(tok)
-                if not cm:
-                    if "firmware" in tok or re.search(r"[*?\[]", tok):
-                        refuse("$(shell/$(file argument names a firmware path "
-                               "that is not a plain literal (%r)" % tok)
-                    continue
-                path = cm.group(1)
-                if "." in path.rsplit("/", 1)[-1]:
-                    found.append((path, path))
-                else:
-                    found.append((path + "/", path + "/__child__.h"))
+            check(arg, "$(shell/$(file argument", refuse)
     return found
 
 
@@ -366,6 +389,8 @@ def self_test():
     for label, text in PASSING_SHELL.items():
         ck("not refused: " + label, run(text, ["firmware/src/Util/A.h"])[2], [])
     ck("literal shell path is harvested", run(PASSING_SHELL["shell with literal paths"])[0],
+       ["firmware/src/Util/A.h"])
+    ck("literal != path is harvested", run(PASSING_SHELL["!= with a literal file"])[0],
        ["firmware/src/Util/A.h"])
     ck("a directory literal under $(shell is returned as a directory to cover",
        run("X := $(shell find ../../firmware/src/W/include -type d)\nall:\n\t@:\n",
