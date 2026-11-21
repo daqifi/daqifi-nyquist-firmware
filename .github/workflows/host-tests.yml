@@ -491,6 +491,15 @@ on:
       # #881: test_881_wifi_reset.c splices Iperf2_Stop()/MaybeAutoReset() out
       # of this file (iperf2's auto-reset is one of the hard-reset callers).
       - 'firmware/src/services/wifi_services/iperf2/iperf2.c'
+      # #1178 review: the Makefile puts these four directories on the compiler's
+      # -I path, so a test can #include ANY header under them without the
+      # Makefile ever spelling its name -- the checker cannot enumerate those.
+      # Whole-directory entries are the only sound cover; check_ci_path_filters.py
+      # fails when an -I directory is not under a glob. Over-triggers by design.
+      - 'firmware/src/HAL/**'
+      - 'firmware/src/Util/**'
+      - 'firmware/src/services/**'
+      - 'firmware/src/config/default/**'
   push:
     branches: [main]
     paths:
@@ -633,6 +642,15 @@ on:
       # #881: test_881_wifi_reset.c splices Iperf2_Stop()/MaybeAutoReset() out
       # of this file (iperf2's auto-reset is one of the hard-reset callers).
       - 'firmware/src/services/wifi_services/iperf2/iperf2.c'
+      # #1178 review: the Makefile puts these four directories on the compiler's
+      # -I path, so a test can #include ANY header under them without the
+      # Makefile ever spelling its name -- the checker cannot enumerate those.
+      # Whole-directory entries are the only sound cover; check_ci_path_filters.py
+      # fails when an -I directory is not under a glob. Over-triggers by design.
+      - 'firmware/src/HAL/**'
+      - 'firmware/src/Util/**'
+      - 'firmware/src/services/**'
+      - 'firmware/src/config/default/**'
 
 permissions:
   contents: read   # checkout + gcc build + run only, no writes
