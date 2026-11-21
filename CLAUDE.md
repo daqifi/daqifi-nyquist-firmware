@@ -70,7 +70,7 @@ any difference, writes nothing — #1169):
 
 ```bash
 bash tools/lint/cppcheck.sh                   # check
-bash tools/lint/cppcheck.sh --write-baseline  # regenerate; refuses if findings grew
+bash tools/lint/cppcheck.sh --write-baseline  # regenerate; refuses on any new finding
 ```
 
 CI gate: `.github/workflows/cppcheck.yml` runs on every PR push that

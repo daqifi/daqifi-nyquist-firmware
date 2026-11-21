@@ -15,7 +15,7 @@
 #   bash tools/lint/cppcheck.sh                          CHECK: diff against the
 #                                                        committed baseline, exit 1 on any difference
 #   bash tools/lint/cppcheck.sh --write-baseline         regenerate the committed baseline
-#                                                        (refuses if the finding count grew)
+#                                                        (refuses if any finding is not already in it)
 #   bash tools/lint/cppcheck.sh --write-baseline --force regenerate even when findings grew
 #   bash tools/lint/cppcheck.sh <path>                   write findings to <path> (the CI form)
 
@@ -128,11 +128,13 @@ case "$MODE" in
     ;;
   write)
     OUT="$BASELINE"
-    OLD_COUNT="$(wc -l < "$BASELINE" 2>/dev/null || echo 0)"
-    NEW_COUNT="$(wc -l < "$SORTED_OUT")"
-    if [ "$NEW_COUNT" -gt "$OLD_COUNT" ] && [ "$FORCE" != 1 ]; then
-      echo "::error::refusing to write the baseline: findings grew $OLD_COUNT -> $NEW_COUNT." >&2
-      echo "A growing baseline adopts new findings. Fix or suppress them; use --force only if deliberate." >&2
+    # Refuse on any finding NOT already in the baseline, not on a count: a
+    # change that fixes one finding and adds another keeps the count level
+    # and would otherwise adopt the new one silently.
+    ADDED="$(LC_ALL=C comm -13 <(LC_ALL=C sort "$BASELINE" 2>/dev/null | tr -d '\r') "$SORTED_OUT" | wc -l)"
+    if [ "$ADDED" -gt 0 ] && [ "$FORCE" != 1 ]; then
+      echo "::error::refusing to write the baseline: $ADDED finding(s) not in $BASELINE." >&2
+      echo "Writing them would adopt new findings. Fix or suppress them; use --force only if deliberate." >&2
       diff -u --strip-trailing-cr "$BASELINE" "$SORTED_OUT" >&2 || true
       exit 1
     fi
