@@ -46,8 +46,47 @@ REF = re.compile(r"\.\./\.\./(firmware/src/[A-Za-z0-9_./-]+\.(?:c|h))")
 ENTRY = re.compile(r"^\s*-\s*'([^']+)'", re.M)
 
 
+# A source file named through a variable: `$(FW_UTIL)/Logger.c`. The literal
+# `../../firmware/src` text is on the VARIABLE's line, so REF alone never sees
+# the file (#1178: "25 firmware files covered" while the host tests read 28).
+ASSIGN = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*(?::|\?)?=\s*([^#\n]*?)\s*$", re.M)
+COMPOSED = re.compile(r"\$\(([A-Za-z_][A-Za-z0-9_]*)\)(/[A-Za-z0-9_./-]*\.(?:c|h))\b")
+VARREF = re.compile(r"\$\(([A-Za-z_][A-Za-z0-9_]*)\)")
+
+
+def _expand(value, defs, seen=()):
+    """Expand $(VAR) using simple assignments; None if any reference cannot be
+    resolved (undefined, recursive, or a make function)."""
+    def sub(m):
+        name = m.group(1)
+        if name in seen or name not in defs:
+            raise KeyError(name)
+        got = _expand(defs[name], defs, seen + (name,))
+        if got is None:
+            raise KeyError(name)
+        return got
+    try:
+        return VARREF.sub(sub, value)
+    except KeyError:
+        return None
+
+
+def unresolved(makefile_text):
+    """`$(VAR)/x.c|h` tokens whose VAR cannot be expanded. Reported, never
+    skipped: each is a possible firmware read this checker cannot see."""
+    defs = dict(ASSIGN.findall(makefile_text))
+    return sorted({m.group(0) for m in COMPOSED.finditer(makefile_text)
+                   if _expand("$(%s)" % m.group(1), defs) is None})
+
+
 def referenced(makefile_text):
-    return sorted(set(REF.findall(makefile_text)))
+    found = set(REF.findall(makefile_text))
+    defs = dict(ASSIGN.findall(makefile_text))
+    for m in COMPOSED.finditer(makefile_text):
+        base = _expand("$(%s)" % m.group(1), defs)
+        if base is not None:
+            found.update(REF.findall(base + m.group(2)))
+    return sorted(found)
 
 
 def filters(workflow_text):
@@ -97,6 +136,16 @@ def self_test():
     ck("a glob entry covers matching paths",
        uncovered(["firmware/src/services/a.h"], ["firmware/src/services/*.h"]),
        [])
+    # #1178: a variable-composed path is seen; an unresolvable one fails.
+    mk2 = "FW_HAL := ../../firmware/src/HAL\nFW_X := $(FW_HAL)/Sub\n" \
+          "A := $(FW_HAL)/WaitLoop.h\nB := $(FW_X)/y.c\n"
+    ck("a variable-composed path is harvested, chained too",
+       referenced(mk2), ["firmware/src/HAL/Sub/y.c", "firmware/src/HAL/WaitLoop.h"])
+    ck("a resolvable composition is not reported unresolved", unresolved(mk2), [])
+    ck("an unresolvable composition is reported, not skipped",
+       unresolved("A := $(NOPE)/z.c\n"), ["$(NOPE)/z.c"])
+    ck("a recursive definition is unresolvable, not a hang",
+       unresolved("R := $(R)/z\nA := $(R)/z.c\n"), ["$(R)/z.c"])
     print("  self-test: %d/%d checks passed" % (checks, checks))
 
 
@@ -107,6 +156,15 @@ def main():
     mk = open(MAKEFILE, encoding="utf-8").read()
     wf = open(WORKFLOW, encoding="utf-8").read()
     paths = referenced(mk)
+    blind = unresolved(mk)
+    if blind:
+        print("ERROR: the Makefile composes source paths from variables this")
+        print("       checker cannot expand, so it cannot say whether the path")
+        print("       filters cover them (#1178). Spell the path out in full")
+        print("       (../../firmware/src/...) or teach the expander:")
+        for b in blind:
+            print("       unresolvable  %s" % b)
+        return 1
     pr, push = filters(wf)
     bad_pr, bad_push = uncovered(paths, pr), uncovered(paths, push)
     if not bad_pr and not bad_push:
