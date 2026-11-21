@@ -8643,8 +8643,12 @@ static scpi_result_t SCPI_GetMemFree(scpi_t * context) {
      * unless freeHeap >= needed + 1024 -- and on a clamp it keeps the old queue size.
      * SamplePoolCount above is the USABLE depth; without the two fields below the
      * shortfall was announced only in a LOG_E line, so a host saw a depth that
-     * silently disagreed with the partition. Clamped=0 on a device with heap to
-     * spare. Appended, not substituted -- MEM:FREE? is a key=value list and existing
+     * silently disagreed with the partition. Clamped > 0 is NOT by itself a fault
+     * (#1164): in auto mode the partition maximizes to the pool, so a healthy device
+     * whose queue was never asked to grow reports Partitioned > Count with heap to
+     * spare. A refused grow produces the same number, so this field cannot tell the
+     * two apart -- compare SYST:MEM:SAMP:POOL? (the request) with Count instead.
+     * Appended, not substituted -- MEM:FREE? is a key=value list and existing
      * keys keep their meaning.
      *
      * Partitioned == 0 is a FAULT, not a pre-stream state. The pool is partitioned at
