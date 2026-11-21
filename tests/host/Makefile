@@ -5507,6 +5507,10 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
 	@# that can no longer fail is caught before it is trusted.
 	@bash check_1158_no_ad7609_rate_override.sh --self-test
 	@bash check_1158_no_ad7609_rate_override.sh $(SCPISD_START_SRC)
+	@# #1227: Streaming_Start() must not clear the encoder buffer on the STOP
+	@# path (streaming.c is not host-compilable; see the script's header).
+	@$(PYTHON) check_1227_stop_no_buffer_clear.py --self-test >/dev/null
+	@$(PYTHON) check_1227_stop_no_buffer_clear.py ../../firmware/src/services/streaming.c
 	./$(USECALTYPE_BIN)
 	./$(DACREINIT_BIN)
 	./$(CALFINITE_BIN)

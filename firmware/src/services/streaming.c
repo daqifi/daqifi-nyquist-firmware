@@ -2282,8 +2282,19 @@ static void Streaming_Start(void) {
             gStreamStartTick = xTaskGetTickCount();
         }
 
-        // Clear encoding buffer once to prevent stale data artifacts in SD files
-        if (buffer != NULL) memset(buffer, 0, bufferSize);
+        /* Clear encoding buffer once to prevent stale data artifacts in SD files.
+         *
+         * #1227: START path only. Streaming_UpdateState() is Stop-then-Start
+         * unconditionally, so this function also runs on the STOP path
+         * (IsEnabled == false), reached from a task above streaming_Task's
+         * priority (USB SCPI 7, PowerAndUITask 7). An unguarded clear there can
+         * land after streaming_Task has encoded a packet into `buffer` but
+         * before Streaming_WriteWithRetry sends it, so the final packet goes out
+         * as packetSize zero bytes and corrupts protobuf framing. A stop needs no
+         * clear: the next session's START performs it before its first encode. */
+        if (gpRuntimeConfigStream->IsEnabled && buffer != NULL) {
+            memset(buffer, 0, bufferSize);
+        }
 
         /* #824: a STARTING session gets its own header.
          *
