@@ -86,8 +86,8 @@ When the gate fails:
   regenerate the baseline (`bash tools/lint/cppcheck.sh`) and commit
   the updated `cppcheck-baseline.txt`.
 
-The baseline is **NOT empty**: it records the 233 pre-existing findings
-accepted at #1309 Phase 1 (226 style, 4 warning, 2 error, 1 portability;
+The baseline is **NOT empty**: it records the 231 pre-existing findings
+accepted at #1309 Phase 1 (226 style, 4 warning, 0 error, 1 portability;
 triage tracked in a follow-up issue). Until #1309 the gate silently skipped
 every FreeRTOS-including file (portmacro.h's FPU `#error` fired without
 `-D__mips_hard_float=1`, and the error was suppressed), so the old empty
