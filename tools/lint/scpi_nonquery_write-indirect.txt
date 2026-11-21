@@ -1,0 +1,50 @@
+# Indirect calls inside the non-query closure that this gate cannot resolve.
+#
+# An unresolvable indirection is the ONE way a response write can hide from
+# this gate, so each is declared here with the issue that tracks it, and a NEW
+# one fails the gate rather than passing quietly. Shrink-only, like the
+# allowlist: a declaration that no longer matches must be deleted.
+#
+# A member whose assignments ARE findable is followed instead of declared --
+# `.flush = SCPI_USB_Flush` and `gStateMachineContext.active = MainState` both
+# resolve, and neither target writes.
+#
+# Format: <file>\t<function>\t<member>\t#<issue>
+
+# `cirbuf->process_callback = fp` takes its target from a PARAMETER, so no
+# assignment names a function. Verified by hand at 4ec4f91c: the only two
+# registered targets are CircularBufferToSDWrite (sd_card_manager.c) and
+# UsbCdc_Wrapper_Write (UsbCdc.c), and NEITHER reaches scpi_printf,
+# SCPI_Result*, SCPI_Write* or a ->write() call. They move bytes to the SD
+# card and to the USB DMA buffer, which are not the SCPI response stream.
+# The pointer-argument rule also edges from each registration site, so a
+# response write added to either target would still be reported there.
+Util/CircularBuffer.c	CircularBuf_ProcessBytes	process_callback	#1274
+
+# libscpi's two error-emit sites (round 3, once libscpi is indexed). This
+# member IS resolvable -- `.error = SCPI_USB_Error` / `SCPI_TCP_Error` -- and
+# both targets print the `**ERROR` line that every queued error produces, on
+# ANY command, query or not. That line is part of #1274 but is stage 3's
+# removal, not this gate's claim (see the module docstring). Followed, it
+# makes every command that can queue an error -- i.e. every one that parses
+# a parameter -- a "writer", which is the false population an earlier
+# version blamed on libscpi itself. Only a LIBSCPI call site may declare a
+# resolvable member: the same declaration on a call in our own code is
+# refused, so this cannot be used to cut an ordinary write.
+libraries/scpi/libscpi/src/error.c	SCPI_ErrorEmitEmpty	error	#1274
+libraries/scpi/libscpi/src/error.c	SCPI_ErrorEmit	error	#1274
+
+# The WiFi transport's call into libscpi's parser (round 3). The console
+# callback `microrl_commandComplete` executes whatever command line arrives,
+# so through processCommand's `cmd->callback(context)` it reaches EVERY
+# registered callback, queries included. It is reached as a registration:
+# `wifi_tcp_server_Initialize` passes it to microrl (a pointer argument, which
+# this graph counts as a call), and the WiFi pump runs the initializer from
+# SYSTem:POWer:STATe -- so, followed, every write of every query would be
+# blamed on a command that only powers the board. Those writes belong to a
+# LATER command on the transport, each analysed under its own registration.
+# Only a call that resolves solely to libscpi's parser entry points
+# (SCPI_Input, SCPI_Parse) may be declared here; any other direct callee is
+# refused. The USB twin (UsbCdc.c) is not in the non-query closure today; if
+# it enters, its call is followed and reported, not silently cut.
+services/wifi_services/wifi_tcp_server.c	microrl_commandComplete	SCPI_Input	#1274
