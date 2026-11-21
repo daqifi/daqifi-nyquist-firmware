@@ -259,6 +259,17 @@ uint64_t UsbCdc_GetWireBytesSent(void);
      */
     void UsbCdc_SetWriteBuffer(uint8_t* buf, uint32_t size);
 
+    /*! fw#1265: bytes queued for the host and not yet transmitted. Twin of
+     *  wifi_tcp_server_GetCircularBufferAvailable. */
+    uint32_t UsbCdc_GetCircularBufferAvailable(void);
+
+    /*! fw#1265: which CDC host session is on the wire. Changes whenever a host
+     *  asserts DTR after none was connected, and does not repeat short of 2^32
+     *  sessions, so a tagged
+     *  SD:GET's data window can be keyed to the session it was opened for --
+     *  the USB twin of wifi_tcp_server_GetConnGeneration (#599). */
+    uint32_t UsbCdc_GetSessionGeneration(void);
+
     /**
      * Set the USB CDC DMA write staging buffer.
      * Called at each stream start to auto-size for active interfaces.

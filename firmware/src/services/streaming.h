@@ -1161,7 +1161,13 @@ typedef enum {
      * interlocked claim. One value for both, for the same reason as
      * STREAM_CFG_CLAIM_BUSY: the remedy is to retry either way, and
      * Streaming_BeginSessionStart logs which holder it was. */
-    STREAM_START_CLAIM_BUSY
+    STREAM_START_CLAIM_BUSY,
+    /* fw#1265 / #1269: a TAGGED SYSTem:STORage:SD:GET is framing a
+     * definite-length block, or is armed and about to. A separate value from
+     * BUSY because the remedy is different -- wait for a download to finish,
+     * not retry immediately -- and because the message has to name something
+     * the caller can act on. */
+    STREAM_START_CLAIM_SD_GET
 } StreamingStartClaim;
 
 /**
@@ -1179,6 +1185,21 @@ StreamingStartClaim Streaming_BeginSessionStart(void);
 
 /** Release a claim taken by Streaming_BeginSessionStart(). */
 void Streaming_EndSessionStart(void);
+
+/**
+ * Is a session arm in progress right now -- claim taken, not yet released?
+ *
+ * fw#1269: the SD:GET data window reads this to refuse opening while an arm is
+ * mid-flight. It is the ONLY thing that closes the arm-vs-window race, because
+ * the arm's observable effect (IsEnabled) is published late: a GET that only
+ * checked "is a stream live" could pass, open its window, emit its header, and
+ * then have the arm publish and write frames into the block.
+ *
+ * A single aligned 32-bit read, atomic on PIC32MZ, so it is safe to call from
+ * inside a critical section -- which is the only way it is used, because the
+ * answer is only meaningful as part of one decision with the window state.
+ */
+bool Streaming_SessionStartInProgress(void);
 
 /*! Initializes the streaming component
  * @param[in] pStreamingConfigInit Streaming configuration
@@ -1681,6 +1702,13 @@ bool Streaming_IsActiveOnNonWifiInterface(void);
  * fields with no cross-task coordination needed.
  */
 bool Streaming_IsActiveOnWifiInterface(void);
+
+/**
+ * True when a streaming session is live on ANY interface -- `IsEnabled ||
+ * Running`, read as one snapshot. fw#1265; see the implementation for why it
+ * is neither a lock nor composable from the two predicates above.
+ */
+bool Streaming_SessionIsLive(void);
 
 /**
  * Build channel mapping from current board config and runtime config.
