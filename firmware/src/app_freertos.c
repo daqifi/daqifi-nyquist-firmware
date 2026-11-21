@@ -74,17 +74,20 @@
 #if (DRV_SDSPI_SPEED_HZ_IDX0 != SPI0_STANDARDIZED_FREQUENCY_HZ)
 #error "SPI frequency mismatch detected! When coordination disabled, standardize frequencies or enable coordination (SPI0_COORDINATION_ENABLED=1)."
 #endif
+// #1278: the WINC client's rate (wdrvWincSpiInitData.baudRateInHz). Before
+// #1278 it had none, so this guard described a WiFi rate nothing applied.
+#if (DRV_WINC_SPI_SPEED_HZ_IDX0 != SPI0_STANDARDIZED_FREQUENCY_HZ)
+#error "WiFi SPI frequency mismatch! DRV_WINC_SPI_SPEED_HZ_IDX0 must equal the SD rate: different SPI4 rates broke SD writes (#380)."
+#endif
 #else
 // When coordination enabled, validate SD card configuration matches our managed frequency
 #if (DRV_SDSPI_SPEED_HZ_IDX0 != SPI0_SD_FREQUENCY_HZ)
 #error "SD card frequency mismatch! DRV_SDSPI_SPEED_HZ_IDX0 must match SPI0_SD_FREQUENCY_HZ when coordination enabled."
 #endif
+#if (DRV_WINC_SPI_SPEED_HZ_IDX0 != SPI0_WIFI_FREQUENCY_HZ)
+#error "WiFi SPI frequency mismatch! DRV_WINC_SPI_SPEED_HZ_IDX0 must match SPI0_WIFI_FREQUENCY_HZ when coordination enabled."
 #endif
-
-// Future validation: Add WiFi frequency check when configurable
-// #if defined(DRV_WIFI_SPI_SPEED_HZ) && (DRV_WIFI_SPI_SPEED_HZ != SPI0_STANDARDIZED_FREQUENCY_HZ) && (SPI0_COORDINATION_ENABLED == 0)
-// #error "WiFi SPI frequency mismatch! Enable SPI coordination or standardize frequencies."
-// #endif
+#endif
 
 // SPI0 bus clients for identification and future coordination
 typedef enum {
