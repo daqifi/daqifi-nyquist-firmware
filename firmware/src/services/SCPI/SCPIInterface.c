@@ -10186,6 +10186,7 @@ static scpi_result_t SCPI_DiagSpiBusStatsGet(scpi_t * context)
 {
     extern void DRV_SPI_GetRejectCounters(uint32_t *stale, uint32_t *exclusive,
                                           uint32_t *lockFail, uint32_t *queueFull);
+    extern uint32_t nm_spi_rsp_state_errors(void);   /* nmspi.h; #1262 */
     uint32_t st, ex, lk, qf;
     DRV_SPI_GetRejectCounters(&st, &ex, &lk, &qf);
 
@@ -10203,27 +10204,31 @@ static scpi_result_t SCPI_DiagSpiBusStatsGet(scpi_t * context)
     sdHolds = app_SDCard_HoldsSpiBus();
     recovered = app_SDCard_BusRecoveryCount();
     holdMaxMs = app_SDCard_BusHoldMaxMs();  // #930
+    /* #1262: WiFi command-response state bytes that were not 0x00. The WINC
+     * driver retries them silently; a nonzero count is the shared-bus
+     * corruption #1262 traced to an SD card still driving MISO. */
+    uint32_t rspErr = nm_spi_rsp_state_errors();
 
-    /* 224, not 192: the worst case is 219 characters plus the NUL (220),
-     * which 192 truncates. Field-by-field, with every counter at its
-     * 10-digit maximum -- RejStale 20, RejExclusive 24, RejLock 19,
-     * RejQueueFull 24, ExclusiveHeld 16, ExclusiveDepth 26,
-     * ExclusiveHolder 25, SdHoldsBus 13, SdBusRecoveries 27,
-     * SdBusHoldMaxMs 25 (no trailing comma, it is now last). Recompute
-     * this if a field is added. Stays a stack local rather than the
+    /* 248: the worst case is 241 characters plus the NUL (242).
+     * Field-by-field, with every counter at its 10-digit maximum --
+     * RejStale 20, RejExclusive 24, RejLock 19, RejQueueFull 24,
+     * ExclusiveHeld 16, ExclusiveDepth 26, ExclusiveHolder 25,
+     * SdHoldsBus 13, SdBusRecoveries 27, SdBusHoldMaxMs 26, WincRspErr 21
+     * (no trailing comma, it is last). Recompute this if a field is added. Stays a stack local rather than the
      * shared response buffer because it is under the 256 B threshold
      * that rule applies to. */
-    char out[224];
+    char out[248];
     snprintf(out, sizeof(out),
              "RejStale=%lu,RejExclusive=%lu,RejLock=%lu,RejQueueFull=%lu,"
              "ExclusiveHeld=%u,ExclusiveDepth=%lu,ExclusiveHolder=%08lx,"
-             "SdHoldsBus=%u,SdBusRecoveries=%lu,SdBusHoldMaxMs=%lu",
+             "SdHoldsBus=%u,SdBusRecoveries=%lu,SdBusHoldMaxMs=%lu,"
+             "WincRspErr=%lu",
              (unsigned long)st, (unsigned long)ex, (unsigned long)lk,
              (unsigned long)qf,
              (unsigned)(held ? 1U : 0U), (unsigned long)depth,
              (unsigned long)holder,
              (unsigned)(sdHolds ? 1U : 0U), (unsigned long)recovered,
-             (unsigned long)holdMaxMs);
+             (unsigned long)holdMaxMs, (unsigned long)rspErr);
     SCPI_ResultText(context, out);
     return SCPI_RES_OK;
 }
