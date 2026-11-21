@@ -381,7 +381,7 @@ static uint32_t DAC_VoltageToCounts(double voltage, const AOutModule* module) {
 
     // Validate configuration - prevent division by zero and invalid resolution
     if (hardwareFullScale <= 0.0) {
-        LOG_E("DAC_VoltageToCounts: Invalid hardwareFullScale (%.2f), returning 0", hardwareFullScale);
+        LOG_E("DAC_VoltageToCounts: Invalid hardwareFullScale (<= 0), returning 0");
         return 0;
     }
     if (resolution == 0) {

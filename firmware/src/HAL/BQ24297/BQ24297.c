@@ -349,6 +349,7 @@ void BQ24297_ChargeEnable(bool chargeEnable) {
     uint8_t reg;
 
     if (!BQ24297_Read_I2C(0x01, &reg)) {
+        /* log_budget: max=7 -- the ternary below: "enable"/"disable" */
         LOG_E("BQ24297_ChargeEnable: REG01 read failed, cannot %s charging",
               chargeEnable ? "enable" : "disable");
         return;

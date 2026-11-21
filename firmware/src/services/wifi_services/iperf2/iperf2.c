@@ -176,10 +176,12 @@ static void FinalizeStats(void) {
 // DISCONNECTED but the WINC isn't actually up yet).
 static bool RequireWifiConnected(const char* where) {
     if (wifi_manager_GetWiFiStatus() != WIFI_STATUS_CONNECTED) {
+        /* log_budget: max=10 -- `where` is one of the literals passed at lines 223/256/297/331/379: longest is "TCP server"/"UDP server"/"TCP client"/"UDP client" (10) */
         LOG_E("iperf2: %s refused - WiFi not CONNECTED", where);
         return false;
     }
     if (m2m_wifi_get_state() != WIFI_STATE_START) {
+        /* log_budget: max=10 -- `where` is one of the literals passed at lines 223/256/297/331/379: longest is "TCP server"/"UDP server"/"TCP client"/"UDP client" (10) */
         LOG_E("iperf2: %s refused - WINC not started", where);
         return false;
     }
@@ -188,10 +190,12 @@ static bool RequireWifiConnected(const char* where) {
 
 static bool RequireWifiReadyForSockets(const char* where) {
     if (wifi_manager_GetWiFiStatus() == WIFI_STATUS_DISABLED) {
+        /* log_budget: max=10 -- `where` is one of the literals passed at lines 223/256/297/331/379: longest is "TCP server"/"UDP server"/"TCP client"/"UDP client" (10) */
         LOG_E("iperf2: %s refused - WiFi DISABLED", where);
         return false;
     }
     if (m2m_wifi_get_state() != WIFI_STATE_START) {
+        /* log_budget: max=10 -- `where` is one of the literals passed at lines 223/256/297/331/379: longest is "TCP server"/"UDP server"/"TCP client"/"UDP client" (10) */
         LOG_E("iperf2: %s refused - WINC not started", where);
         return false;
     }
@@ -351,6 +355,7 @@ bool Iperf2_StartTcpClient(const char* remote_ip, uint16_t remote_port,
     // WINC inet_addr returns 0 on parse failure; also reject 0xFFFFFFFFU
     // (POSIX INADDR_NONE / "255.255.255.255") — not a valid iperf target.
     if (addr.sin_addr.s_addr == 0 || addr.sin_addr.s_addr == 0xFFFFFFFFU) {
+        /* log_budget: max=31 -- remote_ip comes only from SCPIInterface.c:4457/4471, where it is char ipBuf[32] filled by SCPI_ParamCopyText(ipBuf, 32) (parser.c:1232: at most 31 chars + NUL) */
         LOG_E("iperf2: bad remote IP %s", remote_ip);
         CloseAll();
         return false;
@@ -397,6 +402,7 @@ bool Iperf2_StartUdpClient(const char* remote_ip, uint16_t remote_port,
     gCtx.udp_remote.sin_addr.s_addr = inet_addr((char*)remote_ip);
     if (gCtx.udp_remote.sin_addr.s_addr == 0 ||
         gCtx.udp_remote.sin_addr.s_addr == 0xFFFFFFFFU) {
+        /* log_budget: max=31 -- remote_ip comes only from SCPIInterface.c:4457/4471, where it is char ipBuf[32] filled by SCPI_ParamCopyText(ipBuf, 32) (parser.c:1232: at most 31 chars + NUL) */
         LOG_E("iperf2: bad remote IP %s", remote_ip);
         CloseAll();
         return false;

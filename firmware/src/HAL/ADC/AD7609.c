@@ -406,6 +406,7 @@ bool AD7609_ReadSamples(AInSampleArray* samples,
     } while (--timeout > 0);
 
     if (timeout == 0 || event != DRV_SPI_TRANSFER_EVENT_COMPLETE) {
+        /* log_budget: max=7 -- the ternary on this very line: "timeout"/"failed" */
         LOG_E("AD7609_ReadSamples: SPI transfer %s", (timeout == 0) ? "timeout" : "failed");
         goto read_cleanup;
     }

@@ -271,6 +271,7 @@ SpiBusHealthResult_t SpiBusHealth_ProbeActive(void)
                 result = (nonFF == 0U) ? SPI_BUS_CLEAR : SPI_BUS_JAMMED;
                 if (nonFF != 0U)
                 {
+                    /* log_budget: max=15 -- passName[] (line 240): longest is "unselected CMD0" */
                     LOG_E("SpiBusHealth: ACTIVE jammer - %lu/16 bytes answered %s",
                           (unsigned long)nonFF, passName[pass]);
                 }
@@ -462,6 +463,7 @@ SpiBusHealthResult_t SpiBusHealth_TryRelease(void)
         // card, 2026-07-03). Follow up with the active probe.
         after = SpiBusHealth_ProbeActive();
     }
+    /* log_budget: max=13 -- the ternary below: longest is "INDETERMINATE" */
     LOG_E("SpiBusHealth: release ritual done - bus now %s",
           (after == SPI_BUS_CLEAR) ? "CLEAR" :
           (after == SPI_BUS_JAMMED) ? "STILL JAMMED" :

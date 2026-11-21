@@ -177,6 +177,7 @@ bool DioProbe_AssignToChannel(uint8_t probeId, uint8_t channel,
     DioChannelOwner_t periphOwner = DIO_GetChannelOwner(channel);
     if (periphOwner != DIO_OWNER_NONE) {
         taskEXIT_CRITICAL();
+        /* log_budget: max=12 -- DIO_ChannelOwnerName() (HAL/DIO.c:145-155): longest return is "InputCapture" */
         LOG_E("DioProbe: channel %u owned by %s",
               (unsigned)channel, DIO_ChannelOwnerName(periphOwner));
         return false;
