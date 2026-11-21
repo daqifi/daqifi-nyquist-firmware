@@ -1185,8 +1185,10 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
     /* #1279: read through the idle-size SD buffer, not the 4 KB one a WiFi or
      * USB stream left behind -- the read chunk is min(SD circular, 16 KB), so
      * that buffer cut every read to a quarter of its idle size. Best effort:
-     * on false (a stream is live, the other transport holds a claim, or the
-     * re-partition failed) the GET proceeds through the buffers it has, which
+     * on false (a stream is live, the other transport holds a claim, a reply
+     * could not be sent out of a transport ring before the re-partition reset
+     * it, or the re-partition failed) the GET proceeds through the buffers it
+     * has, which
      * is correct and only slower; refusing would break a GET during a live
      * non-SD stream. Before the ReadBufferReady() check below, which a restore
      * can only help. */
@@ -1654,7 +1656,10 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
      * refused and cannot re-partition under this one; before the SD claim and
      * the arm, because the re-partition refuses while the SD manager has a
      * mode armed. Refusing on failure is the point: a result taken through the
-     * small buffers is the wrong answer this ticket exists to stop. */
+     * small buffers is the wrong answer this ticket exists to stop. That
+     * includes refusing rather than discarding a reply still queued for the
+     * host (an earlier reply in the same message, or this command's echo) that
+     * the restore could not send first -- see SCPI_RestoreIdleSdBuffers. */
     if (!SCPI_RestoreIdleSdBuffers()) {
         SCPI_ExecutionError(context,
                             "SYST:STOR:SD:BENCH: rejected, could not restore "

@@ -8776,6 +8776,35 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize,
         return false;
     }
 
+    /* #1279: UsbCdc_SetWriteBuffer and wifi_tcp_server_SetWriteBuffer below
+     * reset their rings, discarding any reply still queued in them. An idle
+     * restore runs from inside an SD command, and libscpi writes each reply
+     * into the ring as it is produced and flushes only at the end of the
+     * message, so `*IDN?;:SYST:STOR:SD:GET "x"` (or the command's own echo)
+     * would lose its earlier output. SCPI_RestoreIdleSdBuffers drains both
+     * rings before calling this; this is the authoritative check, at the LAST
+     * point that can still refuse -- after every wait above, immediately
+     * before the re-carve, after which there is no clean way back.
+     *
+     * Residual, not closed: each ring is reset under its own wMutex, in a
+     * separate lock section from this read, and the re-carve below still waits
+     * (SD idle, WINC SPI idle, the TCP in-flight wait inside
+     * wifi_tcp_server_SetWriteBuffer). The only producer that can land a reply
+     * in that window is the OTHER transport's SCPI task: the calling task
+     * writes nothing here, a live stream is excluded by the config claim, and
+     * SD ops by the buffer lock just taken. Holding both wMutexes across those
+     * waits would block the WINC driver task's own drain, so it is not done.
+     *
+     * Idle restores only: the streaming callers re-partition with the same
+     * reset and are left as they were (out of #1279's scope). */
+    if (idleLayout && (UsbCdc_PendingWriteBytes() != 0u ||
+                       wifi_tcp_server_PendingWriteBytes() != 0u)) {
+        LOG_I("PrepareStreamingBuffers: idle restore refused - transport "
+              "output still queued (#1279)");
+        sd_card_manager_UnlockBuffer();
+        return false;
+    }
+
     StreamingBufferPool_Partition(usbSize, wifiSize, encSize,
                                   sdCircSize, poolCount, sampleElemSize);
 
@@ -8951,6 +8980,24 @@ static bool SdIdleRestoreDue(uint32_t sdCircNow, uint32_t sdWriteBufNow,
  * coherent-pool quiesce forces a WRITE to NONE and waits for the manager to
  * go idle, which would cancel an armed write or time out behind a FORMAT.
  *
+ * SEND QUEUED OUTPUT FIRST. The re-partition resets the USB and TCP output
+ * rings (UsbCdc_SetWriteBuffer, wifi_tcp_server_SetWriteBuffer). libscpi
+ * writes every reply into the ring as it is produced and flushes only at the
+ * end of the message, and neither transport task drains its ring while it is
+ * inside a SCPI callback, so at this point the ring can hold an earlier reply
+ * of the same message (`*IDN?;:SYST:STOR:SD:BENCH 1024,0`), this command's own
+ * echo (on by default for both consoles), or a reply of the other transport.
+ * They are pumped out here, bounded, before the re-partition; if any are still
+ * queued at the deadline (a host that is not reading, a stuck WINC) the
+ * restore is refused instead, and PrepareStreamingBuffers re-checks
+ * immediately before its re-carve.
+ *
+ * The USB ring is pumped from either task (UsbCdc_PumpWrite is documented safe
+ * cross-task). The TCP ring is pumped only off the USB task: on WifiTask --
+ * the TCP command's own task -- nothing else would send it; on the USB task,
+ * WifiTask's loop sends it while this waits, and pumping it here would make
+ * the USB task block in the WINC driver's send().
+ *
  * Returns true when the buffers are at idle size (already, or now), false when
  * they are small and could not be restored. SD:BENCHmark refuses on false,
  * because measuring the small buffers is the defect; SD:GET proceeds, because
@@ -8970,7 +9017,27 @@ bool SCPI_RestoreIdleSdBuffers(void) {
     if (SdIdleRestoreDue(StreamingBufferPool_SdCircularSize(),
                          sd_card_manager_GetWriteBufferSize(),
                          mc->sdCircularBufSize)) {
-        ok = !sd_card_manager_IsBusy() &&
+        ok = !sd_card_manager_IsBusy();
+        TickType_t drainStart = xTaskGetTickCount();
+        while (ok) {
+            bool usbQueued = (UsbCdc_PendingWriteBytes() != 0u);
+            bool wifiQueued = (wifi_tcp_server_PendingWriteBytes() != 0u);
+            if (!usbQueued && !wifiQueued) {
+                break;
+            }
+            if ((xTaskGetTickCount() - drainStart) > pdMS_TO_TICKS(500)) {
+                ok = false;
+                break;
+            }
+            if (usbQueued) {
+                UsbCdc_PumpWrite();
+            }
+            if (wifiQueued && !UsbCdc_CallerIsUsbTask()) {
+                (void)wifi_tcp_server_TransmitBufferedData();
+            }
+            vTaskDelay(1);
+        }
+        ok = ok &&
              PrepareStreamingBuffers(mc->samplePoolCount
                                          ? mc->samplePoolCount
                                          : DEFAULT_AIN_SAMPLE_COUNT,

@@ -17,6 +17,14 @@ string-stripped, function by function, and checks:
   4. PrepareStreamingBuffers only auto-balances when NOT asked for the idle
      layout, and every other caller still passes `false` -- so no streaming
      path changed.
+  5. Queued output survives the restore: the helper pumps the USB and TCP
+     output rings between the busy refusal and the re-partition (the drain's
+     behaviour is run, spliced, by test_1279_restore_keeps_queued_output.c),
+     and PrepareStreamingBuffers refuses an idle re-partition while either
+     ring still holds bytes -- after taking the SD buffer lock, before the
+     re-carve (StreamingBufferPool_Partition), releasing the lock on refusal.
+     The rings' SetWriteBuffer reset would otherwise discard an earlier reply
+     of the same message, or the command's own echo.
 
 Function-scoped on purpose: SCPIStorageSD.c has many SD arms, and a file-wide
 grep would pass while the one command this is about lost its call.
@@ -168,6 +176,51 @@ def check(sd_src, iface_src):
         raise AssertionError("prepare callers: expected four `false` and one "
                              "`true` (the helper), got %r" % lasts)
 
+    # 5. Queued output is sent, or the idle re-partition refuses
+    usbq = once(h, r"\bUsbCdc_PendingWriteBytes\(\)", "helper: USB queued?")
+    wifiq = once(h, r"\bwifi_tcp_server_PendingWriteBytes\(\)",
+                 "helper: TCP queued?")
+    once(h, r"\bUsbCdc_PumpWrite\(\);", "helper: USB pump")
+    once(h, r"if\(wifiQueued&&!UsbCdc_CallerIsUsbTask\(\)\)\{\(void\)"
+            r"wifi_tcp_server_TransmitBufferedData\(\);",
+         "helper: TCP pump, off the USB task only")
+    once(h, r"ok=false;break;", "helper: drain deadline refuses")
+    if not (busy < usbq < prep and busy < wifiq < prep):
+        raise AssertionError("helper: the drain must sit between the busy "
+                             "refusal and the re-partition")
+    if not re.search(r"ok=ok&&PrepareStreamingBuffers\(", h):
+        raise AssertionError("helper: a failed drain must skip the "
+                             "re-partition (`ok = ok && Prepare...`)")
+    guard = once(p, r"if\(idleLayout&&\(UsbCdc_PendingWriteBytes\(\)!=0u\|\|"
+                    r"wifi_tcp_server_PendingWriteBytes\(\)!=0u\)\)\{",
+                 "prepare: idle re-partition refuses queued output")
+    lock = first(p, r"\bsd_card_manager_TryLockBuffer\(\)", "prepare: lock")
+    carve = first(p, r"\bStreamingBufferPool_Partition\(", "prepare: re-carve")
+    if not lock < guard < carve:
+        raise AssertionError("prepare: the queued-output refusal must follow "
+                             "the SD buffer lock and precede the re-carve "
+                             "(lock=%d guard=%d carve=%d)" % (lock, guard, carve))
+    gblock = p[guard:]
+    gblock = gblock[:gblock.index("}") + 1]
+    if ("sd_card_manager_UnlockBuffer();" not in gblock
+            or "return false;" not in gblock):
+        raise AssertionError("prepare: the queued-output refusal must release "
+                             "the SD buffer lock and return false")
+
+
+def _move_guard_after_carve(iface):
+    """Mutant: the queued-output refusal moved past the re-carve, where a
+    refusal could no longer leave the old partition intact."""
+    start = iface.find("    if (idleLayout && (UsbCdc_PendingWriteBytes()")
+    if start < 0:
+        return iface
+    end = iface.index("\n    }\n", start) + len("\n    }\n")
+    guard = iface[start:end]
+    rest = iface[:start] + iface[end:]
+    carve = rest.index("StreamingBufferPool_Partition(", start)
+    after = rest.index(";\n", carve) + 2
+    return rest[:after] + guard + rest[after:]
+
 
 def self_test():
     sd, iface = SD.read_text(), IFACE.read_text()
@@ -188,7 +241,22 @@ def self_test():
         "prepare ignores idleLayout": (sd, iface.replace(
             "if (isAutoMode && !idleLayout) {", "if (isAutoMode) {", 1)),
         "helper drops the busy refusal": (sd, iface.replace(
-            "ok = !sd_card_manager_IsBusy() &&", "ok =", 1)),
+            "ok = !sd_card_manager_IsBusy();", "ok = true;", 1)),
+        "prepare guard deleted": (sd, iface.replace(
+            "if (idleLayout && (UsbCdc_PendingWriteBytes() != 0u ||",
+            "if (0 && (UsbCdc_PendingWriteBytes() != 0u ||", 1)),
+        "prepare guard keeps the SD buffer lock": (sd, iface.replace(
+            "output still queued (#1279)\");\n        "
+            "sd_card_manager_UnlockBuffer();\n", "output still queued "
+            "(#1279)\");\n", 1)),
+        "prepare guard after the re-carve": (sd, _move_guard_after_carve(
+            iface)),
+        "helper re-partitions after a failed drain": (sd, iface.replace(
+            "        ok = ok &&\n             PrepareStreamingBuffers(",
+            "        ok =\n             PrepareStreamingBuffers(", 1)),
+        "helper pumps TCP from the USB task": (sd, iface.replace(
+            "if (wifiQueued && !UsbCdc_CallerIsUsbTask()) {",
+            "if (wifiQueued) {", 1)),
     }
     failed = 0
     for name, (s, i) in mutants.items():

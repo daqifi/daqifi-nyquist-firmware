@@ -1595,6 +1595,29 @@ void UsbCdc_SetWriteBuffer(uint8_t* buf, uint32_t size) {
 }
 
 
+/* #1279: bytes queued in the write circular buffer that UsbCdc_SetWriteBuffer
+ * would discard. Read under wMutex, the lock every producer and the consumer
+ * hold, so the count is never torn against an AddBytes/ProcessBytes.
+ *
+ * 0 outside PROCESS: an unconfigured or closed CDC has no host to deliver to,
+ * and counting there would make an idle re-partition wait on bytes nobody can
+ * ever drain. */
+uint32_t UsbCdc_PendingWriteBytes(void) {
+    if (gRunTimeUsbSttings.state != USB_CDC_STATE_PROCESS) {
+        return 0u;
+    }
+    xSemaphoreTake(gRunTimeUsbSttings.wMutex, portMAX_DELAY);
+    uint32_t n = CircularBuf_NumBytesAvailable(&gRunTimeUsbSttings.wCirbuf);
+    xSemaphoreGive(gRunTimeUsbSttings.wMutex);
+    return n;
+}
+
+/* #1279: is the caller app_USBDeviceTask, the USB SCPI task? */
+bool UsbCdc_CallerIsUsbTask(void) {
+    return (gUsbCdcTaskHandle != NULL) &&
+           (xTaskGetCurrentTaskHandle() == gUsbCdcTaskHandle);
+}
+
 void UsbCdc_SetDmaWriteBuffer(uint8_t* buf, uint32_t size) {
     if (buf == NULL || size == 0) return;
     gRunTimeUsbSttings.dmaWriteBuffer = buf;

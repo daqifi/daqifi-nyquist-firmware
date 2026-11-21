@@ -260,6 +260,16 @@ uint64_t UsbCdc_GetWireBytesSent(void);
     void UsbCdc_SetWriteBuffer(uint8_t* buf, uint32_t size);
 
     /**
+     * #1279: bytes queued in the write circular buffer -- what
+     * UsbCdc_SetWriteBuffer would discard. Read under wMutex. 0 unless the
+     * CDC is in PROCESS state (no host to deliver to otherwise).
+     */
+    uint32_t UsbCdc_PendingWriteBytes(void);
+
+    /** #1279: true when called on app_USBDeviceTask (the USB SCPI task). */
+    bool UsbCdc_CallerIsUsbTask(void);
+
+    /**
      * Set the USB CDC DMA write staging buffer.
      * Called at each stream start to auto-size for active interfaces.
      * Must only be called when no USB DMA transfer is in flight.

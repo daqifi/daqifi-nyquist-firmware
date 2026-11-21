@@ -762,6 +762,45 @@ $(SDIDLE1279_BIN): test_1279_sd_idle_buffer_restore.c test_framework.h \
 	  || { python3 check_1279_sd_idle_restore.py; exit 1; }
 	$(CC) $(CFLAGS) $(INCLUDES) -o $@ test_1279_sd_idle_buffer_restore.c
 
+# #1279 (audit finding 1): the idle restore must not discard queued output.
+#
+# The re-partition resets the USB and TCP output rings, and an SD command's
+# restore runs while an earlier reply of the same message (libscpi flushes only
+# at message end) or the command's own echo can still be queued. The REAL
+# SCPI_RestoreIdleSdBuffers and SdIdleRestoreDue are spliced verbatim and run
+# against a model of the two rings in which the re-partition loses whatever is
+# still queued. Unlike run_1279_tests this splice also succeeds on a tree
+# without the fix (both functions exist there), so the failure on such a tree
+# is behavioural: the loss assertions fire. The refusal inside
+# PrepareStreamingBuffers is pinned by check_1279_sd_idle_restore.py, which
+# run_1279_tests runs.
+OUT1279_BIN := run_1279_output_tests
+OUT1279_DUE := gen_1279_out_due.h
+OUT1279_RESTORE := gen_1279_out_restore.h
+OUT1279_DEFS := gen_1279_out_defs.h
+
+$(OUT1279_BIN): test_1279_restore_keeps_queued_output.c test_framework.h \
+                $(SCPISD_START_SRC) $(SDIDLE1279_SD_HDR)
+	@splice() { \
+	   sed -n "/^$$2(/,/^}/p" "$$1" | tr -d '\r' > "$$3"; \
+	   lines=`wc -l < "$$3" | tr -d ' '`; \
+	   last=`tail -1 "$$3" | tr -d '[:space:]'`; \
+	   test "$$lines" -ge 4 && test "$$lines" -le 200 && test "$$last" = "}" \
+	   || { echo "ERROR: #1279 -- could not splice '$$2' out of $$1:"; \
+	        echo "       got $$lines line(s) ending in '$$last'."; \
+	        rm -f "$$3"; return 1; }; \
+	 }; \
+	 splice $(SCPISD_START_SRC) "static bool SdIdleRestoreDue" $(OUT1279_DUE) || exit 1; \
+	 splice $(SCPISD_START_SRC) "bool SCPI_RestoreIdleSdBuffers" $(OUT1279_RESTORE) || exit 1
+	@grep -hE '^#define (SD_CARD_MANAGER_CONF_WBUFFER_SIZE|SD_CARD_MANAGER_DEFAULT_CIRCULAR_SIZE)[[:space:]]' $(SDIDLE1279_SD_HDR) \
+	   | tr -d '\r' | sed 's://.*$$::' > $(OUT1279_DEFS)
+	@n=`grep -c '^#define' $(OUT1279_DEFS)`; \
+	 if [ "$$n" -ne 2 ]; then \
+	   echo "ERROR: #1279 -- expected 2 #defines in $(OUT1279_DEFS), got $$n."; \
+	   rm -f $(OUT1279_DEFS); exit 1; \
+	 fi
+	$(CC) $(CFLAGS) -o $@ test_1279_restore_keeps_queued_output.c
+
 # #970: encoder consume-accounting. Like BENCH_BIN, streaming.c and
 # JSON_Encoder.c are not host-test candidates (FreeRTOS/libscpi/the whole
 # board graph), so this test re-implements the two relevant loop SHAPES
@@ -5511,7 +5550,7 @@ $(WIFI881_BIN): test_881_wifi_reset.c test_framework.h $(WIFI_MGR_SRC) $(IPERF2_
 
 run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) \
      $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) \
-     $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(CAP1202_BIN) $(ISRLOG1197_BIN) $(STOP1201_BIN) $(CLAMP1231_BIN) $(SDIDLE1279_BIN) \
+     $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(CAP1202_BIN) $(ISRLOG1197_BIN) $(STOP1201_BIN) $(CLAMP1231_BIN) $(SDIDLE1279_BIN) $(OUT1279_BIN) \
      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(USECALTYPE_BIN) $(ARM_BIN) $(NAME_BIN) \
      $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) check-1200-parity check-885-savecal-claim \
      $(NVM1153_BIN) $(ARMREFUSE_BIN) $(SDCRC_BIN) $(SDWRITE_BIN) $(LOGRING1248_BIN) $(HIF881_BIN) \
@@ -5558,6 +5597,7 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
 	./$(STOP1201_BIN)
 	./$(CLAMP1231_BIN)
 	./$(SDIDLE1279_BIN)
+	./$(OUT1279_BIN)
 	./$(CAP1202_BIN)
 	./$(ISRLOG1197_BIN)
 	@# #1158: no AD7609 rate override in START (SCPIInterface.c is not
@@ -6110,6 +6150,7 @@ clean:
 	      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(GEN_1125) $(CAP1202_BIN) $(GEN_1202) $(ISRLOG1197_BIN) $(GEN_1197) \
 	      $(STOP1201_BIN) $(STOP1201_GEN) $(CLAMP1231_BIN) $(CLAMP1231_GEN) \
 	      $(SDIDLE1279_BIN) $(SDIDLE1279_AUTOBUF) $(SDIDLE1279_DUE) $(SDIDLE1279_DEFS) \
+	      $(OUT1279_BIN) $(OUT1279_DUE) $(OUT1279_RESTORE) $(OUT1279_DEFS) \
 	      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(SDLOG1029_GEN).tmp \
 	      $(USECALTYPE_BIN) $(NAME_BIN) $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(ARM_BIN) $(SCPIDAC_RAILGATE_BIN) \
 	      $(FORCEGATE_BIN) $(LOG1039_BIN) $(LOG1039_GEN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) $(ARMREFUSE_BIN)
