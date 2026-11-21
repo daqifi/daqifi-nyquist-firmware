@@ -56,8 +56,12 @@ if [ "$FORCE" = 1 ] && [ "$WRITE" != 1 ]; then
 fi
 # The path form is unguarded by design (CI writes to a scratch file), so it
 # must not reach the committed baseline: that would re-open #1169 under
-# another spelling.
-if [ -n "$OUT" ] && [ "$(realpath -m -- "$OUT")" = "$(realpath -m -- "$BASELINE")" ]; then
+# another spelling. Compare FILE IDENTITY (`-ef`: same device and inode), not
+# spellings: on a case-insensitive checkout `tools/LINT/...` is the baseline
+# under a different string, and so is a symlink or hard link. The realpath
+# compare covers the case where the baseline file does not exist yet.
+if [ -n "$OUT" ] && { [ "$OUT" -ef "$BASELINE" ] \
+     || [ "$(realpath -m -- "$OUT")" = "$(realpath -m -- "$BASELINE")" ]; }; then
   echo "::error::an output path may not be the committed baseline; use --write-baseline" >&2
   exit 2
 fi
