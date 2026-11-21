@@ -184,6 +184,13 @@ extern "C" {
     bool wifi_manager_IsWiFiConnected(void);
 
     /**
+     * @brief True while @p ssid is the unsuffixed default "DAQiFi" and the MAC
+     *        suffix has not been applied yet (#1266). Such a value is not what
+     *        the AP uses, so reporters must not present it as the SSID.
+     */
+    bool wifi_manager_IsDefaultSsidSuffixPending(const char *ssid);
+
+    /**
      * Fine-grained WiFi link state (#951).
      *
      * A strict REFINEMENT of wifi_status_t, not a replacement. DISABLED and

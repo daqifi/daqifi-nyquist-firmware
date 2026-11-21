@@ -1045,6 +1045,19 @@ static bool OpenUdpSocket(SOCKET *pSocket) {
  * Also syncs the result to the runtime config and sets the WINC device name.
  * The strcmp guard prevents double-appending on repeated calls.
  */
+/**
+ * #1266: set once ApplyDefaultSuffixAndDeviceName has run with the WINC's MAC
+ * address. Until then the runtime SSID/hostname hold the unsuffixed default
+ * "DAQiFi", which is not what the AP will broadcast. Single writer (WiFi
+ * task), readers on USB/TCP tasks: an aligned bool read is atomic.
+ */
+static volatile bool gDefaultSuffixApplied = false;
+
+bool wifi_manager_IsDefaultSsidSuffixPending(const char *ssid) {
+    return (ssid != NULL) && !gDefaultSuffixApplied &&
+            (strcmp(ssid, "DAQiFi") == 0);
+}
+
 static void ApplyDefaultSuffixAndDeviceName(stateMachineInst_t *pInstance) {
     char macSuffix[6];
     uint8_t *mac = pInstance->pWifiSettings->macAddr.addr;
@@ -1072,6 +1085,7 @@ static void ApplyDefaultSuffixAndDeviceName(stateMachineInst_t *pInstance) {
         pRtWifi->hostName[WIFI_MANAGER_DNS_CLIENT_MAX_HOSTNAME_LEN] = '\0';
         taskEXIT_CRITICAL();
     }
+    gDefaultSuffixApplied = true;
 
     // Set DHCP hostname (truncated to WINC limit)
     if (pInstance->wdrvHandle != DRV_HANDLE_INVALID) {
