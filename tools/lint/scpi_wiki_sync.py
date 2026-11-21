@@ -257,6 +257,27 @@ def _joined(literal_group):
     return "".join(_ONE_LITERAL.findall(literal_group))
 
 
+def _spliced_and_live(scpi_c):
+    """(spliced text, spliced text with comments stripped) for the table file."""
+    if not os.path.exists(scpi_c):
+        # A bare FileNotFoundError traceback in CI reads like the checker is
+        # broken. It usually means the command table was moved or renamed,
+        # which is a one-line fix once you know that is what happened.
+        sys.exit(f"error: {scpi_c!r} not found. If the SCPI command table "
+                 f"moved, pass --scpi <path> and update "
+                 f".github/workflows/scpi-wiki-sync.yml.")
+    with open(scpi_c, encoding="utf-8", errors="replace") as fh:
+        raw = fh.read()
+    # Phase 2 BEFORE comment recognition, as the compiler does (#1066): a
+    # splice can CREATE a comment marker (`/` + backslash-newline + `/` is
+    # `//`) or END a block comment early (`*` + backslash-newline + `/`),
+    # shapes `_CODE_OR_COMMENT` cannot see on raw text. A `.pattern` entry
+    # deleted that way used to stay in `live`.
+    raw, _omap = splice(raw)
+    live_src = strip_c_comments(raw, spliced=True)
+    return raw, live_src
+
+
 def registered_patterns(scpi_c):
     """(live, commented_out, live_list) for the .pattern strings in the table.
 
@@ -275,22 +296,7 @@ def registered_patterns(scpi_c):
     over exactly the drift it exists to catch. Better to fail loudly on a C
     construct this does not understand than to quietly stop checking it.
     """
-    if not os.path.exists(scpi_c):
-        # A bare FileNotFoundError traceback in CI reads like the checker is
-        # broken. It usually means the command table was moved or renamed,
-        # which is a one-line fix once you know that is what happened.
-        sys.exit(f"error: {scpi_c!r} not found. If the SCPI command table "
-                 f"moved, pass --scpi <path> and update "
-                 f".github/workflows/scpi-wiki-sync.yml.")
-    with open(scpi_c, encoding="utf-8", errors="replace") as fh:
-        raw = fh.read()
-    # Phase 2 BEFORE comment recognition, as the compiler does (#1066): a
-    # splice can CREATE a comment marker (`/` + backslash-newline + `/` is
-    # `//`) or END a block comment early (`*` + backslash-newline + `/`),
-    # shapes `_CODE_OR_COMMENT` cannot see on raw text. A `.pattern` entry
-    # deleted that way used to stay in `live`.
-    raw, _omap = splice(raw)
-    live_src = strip_c_comments(raw, spliced=True)
+    raw, live_src = _spliced_and_live(scpi_c)
     every = {_joined(g) for g, _ in _REGISTRATION.findall(raw)}
     live_list = [_joined(g) for g, _ in _REGISTRATION.findall(live_src)]
     live = set(live_list)
@@ -551,7 +557,58 @@ def split_row(line):
 
 
 def wiki_rows(wiki_dir):
-    """[(command, whole row)] for the rows of the COMMAND tables.
+    """[(command, whole row)] -- see _iter_command_rows."""
+    return [(cmd, row) for cmd, row, _hdr in _iter_command_rows(wiki_dir)]
+
+
+CALLBACK_COLUMN = "firmware callback"
+
+
+def wiki_callbacks(wiki_dir):
+    """[(command, callback cell)] for rows of tables with a Firmware Callback column.
+
+    The cell is `clean_cell`-normalised ('' when empty). Tables without that
+    column (the SPIBus diagnostics table has three) yield nothing: the check
+    is about a column that exists, not about inventing one.
+    """
+    out = []
+    for cmd, row, hdr in _iter_command_rows(wiki_dir):
+        if CALLBACK_COLUMN not in hdr:
+            continue
+        cells = split_row(row)
+        idx = hdr.index(CALLBACK_COLUMN)
+        cell = cells[idx] if idx < len(cells) else ""
+        out.append((cmd, clean_cell(cell)))
+    return out
+
+
+def registered_callbacks(scpi_c):
+    """[(pattern, callback)] for every LIVE registration, in table order (#1196)."""
+    _raw, live_src = _spliced_and_live(scpi_c)
+    return [(_joined(g), cb) for g, cb in _REGISTRATION.findall(live_src)]
+
+
+def callback_violations(callbacks, wiki_cbs):
+    """Wiki rows whose Firmware Callback cell is not the registered callback.
+
+    `callbacks` is registered_callbacks(), `wiki_cbs` is wiki_callbacks().
+    Returns sorted (wiki command, wiki cell, registered callbacks) for each row
+    that names a live pattern (`is_form_of`) yet whose cell equals NONE of the
+    callbacks registered under that pattern -- including an EMPTY cell, since a
+    row that is supposed to carry a handler name and does not is the same
+    unenforced promise. Rows naming no live pattern are the ghost check's
+    business, not this one's.
+    """
+    bad = set()
+    for cmd, cell in wiki_cbs:
+        regs = sorted({cb for pat, cb in callbacks if is_form_of(cmd, pat)})
+        if regs and cell not in regs:
+            bad.add((cmd, cell, tuple(regs)))
+    return sorted(bad)
+
+
+def _iter_command_rows(wiki_dir):
+    """Yield (command, whole row, header cells) for the rows of the COMMAND tables.
 
     Rows are taken from tables whose header's first column is "SCPI Command",
     rather than by pattern-matching the first cell. The first version used a
@@ -564,7 +621,6 @@ def wiki_rows(wiki_dir):
 
     Keying on the header is exact. Every command table in the wiki uses it.
     """
-    rows = []
     files = sorted(glob.glob(os.path.join(wiki_dir, "*.md")))
     if not files:
         sys.exit(f"error: no .md files under {wiki_dir!r} -- is the wiki cloned?")
@@ -573,6 +629,7 @@ def wiki_rows(wiki_dir):
             body = fh.read()
 
         in_command_table = False
+        header = []
         for line in body.split("\n"):
             if not line.lstrip().startswith("|"):
                 in_command_table = False          # any non-row ends the table
@@ -583,6 +640,7 @@ def wiki_rows(wiki_dir):
             first = cells[0]
             if first.lower() in ("scpi command", "command"):  # header: rows below are commands
                 in_command_table = True
+                header = [c.strip().lower() for c in cells]
                 continue
             # Cells of NON-command tables are not consulted at all (#807). They
             # used to be, as a weaker kind of mention, because the legacy-alias
@@ -599,8 +657,7 @@ def wiki_rows(wiki_dir):
                 continue
             first = clean_cell(first)
             if first:
-                rows.append((first, line))
-    return rows
+                yield first, line, header
 
 
 def load_allowlist(path):
@@ -1338,6 +1395,84 @@ def _self_test_diagnostics_stdout():
     return cases, failures
 
 
+def _self_test_callbacks():
+    """Pin the #1196 callback-name check through the `--wiki` entry path.
+
+    Before it, the callback was captured by `_REGISTRATION` and then discarded,
+    so a wiki row naming a function that does not exist passed (297 registered
+    / 309 rows, exit 0, with `NETType` pointing at `SCPI_LANNetTypeGet`).
+
+    Each case drives `main()` with `--wiki` over a synthetic one-command table
+    whose pattern IS documented (undocumented/ghosts/style all empty), so the
+    exit code is the callback check's alone. Cases:
+      - the registered callback                -> 0
+      - an abbreviated command + same callback -> 0 (the matcher, not spelling)
+      - the callback with trailing prose       -> 0 (only the name is read)
+      - a callback that does not exist         -> non-zero (the #1196 repro)
+      - an EMPTY cell in a callback column     -> non-zero
+      - a table WITHOUT the column             -> 0 (nothing is invented)
+    """
+    import contextlib
+    import io
+    import tempfile
+
+    c_src = ('const scpi_command_t scpi_commands[] = {\n'
+             '    {.pattern = "SYSTem:DEVice:NAME", .callback = SCPI_Real,},\n'
+             '    {.pattern = NULL, .callback = SCPI_NotImplemented,},\n'
+             '};\n')
+    hdr4 = ("| SCPI Command | Description | Example | Firmware Callback |\n"
+            "| -- | -- | -- | -- |\n")
+    cases_def = (
+        (hdr4 + "| SYSTem:DEVice:NAME | x | y | SCPI_Real |\n", 0,
+         "registered callback"),
+        (hdr4 + "| SYST:DEV:NAME | x | y | SCPI_Real |\n", 0,
+         "abbreviated command"),
+        (hdr4 + "| SYSTem:DEVice:NAME | x | y | SCPI_Real (see note) |\n", 0,
+         "trailing prose"),
+        (hdr4 + "| SYSTem:DEVice:NAME | x | y | SCPI_Imaginary |\n", 1,
+         "nonexistent callback"),
+        (hdr4 + "| SYSTem:DEVice:NAME | x | y | |\n", 1,
+         "empty callback cell"),
+        ("| SCPI Command | Description |\n| -- | -- |\n"
+         "| SYSTem:DEVice:NAME | x |\n", 0, "no callback column"),
+    )
+    cases, failures = len(cases_def), 0
+    for md, want_fail, label in cases_def:
+        with tempfile.TemporaryDirectory() as d:
+            c = os.path.join(d, "scpi.c")
+            with open(c, "w", encoding="utf-8") as fh:
+                fh.write(c_src)
+            wiki = os.path.join(d, "wiki")
+            os.makedirs(wiki)
+            with open(os.path.join(wiki, "01.md"), "w", encoding="utf-8") as fh:
+                fh.write(md)
+            allow = os.path.join(d, "empty-allow.txt")
+            with open(allow, "w", encoding="utf-8"):
+                pass
+
+            global self_test
+            real_self_test = self_test
+            argv_saved = sys.argv
+
+            def _spy_pass():
+                return 0
+
+            try:
+                self_test = _spy_pass
+                sys.argv = ["scpi_wiki_sync.py", "--wiki", wiki, "--scpi", c,
+                            "--allow", allow]
+                with contextlib.redirect_stdout(io.StringIO()):
+                    rc = main()
+            finally:
+                self_test = real_self_test
+                sys.argv = argv_saved
+        if (rc != 0) != bool(want_fail):
+            failures += 1
+            print(f"  FAIL callback check ({label}): main() --wiki returned "
+                  f"{rc}, expected {'non-zero' if want_fail else 0}")
+    return cases, failures
+
+
 def self_test():
     """Check the abbreviation rule and the #907 house-style gate.
 
@@ -1363,6 +1498,8 @@ def self_test():
     failures += entry_failures
     wiki_cases, wiki_failures = _self_test_wiki_entry()
     failures += wiki_failures
+    cb_cases, cb_failures = _self_test_callbacks()
+    failures += cb_failures
     stdout_cases, stdout_failures = _self_test_diagnostics_stdout()
     failures += stdout_failures
     if failures:
@@ -1375,6 +1512,7 @@ def self_test():
           f"{domain_cases}/{domain_cases} domain-guard cases + "
           f"{entry_cases}/{entry_cases} style-only entry cases + "
           f"{wiki_cases}/{wiki_cases} wiki-entry cases + "
+          f"{cb_cases}/{cb_cases} callback-name cases + "
           f"{stdout_cases}/{stdout_cases} diagnostics-stdout cases pass")
     return 0
 
@@ -1720,15 +1858,20 @@ def main():
          if not any(is_form_of(cmd, p) for p in live)
          and NOT_IMPLEMENTED_MARK not in row.lower()})
 
+    # #1196: the wiki's Firmware Callback column is a claim about the code.
+    cb_violations = callback_violations(
+        registered_callbacks(args.scpi), wiki_callbacks(args.wiki))
+
     print(f"registered SCPI commands : {len(live)}")
     print(f"commented-out patterns   : {len(commented)} (not shipped, ignored)")
     print(f"wiki command rows        : {len(rows)}")
     print(f"house-style allowlist    : {len(STYLE_ALLOWLIST)} pattern(s)")
 
     fatal_ghosts = ghosts and not args.ghosts_warn_only
-    if not undocumented and not ghosts and not style_violated:
-        print("\nOK: the wiki and the command table agree, and the #907 "
-              "house-style gate is clean.")
+    if (not undocumented and not ghosts and not style_violated
+            and not cb_violations):
+        print("\nOK: the wiki and the command table agree (callback names "
+              "included), and the #907 house-style gate is clean.")
         return 0
 
     if undocumented:
@@ -1758,7 +1901,17 @@ def main():
         print("  with the reason. If the command was RENAMED, update the row to")
         print("  the new name instead of leaving the old one behind.")
 
-    return 1 if (undocumented or fatal_ghosts or style_violated) else 0
+    if cb_violations:
+        print(f"\n::error::{len(cb_violations)} wiki row(s) name a Firmware "
+              f"Callback that is not the registered one (#1196):")
+        for cmd, cell, regs in cb_violations:
+            print(f"    {cmd}: wiki says {cell or '(empty)'!r}, "
+                  f"registered {', '.join(regs)}")
+        print("\n  Correct the row's Firmware Callback cell to the registered "
+              "function name.")
+
+    return 1 if (undocumented or fatal_ghosts or style_violated
+                 or cb_violations) else 0
 
 
 if __name__ == "__main__":
