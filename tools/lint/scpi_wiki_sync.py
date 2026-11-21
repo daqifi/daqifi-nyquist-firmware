@@ -260,6 +260,10 @@ _PATTERN_FIELD = re.compile(r"\.pattern\s*=")
 # a real `.pattern =` field and deliberately not a command, so the parse guard
 # below counts it as understood rather than as something it failed to read.
 _NULL_SENTINEL = re.compile(r"\.pattern\s*=\s*NULL\b")
+_NULL_ENTRY = re.compile(
+    r"\{\s*\.pattern\s*=\s*NULL\s*,\s*\.callback\s*=\s*[A-Za-z_]\w*\s*,?\s*\}")
+_TABLE_DECL = re.compile(r"scpi_command_t\s+scpi_commands\s*\[\s*\]\s*=\s*\{")
+_DEFINE = re.compile(r"^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)", re.M)
 _ONE_LITERAL = re.compile(r'"([^"]*)"')
 
 
@@ -322,7 +326,91 @@ def registered_patterns(scpi_c):
                  f"silently omitted from the check -- so a command missing "
                  f"from the wiki could never be reported. Extend "
                  f"_REGISTRATION in tools/lint/scpi_wiki_sync.py.")
+    _require_canonical_table(scpi_c, live_src)
     return live, every - live, live_list
+
+
+def _require_canonical_table(scpi_c, live_src):
+    """Exit unless the table holds ONLY canonical entries, and no macro
+    renames a registered callback (#1196 audits r2-r4).
+
+    The callback check is only as good as the claim "the identifier written
+    in the entry is the function that runs". Each audit round found one more
+    C construct that breaks that claim while the per-entry regex still
+    matched: a compound initializer, a repeated designator, an array
+    designator OUTSIDE the entry braces (`[0].callback = B`, later
+    initializers win), and a `#define` aliasing the name. Point fixes cannot
+    end that list, so this states the grammar instead and refuses everything
+    outside it:
+      1. after removing every canonical entry and the NULL sentinel, the
+         table body may contain only commas and whitespace;
+      2. no `#define` in the table's own directory (`.c` and `.h`) may name a
+         registered callback.
+    Both hold on main today, so neither refuses anything real.
+    """
+    # Preprocessor lines are blanked first: they are not initializer syntax,
+    # an unterminated literal in an `#if 0` line must not swallow the table's
+    # closing brace (#1066's fixtures), and a `#define` that renames a
+    # callback is caught by rule 2 below.
+    live_src = re.sub(r"^[ \t]*#[^\n]*", "", live_src, flags=re.M)
+    m = _TABLE_DECL.search(live_src)
+    if not m:
+        sys.exit(f"error: cannot locate 'scpi_command_t scpi_commands[] = {{' "
+                 f"in {scpi_c!r}, so the table's contents cannot be checked "
+                 f"for constructs this checker does not understand.")
+    i, depth, in_str = m.end(), 1, False
+    while depth and i < len(live_src):
+        c = live_src[i]
+        if in_str:
+            if c == "\\":
+                i += 1
+            elif c in ('"', "\n"):      # a literal also ends at its newline
+                in_str = False
+        elif c == '"':
+            in_str = True
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+        i += 1
+    if depth:
+        sys.exit(f"error: the command table in {scpi_c!r} has no closing brace.")
+    body = live_src[m.end():i - 1]
+    residue = re.sub(r"[\s,]", "",
+                     _NULL_ENTRY.sub("", _REGISTRATION.sub("", body)))
+    if residue:
+        sys.exit(f"error: the command table in {scpi_c!r} contains something "
+                 f"other than canonical '{{ .pattern = \"...\", .callback = "
+                 f"NAME }}' entries (starting {residue[:60]!r}). A designator, "
+                 f"directive or expression outside an entry can change which "
+                 f"callback runs, so the callback check would be validating the "
+                 f"wrong name. Write the entry canonically, or extend "
+                 f"_require_canonical_table in tools/lint/scpi_wiki_sync.py.")
+    callbacks = {cb for _g, cb in _REGISTRATION.findall(live_src)}
+    here = os.path.dirname(os.path.abspath(scpi_c))
+    for path in sorted(glob.glob(os.path.join(here, "*.[ch]"))):
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            src = strip_c_comments(splice(fh.read())[0], spliced=True)
+        aliased = sorted(set(_DEFINE.findall(src)) & callbacks)
+        if aliased:
+            sys.exit(f"error: {path!r} #defines registered callback name(s) "
+                     f"{aliased}. The wiki's Firmware Callback column cannot be "
+                     f"checked against a macro, because the function that runs "
+                     f"is whatever it expands to.")
+
+
+def clean_callback_cell(cell):
+    """The callback identifier in a wiki Firmware Callback cell.
+
+    NOT clean_cell: that one is for COMMAND cells and cuts at the first
+    backslash (an escaped argument), so a Markdown-escaped `SCPI\\_Real\\_Bogus`
+    read as `SCPI` and `SCPI\\_Real`-style cells were truncated (#1196 r4).
+    Here code/emphasis marks are dropped, `\\_` is unescaped, and the leading
+    identifier is taken, so trailing prose ("SCPI_X (see note)") is ignored.
+    """
+    s = cell.replace("`", "").replace("\\_", "_").replace("*", "").strip()
+    m = re.match(r"[A-Za-z_]\w*", s)
+    return m.group(0) if m else s
 
 
 def _short_form(node):
@@ -590,7 +678,7 @@ def wiki_callbacks(wiki_dir):
         cells = split_row(row)
         idx = hdr.index(name)
         cell = cells[idx] if idx < len(cells) else ""
-        out.append((cmd, clean_cell(cell)))
+        out.append((cmd, clean_callback_cell(cell)))
     return out
 
 
@@ -1458,6 +1546,10 @@ def _self_test_callbacks():
          "short 'Callback' header, wrong callback"),
         (hdr4 + "| SYSTem:DEVice:NAME | x | y | |\n", 1,
          "empty callback cell"),
+        (hdr4 + "| SYSTem:DEVice:NAME | x | y | SCPI_Real\\_Bogus |\n", 1,
+         "markdown-escaped nonexistent callback (not cut at the backslash)"),
+        (hdr4 + "| SYSTem:DEVice:NAME | x | y | SCPI\\_Real |\n", 0,
+         "markdown-escaped real callback"),
         ("| SCPI Command | Description | Example | **Firmware Callback** |\n"
          "| -- | -- | -- | -- |\n"
          "| SYSTem:DEVice:NAME | x | y | SCPI_Imaginary |\n", 1,
@@ -1525,6 +1617,40 @@ def _self_test_callbacks():
         ('.callback = SCPI_Real, .extra = 1,', True, "extra field"),
         ('.callback = SCPI_Real,', False, "canonical entry (control)"),
     )
+    sentinel = '    {.pattern = NULL, .callback = SCPI_NotImplemented,},\n'
+    whole = (
+        ('const scpi_command_t scpi_commands[] = {\n'
+         '    [0] = {.pattern = "SYSTem:DEVice:NAME", .callback = SCPI_Old},\n'
+         '    [0].callback = SCPI_New,\n    [1] = {.pattern = NULL, '
+         '.callback = SCPI_NotImplemented},\n};\n', True,
+         "array designator overriding the callback outside the entry"),
+        ('#define SCPI_Old SCPI_New\n'
+         'const scpi_command_t scpi_commands[] = {\n'
+         '    {.pattern = "SYSTem:DEVice:NAME", .callback = SCPI_Old,},\n'
+         + sentinel + '};\n', True, "#define aliasing a registered callback"),
+        ('#define SCPI_UNRELATED_BUDGET 5\n'
+         'const scpi_command_t scpi_commands[] = {\n'
+         '    {.pattern = "SYSTem:DEVice:NAME", .callback = SCPI_Old,},\n'
+         + sentinel + '};\n', False, "an unrelated #define (control)"),
+    )
+    for src, want_refused, label in whole:
+        with tempfile.TemporaryDirectory() as d:
+            c = os.path.join(d, "scpi.c")
+            with open(c, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            cases += 1
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    registered_patterns(c)
+                refused = False
+            except SystemExit:
+                refused = True
+            if refused != want_refused:
+                failures += 1
+                print(f"  FAIL callback check ({label}): "
+                      f"{'refused' if refused else 'parsed'}, expected "
+                      f"{'refused' if want_refused else 'parsed'}")
+
     for tail, want_refused, label in shapes:
         with tempfile.TemporaryDirectory() as d:
             c = os.path.join(d, "scpi.c")
