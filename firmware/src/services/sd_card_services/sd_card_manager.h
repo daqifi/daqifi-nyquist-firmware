@@ -498,6 +498,17 @@ bool sd_card_manager_WriteIsStreamingLog(void);
     bool sd_card_manager_ReadBufferReady(void);
 
     /**
+     * @brief Runtime size of the SD DMA write buffer, in bytes (#1279).
+     *
+     * The size the last partition installed (sd_card_manager_SetWriteBuffer),
+     * not the compile-time ceiling SD_CARD_MANAGER_CONF_WBUFFER_SIZE. It
+     * bounds every card write the logging drain issues, and auto-balance drops
+     * it to SD_CARD_MANAGER_MIN_WBUFFER_SIZE whenever SD is not a streaming
+     * consumer, so it is half of what SCPI_RestoreIdleSdBuffers() tests.
+     */
+    uint32_t sd_card_manager_GetWriteBufferSize(void);
+
+    /**
      * @brief #703: is an SD op actively streaming into the shared SD buffer?
      *
      * True while an SD:GET read / CRC / directory LIST is in flight — the ops

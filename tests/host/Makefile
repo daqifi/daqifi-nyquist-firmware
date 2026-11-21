@@ -705,6 +705,63 @@ $(CLAMP1231_BIN): test_1231_clamp_report_latch.c test_framework.h \
 	fi
 	$(CC) $(CFLAGS) -o $(CLAMP1231_BIN) test_1231_clamp_report_latch.c
 
+# #1279: SD operations restore the idle SD buffers a non-SD stream shrank.
+#
+# The REAL sizing (Streaming_ComputeAutoBuffers, streaming.c) and the REAL
+# predicate (SdIdleRestoreDue, SCPIInterface.c) are spliced verbatim and run
+# together, so the test asserts the predicate fires on exactly the partitions
+# the sizing leaves behind -- after a WiFi or USB-only stream, not after an SD
+# one. The real #defines they use come out of headers that are not
+# host-includable (sd_card_manager.h, UsbCdc.h, streaming.h).
+#
+# The call sites -- SD:BENCHmark and SD:GET asking before they arm, BENCHmark
+# refusing on failure, the helper's claim/re-ask/re-partition/release order --
+# are not host-compilable, so check_1279_sd_idle_restore.py pins them against
+# the real source, function-scoped, after its own --self-test shows each pin
+# can fail. On a tree without the fix the splice below finds no
+# SdIdleRestoreDue and fails the build, and the call-site check fails too.
+SDIDLE1279_BIN := run_1279_tests
+SDIDLE1279_AUTOBUF := gen_1279_autobuf.h
+SDIDLE1279_DUE := gen_1279_due.h
+SDIDLE1279_DEFS := gen_1279_defs.h
+SDIDLE1279_SD_HDR := ../../firmware/src/services/sd_card_services/sd_card_manager.h
+SDIDLE1279_USB_HDR := ../../firmware/src/services/UsbCdc/UsbCdc.h
+SDIDLE1279_STREAM_HDR := ../../firmware/src/services/streaming.h
+
+$(SDIDLE1279_BIN): test_1279_sd_idle_buffer_restore.c test_framework.h \
+                   check_1279_sd_idle_restore.py $(STREAMING_SRC) \
+                   $(SCPISD_START_SRC) $(SD_BENCH_SRC) $(SDIDLE1279_SD_HDR) \
+                   $(SDIDLE1279_USB_HDR) $(SDIDLE1279_STREAM_HDR) \
+                   $(FW_UTIL)/StreamingBufferPool.h $(FW_UTIL)/CoherentPool.h \
+                   $(RECIPES)
+	@splice() { \
+	   sed -n "/^$$2(/,/^}/p" "$$1" | tr -d '\r' > "$$3"; \
+	   lines=`wc -l < "$$3" | tr -d ' '`; \
+	   last=`tail -1 "$$3" | tr -d '[:space:]'`; \
+	   test "$$lines" -ge 4 && test "$$lines" -le 200 && test "$$last" = "}" \
+	   || { echo "ERROR: #1279 -- could not splice '$$2' out of $$1:"; \
+	        echo "       got $$lines line(s) ending in '$$last'. 0 lines means it"; \
+	        echo "       is absent or its signature left column 0 -- on a tree"; \
+	        echo "       without the #1279 fix SdIdleRestoreDue does not exist."; \
+	        rm -f "$$3"; return 1; }; \
+	 }; \
+	 splice $(STREAMING_SRC) "void Streaming_ComputeAutoBuffers" $(SDIDLE1279_AUTOBUF) || exit 1; \
+	 splice $(SCPISD_START_SRC) "static bool SdIdleRestoreDue" $(SDIDLE1279_DUE) || exit 1
+	@{ grep -hE '^#define (SD_CARD_MANAGER_CONF_WBUFFER_SIZE|SD_CARD_MANAGER_MIN_WBUFFER_SIZE|SD_CARD_MANAGER_DEFAULT_CIRCULAR_SIZE)[[:space:]]' $(SDIDLE1279_SD_HDR); \
+	   grep -hE '^#define USBCDC_DMA_WBUFFER_MIN[[:space:]]' $(SDIDLE1279_USB_HDR); \
+	   grep -hE '^#define WIFI_DMA_MIN[[:space:]]' $(SDIDLE1279_STREAM_HDR); } \
+	   | tr -d '\r' | sed 's://.*$$::' > $(SDIDLE1279_DEFS)
+	@n=`grep -c '^#define' $(SDIDLE1279_DEFS)`; \
+	 if [ "$$n" -ne 5 ]; then \
+	   echo "ERROR: #1279 -- expected 5 #defines in $(SDIDLE1279_DEFS), got $$n."; \
+	   rm -f $(SDIDLE1279_DEFS); exit 1; \
+	 fi
+	@python3 check_1279_sd_idle_restore.py --self-test >/dev/null \
+	  || { python3 check_1279_sd_idle_restore.py --self-test; exit 1; }
+	@python3 check_1279_sd_idle_restore.py >/dev/null \
+	  || { python3 check_1279_sd_idle_restore.py; exit 1; }
+	$(CC) $(CFLAGS) $(INCLUDES) -o $@ test_1279_sd_idle_buffer_restore.c
+
 # #970: encoder consume-accounting. Like BENCH_BIN, streaming.c and
 # JSON_Encoder.c are not host-test candidates (FreeRTOS/libscpi/the whole
 # board graph), so this test re-implements the two relevant loop SHAPES
@@ -5454,7 +5511,7 @@ $(WIFI881_BIN): test_881_wifi_reset.c test_framework.h $(WIFI_MGR_SRC) $(IPERF2_
 
 run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) \
      $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) \
-     $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(CAP1202_BIN) $(ISRLOG1197_BIN) $(STOP1201_BIN) $(CLAMP1231_BIN) \
+     $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(CAP1202_BIN) $(ISRLOG1197_BIN) $(STOP1201_BIN) $(CLAMP1231_BIN) $(SDIDLE1279_BIN) \
      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(USECALTYPE_BIN) $(ARM_BIN) $(NAME_BIN) \
      $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) check-1200-parity check-885-savecal-claim \
      $(NVM1153_BIN) $(ARMREFUSE_BIN) $(SDCRC_BIN) $(SDWRITE_BIN) $(LOGRING1248_BIN) $(HIF881_BIN) \
@@ -5500,6 +5557,7 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
 	./$(LOGONCE_BIN)
 	./$(STOP1201_BIN)
 	./$(CLAMP1231_BIN)
+	./$(SDIDLE1279_BIN)
 	./$(CAP1202_BIN)
 	./$(ISRLOG1197_BIN)
 	@# #1158: no AD7609 rate override in START (SCPIInterface.c is not
@@ -6051,6 +6109,7 @@ clean:
 	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) \
 	      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(GEN_1125) $(CAP1202_BIN) $(GEN_1202) $(ISRLOG1197_BIN) $(GEN_1197) \
 	      $(STOP1201_BIN) $(STOP1201_GEN) $(CLAMP1231_BIN) $(CLAMP1231_GEN) \
+	      $(SDIDLE1279_BIN) $(SDIDLE1279_AUTOBUF) $(SDIDLE1279_DUE) $(SDIDLE1279_DEFS) \
 	      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(SDLOG1029_GEN).tmp \
 	      $(USECALTYPE_BIN) $(NAME_BIN) $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(ARM_BIN) $(SCPIDAC_RAILGATE_BIN) \
 	      $(FORCEGATE_BIN) $(LOG1039_BIN) $(LOG1039_GEN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) $(ARMREFUSE_BIN)
