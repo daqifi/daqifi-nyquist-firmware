@@ -4053,13 +4053,18 @@ wifi_tcp_server_context_t* wifi_manager_GetTcpServerContext() {
     return gStateMachineContext.pTcpServerContext;
 }
 
-// #1324: count of M2M_WIFI_RESP_IP_CONFLICT events.  Single writer: the WINC
-// event callback (runs on app_WifiTask via m2m_wifi_handle_events); the
-// 32-bit read/clear from the SCPI task is atomic on PIC32MZ.
+// #1324: count of M2M_WIFI_RESP_IP_CONFLICT events.  Two writers: the WINC
+// event callback (WINC driver task, via m2m_wifi_handle_events) increments it,
+// and SYST:STR:STATS:CLEar (USB or WiFi SCPI task, both higher priority) zeroes
+// it.  ++ is a read-modify-write, so it runs in a critical section; otherwise a
+// clear landing between its load and store is undone.  The 32-bit read and the
+// clear's plain store are each atomic on PIC32MZ.
 static volatile uint32_t gWifiIpConflicts = 0;
 
 void wifi_manager_NoteIpConflict(void) {
+    taskENTER_CRITICAL();
     gWifiIpConflicts++;
+    taskEXIT_CRITICAL();
     LOG_E("WiFi: IP address conflict reported by WINC\r\n");
 }
 
