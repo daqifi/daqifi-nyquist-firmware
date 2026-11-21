@@ -263,12 +263,12 @@ uint64_t UsbCdc_GetWireBytesSent(void);
      *  wifi_tcp_server_GetCircularBufferAvailable. */
     uint32_t UsbCdc_GetCircularBufferAvailable(void);
 
-    /*! fw#1265: ask for the CDC session to be torn down and re-established,
-     *  because a tagged SD:GET left a definite-length block short and the
-     *  host's framing context can no longer be trusted. Safe to call from any
-     *  task; the USB task performs it. See the implementation for why nothing
-     *  sent on the pipe could fix this instead. */
-    void UsbCdc_RequestSessionReset(void);
+    /*! fw#1265: which CDC host session is on the wire. Changes whenever a host
+     *  asserts DTR after none was connected, and does not repeat short of 2^32
+     *  sessions, so a tagged
+     *  SD:GET's data window can be keyed to the session it was opened for --
+     *  the USB twin of wifi_tcp_server_GetConnGeneration (#599). */
+    uint32_t UsbCdc_GetSessionGeneration(void);
 
     /**
      * Set the USB CDC DMA write staging buffer.

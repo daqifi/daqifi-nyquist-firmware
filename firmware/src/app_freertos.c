@@ -618,7 +618,10 @@ static void app_SDCardTask(void* p_arg) {
         SpiBusHealth_SetSdSuspended(state == APP_SD_STATE_SUSPENDED ||
                                     app_SDCard_SpiOwnedByWifi());
 
-        /* fw#1265: close a tagged SD:GET data window that has gone stale.
+        /* fw#1265: close a tagged SD:GET data window that has gone stale --
+         * and, since round 5, a window a finished transfer handed over, once
+         * its write ring has drained or its session has ended. Polled at this
+         * loop's ~1 ms cadence; nothing waits on it.
          *
          * HERE because this runs on EVERY iteration in EVERY state -- so it is
          * reached however the transfer ended, including when the task is
@@ -634,7 +637,9 @@ static void app_SDCardTask(void* p_arg) {
          * the case it exists for. It does NOT fire while the task is still
          * inside a transfer, because that transfer is this same task: what
          * bounds that is the transfer's own bounded retries and its single
-         * sd_get_send_end, not this call.
+         * sd_get_send_end, not this call. (sd_get_open_window also calls it,
+         * before its own window opens, so a window owed to a session that has
+         * ended cannot make the next GET fail `busy`.)
          *
          * On the SD task, never on a transport task: ruling #756 forbids
          * parking app_USBDeviceTask, and the SD task is the one that owns the

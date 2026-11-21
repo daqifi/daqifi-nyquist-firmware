@@ -238,9 +238,12 @@ extern "C" {
      * ScpiSdWindow_ReleaseWhenDrained) -- WHEN the block was delivered in full.
      * When it was not (the host stopped reading), processing that input would
      * append replies behind a partial block, where a host resuming its blind
-     * read counts them as file data; so that case ends the host's SESSION
-     * instead, and the waiting input dies with it. Round 4 promised the
-     * unqualified version and the round-4 audit disproved it.
+     * read counts them as file data; so in that case the window is HELD until
+     * the host's session ends (ScpiSdWindow_HoldUntilSessionEnd), and that
+     * session never hears from this transport again. Round 4 promised the
+     * unqualified version and the round-4 audit disproved it; round 5 tried
+     * to end the session from our side and the round-5 audit showed the USB
+     * "reset" ended nothing (USB_DEVICE_Close neither detaches nor cancels).
      *
      * ⚠ NOT A PUMPED WAIT, AND NOTHING IS PARKED. Pausing means the transport
      * does not ARM its next read: USB skips USB_DEVICE_CDC_Read, TCP skips the
@@ -288,15 +291,18 @@ extern "C" {
 
     /*! True while a window is open on this transport AND it belongs to
      *  `generation`, which is the signal to feed nothing and arm no read.
-     *  Called from the transport tasks; USB passes 0.
+     *  Called from the transport tasks with the session that is live NOW:
+     *  TCP passes wifi_tcp_server_GetConnGeneration(), USB its CDC session
+     *  generation (UsbCdc_GetSessionGeneration).
      *
-     * ⭐ THE GENERATION TEST IS WHAT BOUNDS THE PAUSE TO ONE CLIENT. A TCP
-     * client that vanishes mid-transfer takes its window with it: the
-     * replacement client's generation differs, so this answers false for the
-     * new client immediately and it is never paused by a dead one's window.
-     * The window itself is still closed by the transfer's own exit (the GET
-     * aborts once DataReadyCB sees the client is gone) or by the staleness
-     * backstop. */
+     * ⭐ THE GENERATION TEST IS WHAT BOUNDS THE PAUSE TO ONE SESSION. A TCP
+     * client that vanishes takes its window with it: the replacement client's
+     * generation differs, so this answers false for the new client
+     * immediately and it is never paused by a dead one's window. USB is the
+     * same since round 5: a host that closes and reopens the port is a new
+     * CDC session. The window itself is closed later -- by its transfer's
+     * hand-over (ScpiSdWindow_Service sees the session gone) or by the
+     * staleness backstop. */
     bool ScpiSdWindow_IsOpenFor(ScpiSdWindowTransport_t transport,
                                 uint32_t generation);
 
@@ -328,8 +334,9 @@ extern "C" {
      * orders is written out at that arm site. Neither side keeps new state:
      * each reads a flag the other already releases on every path out.
      *
-     * `generation` is the TCP connection generation that asked (0 for USB), so
-     * a window cannot outlive the client that opened it. */
+     * `generation` is the session that asked: the TCP connection generation
+     * captured at arm, or the USB CDC session generation at open. A window
+     * therefore never pauses a session other than the one it was opened for. */
     bool ScpiSdWindow_TryOpen(ScpiSdWindowTransport_t transport,
                               uint32_t generation);
 
@@ -354,6 +361,30 @@ extern "C" {
      */
     void ScpiSdWindow_ReleaseWhenDrained(ScpiSdWindowTransport_t transport);
 
+    /*! A transfer that left its block SHORT (the host stopped reading, so
+     *  fewer than <n> bytes were accepted) hands the window over to be held
+     *  until the owning SESSION ends: ScpiSdWindow_Service closes it only once
+     *  that TCP connection is gone or that USB CDC session is over (DTR drop,
+     *  bus reset, VBUS loss), never by elapsed time. No-op on a window that is
+     *  not open.
+     *
+     * ⭐ WHY THE SESSION, AND WHY NOTHING SHORTER. The host is part-way
+     * through a blind read of <n> bytes, so ANY later byte on that session --
+     * an echo, a reply, a prompt, our own end line -- is consumed as file
+     * data. Round 4 left it silent and then let queued input be answered into
+     * the block; round 5 tried to end the USB session from our side, and
+     * USB_DEVICE_Close turned out to end nothing (no detach, no endpoint
+     * cancel). Holding the window is the one thing that is true on both
+     * transports: that session is never written to again by its own input.
+     *
+     * ⚠ THE COST, STATED. Until the session ends, that transport is deaf to
+     * that host. A USB host learns the block is short from the declared
+     * length and its own read timeout, and recovers by closing and reopening
+     * the port; a new session is never paused by the old one's window
+     * (IsOpenFor is keyed by session). A TCP host is closed from our side as
+     * well -- see sd_get_send_end. */
+    void ScpiSdWindow_HoldUntilSessionEnd(ScpiSdWindowTransport_t transport);
+
     /*! Record data progress, so the staleness bound is measured from the last
      *  byte delivered rather than from the window opening.
      *
@@ -362,7 +393,9 @@ extern "C" {
      * on the SD task's loop, and so does the transfer, so the task cannot be
      * in both -- every window Service can observe is one a finished transfer
      * left behind (V: app_SDCard_Task calls sd_card_manager_ProcessState and
-     * ScpiSdWindow_Service in the same iteration). All this stamp decides is
+     * ScpiSdWindow_Service in the same iteration; the other caller,
+     * sd_get_open_window, runs before its own window opens). All this stamp
+     * decides is
      * how long AFTER the last data byte such an orphan is reclaimed.
      *
      * Kept rather than deleted because the bound has to stay correct if the
@@ -372,9 +405,15 @@ extern "C" {
      * SCPI_SD_WINDOW_STALE_MS past the last byte instead of past the open. */
     void ScpiSdWindow_NoteProgress(ScpiSdWindowTransport_t transport);
 
-    /*! The staleness backstop: close a window that has gone quiet. Called from
-     *  the SD task's loop -- one place, reached whatever the transfer did, and
-     *  never from a transport task.
+    /*! Close windows whose transfers have finished with them: a handed-over
+     *  window once its ring has drained or its session has ended (see
+     *  ScpiSdWindow_ReleaseWhenDrained / _HoldUntilSessionEnd), and -- the
+     *  staleness backstop -- a window nobody handed over that has gone quiet.
+     *  Called from the SD task's loop -- reached whatever the transfer did --
+     *  and, since round 5, from sd_get_open_window's retry loop BEFORE that
+     *  transfer's own window exists; both are the SD task, never a transport
+     *  task. Either way it never sees the window of a transfer still running:
+     *  the SD task runs one transfer at a time, and it is not inside one.
      *
      * ⛔ IT DOES NOT AFFECT ANY TRANSFER'S VERDICT, and an earlier revision of
      * this API wrongly said it did. It carried a `WasForceClosed` flag that

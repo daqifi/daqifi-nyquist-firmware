@@ -761,11 +761,11 @@ static void sd_get_read_teardown(TaskHandle_t task, UBaseType_t prio) {
  * ⚠ WHAT IS PROMISED, AND TO WHOM. Delivery is guaranteed to a host that KEEPS
  * READING -- at whatever pace it likes, for as long as it takes. It is not
  * guaranteed to a host that stops: there the pad ends at the first short write
- * and the transfer sends no end line at all, ending the host's session instead
- * -- a TCP close or a CDC session reset, whichever transport asked. See
- * sd_get_send_end. (An earlier version of this line said USB had no equivalent
- * signal, which was wrong; UsbCdc.c has handled the CDC control-line state all
- * along.)
+ * and the transfer sends no end line at all, and that session is never
+ * written to again by its own input -- the window is held until the session
+ * ends, which over TCP we cause with a close and over USB the host causes by
+ * closing the port. See sd_get_send_end. (Round 5 claimed a "CDC session
+ * reset" here; it did not end the session, and it is gone.)
  *
  * ⛔ AN EARLIER VERSION OF THIS COMMENT CLAIMED THE OPPOSITE OF THE CODE, and
  * the round-3 audit quoted it as the thing it disproved. It said the 10 s total
@@ -836,12 +836,24 @@ static const char* sd_get_open_window(void) {
     const ScpiSdWindowTransport_t transport = sd_get_window_transport();
     /* #599's generation, captured when the GET was armed -- so the window
      * belongs to the connection that ASKED, not to whoever holds the slot by
-     * the time the SD task gets here. */
+     * the time the SD task gets here. USB has no arm-time capture; its CDC
+     * session generation is read here, and the bytes go to whichever session
+     * is on the wire, exactly as an untagged GET's always have. */
     const uint32_t generation = (transport == SCPI_SD_WINDOW_TCP)
-            ? gpSDCardSettings->replyGeneration : 0u;
+            ? gpSDCardSettings->replyGeneration
+            : UsbCdc_GetSessionGeneration();
     const TickType_t start = xTaskGetTickCount();
 
-    while (!ScpiSdWindow_TryOpen(transport, generation)) {
+    for (;;) {
+        /* fw#1265 round 5: release first any window an EARLIER transfer
+         * handed over whose session has since ended -- otherwise TryOpen
+         * would refuse on it and this transfer would fail `busy` for a host
+         * that is gone. Service normally runs from the SD task's loop, which
+         * cannot run while this task is in here. Same task, same calls. */
+        ScpiSdWindow_Service();
+        if (ScpiSdWindow_TryOpen(transport, generation)) {
+            break;
+        }
         /* An abort that lands during the wait ends the transfer HERE, before
          * any header, so nothing is owed (#1267 round-2 audit, 5). Waiting out
          * the full bound first would be two seconds spent to reach the same
@@ -984,12 +996,13 @@ static void sd_get_send_end(bool ok, uint32_t count, const char* reason,
      * with the query losing its answer. The bytes that break the frame are the
      * NEXT ones, not ours, so no decision about our own terminator can fix it.
      *
-     * ⭐ SO THE SESSION IS ENDED ON BOTH TRANSPORTS. The host's framing
-     * context is the thing that is broken and it cannot be repaired over the
-     * same pipe, so it is destroyed: TCP closes the connection (guarded by the
-     * #599 generation) and USB tears down and re-establishes the CDC session.
-     * Neither signal can be read as file bytes, and both are bounded and
-     * symmetric. See UsbCdc_RequestSessionReset for the USB half.
+     * ⭐ SO THAT SESSION NEVER HEARS FROM ITS OWN INPUT AGAIN. The window is
+     * held, not closed, until the session ends
+     * (ScpiSdWindow_HoldUntilSessionEnd): nothing the host queued is fed, so
+     * nothing is appended behind the partial block. TCP additionally closes
+     * the connection (guarded by the #599 generation), which is what ends
+     * that session. USB has no way for us to end it -- see the USB branch --
+     * so it ends when the host closes the port.
      *
      * The reason still reaches the host out of band, through SYST:ERR? and
      * SYST:LOG?, which is where this product puts failures anyway (the #914
@@ -1007,31 +1020,35 @@ static void sd_get_send_end(bool ok, uint32_t count, const char* reason,
             wifi_tcp_server_RequestClientClose(
                     gpSDCardSettings->replyGeneration);
         } else {
-            /* ⭐ THE USB ANSWER, AND ROUND 4's WAS WRONG. Round 4 withheld the
-             * end line and called what followed "recoverable silence". The
-             * round-4 audit disproved it: the window still CLOSED, so a
-             * command the host had queued during the transfer was then fed,
-             * and its echo, reply and prompt were appended behind the partial
-             * block -- where a host resuming its blind read of <n> bytes
-             * counts them as file data and the query loses its answer.
-             * Withholding our own terminator never addressed that, because
-             * the bytes that corrupt the frame are the NEXT ones, not ours.
+            /* ⭐ THE USB ANSWER: HOLD THE WINDOW, AND END NOTHING FROM HERE.
              *
-             * So the session goes instead: the host's framing context is what
-             * is broken, and it cannot be repaired over the same pipe. This is
-             * the CDC analogue of the TCP close beside it -- bounded,
-             * unambiguous, and symmetric. UsbCdc_RequestSessionReset closes
-             * the window itself as part of the teardown, which is why nothing
-             * else is needed here.
+             * ⛔ ROUND 5 "RESET THE CDC SESSION" AND THAT RESET NOTHING
+             * (#1267 round-5 audit, 2). It drove the state machine through
+             * BEGIN_CLOSE/CLOSED, but USB_DEVICE_Close only clears the
+             * client's handle bookkeeping: it neither detaches from the bus
+             * nor cancels endpoint transfers, and CLOSED does not touch the
+             * write ring. The host saw no disconnect, stayed inside its blind
+             * read, and a DTR toggle resumed PROCESS with the old bytes still
+             * queued. The comments that called it an out-of-band termination
+             * were false, and the mechanism is gone.
              *
-             * ⛔ AND "THE CDC HAS NO OUT-OF-BAND CHANNEL" WAS SIMPLY FALSE --
-             * my round-4 wording, contradicted by code 250 lines above the
-             * file I was editing: UsbCdc.c handles
-             * USB_DEVICE_CDC_EVENT_SET_CONTROL_LINE_STATE and already drives
-             * the state machine on a DTR deassert. A session reset is
-             * therefore not even the only option; it is the one that does not
-             * wait on the host. */
-            UsbCdc_RequestSessionReset();
+             * What replaces it is the hold itself: the window stays open for
+             * THIS CDC session, so nothing the host queued is fed and nothing
+             * is appended behind the partial block. What the host can rely on
+             * is the declared length -- fewer than <n> bytes ever arrive, and
+             * no end line -- and its own read timeout. It recovers by closing
+             * and reopening the port: that is a new CDC session, which the
+             * window does not pause (it is keyed by session), and
+             * ScpiSdWindow_Service then releases it. A real detach/re-attach
+             * would end the session from our side; it is not done because it
+             * drops the host's port and re-enumerates the device.
+             *
+             * ⚠ NOT A SCRUB. Whatever of the partial block is still in the
+             * write ring goes out on the NEXT session, as undelivered output
+             * always has at a CDC reconnect (main does not reset the ring
+             * there either). A tagged host skips everything before its own
+             * `#SDGET <tag>` header, which is what the tag is for. */
+            ScpiSdWindow_HoldUntilSessionEnd(transport);
         }
     } else {
         char line[64];
@@ -1086,7 +1103,7 @@ static void sd_get_send_end(bool ok, uint32_t count, const char* reason,
      * only by the staleness backstop. */
     if (blockDelivered) {
         ScpiSdWindow_ReleaseWhenDrained(transport);
-    } else {
+    } else if (transport == SCPI_SD_WINDOW_TCP) {
         ScpiSdWindow_Close(transport);
     }
 }

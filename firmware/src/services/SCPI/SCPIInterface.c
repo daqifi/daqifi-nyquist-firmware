@@ -10966,7 +10966,8 @@ typedef struct {
      * test TryOpen makes, and it has to cover the whole packet so a second
      * command sharing one write is processed BEFORE the header. */
     volatile bool feeding;
-    /* The TCP connection that owns an open window; 0 for USB. */
+    /* The session that owns an open window: the TCP connection generation
+     * (#599), or the USB CDC session generation. */
     volatile uint32_t generation;
     volatile TickType_t lastProgress;
     /* What an open window that has OUTLIVED its transfer is waiting for --
@@ -10981,6 +10982,10 @@ typedef struct {
 /* Release once the transport's write ring is empty: the block and the end
  * line were queued in full, and only their transmission is outstanding. */
 #define SCPI_SD_RELEASE_ON_DRAIN  1u
+/* Release only once the owning session has ENDED: the host is part-way
+ * through a block that will never be completed, so no byte of ours may follow
+ * it on that session -- not a reply, not an echo, not a prompt. */
+#define SCPI_SD_RELEASE_ON_SESSION_END 2u
 
 static ScpiSdWindowState_t gScpiSdWindow[SCPI_SD_WINDOW_COUNT];
 
@@ -11067,17 +11072,28 @@ void ScpiSdWindow_ReleaseWhenDrained(ScpiSdWindowTransport_t transport) {
     }
 }
 
+void ScpiSdWindow_HoldUntilSessionEnd(ScpiSdWindowTransport_t transport) {
+    ScpiSdWindowState_t* w = ScpiSdWindow_For(transport);
+    /* Same guard as ReleaseWhenDrained, for the same reason. */
+    if ((w != NULL) && w->open && (w->release == SCPI_SD_RELEASE_NONE)) {
+        w->release = SCPI_SD_RELEASE_ON_SESSION_END;
+    }
+}
+
 /* Is the session that owned this window still the one on the wire? TCP by the
  * #599 generation (ConnIsCurrent is false once the socket is closed or a new
- * client holds the slot, and neither can revert); USB by the CDC host flag,
- * which a DTR drop, a bus reset/deconfigure, VBUS loss and a bus error all
- * clear. A false answer means THAT session has ended for good -- a later one
- * is a different session -- so acting on it cannot be premature. */
+ * client holds the slot, and neither can revert); USB by the CDC session
+ * generation plus the host flag, which a DTR drop, a bus reset/deconfigure,
+ * VBUS loss and a bus error all clear -- and the flag returns to true only by
+ * starting a NEW generation. So a false answer means that session has ended
+ * for good, whichever field was read first, and acting on it cannot be
+ * premature. */
 static bool ScpiSdWindow_SessionLive(unsigned i, uint32_t generation) {
     if (i == (unsigned) SCPI_SD_WINDOW_TCP) {
         return wifi_tcp_server_ConnIsCurrent(generation);
     }
-    return UsbCdc_GetSettings()->isCdcHostConnected;
+    return (UsbCdc_GetSessionGeneration() == generation) &&
+           UsbCdc_GetSettings()->isCdcHostConnected;
 }
 
 /* Has everything queued for this transport left its write ring? For USB the
@@ -11118,6 +11134,23 @@ void ScpiSdWindow_Service(void) {
             }
             continue;
         }
+        if (w->release == SCPI_SD_RELEASE_ON_SESSION_END) {
+            /* fw#1265 round 5: a transfer that left its block SHORT. Its host
+             * is part-way through a blind read of <n> bytes, so anything this
+             * transport sends on that session -- an echo, a reply, a prompt --
+             * is counted as file data. The window therefore stays open until
+             * the session itself is gone, and NEVER by elapsed time: the
+             * staleness bound below is exactly how round 4's "recoverable
+             * silence" let queued input be answered into the partial block.
+             * The window is keyed to its session, so a NEW session (another
+             * TCP client; a USB host that reopened the port) is not paused by
+             * it even before this releases it. */
+            if (!ScpiSdWindow_SessionLive(i, w->generation)) {
+                w->release = SCPI_SD_RELEASE_NONE;
+                w->open = false;
+            }
+            continue;
+        }
         /* Wrap-safe: (now - start) >= window, never now >= deadline. */
         const TickType_t elapsed =
                 (TickType_t)(xTaskGetTickCount() - w->lastProgress);
@@ -11132,10 +11165,12 @@ void ScpiSdWindow_Service(void) {
          *
          * ⚠ EVERY WINDOW THAT REACHES THIS POINT IS AN ORPHAN -- one that no
          * transfer handed over above -- and that bounds what it can
-         * usefully do. The caller is the SD task's loop and the transfer runs
-         * on that same task, so this cannot run while a transfer is in flight;
-         * see the API comment in SCPIInterface.h for why that makes a verdict
-         * term here impossible rather than merely unnecessary.
+         * usefully do. Both callers are the SD task, which runs the transfer
+         * too -- its loop, between transfers, and sd_get_open_window, before
+         * the new transfer's window exists -- so this never sees a running
+         * transfer's window; see the API comment in SCPIInterface.h for why
+         * that makes a verdict term here impossible rather than merely
+         * unnecessary.
          *
          * Not a critical section: this is the only task that force-closes and
          * `open` is a plain aligned store. A close racing the transfer's own

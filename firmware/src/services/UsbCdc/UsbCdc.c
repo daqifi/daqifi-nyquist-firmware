@@ -75,6 +75,19 @@ uint64_t UsbCdc_GetWireBytesSent(void)
 static UsbCdcData_t gRunTimeUsbSttings __attribute__((coherent));
 static bool UsbCdc_FinalizeWrite(UsbCdcData_t* client);
 
+/* fw#1265 round 5: which CDC host session is on the wire -- the USB twin of
+ * the TCP #599 connection generation. Bumped when a host asserts DTR after
+ * having been disconnected (UsbCdc_CDCEventHandler), so every session gets a
+ * value no earlier session had. A tagged SD:GET's data window records the
+ * session it was opened for, which is what stops a window owed to a session
+ * that has ENDED from pausing the next one. Wraps only after 2^32 sessions.
+ *
+ * One writer (that event branch; control transfers on EP0 are serialized, so
+ * it cannot preempt itself), so the increment needs no lock; readers take a
+ * single aligned 32-bit load. Reset in UsbCdc_Initialize (#409: retained
+ * .bss is not zeroed on MCLR). */
+static volatile uint32_t gUsbSessionGeneration;
+
 /* A write DMA that hasn't completed within this long means the host has
  * stopped draining the CDC IN endpoint (not a transient hiccup). #525:
  * bail out of the wait rather than block — the in-flight transfer completes
@@ -292,6 +305,18 @@ USB_DEVICE_CDC_EVENT_RESPONSE UsbCdc_CDCEventHandler
                 }
                 gRunTimeUsbSttings.isCdcHostConnected=0;
             } else {
+                /* fw#1265: a host asserting DTR while none was connected is a
+                 * NEW session. Every path that ends a session clears
+                 * isCdcHostConnected (DTR drop above, bus reset/deconfigure,
+                 * VBUS loss, bus error), and this is the only place that sets
+                 * it, so "was 0" is exactly "a different session from now
+                 * on". A repeat SET_CONTROL_LINE_STATE inside a session (an
+                 * RTS change) does not bump it. Bumped BEFORE PROCESS is
+                 * published, so the USB task never feeds under the old value
+                 * once the new session can be fed at all. */
+                if (!gRunTimeUsbSttings.isCdcHostConnected) {
+                    gUsbSessionGeneration = gUsbSessionGeneration + 1u;
+                }
                 gRunTimeUsbSttings.state = USB_CDC_STATE_PROCESS;
                 gRunTimeUsbSttings.isCdcHostConnected=1;
                 // #525: a freshly connecting host must not inherit a stall
@@ -787,8 +812,11 @@ static bool UsbCdc_BeginRead(UsbCdcData_t* client) {
      * transfer this window exists to protect.
      *
      * Not arming is loss-free: the host's bytes stay in the CDC endpoint and
-     * the hardware NAKs when it fills, which is flow control, not a drop. */
-    if (ScpiSdWindow_IsOpenFor(SCPI_SD_WINDOW_USB, 0u)) {
+     * the hardware NAKs when it fills, which is flow control, not a drop.
+     *
+     * Keyed on the CURRENT session (gUsbSessionGeneration), so a window owed
+     * to a session that has ended never pauses the next one. */
+    if (ScpiSdWindow_IsOpenFor(SCPI_SD_WINDOW_USB, gUsbSessionGeneration)) {
         return true;
     }
     // Schedule the next read
@@ -1317,12 +1345,6 @@ static scpi_interface_t scpi_interface = {
  * errors. */
 static ScpiContextStorage gUsbScpiStorage;
 
-/* fw#1265 round 5: a CDC session reset REQUESTED by the SD task and PERFORMED
- * by the USB task -- see UsbCdc_RequestSessionReset for why. Defined up here
- * with the other file statics because UsbCdc_ProcessState, which drains it, is
- * above that function. */
-static volatile bool gSessionResetRequested = false;
-
 /**
  * Called to echo commands to the console
  * @param context The console theat made this call
@@ -1394,6 +1416,8 @@ void UsbCdc_Initialize() {
      * Record it as the write-complete notification target (see
      * gUsbCdcTaskHandle). No write can be submitted before this returns. */
     gUsbCdcTaskHandle = xTaskGetCurrentTaskHandle();
+
+    gUsbSessionGeneration = 0u;   /* fw#1265; see its definition */
 
     gRunTimeUsbSttings.state = USB_CDC_STATE_INIT;
 
@@ -1512,25 +1536,6 @@ void UsbCdc_ProcessState() {
 
             break;
         case USB_CDC_STATE_PROCESS:
-            /* fw#1265 round 4/5: perform a session reset the SD task asked
-             * for, BEFORE anything else in this state.
-             *
-             * It has to come first. The whole point is that the host's framing
-             * context is broken, so feeding it input, answering a deferred
-             * command or pushing another byte all make things worse -- and the
-             * feed is the very next thing below. BEGIN_CLOSE tears the handle
-             * down and CLOSED scrubs the per-session state, so whatever was
-             * queued dies with the session, which is the intent rather than a
-             * side effect. */
-            if (gSessionResetRequested) {
-                gSessionResetRequested = false;
-                LOG_E("[USB] CDC session reset: a tagged SD:GET left a block "
-                      "short; the host must reopen");
-                ScpiSdWindow_Close(SCPI_SD_WINDOW_USB);
-                ScpiSdWindow_FeedEnd(SCPI_SD_WINDOW_USB);
-                gRunTimeUsbSttings.state = USB_CDC_STATE_BEGIN_CLOSE;
-                break;
-            }
             // If a write operation is not in progress
             if (gRunTimeUsbSttings.readTransferHandle ==
                     USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID) {
@@ -1548,8 +1553,11 @@ void UsbCdc_ProcessState() {
                  * exists to prevent. Instead the buffer waits: readBuffer
                  * keeps its bytes, readBufferLength stays non-zero, and
                  * everything the host sent reaches SCPI in order on the first
-                 * pass after the window closes. */
-                if (!ScpiSdWindow_IsOpenFor(SCPI_SD_WINDOW_USB, 0u)) {
+                 * pass after the window closes -- or, if the window is owed to
+                 * a session that has since ended, on the first pass of the
+                 * new one (the same session key as UsbCdc_BeginRead). */
+                if (!ScpiSdWindow_IsOpenFor(SCPI_SD_WINDOW_USB,
+                                            gUsbSessionGeneration)) {
                     // Process any input
                     UsbCdc_FinalizeRead(&gRunTimeUsbSttings);
                     /* fw#1265: UNCONDITIONAL, and only here. FinalizeRead has
@@ -1648,40 +1656,17 @@ tRunTimeUsbSettings* UsbCdc_GetRuntimeSettings(void) {
 }
 
 uint32_t UsbCdc_GetCircularBufferAvailable(void) {
-    /* fw#1265 / #1267 round-4 audit A: bytes QUEUED for the host and not yet
-     * transmitted. The twin of wifi_tcp_server_GetCircularBufferAvailable,
-     * added because PrepareStreamingBuffers has to know whether a
-     * re-partition would discard undelivered output. Unlocked single read of
-     * the two counters CircularBuf_NumBytesAvailable derives; the caller uses
-     * it to decide whether to WAIT, so a stale value costs one more pass. */
+    /* fw#1265: bytes QUEUED for the host and not yet transmitted. The twin of
+     * wifi_tcp_server_GetCircularBufferAvailable; ScpiSdWindow_Service polls
+     * it to release a completed tagged SD:GET's window once its tail and end
+     * line have left the ring. Unlocked single read of the two counters
+     * CircularBuf_NumBytesAvailable derives; a stale value costs one more
+     * ~1 ms poll. */
     return (uint32_t) CircularBuf_NumBytesAvailable(&gRunTimeUsbSttings.wCirbuf);
 }
 
-/* fw#1265 / #1267 round-4 audit B: SOFT-RESET THE CDC SESSION.
- *
- * ⭐ WHY A SESSION RESET IS THE ONLY HONEST ANSWER HERE. When a tagged GET's
- * block is left short, the host is part-way through a blind read of <n> bytes
- * and every byte we send afterwards is counted INSIDE that block -- including
- * the echo, reply and prompt of whatever it had queued. Round 4 withheld the
- * end line and called the result "recoverable silence"; the audit showed that
- * is false for a host that pauses and then resumes, because the next reply is
- * still read as file data and the query loses its answer. Nothing we can send
- * on that pipe fixes a framing context we have already broken -- so the
- * context has to go.
- *
- * This is the CDC analogue of the TCP close built in round 4, and it reuses
- * the EXISTING teardown funnel rather than calling USB_DEVICE_Detach directly:
- * USB_CDC_STATE_BEGIN_CLOSE closes the device handle and CLOSED scrubs the
- * transfer handles, readBufferLength and the writeInProgress claim before
- * returning to INIT, which is exactly the session scrub this needs. That path
- * is already exercised by the endpoint-halt and terminated-by-host resets in
- * BeginRead/BeginWrite, so it is not new ground.
- *
- * ⚠ REQUESTED HERE, PERFORMED BY THE USB TASK, for the same reason the TCP
- * close is deferred to WifiTask: the device handle belongs to the USB tasks
- * and tearing it down from the SD task would race their state machine. */
-void UsbCdc_RequestSessionReset(void) {
-    gSessionResetRequested = true;
+uint32_t UsbCdc_GetSessionGeneration(void) {
+    return gUsbSessionGeneration;   /* fw#1265; see its definition */
 }
 
 bool UsbCdc_ResizeWriteBuffer(uint32_t newSize) {
