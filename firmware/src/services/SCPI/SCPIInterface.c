@@ -517,8 +517,10 @@ static void SCPI_SyncQuesBits(void) {
 static scpi_result_t SCPI_Reset(scpi_t * context) {
     // Send notification that reset is occurring
     // This gives connected clients a chance to know what happened
-    const char* msg = "System reset initiated\r\n";
-    context->interface->write(context, msg, strlen(msg));
+    if (context->interface && context->interface->write) {
+        const char* msg = "System reset initiated\r\n";
+        context->interface->write(context, msg, strlen(msg));
+    }
     
     // Ensure the message is sent before reset
     if (context->interface && context->interface->flush) {
@@ -1080,7 +1082,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  User ADC: %d/%d | Internal ADC: %d/%d | DIO: %d/%d inputs\r\n", 
         userAdcEnabled, userAdcTotal,
         internalAdcEnabled, internalAdcTotal,
-        dioInputs, pDIOConfig ? pDIOConfig->Size : 0);
+        dioInputs, pDIOConfig ? (int)pDIOConfig->Size : 0);
     SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
     
     // Show which specific user ADC channels are enabled

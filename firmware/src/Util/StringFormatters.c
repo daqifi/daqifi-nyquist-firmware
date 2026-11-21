@@ -298,7 +298,7 @@ static size_t __attribute__((unused)) strncpy_m(char* destStr, size_t destSize, 
 }
 
 
-static bool MACAddressToString(const uint8_t macAddr[8], char* buff, size_t buffSize)
+static bool MACAddressToString(const uint8_t macAddr[6], char* buff, size_t buffSize)
 {
     if(macAddr && buff && buffSize >= 18)
     {
