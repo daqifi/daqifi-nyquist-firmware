@@ -5452,16 +5452,51 @@ $(WIFI881_BIN): test_881_wifi_reset.c test_framework.h $(WIFI_MGR_SRC) $(IPERF2_
 	 rm -f $(WIFI881_GEN).part
 	$(CC) $(CFLAGS) -o $@ test_881_wifi_reset.c
 
+# #1195: MainState's own DEINIT re-queue must not discard SendEvent's result.
+# The REAL RequeueDeinit() is spliced out (same technique as $(WIFI881_GEN));
+# the three call-site facts no host test can see are pinned on the
+# comment-stripped source, since the prose around the fix names them.
+DEINIT1195_BIN := run_1195_tests
+DEINIT1195_GEN := gen_1195_deinit_requeue.h
+$(DEINIT1195_BIN): test_1195_deinit_requeue.c test_framework.h $(WIFI_MGR_SRC) $(RECIPES)
+	@f='static void RequeueDeinit(void) {'; \
+	 n=`tr -d '\r' < $(WIFI_MGR_SRC) | grep -cxF "$$f"`; \
+	 test "$$n" = 1 || { echo "ERROR: '$$f' found $$n time(s) in"; \
+	   echo "       $(WIFI_MGR_SRC); #1195 needs exactly one."; exit 1; }; \
+	 tr -d '\r' < $(WIFI_MGR_SRC) \
+	   | awk -v f="$$f" '$$0 == f { p = 1 } p { print } p && /^}/ { p = 0 }' > $(DEINIT1195_GEN); \
+	 last=`tail -1 $(DEINIT1195_GEN) | tr -d '[:space:]'`; \
+	 test "$$last" = "}" || { echo "ERROR: '$$f' did not end in '}'"; \
+	   rm -f $(DEINIT1195_GEN); exit 1; }
+	@src=`$(CC) -fpreprocessed -E $(WIFI_MGR_SRC) 2>/dev/null | tr -d '\r'`; \
+	 test -n "$$src" || { echo "ERROR: could not comment-strip $(WIFI_MGR_SRC)"; exit 1; }; \
+	 bare=`printf '%s\n' "$$src" | tr '\n' ' ' \
+	   | grep -oE '([;{}:)]|else) *SendEvent *\( *WIFI_MANAGER_EVENT_DEINIT *\) *;' | wc -l`; \
+	 test "$$bare" -eq 0 || { echo "FAIL: #1195 -- $$bare SendEvent(WIFI_MANAGER_EVENT_DEINIT)"; \
+	   echo "      call(s) discard the result. A failed send abandons the"; \
+	   echo "      teardown; MainState must use RequeueDeinit()."; exit 1; }; \
+	 printf '%s\n' "$$src" \
+	   | awk '/^static void wifi_manager_ProcessStateImpl\(bool drainTcpRx\) \{$$/ { p = 1 } p { print } p && /^}/ { p = 0 }' \
+	   | tr '\n' ' ' | grep -qE 'if \( *gDeinitRequeuePending *\) *\{ *RequeueDeinit *\( *\) *;' \
+	   || { echo "FAIL: #1195 -- ProcessStateImpl no longer retries a pending"; \
+	        echo "      DEINIT re-queue (if (gDeinitRequeuePending) RequeueDeinit();)."; exit 1; }; \
+	 printf '%s\n' "$$src" | tr '\n' ' ' \
+	   | grep -qE 'case WIFI_MANAGER_EVENT_DEINIT: *gDeinitRequeuePending *= *false *;' \
+	   || { echo "FAIL: #1195 -- the DEINIT case no longer clears gDeinitRequeuePending"; \
+	        echo "      first, so a retry can become a duplicate DEINIT."; exit 1; }
+	$(CC) $(CFLAGS) -o $@ test_1195_deinit_requeue.c
+
 run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) \
      $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) \
      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(CAP1202_BIN) $(ISRLOG1197_BIN) $(STOP1201_BIN) $(CLAMP1231_BIN) \
      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(USECALTYPE_BIN) $(ARM_BIN) $(NAME_BIN) \
      $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) check-1200-parity check-885-savecal-claim \
      $(NVM1153_BIN) $(ARMREFUSE_BIN) $(SDCRC_BIN) $(SDWRITE_BIN) $(LOGRING1248_BIN) $(HIF881_BIN) \
-     $(HIF881SPI_BIN) $(WIFI881_BIN)
+     $(HIF881SPI_BIN) $(WIFI881_BIN) $(DEINIT1195_BIN)
 	./$(HIF881_BIN)
 	./$(HIF881SPI_BIN)
 	./$(WIFI881_BIN)
+	./$(DEINIT1195_BIN)
 	./$(LOGRING1248_BIN)
 	./$(SDCRC_BIN)
 	./$(SDWRITE_BIN)
@@ -6042,6 +6077,7 @@ $(NVM1153_BIN): test_1153_nvm_recursive_lock.c test_framework.h \
 
 clean:
 	rm -f $(HIF881_BIN) $(HIF881SPI_BIN) $(WIFI881_BIN) $(WIFI881_GEN)
+	rm -f $(DEINIT1195_BIN) $(DEINIT1195_GEN)
 	rm -f $(LOGRING1248_BIN) $(LOGRING1248_GEN)
 	rm -f $(SDCRC_BIN) $(SDWRITE_BIN) $(SDWRITE_UUT_OBJ)
 	rm -f $(NVM1153_BIN)

@@ -234,6 +234,15 @@ static bool wifiPowerSaveEnabled(void) {
 // calling HardReset/Deinit and read every tick from app_WifiTask.
 static volatile TickType_t gWifiReinitDeadlineTick = 0;
 
+// #1195: a DEINIT that MainState tried to re-queue (driver BUSY, or the
+// firmware-update exit) and SendEvent could not place. SendEvent uses
+// timeout 0 there -- the caller holds gProcessStateMutex and is the only
+// drainer -- so a full queue used to abandon the teardown silently.
+// RequeueDeinit() sets this on failure; ProcessStateImpl retries it every
+// pass; any dispatched DEINIT clears it. Read and written only with
+// gProcessStateMutex held, so no critical section is needed.
+static bool gDeinitRequeuePending = false;
+
 // #663: TCP console idle-timeout deadline, in ticks. A connected client with
 // no RX or TX for this long is closed (connect-and-never-send DoS; #387/#560
 // listener-wedge class). Default 300 s — generous, since a legitimate headless
@@ -1144,6 +1153,12 @@ static bool SendEvent(wifi_manager_event_t event) {
     return false;
 }
 
+// #1195: MainState's own DEINIT re-queue. A failed send is not dropped: it
+// stays pending and ProcessStateImpl retries it (SendEvent has logged it).
+static void RequeueDeinit(void) {
+    gDeinitRequeuePending = !SendEvent(WIFI_MANAGER_EVENT_DEINIT);
+}
+
 static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * const pInstance, uint16_t event) {
     wifi_manager_stateMachineReturnStatus_t returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_HANDLED;
     switch (event) {
@@ -1762,7 +1777,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
 
                 // Use DEINIT event for proper cleanup instead of manual reset
                 // DEINIT will Close handle, Deinitialize driver, fix reset state, then transition to MainState
-                SendEvent(WIFI_MANAGER_EVENT_DEINIT);
+                RequeueDeinit();  // #1195: a failed send is retried, not lost
                 break;
             }
             // If WiFi firmware update requested, transition to MainState which
@@ -2619,13 +2634,16 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
 
             break;
         case WIFI_MANAGER_EVENT_DEINIT:
+            // #1195: this dispatch IS the teardown a failed re-queue was
+            // holding open; a later retry would be a duplicate DEINIT.
+            gDeinitRequeuePending = false;
             if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_READY)) {
                 //If WiFi firmware update is running and again initialized, then deinit WiFi firmware update
                 ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_READY);
                 wifi_serial_bridge_interface_DeInit();
             }
             if (WDRV_WINC_Status(sysObj.drvWifiWinc) == SYS_STATUS_BUSY) {
-                SendEvent(WIFI_MANAGER_EVENT_DEINIT);
+                RequeueDeinit();  // #1195: a failed send is retried, not lost
                 break;
             }
             returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_TRAN;
@@ -2816,6 +2834,7 @@ void wifi_manager_BootInit(void) {
     gTcpRxPending = false;
     gLastRssiPercentage = 0;
     gWifiReinitDeadlineTick = 0;
+    gDeinitRequeuePending = false;  // #1195 — retained-RAM scrub
     gWincDeepPowerOff = false;  // #334 — retained-RAM scrub
     gApplyInProgress = false;
     gApplyInProgressDeadlineTick = 0;
@@ -3946,6 +3965,11 @@ static void wifi_manager_ProcessStateImpl(bool drainTcpRx) {
     }
     if (doInit) {
         SendEvent(WIFI_MANAGER_EVENT_INIT);
+    }
+
+    // #1195: retry a DEINIT re-queue that MainState could not place.
+    if (gDeinitRequeuePending) {
+        RequeueDeinit();
     }
 
     // APPLY gate safety release (#425): drop gApplyInProgress if the state
