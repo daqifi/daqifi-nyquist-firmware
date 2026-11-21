@@ -31,255 +31,103 @@ entry is harmless), that a referenced file exists, or anything about the push
 and pull_request filters agreeing with each other beyond covering this set.
 """
 import fnmatch
-import glob
 import os
 import posixpath
 import re
+import subprocess
 import sys
+import tempfile
 
-MAKEFILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Makefile")
-WORKFLOW = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                        "..", "..", ".github", "workflows", "host-tests.yml")
+HERE = os.path.dirname(os.path.abspath(__file__))
+MAKEFILE = os.path.join(HERE, "Makefile")
+WORKFLOW = os.path.join(HERE, "..", "..", ".github", "workflows", "host-tests.yml")
 
-# `../../firmware/src/...` is how every host-test target names a firmware file,
-# whether through a variable definition or inline in a recipe. Both forms are
-# the same evidence: the Makefile text mentions the path.
+# `../../firmware/src/...` is how every host-test target names a firmware file.
 REF = re.compile(r"\.\./\.\./(firmware/src/[A-Za-z0-9_./-]+\.(?:c|h))")
+INC = re.compile(r"-I(\.\./\.\./firmware/src/[^\s)$]*)")
 ENTRY = re.compile(r"^\s*-\s*'([^']+)'", re.M)
+BARE = re.compile(r"\$[({]([A-Za-z_][A-Za-z0-9_]*)[)}]")
+FUNC = re.compile(r"\$[({](?:addprefix|addsuffix|patsubst|subst|wildcard|foreach|filter|"
+                  r"filter-out|basename|dir|notdir|abspath|realpath)\s[^)}]*firmware/src")
 
-
-# A source file named through a variable: `$(FW_UTIL)/Logger.c`. The literal
-# `../../firmware/src` text is on the VARIABLE's line, so REF alone never sees
-# the file (#1178: "25 firmware files covered" while the host tests read 28).
+# #1178 / PR #1298 audit: three rounds of a hand-written Makefile expander each
+# missed a GNU make semantic (addprefix/patsubst renaming, a variable
+# redefined after use, ...), because re-implementing make in Python is the same
+# blind spot this checker exists to remove. So make itself answers:
+# `make -pRrq` prints its database, in which prerequisites and `:=` values are
+# already fully expanded (addprefix, patsubst, wildcard, redefinition, all of
+# it). Recipes and recursive (`=`) variables are printed UNEXPANDED, so the
+# `$(NAME)` references in recipes are resolved by a second make run that
+# `$(info)`s each NAME against the same Makefile (the smaller sound option,
+# vs. flagging them). A `$(func ...)` in a recipe that still mentions
+# firmware/src after that is FAILED, never skipped. The raw Makefile text is
+# also scanned, which keeps literal paths in recipe greps.
 #
-# SOUNDNESS RULE (the #1178 review round): harvesting the shapes we know is not
-# enough -- a variable used in any OTHER shape (addprefix, wildcard, patsubst,
-# -I flags, a continuation line) was neither harvested nor reported, which is
-# "silently tolerates forms the expander does not handle". So every top-level
-# `$(VAR)` / `${VAR}` whose expansion contains firmware/src must be ACCOUNTED
-# FOR, by exactly one of:
-#   * composed with a .c/.h suffix           -> harvested as a file
-#   * inside $(addprefix P,LIST)/$(wildcard) -> expanded, files harvested
-#   * an -I include directory                -> CLASSIFIED and listed in a NOTE,
-#                                               not enforced (see below)
-#   * bare use of a file-list variable       -> its own definition was scanned
-# and anything else FAILS, listed. There is no "skip" category.
-#
-# SCOPE: -I directories are a different problem (a test #includes a header the
-# Makefile never names, so no prerequisite list can see it). That gap pre-dates
-# #1178 and is out of this checker's prerequisite model; it is printed as a
-# NOTE so it stays visible, and tracked separately.
-ASSIGN = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*(:|\?|\+)?=\s*(.*?)(?:\s+#.*)?\s*$")
-VARNAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-VARUSE = re.compile(r"\$[({]([A-Za-z_][A-Za-z0-9_]*)[)}]")
-SUFFIX_CH = re.compile(r"\.(?:c|h)$")
-BASE = os.path.dirname(os.path.abspath(__file__))
+# -I include dirs are classified and printed as a NOTE, not enforced (#1300).
 
 
-class Unsupported(Exception):
+class MakeError(Exception):
     pass
 
 
-def splice(text):
-    """Join backslash-newline continuations: an assignment value can span lines."""
-    return re.sub(r"\\\r?\n", " ", text)
+def _make(args, cwd):
+    try:
+        r = subprocess.run(["make"] + args, cwd=cwd, capture_output=True, text=True,
+                           timeout=120, env={k: v for k, v in dict(os.environ, LC_ALL="C").items()
+                                if k not in ("MAKEFLAGS", "MAKELEVEL", "MFLAGS", "MAKEOVERRIDES")})
+    except FileNotFoundError:
+        raise MakeError("GNU make is not installed")
+    except subprocess.TimeoutExpired:
+        raise MakeError("make timed out: " + " ".join(args))
+    if r.returncode not in (0, 1):  # 1 = default goal out of date: normal for -q
+        raise MakeError("make exited %d: %s" % (r.returncode, r.stderr.strip()[:500]))
+    return r.stdout
 
 
-def nodes(s):
-    """Top-level `$(...)` / `${...}` as (start, end, body). `$$` is a literal
-    dollar (shell), never a make reference."""
-    i = 0
-    while i < len(s):
-        if s[i] == "$" and i + 1 < len(s):
-            if s[i + 1] == "$":
-                i += 2
-                continue
-            if s[i + 1] in "({":
-                op = s[i + 1]
-                cl = ")" if op == "(" else "}"
-                depth, j = 0, i + 1
-                while j < len(s):
-                    if s[j] == op:
-                        depth += 1
-                    elif s[j] == cl:
-                        depth -= 1
-                        if depth == 0:
-                            break
-                    j += 1
-                yield (i, min(j + 1, len(s)), s[i + 2:j])
-                i = j + 1
-                continue
-        i += 1
-
-
-def split_args(body):
-    out, depth, cur = [], 0, ""
-    for ch in body:
-        if ch in "({":
-            depth += 1
-        elif ch in ")}":
-            depth -= 1
-        if ch == "," and depth == 0:
-            out.append(cur)
-            cur = ""
-        else:
-            cur += ch
-    return out + [cur]
-
-
-def ev_str(s, defs, seen=(), base=None):
-    """Expand make text. Supports $(VAR), $(addprefix P,L), $(wildcard ...);
-    raises Unsupported for anything else (undefined, recursive, other
-    functions) -- never guesses."""
-    base = BASE if base is None else base
-    out, last = [], 0
-    for a, b, body in nodes(s):
-        out.append(s[last:a])
-        out.append(_ev_node(body, defs, seen, base))
-        last = b
-    out.append(s[last:])
-    return "".join(out)
-
-
-def _ev_node(body, defs, seen, base):
-    if VARNAME.fullmatch(body):
-        if body in seen or body not in defs:
-            raise Unsupported(body)
-        return ev_str(defs[body], defs, seen + (body,), base)
-    m = re.match(r"(addprefix|wildcard)\s+(.*)$", body, re.S)
-    if not m:
-        raise Unsupported(body)
-    fn, rest = m.groups()
-    if fn == "addprefix":
-        args = split_args(rest)
-        if len(args) != 2:
-            raise Unsupported(body)
-        pre = ev_str(args[0], defs, seen, base)
-        return " ".join(pre + w for w in ev_str(args[1], defs, seen, base).split())
-    words = []
-    for pat in ev_str(rest, defs, seen, base).split():
-        got = sorted(glob.glob(os.path.join(base, pat)))
-        if not got and "firmware/src" in pat:
-            raise Unsupported("wildcard matches no file: " + pat)
-        words += [os.path.relpath(g, base).replace(os.sep, "/") for g in got]
-    return " ".join(words)
-
-
-def soft(s, defs, seen=()):
-    """Best-effort text of s with every known variable substituted and the
-    rest dropped -- ONLY used to ask 'does this mention firmware/src'."""
-    def sub(m):
-        n = m.group(1)
-        return "" if n in seen or n not in defs else soft(defs[n], defs, seen + (n,))
-    return VARUSE.sub(sub, s)
-
-
-def fw_via_vars(body, defs):
-    return any("firmware/src" in soft("$(%s)" % n, defs)
-               for n in VARUSE.findall("$(" + body + ")"))
-
-
-def analyse(mk_text, base=None):
-    """(files, dirs, problems): firmware files read, -I directories used, and
-    every `$(VAR)` occurrence that touches firmware/src and could not be
-    accounted for."""
-    base = BASE if base is None else base
-    lines = splice(mk_text).split("\n")
-    defs = {}
-    for ln in lines:
-        m = ASSIGN.match(ln)
-        if m:
-            name, op, val = m.groups()
-            defs[name] = (defs.get(name, "") + " " + val) if op == "+" else val
-    # a variable that is a single directory-ish word: its USES are classified
-    alias = set()
-    for name, val in defs.items():
-        if "firmware/src" in soft(val, defs) or "firmware/src" in val:
-            try:
-                v = ev_str(val, defs, (name,), base)
-            except Unsupported:
-                continue
-            if v.strip() and len(v.split()) == 1 and not SUFFIX_CH.search(v):
-                alias.add(name)
-    files, dirs, problems = set(), set(), []
-    files.update(REF.findall(splice(mk_text)))
-
-    def prob(msg):
-        if msg not in problems:
-            problems.append(msg)
-
-    for ln in lines:
-        if ln.lstrip().startswith("#"):
-            continue
-        m = ASSIGN.match(ln)
-        if m and m.group(1) in alias:
-            continue  # a directory definition; each USE is classified below
-        for lit in re.findall(r"-I(\.\./\.\./firmware/src/[^\s)$]*)", ln):
-            dirs.add(lit)
-        for a, b, body in nodes(ln):
-            tok = re.match(r"/[^\s)$]*", ln[b:])
-            tok = tok.group(0) if tok else ""
-            if VARNAME.fullmatch(body):
-                composed = re.match(r"/[A-Za-z0-9_./-]*\.(?:c|h)$", tok)
-                try:
-                    exp = ev_str("$(%s)" % body, defs, (), base)
-                except Unsupported:
-                    exp = None
-                if composed:
-                    if exp is None:
-                        prob("$(%s)%s  (variable cannot be expanded)" % (body, tok))
-                    else:
-                        files.update(REF.findall(exp + tok))
-                    continue
-                if not fw_via_vars(body, defs):
-                    continue
-                if ln[max(0, a - 2):a] == "-I":
-                    dirs.add(("$(%s)" % body if exp is None else exp) + tok)
-                elif tok == "":
-                    if body in alias:
-                        prob("$(%s) used bare but it is a directory" % body)
-                else:
-                    prob("$(%s)%s  (a firmware directory used outside -I)" % (body, tok))
-                continue
-            is_wild = body.startswith("wildcard") and "firmware/src" in body
-            if not (is_wild or fw_via_vars(body, defs)):
-                continue
-            if not re.match(r"(addprefix|wildcard)\s", body):
-                # call/patsubst/shell/...: not expandable, so the only thing
-                # that is safe to let through is a FILE-LIST variable passed
-                # whole (its definition line was scanned). A directory
-                # variable inside an unknown function is the unaccounted shape.
-                for n in VARUSE.findall("$(" + body + ")"):
-                    if n in alias:
-                        prob("$(%s)  (directory variable $(%s) inside a function "
-                             "shape the expander does not handle)" % (body.strip(), n))
-                continue
-            mi = re.match(r"addprefix\s+-I\s*,\s*\$\(shell\s+find\s+(.+?)\s+-type\s+d\)\s*$",
-                          body, re.S)
-            try:
-                if mi:
-                    dirs.add(ev_str(mi.group(1), defs, (), base))
-                    continue
-                words = ev_str("$(%s)" % body, defs, (), base).split()
-            except Unsupported:
-                prob("$(%s)  (function shape the expander does not handle)" % body.strip())
-                continue
-            for w in words:
-                if w.startswith("-I"):
-                    dirs.add(w[2:])
-                elif SUFFIX_CH.search(w):
-                    files.update(REF.findall(w))
-                else:
-                    prob("$(%s)  (yields non-source word %s)" % (body.strip(), w))
+def analyse(makefile):
+    """(files, dirs, problems) for one Makefile, as GNU make sees it."""
+    cwd = os.path.dirname(os.path.abspath(makefile))
+    mk = os.path.abspath(makefile)
+    raw = open(mk, encoding="utf-8").read()
+    db = _make(["-pRrq", "-f", mk], cwd)
+    files = set(REF.findall(raw)) | set(REF.findall(db))
+    dirs = set(INC.findall(raw)) | set(INC.findall(db))
+    problems = []
+    recipes = [ln for ln in db.split("\n") if ln.startswith("\t")]
+    names = sorted({n for ln in recipes for n in BARE.findall(ln.replace("$$", ""))})
+    vals = {}
+    if names:
+        with tempfile.TemporaryDirectory() as td:
+            tmp = os.path.join(td, "print.mk")
+            with open(tmp, "w") as f:
+                for n in names:
+                    f.write("$(info @@%s@@$(%s))\n" % (n, n))
+            out = _make(["-q", "-f", mk, "-f", tmp], cwd)
+        cur = None
+        for ln in out.rstrip("\n").split("\n"):
+            m = re.match(r"@@([A-Za-z_][A-Za-z0-9_]*)@@(.*)$", ln)
+            if m and m.group(1) in names:
+                cur = m.group(1)
+                vals[cur] = m.group(2)
+            elif cur:
+                vals[cur] += " " + ln
+    for ln in recipes:
+        t = ln.replace("$$", "\0")
+        for _ in range(8):
+            t2 = BARE.sub(lambda m: vals.get(m.group(1), m.group(0)), t)
+            if t2 == t:
+                break
+            t = t2
+        files.update(REF.findall(t))
+        dirs.update(INC.findall(t))
+        if FUNC.search(t):
+            problems.append("recipe composes a firmware path with a make function: "
+                            + t.replace("\0", "$$").strip()[:160])
     return sorted(files), sorted({posixpath.normpath(d) for d in dirs}), problems
 
 
-def referenced(makefile_text, base=None):
-    return analyse(makefile_text, base)[0]
-
-
-def unresolved(makefile_text, base=None):
-    return analyse(makefile_text, base)[2]
+def referenced(makefile):
+    return analyse(makefile)[0]
 
 
 def filters(workflow_text):
@@ -297,7 +145,8 @@ def uncovered(paths, patterns):
 
 
 def self_test():
-    """Both directions, because a checker that cannot FAIL is not a checker."""
+    """Both directions, because a checker that cannot FAIL is not a checker.
+    Mk-file cases run the REAL make on temp Makefiles."""
     checks = 0
 
     def ck(label, got, want):
@@ -307,11 +156,48 @@ def self_test():
             print("  self-test FAIL: %s: got %r want %r" % (label, got, want))
             sys.exit(1)
 
-    mk = "  $(CC) -o x ../../firmware/src/services/csv_encoder.c\n" \
-         "SRC := ../../firmware/src/Util/CRC32.c\n"
-    ck("both reference forms are found -- a variable and an inline recipe",
-       referenced(mk),
+    def run(text, extra=()):
+        with tempfile.TemporaryDirectory() as td:
+            os.makedirs(os.path.join(td, "tests", "host"))
+            for e in list(extra) + REF.findall(text):
+                p = os.path.join(td, e)
+                os.makedirs(os.path.dirname(p), exist_ok=True)
+                open(p, "w").close()
+            mk = os.path.join(td, "tests", "host", "Makefile")
+            open(mk, "w").write(text)
+            return analyse(mk)
+
+    ck("literal variable and inline recipe forms are found",
+       run("SRC := ../../firmware/src/Util/CRC32.c\nall:\n\tcc ../../firmware/src/services/csv_encoder.c\n")[0],
        ["firmware/src/Util/CRC32.c", "firmware/src/services/csv_encoder.c"])
+    ck("A: addprefix prerequisite", run(
+        "all: $(addprefix ../../firmware/src/Util/,DoubleFmt.h)\n\t@:\n",
+        ["firmware/src/Util/DoubleFmt.h"])[0],
+       ["firmware/src/Util/DoubleFmt.h"])
+    ck("B: patsubst renames the prerequisite", run(
+        "S := ../../firmware/src/Util/a.c\nall: $(patsubst %.c,%.h,$(S))\n\t@:\n",
+        ["firmware/src/Util/a.h"])[0],
+       ["firmware/src/Util/a.c", "firmware/src/Util/a.h"])
+    ck("C: a redefined variable keeps the value current at use", run(
+        "D := ../../firmware/src/A\nX := $(D)/f.c\nD := ../../firmware/src/B\nall: $(X)\n\t@:\n", ["firmware/src/A/f.c"])[0],
+       ["firmware/src/A/f.c"])
+    ck("wildcard is globbed by make", run(
+        "all: $(wildcard ../../firmware/src/W/*.h)\n\t@:\n",
+        ["firmware/src/W/a.h", "firmware/src/W/b.h"])[0],
+       ["firmware/src/W/a.h", "firmware/src/W/b.h"])
+    ck("D: a recursive variable composed in a recipe only", run(
+        "D = ../../firmware/src/R\nall:\n\tcat $(D)/only.c\n")[0],
+       ["firmware/src/R/only.c"])
+    ck("E: a make function over a firmware path in a recipe is reported", len(run(
+        "D := ../../firmware/src/R\nall:\n\techo $(addprefix $(D)/,a.c)\n")[2]), 1)
+    ck("-I dirs are collected, not enforced", run(
+        "D := ../../firmware/src/x\nF = -I$(D)/inc\nall:\n\tcc $(F)\n")[1],
+       ["../../firmware/src/x/inc"])
+    try:
+        run("all: ( broken\n\t@:\n$(error boom)\n")
+        ck("make exit 2 must raise", "returned", "raised")
+    except MakeError:
+        ck("make exit 2 raises MakeError", 1, 1)
 
     wf = ("on:\n  pull_request:\n    paths:\n"
           "      - 'firmware/src/Util/CRC32.c'\n"
@@ -320,67 +206,12 @@ def self_test():
           "      - 'firmware/src/services/csv_encoder.c'\n")
     pr, push = filters(wf)
     ck("the two filter blocks are read separately", (len(pr), len(push)), (1, 2))
-    # POSITIVE CONTROL: the real defect shape -- present in push, absent in PR.
-    ck("a file missing from ONE filter is reported",
-       uncovered(referenced(mk), pr), ["firmware/src/services/csv_encoder.c"])
-    ck("...and is NOT reported against the filter that has it",
-       uncovered(referenced(mk), push), [])
-    # a glob must cover its members, or every header would be a false alarm
+    miss = ["firmware/src/Util/CRC32.c", "firmware/src/services/csv_encoder.c"]
+    ck("a file missing from ONE filter is reported", uncovered(miss, pr),
+       ["firmware/src/services/csv_encoder.c"])
+    ck("...and not against the filter that has it", uncovered(miss, push), [])
     ck("a glob entry covers matching paths",
-       uncovered(["firmware/src/services/a.h"], ["firmware/src/services/*.h"]),
-       [])
-    # #1178: a variable-composed path is seen; an unresolvable one fails.
-    mk2 = "FW_HAL := ../../firmware/src/HAL\nFW_X := $(FW_HAL)/Sub\n" \
-          "A := $(FW_HAL)/WaitLoop.h\nB := $(FW_X)/y.c\n"
-    ck("a variable-composed path is harvested, chained too",
-       referenced(mk2), ["firmware/src/HAL/Sub/y.c", "firmware/src/HAL/WaitLoop.h"])
-    ck("a resolvable composition is not reported unresolved", unresolved(mk2), [])
-    ck("an unresolvable composition is reported, not skipped",
-       [u.split()[0] for u in unresolved("A := $(NOPE)/z.c\n")], ["$(NOPE)/z.c"])
-    ck("a recursive definition is unresolvable, not a hang",
-       [u.split()[0] for u in unresolved("R := $(R)/z\nA := $(R)/z.c\n")],
-       ["$(R)/z.c"])
-    # --- the #1178 review round: shapes the first expander silently ignored ---
-    mk3 = ("D := ../../firmware/src/drv\n"
-           "A := $(addprefix $(D)/,a.c sub/b.c)\n"
-           "B := $(addprefix $(D)/src/, \\\n\tc.c d.c)\n")
-    ck("addprefix is expanded, with a continuation line",
-       referenced(mk3), ["firmware/src/drv/a.c", "firmware/src/drv/src/c.c",
-                         "firmware/src/drv/src/d.c", "firmware/src/drv/sub/b.c"])
-    ck("...and nothing in them is left unaccounted", unresolved(mk3), [])
-    # wildcard is globbed against the REAL checkout (tests/host is the base)
-    wl = ("W := ../../firmware/src/libraries/scpi/libscpi\n"
-          "H := $(wildcard $(W)/inc/scpi/*.h)\n")
-    got = referenced(wl)
-    ck("wildcard is globbed against the checkout and harvested",
-       (len(got) > 0, all(g.startswith("firmware/src/libraries/scpi/libscpi/inc/scpi/")
-                          and g.endswith(".h") for g in got)), (True, True))
-    ck("a wildcard that matches nothing is reported, not dropped",
-       len(unresolved("W := ../../firmware/src/NOSUCHDIR\n"
-                      "H := $(wildcard $(W)/*.h)\n")), 1)
-    ck("a literal firmware wildcard is harvested too",
-       len(referenced("H := $(wildcard ../../firmware/src/libraries/scpi/libscpi/inc/scpi/*.h)\n")) > 0,
-       True)
-    # an unaccounted $(VAR) in a novel function shape
-    ck("a novel function shape is reported, never skipped",
-       len(unresolved("FW_X := ../../firmware/src/x\n"
-                      "S := $(patsubst %,$(FW_X)/%,a.c)\n")), 1)
-    ck("a bare use of a firmware DIRECTORY variable is reported",
-       len(unresolved("FW_X := ../../firmware/src/x\nrule:\n\tls $(FW_X)\n")), 1)
-    ck("a file-list variable used bare is accounted at its definition",
-       unresolved("FW_X := ../../firmware/src/x\nL := $(FW_X)/a.c\nrule: $(L)\n"), [])
-    ck("a dollar-dollar shell variable is not a make reference",
-       unresolved("FW_X := ../../firmware/src/x\nrule:\n\techo $${FW_X}\n"), [])
-    # -I directories: collected, and covered only by a glob that reaches below
-    mki = "FW_X := ../../firmware/src/x\nF := -I$(FW_X)/inc -I../../firmware/src/y\n"
-    ck("-I directories are collected, not skipped",
-       analyse(mki)[1], ["../../firmware/src/x/inc", "../../firmware/src/y"])
-    ck("an -I dir is classified in the NOTE list, not reported as a problem",
-       (analyse(mki)[2], len(analyse(mki)[1])), ([], 2))
-    ck("addprefix -I over a shell find is an -I dir, not skipped",
-       analyse("FW_X := ../../firmware/src/x\n"
-               "F := $(addprefix -I,$(shell find $(FW_X)/include -type d))\n")[1],
-       ["../../firmware/src/x/include"])
+       uncovered(["firmware/src/services/a.h"], ["firmware/src/services/*.h"]), [])
     print("  self-test: %d/%d checks passed" % (checks, checks))
 
 
@@ -388,9 +219,12 @@ def main():
     if "--self-test" in sys.argv:
         self_test()
         return 0
-    mk = open(MAKEFILE, encoding="utf-8").read()
     wf = open(WORKFLOW, encoding="utf-8").read()
-    paths, dirs, blind = analyse(mk)
+    try:
+        paths, dirs, blind = analyse(MAKEFILE)
+    except MakeError as e:
+        print("ERROR: cannot read the Makefile through GNU make (#1178): %s" % e)
+        return 1
     if blind:
         print("ERROR: the Makefile uses a variable that expands to a firmware path")
         print("       in a shape this checker cannot account for, so it cannot say")
