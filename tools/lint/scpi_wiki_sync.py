@@ -264,6 +264,41 @@ _NULL_ENTRY = re.compile(
     r"\{\s*\.pattern\s*=\s*NULL\s*,\s*\.callback\s*=\s*[A-Za-z_]\w*\s*,?\s*\}")
 _TABLE_DECL = re.compile(r"scpi_command_t\s+scpi_commands\s*\[\s*\]\s*=\s*\{")
 _DEFINE = re.compile(r"^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)", re.M)
+# `%:` is the digraph spelling of `#` (C99 6.4.6p3); at the start of a line
+# it introduces a directive exactly as `#` does (#1196 r6).
+_DIGRAPH_HASH = re.compile(r"^([ \t]*)%:", re.M)
+
+
+def _directives_as_hash(src):
+    """`src` with a line-leading `%:` digraph respelled `#`."""
+    return _DIGRAPH_HASH.sub(r"\1#", src)
+
+
+def _blank_literals(src):
+    """`src` with the CONTENTS of string and char literals replaced by spaces.
+
+    Length-preserving, so offsets found in the result index `src`. A literal
+    ends at its closing quote or at a newline (an unterminated literal does
+    not run on), as `cdef.literal_end` reads it. Used to locate the table
+    declaration: one spelled inside a string is text, not a table (r6).
+    """
+    out = list(src)
+    i, n = 0, len(src)
+    while i < n:
+        q = src[i]
+        if q in "\"'":
+            j = i + 1
+            while j < n and src[j] not in (q, "\n"):
+                if src[j] == "\\" and j + 1 < n and src[j + 1] != "\n":
+                    out[j] = out[j + 1] = " "
+                    j += 2
+                    continue
+                out[j] = " "
+                j += 1
+            i = j + 1
+        else:
+            i += 1
+    return "".join(out)
 _ONE_LITERAL = re.compile(r'"([^"]*)"')
 
 
@@ -355,10 +390,17 @@ def _require_canonical_table(scpi_c, live_src):
     # closing brace (#1066's fixtures), and a `#define` that renames a
     # callback is caught by rule 2 below. An `#include` becomes a bare token
     # instead, so one inside the table is residue and is refused.
+    live_src = _directives_as_hash(live_src)
     live_src = re.sub(r"^[ \t]*#[ \t]*include\b[^\n]*", " __INCLUDE_IN_TABLE__ ",
                       live_src, flags=re.M)
     live_src = re.sub(r"^[ \t]*#[^\n]*", "", live_src, flags=re.M)
-    m = _TABLE_DECL.search(live_src)
+    decls = list(_TABLE_DECL.finditer(_blank_literals(live_src)))
+    if len(decls) > 1:
+        sys.exit(f"error: {scpi_c!r} has {len(decls)} live "
+                 f"'scpi_command_t scpi_commands[] = {{' declarations outside "
+                 f"string literals (one may be in an '#if 0' block); cannot "
+                 f"tell which is the compiled table.")
+    m = decls[0] if decls else None
     if not m:
         sys.exit(f"error: cannot locate 'scpi_command_t scpi_commands[] = {{' "
                  f"in {scpi_c!r}, so the table's contents cannot be checked "
@@ -402,10 +444,12 @@ def _require_canonical_table(scpi_c, live_src):
         re.escape(c) for c in sorted(callbacks)))
     for path in _source_tree_files(scpi_c):
         with open(path, encoding="utf-8", errors="replace") as fh:
-            text = re.sub(r"\\\r?\n", "", fh.read())
+            # Phase 2 ONCE, via the shared splice(): a second pass would join
+            # a line onto a `//` comment the compiler leaves it out of (r6).
+            text = _directives_as_hash(splice(fh.read())[0])
         if "define" not in text or not named.search(text):
             continue
-        src = strip_c_comments(splice(text)[0], spliced=True)
+        src = strip_c_comments(text, spliced=True)
         aliased = sorted(set(_DEFINE.findall(src)) & callbacks)
         if aliased:
             sys.exit(f"error: {path!r} #defines registered callback name(s) "
@@ -1688,6 +1732,18 @@ def _self_test_callbacks():
          + entry + sentinel + '};\n', False,
          "#include outside the table, no alias (control)",
          {"ok.h": "#define UNRELATED 1\n"}),
+        ('// note ' + "\\" * 2 + '\n\n#define SCPI_Old SCPI_New\n'
+         'const scpi_command_t scpi_commands[] = {\n' + entry + sentinel
+         + '};\n', True, "alias after a comment ending in two backslashes"),
+        ('%:define SCPI_Old SCPI_New\n'
+         'const scpi_command_t scpi_commands[] = {\n' + entry + sentinel
+         + '};\n', True, "alias spelled with the %: digraph"),
+        ('const char *s = "scpi_command_t scpi_commands[] = {}";\n'
+         'const scpi_command_t scpi_commands[] = {\n'
+         '    [0] = {.pattern = "SYSTem:DEVice:NAME", .callback = SCPI_Old},\n'
+         '    [0].callback = SCPI_New,\n    [1] = {.pattern = NULL, '
+         '.callback = SCPI_NotImplemented},\n};\n', True,
+         "decoy table declaration inside a string literal"),
     )
     for src, want_refused, label, *extra in whole:
         with tempfile.TemporaryDirectory() as d:
