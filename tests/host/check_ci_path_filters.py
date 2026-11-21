@@ -46,83 +46,99 @@ WORKFLOW = os.path.join(HERE, "..", "..", ".github", "workflows", "host-tests.ym
 REF = re.compile(r"\.\./\.\./(firmware/src/[A-Za-z0-9_./-]+\.(?:c|h))")
 INC = re.compile(r"-I(\.\./\.\./firmware/src/[^\s)$]*)")
 ENTRY = re.compile(r"^\s*-\s*'([^']+)'", re.M)
-BARE = re.compile(r"\$[({]([A-Za-z_][A-Za-z0-9_]*)[)}]")
-FUNC = re.compile(r"\$[({](?:addprefix|addsuffix|patsubst|subst|wildcard|foreach|filter|"
-                  r"filter-out|basename|dir|notdir|abspath|realpath)\s[^)}]*firmware/src")
+# What can SURVIVE into `make -n` output. -n has expanded every make reference,
+# so a bare `$(NAME)` / `${NAME}` there is SHELL text (`$(grep -c ...)`,
+# `${piece1}`, an echoed `\$(CC)`) and is NOT flagged: measured on the real
+# tree, flagging those fails on ~60 legitimate lines. Only text shaped like a
+# make FUNCTION call (names a shell would not run) is flagged -- it means a
+# function make did not evaluate.
+MAKE_SHAPED = re.compile(
+    r"\$[({](?:addprefix|addsuffix|patsubst|subst|wildcard|foreach|filter-out|"
+    r"abspath|realpath|notdir|basename|call|eval|origin|flavor|findstring|"
+    r"firstword|lastword|wordlist|if|or|and)[ \t]")
+# A target/prerequisite line of the -p database (not a variable, not a recipe).
+DB_RULE = re.compile(r"^[^\s#:=][^:=]*:(?!=)")
+MAKE_ERRORS = re.compile(r"\*\*\*|No rule to make target|missing separator|Stop\.|Circular")
 
-# #1178 / PR #1298 audit: three rounds of a hand-written Makefile expander each
-# missed a GNU make semantic (addprefix/patsubst renaming, a variable
-# redefined after use, ...), because re-implementing make in Python is the same
-# blind spot this checker exists to remove. So make itself answers:
-# `make -pRrq` prints its database, in which prerequisites and `:=` values are
-# already fully expanded (addprefix, patsubst, wildcard, redefinition, all of
-# it). Recipes and recursive (`=`) variables are printed UNEXPANDED, so the
-# `$(NAME)` references in recipes are resolved by a second make run that
-# `$(info)`s each NAME against the same Makefile (the smaller sound option,
-# vs. flagging them). A `$(func ...)` in a recipe that still mentions
-# firmware/src after that is FAILED, never skipped. The raw Makefile text is
-# also scanned, which keeps literal paths in recipe greps.
+# #1178 / PR #1298. Three rounds of a hand-written Makefile expander, then a
+# round-4 `$(info)` second run, each missed a GNU make semantic (target-specific
+# variables, `$(VAR:.c=.h)`, `$(if)`, `$(abspath)` ...): re-implementing make
+# in Python is the same blind spot this checker exists to remove. So Python
+# expands NOTHING; GNU make does, twice:
+#   1. `make -pRrq`   its database: prerequisites and `:=` values, expanded.
+#   2. `make -n -k -B <goal>`  its dry run: every recipe line expanded in its
+#      real target scope (target-specific variables, substitution refs,
+#      functions, abspath, all of it). No recipe under `run` uses $(MAKE) or a
+#      `+` prefix, which -n would otherwise EXECUTE (checked, #1298 r5).
+# File set = REF over (the database) U (the dry-run text) U (the raw Makefile,
+# for safety). Absolute paths inside the repo are rewritten to the `../../`
+# form first (realpath and abspath forms of the root, derived at runtime, since
+# the CI runner's path differs). FAIL CLOSED on: make not installed, a timeout,
+# a database exit other than 0/1, a dry run that exits non-zero OR whose stderr
+# carries make's own errors (`***`, `No rule to make target`, `missing
+# separator`, `Stop.`) -- measured on the real tree: `-n -k -B run` exits 0 with
+# empty stderr, so any of these is a genuine signal -- and on a `$(`/`${`
+# surviving in a prerequisite line, or a make FUNCTION call surviving in the
+# dry-run text (a bare `$(x)`/`${x}` there is shell text, see MAKE_SHAPED).
+# Recursion sentinel: CHECK_CI_PATH_FILTERS_INNER makes a nested run exit 0.
+#
+# DECLARED BOUNDARY: a path composed by the SHELL inside a recipe
+# (`d=../../firmware/src/Util; cat $$d/x.h`) is invisible to every make-level
+# oracle. This checker covers what MAKE expands, and claims nothing beyond it.
 #
 # -I include dirs are classified and printed as a NOTE, not enforced (#1300).
+
+SENTINEL = "CHECK_CI_PATH_FILTERS_INNER"
 
 
 class MakeError(Exception):
     pass
 
 
-def _make(args, cwd):
+def _make(args, cwd, ok_rc=(0, 1)):
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("MAKEFLAGS", "MAKELEVEL", "MFLAGS", "MAKEOVERRIDES")}
+    env["LC_ALL"] = "C"
+    env[SENTINEL] = "1"
     try:
-        r = subprocess.run(["make"] + args, cwd=cwd, capture_output=True, text=True,
-                           timeout=120, env={k: v for k, v in dict(os.environ, LC_ALL="C").items()
-                                if k not in ("MAKEFLAGS", "MAKELEVEL", "MFLAGS", "MAKEOVERRIDES")})
+        r = subprocess.run(["make", "--no-print-directory"] + args, cwd=cwd,
+                           capture_output=True, text=True, timeout=300, env=env)
     except FileNotFoundError:
         raise MakeError("GNU make is not installed")
     except subprocess.TimeoutExpired:
         raise MakeError("make timed out: " + " ".join(args))
-    if r.returncode not in (0, 1):  # 1 = default goal out of date: normal for -q
+    if r.returncode not in ok_rc:
         raise MakeError("make exited %d: %s" % (r.returncode, r.stderr.strip()[:500]))
-    return r.stdout
+    return r
 
 
-def analyse(makefile):
+def _repo_relative(text, root):
+    """Rewrite any absolute path under the repo root to the ../../ form REF knows."""
+    for form in {os.path.realpath(root), os.path.abspath(root)}:
+        text = text.replace(form + "/", "../../")
+    return text
+
+
+def analyse(makefile, goal=None):
     """(files, dirs, problems) for one Makefile, as GNU make sees it."""
     cwd = os.path.dirname(os.path.abspath(makefile))
     mk = os.path.abspath(makefile)
+    root = os.path.join(cwd, "..", "..")
     raw = open(mk, encoding="utf-8").read()
-    db = _make(["-pRrq", "-f", mk], cwd)
-    files = set(REF.findall(raw)) | set(REF.findall(db))
-    dirs = set(INC.findall(raw)) | set(INC.findall(db))
+    db = _repo_relative(_make(["-pRrq", "-f", mk], cwd).stdout, root)
+    dry = _make(["-n", "-k", "-B", "-f", mk] + ([goal] if goal else []), cwd, (0,))
+    if MAKE_ERRORS.search(dry.stderr):
+        raise MakeError("make -n reported: " + dry.stderr.strip()[:500])
+    dry_text = _repo_relative(dry.stdout, root)
     problems = []
-    recipes = [ln for ln in db.split("\n") if ln.startswith("\t")]
-    names = sorted({n for ln in recipes for n in BARE.findall(ln.replace("$$", ""))})
-    vals = {}
-    if names:
-        with tempfile.TemporaryDirectory() as td:
-            tmp = os.path.join(td, "print.mk")
-            with open(tmp, "w") as f:
-                for n in names:
-                    f.write("$(info @@%s@@$(%s))\n" % (n, n))
-            out = _make(["-q", "-f", mk, "-f", tmp], cwd)
-        cur = None
-        for ln in out.rstrip("\n").split("\n"):
-            m = re.match(r"@@([A-Za-z_][A-Za-z0-9_]*)@@(.*)$", ln)
-            if m and m.group(1) in names:
-                cur = m.group(1)
-                vals[cur] = m.group(2)
-            elif cur:
-                vals[cur] += " " + ln
-    for ln in recipes:
-        t = ln.replace("$$", "\0")
-        for _ in range(8):
-            t2 = BARE.sub(lambda m: vals.get(m.group(1), m.group(0)), t)
-            if t2 == t:
-                break
-            t = t2
-        files.update(REF.findall(t))
-        dirs.update(INC.findall(t))
-        if FUNC.search(t):
-            problems.append("recipe composes a firmware path with a make function: "
-                            + t.replace("\0", "$$").strip()[:160])
+    for ln in db.split("\n"):
+        if DB_RULE.match(ln) and ("$(" in ln or "${" in ln):
+            problems.append("unexpanded reference in a prerequisite line: " + ln.strip()[:160])
+    for ln in dry_text.split("\n"):
+        if MAKE_SHAPED.search(ln):
+            problems.append("unexpanded make reference in a dry-run recipe: " + ln.strip()[:160])
+    files = set(REF.findall(raw)) | set(REF.findall(db)) | set(REF.findall(dry_text))
+    dirs = set(INC.findall(raw)) | set(INC.findall(db)) | set(INC.findall(dry_text))
     return sorted(files), sorted({posixpath.normpath(d) for d in dirs}), problems
 
 
@@ -188,16 +204,47 @@ def self_test():
     ck("D: a recursive variable composed in a recipe only", run(
         "D = ../../firmware/src/R\nall:\n\tcat $(D)/only.c\n")[0],
        ["firmware/src/R/only.c"])
-    ck("E: a make function over a firmware path in a recipe is reported", len(run(
-        "D := ../../firmware/src/R\nall:\n\techo $(addprefix $(D)/,a.c)\n")[2]), 1)
+    ck("E: a function-composed path in a recipe is now HARVESTED", run(
+        "D := ../../firmware/src/R\nall:\n\techo $(addprefix $(D)/,a.c)\n")[0],
+       ["firmware/src/R/a.c"])
     ck("-I dirs are collected, not enforced", run(
         "D := ../../firmware/src/x\nF = -I$(D)/inc\nall:\n\tcc $(F)\n")[1],
        ["../../firmware/src/x/inc"])
+    # r2-audit findings (run wf_ec15a1d5-de1): each is HARVESTED by make's own
+    # expansion in the target's real scope, never silently OK.
+    ck("F1: target-specific `=` variable", run(
+        "all: V = ../../firmware/src/T/a.c\nall:\n\tcat $(V)\n")[0],
+       ["firmware/src/T/a.c"])
+    ck("F2: target-specific `:=` variable", run(
+        "all: V := ../../firmware/src/T/b.c\nall:\n\tcat $(V)\n")[0],
+       ["firmware/src/T/b.c"])
+    ck("F3: substitution reference $(VAR:.c=.h)", run(
+        "S := ../../firmware/src/U/a.c\nall:\n\tcat $(S:.c=.h)\n")[0],
+       ["firmware/src/U/a.c", "firmware/src/U/a.h"])
+    ck("F4: $(if ...) composing a path", run(
+        "all:\n\tcat $(if $(X),../../firmware/src/I/no.c,../../firmware/src/I/yes.c)\n")[0],
+       ["firmware/src/I/no.c", "firmware/src/I/yes.c"])
+    ck("F5: $(abspath ...) is normalised to a repo-relative path", run(
+        "all:\n\tcat $(abspath ../../firmware/src/Z/abs.h)\n")[0],
+       ["firmware/src/Z/abs.h"])
+    ck("a shell $(...) substitution in a recipe is not a problem", run(
+        "all:\n\tn=$$(grep -c x ../../firmware/src/S/s.c)\n")[2], [])
+    ck("a make function call surviving into the dry run is a problem", len(run(
+        "all:\n\techo $$(if x,y)\n")[2]), 1)
     try:
         run("all: ( broken\n\t@:\n$(error boom)\n")
         ck("make exit 2 must raise", "returned", "raised")
     except MakeError:
         ck("make exit 2 raises MakeError", 1, 1)
+    try:
+        run("all: missing_target_xyz\n\t@:\n")
+        ck("make -n 'No rule' must raise", "returned", "raised")
+    except MakeError:
+        ck("make -n 'No rule to make target' raises MakeError", 1, 1)
+    r = subprocess.run([sys.executable, os.path.abspath(__file__)],
+                       env=dict(os.environ, **{SENTINEL: "1"}),
+                       capture_output=True, text=True)
+    ck("recursion sentinel: a nested run exits 0 at once", (r.returncode, r.stdout), (0, ""))
 
     wf = ("on:\n  pull_request:\n    paths:\n"
           "      - 'firmware/src/Util/CRC32.c'\n"
@@ -216,20 +263,22 @@ def self_test():
 
 
 def main():
+    if os.environ.get(SENTINEL):  # reached recursively from a make we ran: stop
+        return 0
     if "--self-test" in sys.argv:
         self_test()
         return 0
     wf = open(WORKFLOW, encoding="utf-8").read()
     try:
-        paths, dirs, blind = analyse(MAKEFILE)
+        paths, dirs, blind = analyse(MAKEFILE, "run")
     except MakeError as e:
         print("ERROR: cannot read the Makefile through GNU make (#1178): %s" % e)
         return 1
     if blind:
-        print("ERROR: the Makefile uses a variable that expands to a firmware path")
-        print("       in a shape this checker cannot account for, so it cannot say")
-        print("       whether the path filters cover it (#1178). Spell the path out")
-        print("       in full (../../firmware/src/...) or teach the checker:")
+        print("ERROR: make's own expansion still holds an unexpanded reference, so")
+        print("       this checker cannot say whether the path filters cover what it")
+        print("       names (#1178). Spell the path out in full (../../firmware/src/...)")
+        print("       or fix the reference:")
         for b in blind:
             print("       unaccounted  %s" % b)
         return 1
