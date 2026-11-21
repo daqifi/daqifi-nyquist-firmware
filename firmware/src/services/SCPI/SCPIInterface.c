@@ -3328,9 +3328,12 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
 //   recommendedHz      = soak-confirmed clean rate, clamped to the bench wire
 //                        ceiling (WIFI_BENCH_CEILING_KBPS) — the rate to stream.
 //                        0 when no clean soak streak locked.
-//   recommendedKBps    = wire rate of the LAST clean soak iteration. It is set
-//                        before the streak locks and never cleared, so it can be
-//                        non-zero while recommendedHz is 0. Meaningful as a
+//   recommendedKBps    = when recommendedHz > 0: the locked rate's wire rate,
+//                        scaled by the same bench clamp (KBps * capHz /
+//                        recommendedHz) when the clamp fires. When recommendedHz
+//                        is 0: whatever the last clean-but-unconfirmed soak
+//                        iteration measured, or 0 if none was clean -- it is
+//                        never cleared on a streak reset. Read it as a
 //                        recommendation only when recommendedHz > 0 (#1239).
 //   reason             = START_REFUSED | START_FAIL | NO_LINK | NO_CLEAN_SOAK |
 //                        BENCH_CAP | LINK_SATURATED | HIT_MAX
@@ -4344,10 +4347,10 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context,
     }
 
     // Output: recommendedHz,recommendedKBps,reason,ceilingHz,ceilingKBps
-    //   recommendedHz      = soak-confirmed clean rate (0 if none)
-    //   recommendedKBps    = wire rate of the last clean soak iteration; NOT zeroed
-    //                        when the streak never locked, so read it only when
-    //                        recommendedHz > 0 (#1239)
+    //   recommendedHz      = soak-confirmed clean rate, bench-clamped (0 if none)
+    //   recommendedKBps    = recommendedHz > 0: its wire rate (clamp-scaled). Else the
+    //                        last clean-but-unconfirmed iteration, NOT zeroed on a
+    //                        streak reset -- read it only when recommendedHz > 0 (#1239)
     //   ceilingHz/KBps      = raw arc/refine ceiling (the pre-soak overestimate,
     //                         kept for diagnostics so the soak correction is visible)
     scpi_printf(context, "%u,%u,%s,%u,%u\r\n",
