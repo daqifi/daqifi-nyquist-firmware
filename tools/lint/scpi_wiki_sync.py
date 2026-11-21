@@ -344,14 +344,19 @@ def _require_canonical_table(scpi_c, live_src):
     outside it:
       1. after removing every canonical entry and the NULL sentinel, the
          table body may contain only commas and whitespace;
-      2. no `#define` in the table's own directory (`.c` and `.h`) may name a
-         registered callback.
+      2. no `#define` anywhere in the source tree (every `.c`/`.h` under the
+         nearest ancestor holding `.git`) may name a registered callback.
+    An `#include` INSIDE the table braces is refused outright (r5): the
+    included text is initializer syntax this check never reads.
     Both hold on main today, so neither refuses anything real.
     """
     # Preprocessor lines are blanked first: they are not initializer syntax,
     # an unterminated literal in an `#if 0` line must not swallow the table's
     # closing brace (#1066's fixtures), and a `#define` that renames a
-    # callback is caught by rule 2 below.
+    # callback is caught by rule 2 below. An `#include` becomes a bare token
+    # instead, so one inside the table is residue and is refused.
+    live_src = re.sub(r"^[ \t]*#[ \t]*include\b[^\n]*", " __INCLUDE_IN_TABLE__ ",
+                      live_src, flags=re.M)
     live_src = re.sub(r"^[ \t]*#[^\n]*", "", live_src, flags=re.M)
     m = _TABLE_DECL.search(live_src)
     if not m:
@@ -387,16 +392,53 @@ def _require_canonical_table(scpi_c, live_src):
                  f"wrong name. Write the entry canonically, or extend "
                  f"_require_canonical_table in tools/lint/scpi_wiki_sync.py.")
     callbacks = {cb for _g, cb in _REGISTRATION.findall(live_src)}
-    here = os.path.dirname(os.path.abspath(scpi_c))
-    for path in sorted(glob.glob(os.path.join(here, "*.[ch]"))):
+    if not callbacks:
+        return
+    # Cheap pre-filter on SPLICED raw text (a backslash-newline cannot hide a
+    # name from it): only a file that mentions a callback name at all can
+    # define one, so only those pay for comment stripping. Without it the
+    # scan stripped all of wolfSSL on every run.
+    named = re.compile(r"\b(?:%s)\b" % "|".join(
+        re.escape(c) for c in sorted(callbacks)))
+    for path in _source_tree_files(scpi_c):
         with open(path, encoding="utf-8", errors="replace") as fh:
-            src = strip_c_comments(splice(fh.read())[0], spliced=True)
+            text = re.sub(r"\\\r?\n", "", fh.read())
+        if "define" not in text or not named.search(text):
+            continue
+        src = strip_c_comments(splice(text)[0], spliced=True)
         aliased = sorted(set(_DEFINE.findall(src)) & callbacks)
         if aliased:
             sys.exit(f"error: {path!r} #defines registered callback name(s) "
                      f"{aliased}. The wiki's Firmware Callback column cannot be "
                      f"checked against a macro, because the function that runs "
                      f"is whatever it expands to.")
+
+
+def _source_tree_files(scpi_c):
+    """Every .c/.h under the source tree that holds the table.
+
+    The tree is the nearest ancestor holding `.git` (a dir, or a worktree's
+    file); with none, the table's own directory. Includes are NOT followed:
+    23 of the table file's quoted includes resolve only through the
+    project's -I paths, so a closure would silently miss them (#1196 r5).
+    """
+    here = os.path.dirname(os.path.abspath(scpi_c))
+    root, d = here, here
+    while True:
+        if os.path.exists(os.path.join(d, ".git")):
+            root = d
+            break
+        parent = os.path.dirname(d)
+        if parent == d:
+            break
+        d = parent
+    out = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(n for n in dirnames
+                             if n not in (".git", "build", "dist"))
+        out.extend(os.path.join(dirpath, f) for f in sorted(filenames)
+                   if f.endswith((".c", ".h")))
+    return out
 
 
 def clean_callback_cell(cell):
@@ -1633,9 +1675,28 @@ def _self_test_callbacks():
          '    {.pattern = "SYSTem:DEVice:NAME", .callback = SCPI_Old,},\n'
          + sentinel + '};\n', False, "an unrelated #define (control)"),
     )
-    for src, want_refused, label in whole:
+    entry = '    {.pattern = "SYSTem:DEVice:NAME", .callback = SCPI_Old,},\n'
+    whole += (
+        ('const scpi_command_t scpi_commands[] = {\n' + entry
+         + '#include "override.h"\n' + sentinel + '};\n', True,
+         "#include inside the table", {"sub/override.h": "[0].callback = SCPI_New,\n"}),
+        ('#include "../aliases.h"\nconst scpi_command_t scpi_commands[] = {\n'
+         + entry + sentinel + '};\n', True,
+         "#define alias in a header outside the table's directory",
+         {"aliases.h": "#define SCPI_Old SCPI_New\n"}),
+        ('#include "../ok.h"\nconst scpi_command_t scpi_commands[] = {\n'
+         + entry + sentinel + '};\n', False,
+         "#include outside the table, no alias (control)",
+         {"ok.h": "#define UNRELATED 1\n"}),
+    )
+    for src, want_refused, label, *extra in whole:
         with tempfile.TemporaryDirectory() as d:
-            c = os.path.join(d, "scpi.c")
+            os.mkdir(os.path.join(d, ".git"))       # the source-tree root
+            os.mkdir(os.path.join(d, "sub"))
+            for rel, body in (extra[0] if extra else {}).items():
+                with open(os.path.join(d, rel), "w", encoding="utf-8") as fh:
+                    fh.write(body)
+            c = os.path.join(d, "sub", "scpi.c")
             with open(c, "w", encoding="utf-8") as fh:
                 fh.write(src)
             cases += 1
