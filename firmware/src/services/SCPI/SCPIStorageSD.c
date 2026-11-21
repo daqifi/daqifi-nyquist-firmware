@@ -477,8 +477,18 @@ static bool SD_ValidatePathParam(const char *p, size_t len)
     size_t segStart = 0;
     for (size_t i = 0; i <= len; i++) {
         unsigned char c = (i < len) ? (unsigned char)p[i] : (unsigned char)'/';
-        if (i < len && (c < 0x20u || c == 0x7Fu || c == '\\' || c == ':')) {
-            return false;           /* control chars, backslash, drive prefix */
+        if (i < len && (c < 0x20u || c == 0x7Fu || c == '\\' || c == ':'
+                        || c == '"')) {
+            /* control chars, backslash, drive prefix, double quote.
+             * #1175: '"' can never round-trip over SCPI. The getters answer
+             * through SCPI_ResultText, which doubles an embedded quote
+             * (MY"DATA -> "MY""DATA"), but the setters read their argument
+             * with SCPI_ParamCharacters, which strips only the outer
+             * delimiters and does NOT collapse "" -- so writing back exactly
+             * what the getter returned stored MY""DATA. FAT forbids '"' in
+             * file and directory names (long names included), so no real
+             * entry can carry one and refusing it loses nothing. */
+            return false;
         }
         if (c == '/') {
             size_t segLen = i - segStart;

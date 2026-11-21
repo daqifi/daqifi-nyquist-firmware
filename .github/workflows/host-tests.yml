@@ -337,6 +337,9 @@ on:
       - 'firmware/src/Util/CircularBuffer.c'
       - 'firmware/src/Util/CircularBuffer.h'
       - 'firmware/src/Util/FixedPointFmt.h'
+      - 'firmware/src/Util/DoubleFmt.h'
+      - 'firmware/src/Util/LogRing.h'
+      - 'firmware/src/Util/SampleEmit.h'
       # #1000: the generated log-budget fixture reads the ceiling out of both
       # of these -- the constant from the .h, the two reservations that make
       # it effective from the .c.
@@ -502,6 +505,9 @@ on:
       - 'firmware/src/Util/CircularBuffer.c'
       - 'firmware/src/Util/CircularBuffer.h'
       - 'firmware/src/Util/FixedPointFmt.h'
+      - 'firmware/src/Util/DoubleFmt.h'
+      - 'firmware/src/Util/LogRing.h'
+      - 'firmware/src/Util/SampleEmit.h'
       # #1000: the generated log-budget fixture reads the ceiling out of both
       # of these -- the constant from the .h, the two reservations that make
       # it effective from the .c.

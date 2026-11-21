@@ -5122,6 +5122,16 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
         ? (uint32_t)((s.queueDroppedSamples * 100ULL) / totalSampleAttempts) : 0;
     scpi_printf(context, "SampleLossPercent=%u\r\n", (unsigned)sampleLoss);
 
+    // #1249: SampleLossPercent floors to 0 below 1%, which hides up to
+    // ~5,700 dropped samples on a 120 s run. SampleLossPPM is the same ratio
+    // in parts per million (dropped * 1e6 / attempts), so a 0.44% loss reads
+    // ~4400. SampleLossPercent is unchanged: shipped clients parse it. The
+    // 64-bit product cannot overflow: queueDroppedSamples is uint32, so
+    // the product is < 2^52.
+    uint32_t sampleLossPpm = totalSampleAttempts > 0
+        ? (uint32_t)((s.queueDroppedSamples * 1000000ULL) / totalSampleAttempts) : 0;
+    scpi_printf(context, "SampleLossPPM=%u\r\n", (unsigned)sampleLossPpm);
+
     // Compute byte loss percentage (combined across all outputs).
     // Can exceed 100% when multiple outputs drop simultaneously.
     uint64_t totalDroppedBytes = s.usbDroppedBytes + s.wifiDroppedBytes + s.sdDroppedBytes;

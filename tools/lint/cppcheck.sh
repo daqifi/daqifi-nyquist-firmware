@@ -6,7 +6,9 @@
 # Excludes third-party trees that we don't own:
 #   - firmware/src/third_party (FreeRTOS, wolfSSL, nanopb, zlib)
 #   - firmware/src/libraries (scpi, microrl)
-#   - firmware/src/config (Harmony-generated)
+#   - firmware/src/config -- MOSTLY Harmony-generated, but it also holds
+#     hand-edited sub-trees; those outside ANALYSED_CONFIG below are
+#     known-unanalysed and are added one at a time (#1165 option B)
 #
 # Suppressions file: tools/lint/cppcheck-suppress.txt
 # Include paths derived from firmware/daqifi.X/nbproject/Makefile-default.mk.
@@ -98,38 +100,65 @@ case "$JOBS" in
     ;;
 esac
 
+# Flags shared by every pass.
+COMMON=(
+  -j "$JOBS"
+  --quiet
+  --template='{file}:{line}:{column}: {severity}: {message} [{id}]'
+  --enable=warning,style,performance,portability
+  --inconclusive
+  --suppressions-list=tools/lint/cppcheck-suppress.txt
+  --suppress=missingIncludeSystem
+  --suppress=unusedFunction
+  --suppress=unusedStructMember
+  -I firmware/src
+  -I firmware/src/config/default
+  -I firmware/src/config/default/driver/winc/include
+  -I firmware/src/config/default/driver/winc/include/dev
+  -I firmware/src/config/default/peripheral/cache
+  -I firmware/src/config/default/system/fs/fat_fs/file_system
+  -I firmware/src/config/default/system/fs/fat_fs/hardware_access
+  -I firmware/src/libraries/scpi/libscpi/inc
+  -I firmware/src/third_party/rtos/FreeRTOS/Source/include
+  -I firmware/src/third_party/rtos/FreeRTOS/Source/portable/MPLAB/PIC32MZ
+  -DHAVE_CONFIG_H
+)
+
+# Hand-edited sub-trees of firmware/src/config that ARE analysed (#1165).
+# driver/sdspi carries our shared-SPI4 lock / quarantine / detect-poll logic.
+# Adding one is a deliberate act: regenerate the baseline and read the delta.
+#
+# They get their OWN pass because they need -D__mips_hard_float=1. Without it
+# every translation unit that includes FreeRTOS hits portmacro.h's FPU #error
+# (suppressed above), cppcheck drops that configuration, and the file is
+# silently NOT analysed -- measured: an injected out-of-bounds write in
+# drv_sdspi_file_system.c produced zero findings under the main pass's flags.
+# The define is NOT added to the main pass: doing so surfaces ~250 findings
+# in files that are currently blind (tracked as #1309).
+ANALYSED_CONFIG=(firmware/src/config/default/driver/sdspi)
+
 # `if !` so set -e doesn't abort on cppcheck failure; we want to surface
 # cppcheck's own error output (which goes to TMP_OUT via stderr) before
 # exiting, otherwise CI just shows "step failed" with no diagnostic.
-if ! LC_ALL=C LANG=C cppcheck \
-  -j "$JOBS" \
-  --quiet \
-  --template='{file}:{line}:{column}: {severity}: {message} [{id}]' \
-  --enable=warning,style,performance,portability \
-  --inconclusive \
-  --suppressions-list=tools/lint/cppcheck-suppress.txt \
-  --suppress=missingIncludeSystem \
-  --suppress=unusedFunction \
-  --suppress=unusedStructMember \
+if ! LC_ALL=C LANG=C cppcheck "${COMMON[@]}" \
   -i firmware/src/third_party \
   -i firmware/src/libraries \
   -i firmware/src/config \
-  -I firmware/src \
-  -I firmware/src/config/default \
-  -I firmware/src/config/default/driver/winc/include \
-  -I firmware/src/config/default/driver/winc/include/dev \
-  -I firmware/src/config/default/peripheral/cache \
-  -I firmware/src/config/default/system/fs/fat_fs/file_system \
-  -I firmware/src/config/default/system/fs/fat_fs/hardware_access \
-  -I firmware/src/libraries/scpi/libscpi/inc \
-  -I firmware/src/third_party/rtos/FreeRTOS/Source/include \
-  -I firmware/src/third_party/rtos/FreeRTOS/Source/portable/MPLAB/PIC32MZ \
-  -DHAVE_CONFIG_H \
   firmware/src/ 2>"$TMP_OUT"; then
   echo "::error::cppcheck exited non-zero — captured output below:"
   cat "$TMP_OUT"
   exit 1
 fi
+
+TMP_CFG="$(mktemp)"
+trap 'rm -f "$TMP_OUT" "$SORTED_OUT" "$TMP_CFG"' EXIT
+if ! LC_ALL=C LANG=C cppcheck "${COMMON[@]}" -D__mips_hard_float=1 \
+  "${ANALYSED_CONFIG[@]}" 2>"$TMP_CFG"; then
+  echo "::error::cppcheck (ANALYSED_CONFIG pass) exited non-zero — captured output below:"
+  cat "$TMP_CFG"
+  exit 1
+fi
+cat "$TMP_CFG" >>"$TMP_OUT"
 
 LC_ALL=C sort "$TMP_OUT" >"$SORTED_OUT"
 
