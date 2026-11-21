@@ -581,9 +581,18 @@ void wifi_tcp_server_CloseSocket() {
  * connection that changed between the request and the drain is not closed in
  * the new client's place.
  *
- * A missed drain is recoverable and bounded: the connection stays open and the
- * host gets no signal, which is exactly the USB residual documented in
- * sd_get_send_end -- it is not a wedge. */
+ * ⭐ THE GAP BETWEEN REQUEST AND CLOSE IS COVERED BY THE DATA WINDOW, NOT BY
+ * SPEED (#1267 round-5 audit, 4). sd_get_send_end holds the window
+ * (ScpiSdWindow_HoldUntilSessionEnd) rather than closing it, so this
+ * connection's input stays paused until ConnIsCurrent turns false -- which is
+ * the clientSocket = -1 written by the close below, or the host leaving first.
+ * Round 5 reopened input at the request and let WifiTask's rx drain answer a
+ * queued command into the partial block before this ran.
+ *
+ * The drain runs on every WifiTask pass, unconditionally, and drops a request
+ * only when its connection has already gone -- in which case the window is
+ * released anyway. While the request is pending, that host is deaf, which is
+ * the point; it is not a wedge, because the close ends it. */
 void wifi_tcp_server_RequestClientClose(uint32_t generation) {
     taskENTER_CRITICAL();
     if ((gpServerData != NULL) &&

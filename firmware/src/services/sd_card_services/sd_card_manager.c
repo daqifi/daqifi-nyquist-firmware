@@ -12,8 +12,8 @@
 #include "services/SCPI/SCPIInterface.h"   /* fw#1265: ScpiSdWindow_* */
 #include "Util/CRC32.h"   /* #306 */
 #include "services/streaming.h"  // Streaming_GetSdFileHeader / Streaming_ReportSdDiscard
-/* fw#1265 round 4: wifi_tcp_server_RequestClientClose -- the out-of-band
- * signal for a tagged GET whose block was left short. */
+/* fw#1265 round 4: wifi_tcp_server_RequestClientClose -- how a TCP session
+ * is ended when a tagged GET could not finish its frame. */
 #include "services/wifi_services/wifi_tcp_server.h"
 #include <stddef.h>
 #include "ff.h"   /* #810: FILINFO, for the layout assert below */
@@ -1001,7 +1001,8 @@ static void sd_get_send_end(bool ok, uint32_t count, const char* reason,
      * (ScpiSdWindow_HoldUntilSessionEnd): nothing the host queued is fed, so
      * nothing is appended behind the partial block. TCP additionally closes
      * the connection (guarded by the #599 generation), which is what ends
-     * that session. USB has no way for us to end it -- see the USB branch --
+     * that session -- and the hold covers the gap until WifiTask performs
+     * that close. USB has no way for us to end it -- see the USB branch --
      * so it ends when the host closes the port.
      *
      * The reason reaches the host through SYST:LOG? (the LOG_E below),
@@ -1056,6 +1057,18 @@ static void sd_get_send_end(bool ok, uint32_t count, const char* reason,
 
     if (!endQueued) {
         if (transport == SCPI_SD_WINDOW_TCP) {
+            /* ⛔ THE CLOSE IS ONLY REQUESTED HERE, SO THE WINDOW MUST NOT
+             * OPEN UNTIL IT IS DONE (#1267 round-5 audit, 4). WifiTask
+             * performs it on a later pass of its loop. Round 5 closed the
+             * window right after this request, so in between, WifiTask's rx
+             * drain could feed a command the host had queued and append its
+             * echo, reply and prompt behind the partial block -- the round-4
+             * defect, moved into the gap. The window is held instead (below):
+             * it pauses that connection's input until ConnIsCurrent turns
+             * false, which happens exactly when WifiTask's close sets
+             * clientSocket to -1 (or the host leaves first). A request
+             * dropped because the connection had already gone is the same
+             * case, released on the next Service pass. */
             wifi_tcp_server_RequestClientClose(
                     gpSDCardSettings->replyGeneration);
         } else {
@@ -1090,8 +1103,8 @@ static void sd_get_send_end(bool ok, uint32_t count, const char* reason,
              * always has at a CDC reconnect (main does not reset the ring
              * there either). A tagged host skips everything before its own
              * `#SDGET <tag>` header, which is what the tag is for. */
-            ScpiSdWindow_HoldUntilSessionEnd(transport);
         }
+        ScpiSdWindow_HoldUntilSessionEnd(transport);
     }
 
     /* ⭐ THE END LINE IS QUEUED FIRST AND THE WINDOW IS RELEASED AFTER IT, AND
@@ -1130,11 +1143,11 @@ static void sd_get_send_end(bool ok, uint32_t count, const char* reason,
      * Keyed on `endQueued`, not `blockDelivered`: a refused or partial end
      * line was handed to the session-end branch above, and a malformed
      * snprintf (endQueued stays false) goes the same way rather than being
-     * left to the staleness backstop. */
+     * left to the staleness backstop. Every outcome hands the window over;
+     * none closes it here, on either transport -- only ScpiSdWindow_Service
+     * releases a window, once its condition is met. */
     if (endQueued) {
         ScpiSdWindow_ReleaseWhenDrained(transport);
-    } else if (transport == SCPI_SD_WINDOW_TCP) {
-        ScpiSdWindow_Close(transport);
     }
 }
 

@@ -340,9 +340,6 @@ extern "C" {
     bool ScpiSdWindow_TryOpen(ScpiSdWindowTransport_t transport,
                               uint32_t generation);
 
-    /*! Close the window, so the transport resumes arming reads. */
-    void ScpiSdWindow_Close(ScpiSdWindowTransport_t transport);
-
     /*! A transfer that queued its whole block AND its end line hands the
      *  window over: it stays open -- input still paused -- until that
      *  transport's write ring is EMPTY, and ScpiSdWindow_Service closes it
@@ -362,7 +359,8 @@ extern "C" {
     void ScpiSdWindow_ReleaseWhenDrained(ScpiSdWindowTransport_t transport);
 
     /*! A transfer that left its block SHORT (the host stopped reading, so
-     *  fewer than <n> bytes were accepted) hands the window over to be held
+     *  fewer than <n> bytes were accepted), or whose end line the transport
+     *  did not take in full, hands the window over to be held
      *  until the owning SESSION ends: ScpiSdWindow_Service closes it only once
      *  that TCP connection is gone or that USB CDC session is over (DTR drop,
      *  bus reset, VBUS loss), never by elapsed time. No-op on a window that is
@@ -382,7 +380,12 @@ extern "C" {
      * length and its own read timeout, and recovers by closing and reopening
      * the port; a new session is never paused by the old one's window
      * (IsOpenFor is keyed by session). A TCP host is closed from our side as
-     * well -- see sd_get_send_end. */
+     * well -- see sd_get_send_end -- and the hold is what covers the gap
+     * until that close happens: it is requested by the SD task and PERFORMED
+     * later by WifiTask, and round 5 closed the window at the request, so
+     * input queued in between was fed into the block (#1267 round-5 audit,
+     * 4). There is deliberately no plain close any more: every transfer
+     * hands its window over, and only ScpiSdWindow_Service releases one. */
     void ScpiSdWindow_HoldUntilSessionEnd(ScpiSdWindowTransport_t transport);
 
     /*! Record data progress, so the staleness bound is measured from the last

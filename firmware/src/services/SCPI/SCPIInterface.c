@@ -11054,13 +11054,6 @@ bool ScpiSdWindow_TryOpen(ScpiSdWindowTransport_t transport,
     return opened;
 }
 
-void ScpiSdWindow_Close(ScpiSdWindowTransport_t transport) {
-    ScpiSdWindowState_t* w = ScpiSdWindow_For(transport);
-    if (w != NULL) {
-        w->open = false;
-    }
-}
-
 void ScpiSdWindow_ReleaseWhenDrained(ScpiSdWindowTransport_t transport) {
     ScpiSdWindowState_t* w = ScpiSdWindow_For(transport);
     /* Only a window that is open and still belongs to a running transfer has
