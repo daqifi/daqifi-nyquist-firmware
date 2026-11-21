@@ -6,8 +6,9 @@
 # Excludes third-party trees that we don't own:
 #   - firmware/src/third_party (FreeRTOS, wolfSSL, nanopb, zlib)
 #   - firmware/src/libraries (scpi, microrl)
-#   - firmware/src/config (Harmony-generated) -- EXCEPT the hand-maintained
-#     sub-trees in ANALYSED_CONFIG below, which get a second pass (#1165)
+#   - firmware/src/config -- MOSTLY Harmony-generated, but it also holds
+#     hand-edited sub-trees; those outside ANALYSED_CONFIG below are
+#     known-unanalysed and are added one at a time (#1165 option B)
 #
 # Suppressions file: tools/lint/cppcheck-suppress.txt
 # Include paths derived from firmware/daqifi.X/nbproject/Makefile-default.mk.
@@ -76,7 +77,7 @@ COMMON=(
 # silently NOT analysed -- measured: an injected out-of-bounds write in
 # drv_sdspi_file_system.c produced zero findings under the main pass's flags.
 # The define is NOT added to the main pass: doing so surfaces ~250 findings
-# in files that are currently blind (tracked separately, see #1165 comments).
+# in files that are currently blind (tracked as #1309).
 ANALYSED_CONFIG=(firmware/src/config/default/driver/sdspi)
 
 # `if !` so set -e doesn't abort on cppcheck failure; we want to surface
