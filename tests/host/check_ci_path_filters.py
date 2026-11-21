@@ -54,10 +54,24 @@ ENTRY = re.compile(r"^\s*-\s*'([^']+)'", re.M)
 # function make did not evaluate.
 MAKE_SHAPED = re.compile(
     r"\$[({](?:addprefix|addsuffix|patsubst|subst|wildcard|foreach|filter-out|"
-    r"abspath|realpath|notdir|basename|call|eval|origin|flavor|findstring|"
+    r"abspath|notdir|call|eval|origin|flavor|findstring|"
     r"firstword|lastword|wordlist|if|or|and)[ \t]")
+# (`basename` and `realpath` are deliberately NOT listed: they are real shell
+# commands, so a recipe's `$$(basename x)` prints as `$(basename x)` after -n
+# and is shell text. make has already expanded its own `$(basename ...)`.)
 # A target/prerequisite line of the -p database (not a variable, not a recipe).
 DB_RULE = re.compile(r"^[^\s#:=][^:=]*:(?!=)")
+# A target-specific variable assignment, which -p prints as `target: VAR = v`
+# (recursive values are kept unexpanded). It is NOT a prerequisite line; the dry
+# run expands it in the target's real scope. Accepts `=`, `:=`, `::=`, `?=`,
+# `+=`, `!=` and the override/export/private prefixes.
+TARGET_ASSIGN = re.compile(
+    r"^[^\s#:=][^:=]*:\s*(?:(?:override|export|private)\s+)*[^\s:=]+\s*[:?+!]*=")
+# #1303: make's `shell` and `file` functions hide a path from every oracle here
+# (make replaces the call by its RESULT before the database or dry run exists).
+SHELL_FN = re.compile(r"\$[({]\s*(?:shell|file)(?![A-Za-z0-9_])")
+PATHISH = re.compile(r"[^\s'\"();|&<>=,]*(?:firmware|\.\./)[^\s'\"();|&<>=,]*")
+CLEAN_FW = re.compile(r"^(?:-[A-Za-z])?\.\./\.\./(firmware/src(?:/(?!\.{1,2}(?:/|$))[A-Za-z0-9_.-]+)*)/?$")
 MAKE_ERRORS = re.compile(r"\*\*\*|No rule to make target|missing separator|Stop\.|Circular")
 
 # #1178 / PR #1298. Three rounds of a hand-written Makefile expander, then a
@@ -86,13 +100,124 @@ MAKE_ERRORS = re.compile(r"\*\*\*|No rule to make target|missing separator|Stop\
 # (`d=../../firmware/src/Util; cat $$d/x.h`) is invisible to every make-level
 # oracle. This checker covers what MAKE expands, and claims nothing beyond it.
 #
+# make's `shell` and `file` functions are NOT modelled (#1303): make replaces the
+# call by its result before the database or dry run exists. Instead the raw
+# Makefile is scanned and any $(shell/$(file call is REFUSED (exit 1, Makefile:N)
+# unless every firmware path in it is a literal ../../firmware/src/... (no
+# variable, $$, backtick, glob, or `..` after firmware/src). A literal with no
+# extension is a directory a `find` walks: the filters must cover beneath it.
+#
 # -I include dirs are classified and printed as a NOTE, not enforced (#1300).
 
 SENTINEL = "CHECK_CI_PATH_FILTERS_INNER"
 
+# #1303 self-test fixtures, module-level so the same text can be replayed
+# against an older checker. label -> (Makefile text, expected 'Makefile:N:' line)
+_UTIL = "../../firmware/src/Util"
+REFUSED = {
+    "shell with a $(VAR) path": ("FW := %s\nX := $(shell grep -c x $(FW)/A.h)\nall:\n\t@:\n" % _UTIL, 2),
+    "shell with a ${VAR} path": ("FW := %s\nX := $(shell grep -c x ${FW}/A.h)\nall:\n\t@:\n" % _UTIL, 2),
+    "shell with a $$ shell var": ("X := $(shell d=%s; grep -c x $$d/A.h)\nall:\n\t@:\n" % _UTIL, 1),
+    "shell with backticks": ("X := $(shell cat `printf %%s %s/A`.h)\nall:\n\t@:\n" % _UTIL, 1),
+    "shell glob *": ("X := $(shell cat %s/A*.h)\nall:\n\t@:\n" % _UTIL, 1),
+    "shell glob ?": ("X := $(shell cat %s/A?.h)\nall:\n\t@:\n" % _UTIL, 1),
+    "shell glob [": ("X := $(shell cat %s/A[a].h)\nall:\n\t@:\n" % _UTIL, 1),
+    "shell .. after firmware/src": ("X := $(shell cat %s/../Other/A.h)\nall:\n\t@:\n" % _UTIL, 1),
+    "file read with a $(VAR) path": ("FW := %s\nX := $(file <$(FW)/A.h)\nall:\n\t@:\n" % _UTIL, 2),
+    "continuation: reported at its FIRST line": (
+        "A := 1\nX := $(shell cat \\\n  $(FW)/A.h)\nall:\n\t@:\n", 2),
+}
+PASSING_SHELL = {
+    "shell with literal paths": "X := $(shell grep -c x %s/A.h)\nall:\n\t@:\n" % _UTIL,
+    "file read with a literal path": "X := $(file <%s/A.h)\nall:\n\t@:\n" % _UTIL,
+    "a commented-out shell is not read": "# X := $(shell cat $(FW)/A.h)\nall:\n\t@:\n",
+    "shell with no firmware path": "X := $(shell echo hi)\nall:\n\t@:\n",
+}
+# label -> (Makefile text, number of `problems` the fixed checker reports)
+LOUD = {
+    "target-specific `=`": ("FW := %s\nall: V = $(FW)/A.h\nall:\n\t@:\n" % _UTIL, 0),
+    "target-specific `?=`": ("FW := %s\nall: V ?= $(FW)/A.h\nall:\n\t@:\n" % _UTIL, 0),
+    "target-specific `+=`": ("FW := %s\nall: V += $(FW)/A.h\nall:\n\t@:\n" % _UTIL, 0),
+    "target-specific override `=`": ("FW := %s\nall: override V = $(FW)/A.h\nall:\n\t@:\n" % _UTIL, 0),
+    "target-specific export `?=`": ("FW := %s\nall: export V ?= $(FW)/A.h\nall:\n\t@:\n" % _UTIL, 0),
+    "$$(basename x) in a recipe": ("all:\n\tn=$$(basename x)\n", 0),
+    "$$(realpath x) in a recipe": ("all:\n\tn=$$(realpath x)\n", 0),
+}
+
 
 class MakeError(Exception):
     pass
+
+
+class Refusal(MakeError):
+    pass
+
+
+def _logical_lines(raw):
+    """(first physical line number, text) per make logical line, backslash-newline
+    continuations spliced, comment lines dropped."""
+    out, buf, start = [], "", 0
+    for i, ln in enumerate(raw.split("\n"), 1):
+        if not buf:
+            start = i
+        if ln.endswith("\\"):
+            buf += ln[:-1] + " "
+            continue
+        buf += ln
+        if not buf.lstrip().startswith("#"):
+            out.append((start, buf))
+        buf = ""
+    if buf and not buf.lstrip().startswith("#"):
+        out.append((start, buf))
+    return out
+
+
+def _call_args(text, at):
+    """Text inside the make call whose `$(`/`${` starts at `at`, or None."""
+    depth, i = 0, at + 1
+    while i < len(text):
+        c = text[i]
+        if c in "({":
+            depth += 1
+        elif c in ")}":
+            depth -= 1
+            if depth == 0:
+                return text[at + 2:i]
+        i += 1
+    return None
+
+
+def shell_file_paths(raw, name="Makefile"):
+    """Firmware paths named by $(shell ...)/$(file ...) in the raw Makefile, as
+    (display, path-to-test) pairs; raises Refusal (with file:line) for any call
+    that is not spelled with LITERAL `../../firmware/src/...` paths only.
+    A path with no extension is a DIRECTORY (a `find` root): it is tested via a
+    synthetic child, so the filter must cover everything beneath it."""
+    found = []
+    for line, text in _logical_lines(raw):
+        for m in SHELL_FN.finditer(text):
+            def refuse(why):
+                raise Refusal("%s:%d: %s: %s" % (name, line, why, text.strip()[:140]))
+            arg = _call_args(text, m.start())
+            if arg is None:
+                refuse("unbalanced $(shell/$(file expression")
+            if re.search(r"\$[({$]|`", arg):
+                refuse("$(shell/$(file argument builds a path through a "
+                       "variable, $$ or backticks; spell every firmware path "
+                       "as a literal ../../firmware/src/...")
+            for tok in PATHISH.findall(arg):
+                cm = CLEAN_FW.match(tok)
+                if not cm:
+                    if "firmware" in tok or re.search(r"[*?\[]", tok):
+                        refuse("$(shell/$(file argument names a firmware path "
+                               "that is not a plain literal (%r)" % tok)
+                    continue
+                path = cm.group(1)
+                if "." in path.rsplit("/", 1)[-1]:
+                    found.append((path, path))
+                else:
+                    found.append((path + "/", path + "/__child__.h"))
+    return found
 
 
 def _make(args, cwd, ok_rc=(0, 1)):
@@ -125,6 +250,7 @@ def analyse(makefile, goal=None):
     mk = os.path.abspath(makefile)
     root = os.path.join(cwd, "..", "..")
     raw = open(mk, encoding="utf-8").read()
+    shell_paths = shell_file_paths(raw, os.path.basename(mk))
     db = _repo_relative(_make(["-pRrq", "-f", mk], cwd).stdout, root)
     dry = _make(["-n", "-k", "-B", "-f", mk] + ([goal] if goal else []), cwd, (0,))
     if MAKE_ERRORS.search(dry.stderr):
@@ -132,14 +258,15 @@ def analyse(makefile, goal=None):
     dry_text = _repo_relative(dry.stdout, root)
     problems = []
     for ln in db.split("\n"):
-        if DB_RULE.match(ln) and ("$(" in ln or "${" in ln):
+        if DB_RULE.match(ln) and not TARGET_ASSIGN.match(ln) and ("$(" in ln or "${" in ln):
             problems.append("unexpanded reference in a prerequisite line: " + ln.strip()[:160])
     for ln in dry_text.split("\n"):
         if MAKE_SHAPED.search(ln):
             problems.append("unexpanded make reference in a dry-run recipe: " + ln.strip()[:160])
     files = set(REF.findall(raw)) | set(REF.findall(db)) | set(REF.findall(dry_text))
     dirs = set(INC.findall(raw)) | set(INC.findall(db)) | set(INC.findall(dry_text))
-    return sorted(files), sorted({posixpath.normpath(d) for d in dirs}), problems
+    return (sorted(files), sorted({posixpath.normpath(d) for d in dirs}), problems,
+            sorted(set(shell_paths)))
 
 
 def referenced(makefile):
@@ -229,6 +356,34 @@ def self_test():
        ["firmware/src/Z/abs.h"])
     ck("a shell $(...) substitution in a recipe is not a problem", run(
         "all:\n\tn=$$(grep -c x ../../firmware/src/S/s.c)\n")[2], [])
+    for label, (text, line) in REFUSED.items():
+        try:
+            run(text, ["firmware/src/Util/A.h"])
+            ck("refused: " + label, "returned", "raised Refusal")
+        except Refusal as e:
+            ck("refused: " + label + " (names Makefile:%d)" % line,
+               str(e).startswith("Makefile:%d:" % line), True)
+    for label, text in PASSING_SHELL.items():
+        ck("not refused: " + label, run(text, ["firmware/src/Util/A.h"])[2], [])
+    ck("literal shell path is harvested", run(PASSING_SHELL["shell with literal paths"])[0],
+       ["firmware/src/Util/A.h"])
+    ck("a directory literal under $(shell is returned as a directory to cover",
+       run("X := $(shell find ../../firmware/src/W/include -type d)\nall:\n\t@:\n",
+           ["firmware/src/W/include/a.h"])[3],
+       [("firmware/src/W/include/", "firmware/src/W/include/__child__.h")])
+    ck("...a filter lacking it leaves the synthetic child uncovered",
+       uncovered(["firmware/src/W/include/__child__.h"], ["firmware/src/W/include/a.h"]),
+       ["firmware/src/W/include/__child__.h"])
+    ck("...a `dir/**` filter covers it",
+       uncovered(["firmware/src/W/include/__child__.h"], ["firmware/src/W/**"]), [])
+    for label, (text, n) in LOUD.items():
+        ck("loud fix: " + label, len(run(text)[2]), n)
+    for form in ("V = x", "V := x", "V ::= x", "V ?= x", "V += x", "V != x",
+                 "override V = x", "export V := x", "private V = x"):
+        ck("TARGET_ASSIGN matches `%s`" % form,
+           bool(TARGET_ASSIGN.match("all: " + form)), True)
+    ck("TARGET_ASSIGN does not match a prerequisite list",
+       bool(TARGET_ASSIGN.match("all: a.o b.o")), False)
     ck("a make function call surviving into the dry run is a problem", len(run(
         "all:\n\techo $$(if x,y)\n")[2]), 1)
     try:
@@ -270,7 +425,7 @@ def main():
         return 0
     wf = open(WORKFLOW, encoding="utf-8").read()
     try:
-        paths, dirs, blind = analyse(MAKEFILE, "run")
+        paths, dirs, blind, shell_paths = analyse(MAKEFILE, "run")
     except MakeError as e:
         print("ERROR: cannot read the Makefile through GNU make (#1178): %s" % e)
         return 1
@@ -284,6 +439,13 @@ def main():
         return 1
     pr, push = filters(wf)
     bad_pr, bad_push = uncovered(paths, pr), uncovered(paths, push)
+    for disp, test in shell_paths:
+        note = (disp + "  (a directory read by $(shell/$(file: a file beneath "
+                "it is not covered)") if disp.endswith("/") else disp
+        if uncovered([test], pr):
+            bad_pr.append(note)
+        if uncovered([test], push):
+            bad_push.append(note)
     print("NOTE: %d -I include dirs not checked (headers reached via #include are "
           "outside this checker's prerequisite model; see FINDINGS / follow-up)"
           % len(dirs))

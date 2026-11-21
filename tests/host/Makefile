@@ -5400,7 +5400,7 @@ $(LOGRING1248_BIN): test_1248_log_ring.c test_framework.h $(FW_UTIL)/LogRing.h \
 HIF881_BIN  := run_881_tests
 HIF881_DIR  := ../../firmware/src/config/default/driver/winc
 HIF881_INC  := -Istubs/hif_881 -Istubs/sdspi_1217 -I$(HIF881_DIR)/drv/driver \
-               $(addprefix -I,$(shell find $(HIF881_DIR)/include -type d))
+               $(addprefix -I,$(shell find ../../firmware/src/config/default/driver/winc/include -type d))
 $(HIF881_BIN): test_881_hif_rx_done.c test_framework.h $(HIF881_DIR)/drv/driver/m2m_hif.c \
                stubs/hif_881/osal/osal.h stubs/hif_881/Util/Logger.h stubs/hif_881/definitions.h
 	$(CC) $(CFLAGS) $(HIF881_INC) -o $@ test_881_hif_rx_done.c
