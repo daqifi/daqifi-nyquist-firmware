@@ -3323,17 +3323,26 @@ $(NAME_BIN): test_958_sd_benchmark_filename_collision.c test_framework.h $(SD_BE
 	 fi
 	$(CC) $(CFLAGS) -o $(NAME_BIN) test_958_sd_benchmark_filename_collision.c
 
-$(SDLOG_BIN): test_1000_sd_log_arm_budget.c test_framework.h $(SCPI_IFACE_SRC) $(SD_BENCH_SRC) $(FW_LOG_H) $(FW_LOG_C) $(RECIPES)
-	@grep -qF 'return "SD quarantined after a bus jam - reseat the card, "' $(SD_BENCH_SRC) \
-	  && grep -qF '"then SYST:STOR:SD:ENAble 1";' $(SD_BENCH_SRC) \
-	  && grep -qF 'return "a WiFi firmware update owns SPI4 - retry when it completes";' $(SD_BENCH_SRC) \
-	  && grep -qF 'return "WiFi streaming owns SPI4 - SYST:STR:STOP first";' $(SD_BENCH_SRC) \
-	  || { echo "ERROR: an SD_SuspendReasonText() return statement in $(SD_BENCH_SRC)"; \
-	       echo "       no longer matches the copy in test_1000_sd_log_arm_budget.c."; \
-	       echo "       That test measures those strings against the #942 refusal's"; \
-	       echo "       LOG_E prefix, so a drifted copy measures a string the device"; \
-	       echo "       does not emit. Update the REASON_ macros there, re-derive the"; \
-	       echo "       budget, and check the new length still fits."; \
+$(SDLOG_BIN): test_1000_sd_log_arm_budget.c test_framework.h $(SCPI_IFACE_SRC) $(SD_BENCH_SRC) ../../firmware/src/services/SCPI/SDSuspendReasons.h $(FW_LOG_H) $(FW_LOG_C) $(RECIPES)
+	@grep -qF 'SD_SUSPEND_REASON_MAX 76' ../../firmware/src/services/SCPI/SDSuspendReasons.h \
+	  || { echo "ERROR: SD_SUSPEND_REASON_MAX is no longer 76 in SDSuspendReasons.h."; \
+	       echo "       The log_budget max= annotations at SD_SuspendReasonText()'s"; \
+	       echo "       callers assume 76 (#1001); change both together."; \
+	       exit 1; }
+	@n=`grep -c 'log_budget: max=76' $(SCPI_IFACE_SRC) || true`; \
+	 test "$$n" -ge 3 \
+	  || { echo "ERROR: expected >=3 'log_budget: max=76' annotations in $(SCPI_IFACE_SRC)"; \
+	       echo "       (the SD_SuspendReasonText() callers), found $$n -- #1001."; \
+	       exit 1; }
+	@body=`sed -n '/^const char \*SD_SuspendReasonText(void)[[:space:]]*$$/,/^}/p' $(SD_BENCH_SRC) | grep -v '^[[:space:]]*[*/]'`; \
+	 test -n "$$body" \
+	   || { echo "ERROR: SD_SuspendReasonText(void) not found in $(SD_BENCH_SRC)"; exit 1; }; \
+	 nr=`printf '%s\n' "$$body" | grep -c 'return SD_SUSPEND_REASON_'`; \
+	 nq=`printf '%s\n' "$$body" | grep -c '"'`; \
+	 test "$$nr" -eq 4 && test "$$nq" -eq 0 \
+	  || { echo "ERROR: SD_SuspendReasonText() must return exactly four SD_SUSPEND_REASON_*"; \
+	       echo "       macros and hold no string literal of its own (returns=$$nr, quote lines=$$nq)."; \
+	       echo "       An inline literal escapes the sizeof guard in SDSuspendReasons.h (#1001)."; \
 	       exit 1; }
 	@set -e; \
 	 msgsz=$$(sed -n 's/^#define[[:space:]]\{1,\}LOG_MESSAGE_SIZE[[:space:]]\{1,\}\([0-9]\{1,\}\)[[:space:]]*$$/\1/p' $(FW_LOG_H)); \
