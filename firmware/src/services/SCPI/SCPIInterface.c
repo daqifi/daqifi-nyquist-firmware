@@ -9720,10 +9720,28 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
     }
     scpi_printf(context,
         "\"cal\":{\"factory_present\":%s,\"factory_slot\":\"%s\","
-        "\"source\":\"%s\"}},",
+        "\"source\":\"%s\","
+        "\"cal_channel_ids\":[",
         factoryCalMissing ? "false" : "true",
         factorySlot,
         calSource);
+
+    /* #1272: every channel ID the calibration commands accept, store and
+     * return -- the public inputs AND the monitoring channels 248..255 that
+     * channels[] below deliberately omits (listing them there would advertise
+     * them as inputs a client can use). A backup/restore client iterates
+     * this list instead of hard-coding a per-variant ID table. The IDs are
+     * the board config's DaqifiAdcChannelId: the same key
+     * ADC_FindChannelIndex resolves for CONF:ADC:CHANCALM?, so the set is
+     * exactly the IDs for which that query answers without error. Board
+     * config is immutable, so no critical section is needed. */
+    uint32_t calIdCount = (cfg->AInChannels.Size < MAX_AIN_CHANNEL)
+        ? cfg->AInChannels.Size : MAX_AIN_CHANNEL;
+    for (uint32_t i = 0; i < calIdCount; i++) {
+        scpi_printf(context, "%s%u", (i == 0) ? "" : ",",
+                    (unsigned)cfg->AInChannels.Data[i].DaqifiAdcChannelId);
+    }
+    scpi_printf(context, "]}},");
 
     /* ---- channels[] array (flat, kind-grouped) ----
      * Order: all analog-input first (sorted by DaqifiAdcChannelId
