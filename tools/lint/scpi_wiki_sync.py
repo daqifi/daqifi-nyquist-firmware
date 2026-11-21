@@ -113,6 +113,11 @@ import os
 import re
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Translation phase 2 (backslash-newline splicing) is done once, in cdef, for
+# every lint that reads C text (#1066).
+from cdef import splice  # noqa: E402
+
 NOT_IMPLEMENTED_MARK = "not implemented"
 
 # The #324 legacy camelCase aliases (CLAUDE.md "Stream-control namespace
@@ -249,6 +254,12 @@ def registered_patterns(scpi_c):
                  f".github/workflows/scpi-wiki-sync.yml.")
     with open(scpi_c, encoding="utf-8", errors="replace") as fh:
         raw = fh.read()
+    # Phase 2 BEFORE comment recognition, as the compiler does (#1066): a
+    # splice can CREATE a comment marker (`/` + backslash-newline + `/` is
+    # `//`) or END a block comment early (`*` + backslash-newline + `/`),
+    # shapes `_CODE_OR_COMMENT` cannot see on raw text. A `.pattern` entry
+    # deleted that way used to stay in `live`.
+    raw, _omap = splice(raw)
     live_src = strip_c_comments(raw)
     every = {_joined(g) for g, _ in _REGISTRATION.findall(raw)}
     live_list = [_joined(g) for g, _ in _REGISTRATION.findall(live_src)]
@@ -1347,7 +1358,7 @@ def _self_test_end_to_end():
     pinned here rather than trusted to stay fixed.
     """
     import tempfile
-    cases, failures = 4, 0
+    cases, failures = 7, 0
     src = ('const scpi_command_t scpi_commands[] = {\n'
            '    {.pattern = "SYSTem:WIFI:" "DEBUG?", .callback = SCPI_A,},\n'
            '    {.pattern = "SYSTem:POWer:OTG", .callback = SCPI_B,},\n'
@@ -1429,6 +1440,39 @@ def _self_test_end_to_end():
                   "`//` comment by a trailing backslash was not correctly "
                   "classified as dead -- the compiler never builds it")
             failures += 1
+
+        # (5) #1066: a splice that CREATES (or ENDS) a comment marker. `/` +
+        # backslash-newline + `/` is `//` to the compiler, so the
+        # registration after it is dead; likewise a splice-made `/*`. A
+        # splice-made `*/` closes a block comment early, so the registration
+        # after it is LIVE, which a raw reader hid. A live neighbour keeps
+        # each case non-vacuous.
+        bs = "\\"
+        for label, body, dead in (
+                ("`//`", "    /" + bs + "\n/ {.pattern = \"SYSTem:SPLICE:OPEN\","
+                 " .callback = SCPI_C,},\n", True),
+                ("`/*`", "    /" + bs + "\n* {.pattern = \"SYSTem:SPLICE:OPEN\","
+                 " .callback = SCPI_C,}, */\n", True),
+                ("`*/`", "    /* x *" + bs + "\n/ {.pattern = \"SYSTem:SPLICE:OPEN\","
+                 " .callback = SCPI_C,},\n    /* y */\n", False)):
+            src3 = ("const scpi_command_t scpi_commands[] = {\n" + body +
+                    "    {.pattern = \"SYSTem:LIVE:ONE\", .callback = SCPI_C,},\n"
+                    "    {.pattern = NULL, .callback = SCPI_NotImplemented,},\n};\n")
+            c3 = os.path.join(d, "spliced_open.c")
+            with open(c3, "w", encoding="utf-8") as fh:
+                fh.write(src3)
+            live3, commented3, _ll3 = registered_patterns(c3)
+            if dead:
+                ok = ("SYSTem:SPLICE:OPEN" not in live3
+                      and "SYSTem:SPLICE:OPEN" in commented3
+                      and "SYSTem:LIVE:ONE" in live3)
+            else:
+                ok = ("SYSTem:SPLICE:OPEN" in live3
+                      and "SYSTem:LIVE:ONE" in live3)
+            if not ok:
+                print("  FAIL end-to-end: a splice-made " + label + " marker "
+                      "was misread -- the compiler reads the joined text")
+                failures += 1
     return cases, failures
 
 
