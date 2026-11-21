@@ -17,6 +17,9 @@
 #include "../../services/UsbCdc/UsbCdc.h"
 #include "../../services/daqifi_settings.h"  // #454: load autoPowerOnUsb from NVM
 #include "../../services/sd_card_services/sd_card_manager.h"
+#include "../../services/SCPI/SCPIInterface.h"  // SCPI_StopStreamingForPowerDown
+
+static void Power_FinishStreamingBeforeRailsOff(void);
 #include "driver/usb/usbhs/src/plib_usbhs_header.h"
 #include <xc.h>
 //typedef enum
@@ -886,6 +889,7 @@ static void Power_HandleStandbyState(void) {
      * shutdownNotified is set by UI task after LED warning sequence completes
      * This ensures user is notified before shutdown */
     if (pData->shutdownNotified == true) {
+        Power_FinishStreamingBeforeRailsOff();
         Power_Down();
         pData->shutdownNotified = false;  /* Clear flag to prevent repeated calls */
         
@@ -969,6 +973,18 @@ static void Power_HandlePoweredUpState(void) {
  *   - External power connection
  *   - Critical battery level (<5%)
  */
+/* Stop a live stream and let its SD log finalise while the rails are still up
+ * (SCPI_StopStreamingForPowerDown). Bounded; the power-off goes ahead either
+ * way, because on battery it cannot wait indefinitely, but an unfinished
+ * close is reported, never silent. */
+static void Power_FinishStreamingBeforeRailsOff(void) {
+    if (!SCPI_StopStreamingForPowerDown()) {
+        /* log_budget: max=8 -- sd_card_manager_GetStateName(): longest is "GETSPACE"/"CURDRIVE" */
+        LOG_E("[POWER] SD log not finalised in time (state=%s) - powering off anyway",
+              sd_card_manager_GetStateName());
+    }
+}
+
 static void Power_HandlePoweredUpExtDownState(void) {
     /* Rate limit status updates - uses GPIO/ADC, no I2C */
     static TickType_t lastExtDownUpdate = 0;
@@ -1022,6 +1038,15 @@ static void Power_HandlePoweredUpExtDownState(void) {
               (pData->battVoltageValid && pData->chargePct < BATT_LOW_TH))) {
         LOG_D("Power_UpdateState: Battery critically low (vsysStat=%u, %d%%), transitioning to STANDBY",
               pData->BQ24297Data.status.vsysStat, pData->chargePct);
+
+        /* #1226: this path does not go through Power_Down(), so finish the
+         * stream and its SD log here too, while the rails are still up.
+         * STANDBY is published FIRST, as the button/SCPI path does before its
+         * own call: a START that has not pinned its stop generation yet then
+         * fails its entry power check, and one that has is cancelled by the
+         * generation bump inside the stop (#1226 audit r2). */
+        pData->powerState = STANDBY;
+        Power_FinishStreamingBeforeRailsOff();
 
         /* Explicitly disable all external rails before shutdown */
         pWriteVariables->EN_5_10V_Val = false;

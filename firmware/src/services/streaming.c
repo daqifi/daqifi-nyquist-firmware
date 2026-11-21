@@ -153,7 +153,8 @@ static volatile uint8_t gSdHeaderEnc = 0;     // StreamingEncoding it was built 
  * the cache is always rebuilt for the live session well before any file that
  * consumes it. The session's FIRST file needs no header from here: under
  * CSV/JSON the encoder's own inline header lands at its byte 0, and under
- * protobuf it has never had one (a pre-existing #196 gap).
+ * protobuf the streaming task writes it ahead of the first SD data (#1177,
+ * gSdFirstFileHeaderPending).
  *
  * An intermediate revision used a session EPOCH bumped before the SD arm.
  * That worked for the race but made the gate global, and the audit found two
@@ -163,6 +164,25 @@ static volatile uint8_t gSdHeaderEnc = 0;     // StreamingEncoding it was built 
  * its claim, invalidating a running session's cache mid-rotation. Gating on
  * the rotation itself removes the need for the epoch entirely. */
 static volatile bool gSdHeaderValid = false;
+
+/* #1177: the session's FIRST protobuf file still owes its sd_metadata.
+ *
+ * Only a rotation's open writes the cached header (sd_card_manager.c
+ * OPEN_FILE), and file 1 is opened by SCPI_StartStreaming before the encoder
+ * has built anything. CSV and JSON cover file 1 with the encoder's inline
+ * header; protobuf had nothing, so every session's first file -- the only
+ * file of a session that never rotates -- had no timestamp_freq, port counts
+ * or device identity. Set when the header is built for a protobuf session;
+ * cleared when Streaming_WriteSdFirstFileHeader puts the header in the SD
+ * ring ahead of the session's first data, or by Streaming_SdFirstDataWritten
+ * when data landed first and the header can no longer go ahead of it. The
+ * first data written is file 1's, because a rotation needs MAXSize bytes of
+ * output first.
+ *
+ * Streaming task only (set in Streaming_BuildSdFileHeader, consumed in the
+ * encoder loop, cleared at session start in Streaming_Start), so it needs no
+ * volatile and no lock. */
+static bool gSdFirstFileHeaderPending = false;
 
 // Per-session streaming statistics.
 // Written by: deferred ISR task (queueDroppedSamples, poolExhaustedSamples,
@@ -2284,6 +2304,7 @@ static void Streaming_Start(void) {
          * time. */
         if (gpRuntimeConfigStream->IsEnabled) {
             gSdHeaderValid = false;
+            gSdFirstFileHeaderPending = false;  // #1177: re-armed by the build
         }
 
         TimerApi_Initialize(gpStreamingConfig->TimerIndex);
@@ -2405,9 +2426,28 @@ static void Streaming_Start(void) {
             // could otherwise observe Running=0 for a few cycles while
             // the timer is already ticking, producing inconsistent
             // hardware-state reads.
-            gpRuntimeConfigStream->Running = 1;
-            TimerApi_InterruptEnable(gpStreamingConfig->TimerIndex);
-            TimerApi_Start(gpStreamingConfig->TimerIndex);
+            //
+            // #1226 audit r6: a stop can clear IsEnabled after the check
+            // above. Its Streaming_Stop() then sees Running == false and
+            // tears nothing down, so publishing Running unconditionally left
+            // the hardware armed for a session nobody owns ("already
+            // streaming" after the next power-up). Re-check and commit in one
+            // critical section: a stop that cleared IsEnabled first is
+            // honoured here; one that clears it after sees Running and tears
+            // down. Register writes only, so the section is short.
+            bool committed = false;
+            taskENTER_CRITICAL();
+            if (gpRuntimeConfigStream->IsEnabled) {
+                gpRuntimeConfigStream->Running = 1;
+                TimerApi_InterruptEnable(gpStreamingConfig->TimerIndex);
+                TimerApi_Start(gpStreamingConfig->TimerIndex);
+                committed = true;
+            }
+            taskEXIT_CRITICAL();
+            if (!committed) {
+                MC12b_ConfigureHardwareTrigger(false, false);
+                MC12b_RestoreIdleScanList();
+            }
         }
     }
 }
@@ -2448,7 +2488,15 @@ static bool Streaming_AllConfiguredTransportsDead(StreamingRuntimeConfig *cfg) {
     }
 
     if (wantWifi) {
-        if (wifi_manager_IsWiFiConnected()) {
+        /* #1072: WiFi streaming is only delivered while a TCP client holds the
+         * slot. Association alone said "healthy" after the client vanished (a
+         * killed app, a phone out of range), so this timer never started and
+         * the device streamed into nothing until the pool was exhausted, for
+         * as long as nobody noticed. The client slot is freed when the WINC
+         * reports the socket closed -- a FIN/RST at once, a peer that just
+         * went silent once TCP gives up on it -- and the grace window below
+         * then still lets a client that reconnects in time keep the session. */
+        if (wifi_manager_IsWiFiConnected() && wifi_tcp_server_HasActiveClient()) {
             if (gTransportDownSinceWifi != 0) {
                 LOG_I("Streaming: WiFi transport recovered");
                 gTransportDownSinceWifi = 0;
@@ -3020,10 +3068,72 @@ static void Streaming_EmitSessionSummaryImpl(bool recordDying) {
               (unsigned)snap.usbDroppedBytesSteady,
               (unsigned)snap.wifiDroppedBytesSteady,
               (unsigned)snap.sdDroppedBytesSteady);
-        LOG_E("Stream end (post-grace) samples lost: encFail=%u encDrop=%u dioDrop=%u",
-              (unsigned)snap.encoderFailuresSteady,
+        /* ⛔ #1018: encFail IS NOT A LOSS, and printing it under this heading
+         * said it was. It is the SAME DEFECT the #1055 comment above describes
+         * for eos -- one line further down, and left behind by the fix that
+         * identified the class: a quantity this function deliberately EXCLUDES
+         * from totalSampleLoss must not appear beneath a "samples lost"
+         * heading, because it contradicts the arithmetic three lines above it.
+         *
+         * V, and the firmware already says it twice. totalSampleLoss (above)
+         * sums queueDropped + encoderDropped + dioDropped + scanStale --
+         * encoderFailures is NOT a term. Streaming_ReportEncoderSampleLoss's
+         * contract: "the batch loop books only the EVENT (encoderFailures) and
+         * an encoder that knows it destroyed a sample books the sample here",
+         * and "A site that merely RETAINS a sample (buffer full this tick,
+         * re-encoded next call) must NOT: nothing was lost." Under #520
+         * backpressure the encoder HOLDS samples while the WiFi ring is full,
+         * so a large encFail on a healthy run is the EXPECTED state.
+         *
+         * ⚠ BUT encFail IS NOT PURELY RETRIES, and an earlier revision of this
+         * line claimed it was ("retried, not lost"), which was false (#1233
+         * r1 audit). JSON_Encoder.c has a DROP arm -- an oversized sample at
+         * full capacity with nothing emitted -- which pops it, frees it, books
+         * Streaming_ReportEncoderSampleLoss(1), and returns 0 bytes; the zero
+         * return then increments encoderFailures HERE as well. So encFail
+         * mixes retry events with destructive drops.
+         *
+         * ⭐ THE ARITHMETIC IS STILL RIGHT AND ONLY THE LABEL WAS WRONG:
+         * those drops are already in the total through encoderDroppedSamples,
+         * so adding encFail would DOUBLE-COUNT them. Keeping it out prevents
+         * that; it does not make every encFail a retry. The wording now says
+         * where the drops are rather than mischaracterising the counter.
+         *
+         * E, measured on an NQ1: a cleanly completing 5 s run at 5 kHz printed
+         *     lost 0/24999 samples (0%)
+         *     samples lost: encFail=10001 encDrop=0 dioDrop=0
+         * consecutively -- ~40% of the run announced as lost by a run that
+         * lost nothing. Identical across three runs on each of two images.
+         *
+         * It is not cosmetic. #371's rule is that numbers from a
+         * mis-accounting tool are unreliable FULL STOP, not "the baseline
+         * minus a bug", so a cap or threshold fitted while reading this line
+         * is fitted to a mislabel. And it destroys a real diagnostic: #539
+         * records that its defect "surfaces as ~100% EncoderFailures", which
+         * is unreadable once a healthy run already shows ~40%.
+         *
+         * A FOURTH LINE rather than a longer one, deliberately: the comment
+         * above records that this print was split into three because a single
+         * message was 212 bytes against Logger's 125-byte ceiling and Logger
+         * truncates the TAIL. Worst cases here are 75 and 75 of 125.
+         *
+         * ⚠ NOT FIXED HERE, and still open: #1018 also observes that
+         * scanStaleDropped is inside totalSampleLoss while being described as
+         * "(all post-grace)", and that queueDropped and scanStale are in the
+         * total but absent from this breakdown. Both are about which
+         * quantities the TOTAL should contain; this change is only about which
+         * heading encFail sits under, and widening it would be a different
+         * argument needing a different decision. */
+        LOG_E("Stream end (post-grace) samples lost: encDrop=%u dioDrop=%u",
               (unsigned)snap.encoderDroppedSamplesSteady,
               (unsigned)snap.dioDroppedSamplesSteady);
+        /* ⚠ THE LABEL STAYS `encFail=`. Only the HEADING was wrong, so
+         * renaming the token would be a gratuitous break for anything that
+         * greps the log for it -- and test_1055 already asserts every label
+         * from the pre-split message survives somewhere, which is what
+         * caught the rename. Worst case 96 of Logger's 125. */
+        LOG_E("Stream end (post-grace) encoder events: encFail=%u (drops already counted in loss above)",
+              (unsigned)snap.encoderFailuresSteady);
     }
 }
 
@@ -3049,6 +3159,7 @@ void Streaming_Init(tStreamingConfig* pStreamingConfigInit,
     gBenchmarkMode = BENCHMARK_OFF;
     gSdHeaderLen = 0;
     gSdHeaderValid = false;
+    gSdFirstFileHeaderPending = false;
     memset((void*)&gStreamStats, 0, sizeof(gStreamStats));
     gTimerISRCalls = 0;
     gScanStaleDropped = 0;
@@ -3272,8 +3383,60 @@ static void Streaming_BuildSdFileHeader(StreamingEncoding encoding) {
      * pessimising every byte access that survived. */
     gSdHeaderEnc = (uint8_t)encoding;
     gSdHeaderLen = (uint32_t)len;
+    /* #1177: protobuf has no inline header, so file 1 gets this one from the
+     * first SD write. CSV/JSON must not: their inline header is already at
+     * byte 0 of file 1. */
+    gSdFirstFileHeaderPending = (encoding == Streaming_ProtoBuffer && len > 0u);
     __asm__ volatile ("" ::: "memory");
     gSdHeaderValid = true;
+}
+
+/* #1177: write the session's sd_metadata at the head of file 1, once.
+ *
+ * Called from the encoder loop's SD branch, before that iteration's data, so
+ * the header lands ahead of the session's first SD bytes.
+ *
+ * The header goes in only when the ring has room for it AND the batch that
+ * follows (`sdFree`, read at the top of this iteration, is a lower bound: this
+ * task is the ring's only producer and the SD task only frees space). Without
+ * that check the header could take the room the first batch needed, and that
+ * all-or-nothing write would then be dropped, or would stall solo-SD for its
+ * 10 s retry, on a healthy card (audit round 1). The batch is sized with the
+ * header's bytes reserved (sdHdrReserve), so the two normally fit.
+ *
+ * Returns true once the header is in the ring, and only then clears the
+ * pending flag. When it is not written the flag stays set, so a later
+ * iteration tries again -- correct as long as no DATA has reached the ring
+ * yet, which is why Streaming_SdFirstDataWritten() gives up on the header the
+ * moment a batch lands without it (audit round 2). */
+static bool Streaming_WriteSdFirstFileHeader(size_t sdFree, size_t dataLen) {
+    if (!gSdHeaderValid || gSdHeaderLen == 0u) {
+        gSdFirstFileHeaderPending = false;
+        return false;
+    }
+    size_t len = (size_t)gSdHeaderLen;
+    if (sdFree < dataLen || sdFree - dataLen < len) {
+        return false;
+    }
+    if (sd_card_manager_WriteToBuffer((const char*)gSdHeaderBytes, len) != len) {
+        return false;
+    }
+    gSdFirstFileHeaderPending = false;
+    return true;
+}
+
+/* #1177: a batch reached the SD ring while file 1's header was still owed.
+ * Anything written after this would land behind data, so the header is given
+ * up and the miss is logged: the file is valid protobuf without metadata, as
+ * every file 1 was before #1177. */
+static void Streaming_SdFirstDataWritten(size_t sdFree, size_t dataLen) {
+    if (!gSdFirstFileHeaderPending) {
+        return;
+    }
+    gSdFirstFileHeaderPending = false;
+    LOG_E("SD: first file's protobuf metadata not written (%u B free, "
+          "%u B data) - that file has no sd_metadata (#1177)",
+          (unsigned)sdFree, (unsigned)dataLen);
 }
 
 /* #824: hand the SD task the bytes to write at the head of a newly opened
@@ -3297,7 +3460,8 @@ static void Streaming_BuildSdFileHeader(StreamingEncoding encoding) {
  *     header is itself what lands at byte 0 of such a file, so writing here as
  *     well would duplicate it. Protobuf has no inline header and so no such
  *     predicate; every protobuf file from the first ROTATION onward carries
- *     its sd_metadata. */
+ *     its sd_metadata from here, and file 1 gets it from the streaming task
+ *     (#1177, Streaming_WriteSdFirstFileHeader). */
 size_t Streaming_GetSdFileHeader(const uint8_t** ppHeader) {
     if (ppHeader == NULL || !gSdHeaderValid) {
         return 0;
@@ -3827,9 +3991,9 @@ void streaming_Task(void) {
          * had a separately-written one: the old gSdFileWasReady latch was
          * initialised from IsWriteReady() precisely so the SD-only header
          * block skipped it. For CSV/JSON that is right (the encoder's inline
-         * header lands there instead); for protobuf it means file 1 carries
-         * no sd_metadata, which is a pre-existing #196 gap this change
-         * deliberately does not alter. */
+         * header lands there instead); for protobuf, file 1 gets it from
+         * Streaming_WriteSdFirstFileHeader ahead of the session's first SD
+         * data (#1177). */
         if (!gSdHeaderValid && gSdExpectedThisSession) {
             Streaming_BuildSdFileHeader(pRunTimeStreamConf->Encoding);
         }
@@ -3973,6 +4137,14 @@ void streaming_Task(void) {
                 batchXportCap = sdCap;
             }
         }
+        /* #1177: while file 1's header is still owed, keep its bytes free in
+         * the SD ring when sizing this batch -- the first encode and the
+         * append test below both use it -- so the header and the batch fit
+         * together (audit rounds 2-4). batchXportCap itself is left alone: it
+         * also decides which packets can NEVER be written, and that verdict
+         * must not shrink. */
+        size_t sdHdrReserve = (hasSD && gSdFirstFileHeaderPending)
+                            ? (size_t)gSdHeaderLen : 0u;
         packetSize = 0;
         for (uint32_t batchIdx = 0; batchIdx < STREAMING_BATCH_MAX; batchIdx++) {
             bool ainNow = !AInSampleList_IsEmpty();
@@ -4011,15 +4183,32 @@ void streaming_Task(void) {
              * min). The capped room is therefore never below
              * STREAMING_BATCH_MIN_ROOM: the same 1,024 B floor an encode on
              * this path is given today. */
+            /* #1177 (audit round 3): the FIRST encode can pack many samples --
+             * the protobuf fast path fills whatever room it gets -- so the
+             * header's reservation must bound it too, not only the appends
+             * below. Applied only while the header is owed (protobuf only, so
+             * JSON's full-capacity test is never affected) and only when the
+             * bounded room keeps the usual STREAMING_BATCH_MIN_ROOM floor, so
+             * the queue is never starved; below that the header is given up
+             * rather than the data. Bounded by the SD ring's own free space,
+             * not batchXportFree: that is a min over every active ring, so a
+             * full USB ring would read 0 and switch the bound off (audit
+             * round 4). */
+            if (batchIdx == 0 && sdHdrReserve > 0u &&
+                sdSize >= sdHdrReserve + STREAMING_BATCH_MIN_ROOM &&
+                sdSize - sdHdrReserve < encRoom) {
+                encRoom = sdSize - sdHdrReserve;
+            }
             if (batchIdx > 0) {
                 if (encRoom < STREAMING_BATCH_MIN_ROOM) {
                     break;                   // no encoder-buffer room
                 }
-                if ((packetSize + STREAMING_BATCH_MIN_ROOM) > batchXportFree) {
+                if ((packetSize + STREAMING_BATCH_MIN_ROOM + sdHdrReserve) >
+                        batchXportFree) {
                     break;                   // would overflow the smallest active ring
                 }
-                size_t ringRoom = (batchXportCap > packetSize)
-                                ? (batchXportCap - packetSize) : 0;
+                size_t ringRoom = (batchXportCap > packetSize + sdHdrReserve)
+                                ? (batchXportCap - packetSize - sdHdrReserve) : 0;
                 if (ringRoom < encRoom) {
                     encRoom = ringRoom;
                 }
@@ -4271,6 +4460,9 @@ void streaming_Task(void) {
                 //       STREAM_WRITE_RETURN_STOPPED (stop-abort, no bookkeeping).
             }
             if (hasSD) {
+                if (gSdFirstFileHeaderPending) {
+                    (void)Streaming_WriteSdFirstFileHeader(sdSize, packetSize);
+                }
                 if (pRunTimeStreamConf->ActiveInterface != StreamingInterface_SD) {
                     /* #534: multi-output — a stalled SD must never block the
                      * (healthy) USB path through this shared encoder loop.
@@ -4290,8 +4482,11 @@ void streaming_Task(void) {
                      * drop+count, mirroring the USB side of this branch.
                      * Solo-SD keeps the blocking backpressure below
                      * (#520: pool absorbs the burst; single drop point). */
-                    if (sd_card_manager_WriteToBuffer((const char*)buffer,
-                                                      packetSize) != packetSize) {
+                    size_t sdWr = sd_card_manager_WriteToBuffer(
+                            (const char*)buffer, packetSize);
+                    if (sdWr == packetSize) {
+                        Streaming_SdFirstDataWritten(sdSize, packetSize);
+                    } else {
                         /* Skip the bookkeeping when streaming was stopped
                          * mid-iteration — mirrors WriteWithRetry's STOPPED
                          * path: a non-write during the stop transition (file
@@ -4314,8 +4509,10 @@ void streaming_Task(void) {
                         LOG_E_SESSION(LOG_SESSION_SD_DROP,
                             "Streaming: SD write gave up - interface dead (10 s) or packet larger than the SD ring (#1021)");
                     }
-                    /* else: wr == packetSize (success) or
-                     *       wr == STREAM_WRITE_RETURN_STOPPED (stop-abort,
+                    else if (wr == packetSize) {
+                        Streaming_SdFirstDataWritten(sdSize, packetSize);
+                    }
+                    /* else: wr == STREAM_WRITE_RETURN_STOPPED (stop-abort,
                      *       intentional, no bookkeeping). */
                 }
             }

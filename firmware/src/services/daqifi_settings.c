@@ -573,24 +573,106 @@ bool daqifi_settings_SaveToNvm(DaqifiSettings* settings) {
             return false;
     }
 
-    if (!daqifi_settings_ClearNvm(settings->type)) {
-        return false;
+    /* #1153 round 2: lock HERE, BEFORE the erase, and hold across
+     * the whole erase -> stage -> write -> readback-verify span below.
+     *
+     * Round 1 put the recursive mutex inside nvm.c's write/erase entry
+     * points, which protects the raw FLASH ACCESS but not the two windows
+     * either side of it: this function erases the page via ClearNvm() and
+     * then stages the record into the SHARED gTempFflashBuffer (the memcpy
+     * a few lines down) BEFORE ever reaching a function that takes the
+     * lock. A direct caller that bypasses daqifi_settings_Update() -- the
+     * two WiFi savers in SCPILAN.c (SCPI_LANSettingsApply /
+     * SCPI_LANSettingsSave), and daqifi_settings_SaveADCCalSettings() below,
+     * which all call this function straight -- can have its erase+stage
+     * interleaved with a second such caller's own erase+stage: whichever
+     * side's nvm_WriteRowtoAddr() runs last wins the shared buffer, and that
+     * write's readback verify compares against the SAME buffer, so it
+     * self-validates over the OTHER caller's page. Both callers report
+     * success; one caller's record is gone.
+     *
+     * Holding the lock across the readback verify specifically matters: the
+     * verify (inside nvm_WriteRowtoAddr) compares the just-written flash
+     * against gTempFflashBuffer, so if that buffer can still change before
+     * the comparison runs, the verify proves nothing about what was
+     * actually written.
+     *
+     * Recursive, and nests correctly in both directions: with an outer
+     * daqifi_settings_Update() hold (a caller routed through that helper),
+     * and with ClearNvm()'s own lock immediately below (recursive, not a
+     * second real acquisition) -- see nvm.h's nvm_Lock() doc comment for why
+     * the mutex must be recursive at all. */
+    nvm_Lock();
+
+    bool result = daqifi_settings_ClearNvm(settings->type);
+    if (result) {
+        /* #306: CRC32 integrity (Util/CRC32) — no wolfSSL on the save path.
+         * Store the 4-byte CRC32 in the first bytes of the layout-stable
+         * checksum field and zero the rest, so the field is deterministic
+         * and can't be mistaken for a 16-byte MD5 by the load-path
+         * fallback. */
+        uint32_t crc = CRC32_Compute(&(settings->settings), dataSize);
+        memset(settings->checksum, 0, sizeof(settings->checksum));
+        memcpy(settings->checksum, &crc, sizeof(crc));
+
+        if (sizeof (DaqifiSettings) > sizeof (gTempFflashBuffer)) {
+            result = false;
+        } else {
+            memcpy(gTempFflashBuffer, settings, sizeof (DaqifiSettings));
+            result = nvm_WriteRowtoAddr(address, gTempFflashBuffer);
+        }
     }
 
-    /* #306: CRC32 integrity (Util/CRC32) — no wolfSSL on the save path. Store
-     * the 4-byte CRC32 in the first bytes of the layout-stable checksum field
-     * and zero the rest, so the field is deterministic and can't be mistaken
-     * for a 16-byte MD5 by the load-path fallback. */
-    uint32_t crc = CRC32_Compute(&(settings->settings), dataSize);
-    memset(settings->checksum, 0, sizeof(settings->checksum));
-    memcpy(settings->checksum, &crc, sizeof(crc));
+    /* Single exit point, deliberately: every branch above only sets
+     * `result`, none of them returns. A function with an early return after
+     * the lock is taken is exactly the shape that leaks a permanent
+     * deadlock across every future NVM operation if one return is ever
+     * added without its own unlock -- collapsing to one unlock-then-return
+     * removes that whole class of mistake instead of relying on reviewers
+     * to catch a missing one. */
+    nvm_Unlock();
+    return result;
+}
 
-    if (sizeof (DaqifiSettings)>sizeof (gTempFflashBuffer)) {
-        return false;
+void daqifi_settings_Lock(void) {
+    nvm_Lock();
+}
+
+void daqifi_settings_Unlock(void) {
+    nvm_Unlock();
+}
+
+bool daqifi_settings_Update(DaqifiSettingsType type, DaqifiSettings* settings,
+        DaqifiSettingsUpdateFn fn, void* context) {
+    bool result;
+
+    nvm_Lock();
+
+    memset(settings, 0, sizeof(*settings));
+    bool loaded = daqifi_settings_LoadFromNvm(type, settings);
+    /* #1152: trust the type WE asked for, not whatever type byte NVM
+     * physically held -- that byte rides outside the payload checksum.
+     * Set unconditionally (load success or failure) so every caller's
+     * callback sees a normalized record, matching what every pre-#1153
+     * call site already did by hand right after its own LoadFromNvm. */
+    settings->type = type;
+
+    DaqifiSettingsUpdateDecision decision = fn(settings, loaded, context);
+    switch (decision) {
+        case DAQIFI_SETTINGS_UPDATE_SAVE:
+            result = daqifi_settings_SaveToNvm(settings);
+            break;
+        case DAQIFI_SETTINGS_UPDATE_OK_NO_SAVE:
+            result = true;
+            break;
+        case DAQIFI_SETTINGS_UPDATE_FAIL:
+        default:
+            result = false;
+            break;
     }
-    memcpy(gTempFflashBuffer, settings, sizeof (DaqifiSettings));
-    
-    return nvm_WriteRowtoAddr(address, gTempFflashBuffer);
+
+    nvm_Unlock();
+    return result;
 }
 
 bool daqifi_settings_ClearNvm(DaqifiSettingsType type) {
@@ -614,7 +696,21 @@ bool daqifi_settings_ClearNvm(DaqifiSettingsType type) {
     }
     if (sizeof (DaqifiSettings) > NVM_FLASH_PAGESIZE) return false;
 
-    return nvm_ErasePage(address);
+    /* #1153 round 2: lock around the erase itself, same as every
+     * other entry point into the NVM layer. nvm_ErasePage() already takes
+     * this lock internally, so today this is a recursive no-op when called
+     * from daqifi_settings_SaveToNvm() (which now holds the lock across this
+     * whole call) -- but ClearNvm() is a public entry point in its own
+     * right, exactly like nvm_WriteWordtoAddr() (nvm.c), which nvm.h's own
+     * doc comment keeps locked despite having zero callers today: the lock
+     * belongs at the owning layer regardless of today's call graph, so a
+     * future direct caller of ClearNvm() cannot bypass it by skipping
+     * SaveToNvm(). Recursive, so nesting inside SaveToNvm()'s outer hold is
+     * safe. */
+    nvm_Lock();
+    bool result = nvm_ErasePage(address);
+    nvm_Unlock();
+    return result;
 }
 
 bool daqifi_settings_LoadADCCalSettings(DaqifiSettingsType type, AInRuntimeArray* channelRuntimeConfig)

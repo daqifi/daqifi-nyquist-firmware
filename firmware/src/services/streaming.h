@@ -1326,11 +1326,21 @@ typedef struct {
      * from a zero return: the same zero is produced after 0 pops (buffer merely
      * full, retried) and after N (all-invalid validMask, consumed but carrying
      * no channel data), so deriving it re-counted still-queued samples every
-     * tick. Only Json_Encode reports today (its oversize-sample drop arm);
-     * csv_Encode destroys nothing on any zero-return path, and
-     * Nanopb_EncodeStreamingFast reports too, at both paths that destroy an
-     * already-popped sample: the AIN-message encode failure and the
-     * standalone-DIO fallback. Note that the first of those returns a NON-ZERO
+     * tick. ALL THREE encoders report. Json_Encode from its oversize-sample
+     * drop arm; csv_Encode from its row-eviction arm -- ⛔ #1200: this used to
+     * say "csv_Encode destroys nothing on any zero-return path", which was
+     * stale from the moment #970/#991 added that booking, and it is listed
+     * here because a reader checking which encoders book would have been told
+     * CSV does not; and Nanopb_EncodeStreamingFast at both paths that destroy
+     * an already-popped sample: the AIN-message encode failure and the
+     * standalone-DIO fallback.
+     *
+     * The UNIT is samples, i.e. POPPED QUEUE ENTRIES, not rows or messages. A
+     * discarded row carrying both an AIN and a DIO entry books TWO. #1200
+     * brought csv_Encode into line: it booked one per row, so it under-
+     * reported exactly this case against the other two.
+     *
+     * Note that the PB AIN path returns a NON-ZERO
      * bufferOffset when an earlier message succeeded, so it books loss WITHOUT
      * bumping encoderFailures -- which is why Streaming_Stop's hadDrops gate
      * has to test this counter directly rather than infer it. */

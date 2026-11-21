@@ -206,15 +206,33 @@ extern "C" {
 #define SCPIDEFINE_floatToStr(v, s, l) SCPI_dtostre((v), (s), (l), 6, 0)
 #endif
 
-#if HAVE_DTOSTRE
-#define SCPIDEFINE_doubleToStr(v, s, l) dtostre((v), (s), 15, DTOSTR_PLUS_SIGN | DTOSTR_ALWAYS_SIGN | DTOSTR_UPPERCASE)
-#elif USE_CUSTOM_DTOSTRE
-#define SCPIDEFINE_doubleToStr(v, s, l) SCPI_dtostre((v), (s), (l), 15, 0)
-#elif HAVE_SNPRINTF
-#define SCPIDEFINE_doubleToStr(v, s, l) snprintf((s), (l), "%.15lg", (v))
-#else
-#define SCPIDEFINE_doubleToStr(v, s, l) SCPI_dtostre((v), (s), (l), 15, 0)
-#endif
+/* DAQiFi patch (#1156): every arm below rendered a double at 15 significant
+ * digits, and a double needs up to 17. So `CONFigure:ADC:CHANCALM?` answered a
+ * ROUNDED coefficient with a clean error queue, making a read-modify-write of
+ * calibration silently lossy -- and a client that verified its own restore
+ * compared rounded against rounded, so the check could not fail.
+ *
+ * The four arms are REPLACED rather than one of them edited, deliberately: the
+ * live arm here is the HAVE_SNPRINTF one (HAVE_DTOSTRE is gated on __AVR__ and
+ * defaults to 0 in cc.h:203; C99 is defined at cc.h:52, so HAVE_SNPRINTF is 1),
+ * but editing only that arm would leave three others that silently reintroduce
+ * the defect if a toolchain change ever flipped the selector. One unconditional
+ * definition cannot be arm-dependent.
+ *
+ * daqifi_double_to_str picks the NARROWEST of 15/16/17 digits that reads back
+ * exactly, so output is byte-identical to the old format wherever 15 digits
+ * already sufficed. Needs snprintf and strtod, both of which this library
+ * already requires (utils.c:335 calls strtod).
+ *
+ * ⛔ The include is RELATIVE TO THIS FILE, not "Util/DoubleFmt.h" against the
+ * project's `../src` include path. Both work for the firmware build, but
+ * several host tests in tests/host compile libscpi's sources directly with
+ * only their own stub directories on the include path, and the project-rooted
+ * form fails there with "No such file or directory" -- which the full host
+ * suite caught. A quoted include resolves relative to the including file
+ * first, so this form needs nothing on the include path at all. */
+#include "../../../../../Util/DoubleFmt.h"
+#define SCPIDEFINE_doubleToStr(v, s, l) daqifi_double_to_str((v), (s), (l))
 
 #if USE_DEVICE_DEPENDENT_ERROR_INFORMATION
 

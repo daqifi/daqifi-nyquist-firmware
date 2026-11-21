@@ -118,6 +118,49 @@
 
 #define DRV_SDSPI_COMMAND_RESPONSE_TRIES          (10)
 
+/* #1217: what kind of write is in doubt (DRV_SDSPI_OBJ.writeInDoubt). A CMD24
+ * is recorded in both SD:PROTect modes. A CMD25 exists only with CRC off (with
+ * CRC on the driver does not issue one) and is ended differently: see
+ * lDRV_SDSPI_WriteResyncEnd. */
+#define DRV_SDSPI_WRITE_IN_DOUBT_NONE             (0U)
+#define DRV_SDSPI_WRITE_IN_DOUBT_SINGLE           (1U)
+#define DRV_SDSPI_WRITE_IN_DOUBT_MULTI            (2U)
+
+/* #1217: how many times one write request re-sends a CMD24 whose write was
+ * in doubt, after the resync, before it is reported as failed. Each attempt is
+ * bounded by DRV_SDSPI_WRITE_TIMEOUT_IN_MS plus the #567 watchdog per
+ * transfer, so a card that is truly gone costs at most a few seconds. */
+#define DRV_SDSPI_WRITE_IN_DOUBT_RETRIES          (2U)
+
+/* #1217: which busy wait a resync is in (DRV_SDSPI_OBJ.resyncStage). */
+#define DRV_SDSPI_RESYNC_STAGE_BEFORE_BLOCK       (0U)
+#define DRV_SDSPI_RESYNC_STAGE_AFTER_BLOCK        (1U)
+/* CMD25 only: after the stop-tran token, waiting out the card's busy. */
+#define DRV_SDSPI_RESYNC_STAGE_AFTER_STOP         (2U)
+/* CMD25 only: the CMD12 that follows the stop-tran token went out; waiting
+ * for its R1, which may come after up to eight 0xFF bytes (NCR). */
+#define DRV_SDSPI_RESYNC_STAGE_CMD12_R1           (3U)
+/* CMD25 only: CMD12's R1 is in; waiting out its busy (R1b). */
+#define DRV_SDSPI_RESYNC_STAGE_AFTER_CMD12        (4U)
+/* Reads allowed for CMD12's R1: NCR is at most eight bytes, plus margin. */
+#define DRV_SDSPI_RESYNC_CMD12_R1_READS           (16U)
+
+/* #1217: why the current request's last read/write attempt was abandoned
+ * (DRV_SDSPI_OBJ.ioAbortCause), named in the re-send and failure log lines so
+ * a field log says what abandons writes. Kept in step with gDrvSDSPIAbortName. */
+#define DRV_SDSPI_ABORT_NONE                      (0U)
+#define DRV_SDSPI_ABORT_XFER                      (1U) /* DRV_SPI reported a transfer error */
+#define DRV_SDSPI_ABORT_XFER_TIMEOUT              (2U) /* #567 watchdog: completion never came */
+#define DRV_SDSPI_ABORT_ADD                       (3U) /* DRV_SPI refused to queue a transfer */
+#define DRV_SDSPI_ABORT_TIMER                     (4U) /* a SYS_TIME timer could not be started */
+#define DRV_SDSPI_ABORT_R1                        (5U) /* the card answered the write command with an error R1 */
+#define DRV_SDSPI_ABORT_CMD                       (6U) /* the write command did not complete (no R1, bus error, failed resync) */
+#define DRV_SDSPI_ABORT_TOKEN                     (7U) /* no valid data-response token came back */
+#define DRV_SDSPI_ABORT_BUSY                      (8U) /* the card stayed busy past DRV_SDSPI_WRITE_TIMEOUT_IN_MS */
+#define DRV_SDSPI_ABORT_RELEASE                   (9U) /* DRV_SDSPI_ReleaseBus ended the request */
+#define DRV_SDSPI_ABORT_REJECT                    (10U) /* the card rejected the block: CRC error or write error token */
+#define DRV_SDSPI_ABORT_CAUSES                    (11U)
+
 // *****************************************************************************
 // *****************************************************************************
 // Section: SD Card constants
@@ -562,6 +605,7 @@ typedef enum
     /* Send the stop transmission token for multi block writes. */
     DRV_SDSPI_TASK_WRITE_STOP_TRAN_TOKEN,
 
+
     /* Send 8 clock pulses post stop tran token. */
     DRV_SDSPI_TASK_WR_STP_TRN_DUMMY_PLS,
 
@@ -823,6 +867,13 @@ typedef enum
     /* Command execution is complete */
     DRV_SDSPI_CMD_EXEC_IS_COMPLETE,
 
+    /* #1217: ending a write in doubt before any command is sent. See
+       lDRV_SDSPI_WriteResyncTasks. */
+    DRV_SDSPI_CMD_RESYNC_START,
+    DRV_SDSPI_CMD_RESYNC_FLUSH,
+    DRV_SDSPI_CMD_RESYNC_BUSY_CHECK,
+    DRV_SDSPI_CMD_RESYNC_STOP,
+
 }DRV_SDSPI_CMD_STATES;
 
 typedef enum
@@ -887,8 +938,8 @@ typedef enum
     /* Process the CID register data */
     DRV_SDSPI_INIT_PROCESS_CID,
 
-    /* Issue command to turn off the CRC */
-    DRV_SDSPI_INIT_TURN_OFF_CRC,
+    /* Issue command to turn on the CRC */
+    DRV_SDSPI_INIT_TURN_ON_CRC,
 
     /* Set the block length of the card */
     DRV_SDSPI_INIT_SET_BLOCKLEN,
@@ -905,9 +956,6 @@ typedef struct
 {
     /* Command code */
     DRV_SDSPI_COMMAND_VALUE      commandCode;
-
-    /* CRC value for that command */
-    uint8_t                     crc;
 
     /* Response type */
     DRV_SDSPI_RESPONSES         responseType;
@@ -1474,13 +1522,16 @@ typedef struct
      * whose late completion is still in flight). The completion callback
      * ignores a matching late completion once (then clears the slot) so a
      * timed-out transfer can't falsely complete a later one — the protection
-     * #567's original always-on guard was after. Entries are also cleared
-     * when DRV_SPI reuses the same handle value for a new submit (the old
-     * transfer object was freed, so its completion can no longer arrive).
-     * Cross-context notes: slots are 32-bit (atomic on PIC32MZ), task writes
-     * precede any possible ISR read by the >=500 ms watchdog timeout, and
-     * every path crosses opaque call boundaries — per the project atomicity
-     * rules and the #578 precedent, no volatile. */
+     * #567's original always-on guard was after. #1217: an entry exists only
+     * while DRV_SPI still holds its transfer -- it is recorded only if the
+     * transfer is pending, and every SD submit first prunes entries whose
+     * transfer DRV_SPI has freed (DRV_SDSPI_AbortedXferRecord,
+     * lDRV_SDSPI_AbortedXferPrune). A stale entry swallowed the completion of a
+     * later transfer that reused its handle value.
+     * Cross-context notes: slots are 32-bit (atomic on PIC32MZ); the task-side
+     * writes run under OSAL_CRIT_TYPE_HIGH, which masks the DMA completion ISR
+     * that reads them; every path crosses opaque call boundaries -- per the
+     * project atomicity rules and the #578 precedent, no volatile. */
     DRV_SPI_TRANSFER_HANDLE                         abortedXferHandles[DRV_SDSPI_ABORTED_XFER_SLOTS];
     uint8_t                                         abortedXferIdx;
 
@@ -1489,6 +1540,18 @@ typedef struct
 
     /* Counter to keep track of retries to get command's response from the SD Card */
     uint8_t                                         ncrTries;
+
+    /* #1217: DRV_SDSPI_WRITE_IN_DOUBT_*. Set before every CMD24 and CMD25 is
+       sent, cleared only when the card has
+       provably left the data phase. Survives an abort, DRV_SDSPI_ReleaseBus
+       and the detect FSM. Only touched under transferMutex on the SD task.
+
+       The #1217 fields are placed in existing alignment holes where one exists
+       (this one, writeBlockCrc16, the three after detectForceEver, and
+       resyncFlushLeft); the rest grew gDrvSDSPIObj from 264 to 280 bytes
+       (linker map, 2026-11-09). BSS growth has to be paid for by trimming the
+       streaming pool, see docs/MEMORY_ARCHITECTURE.md. */
+    uint8_t                                         writeInDoubt;
 
     /* Pointer to the buffer used during sending commands and receiving responses
     on the SPI bus */
@@ -1505,6 +1568,16 @@ typedef struct
 
     /* Speed at which SD card communication should happen */
     uint32_t                                        sdcardSpeedHz;
+
+    /* #1255: this driver's own depth on the (recursive) DRV_SPI exclusive
+     * lock, whether DRV_SPI is holding SD CS low for the current request, and
+     * how often the 0xFF clocked after raising CS did not complete in time,
+     * and how many requests ran without the hold because an earlier request's
+     * transfer was still queued. */
+    uint8_t                                         csLockDepth;
+    volatile bool                                   csHeld;   /* read by the SPI event handler (ISR) */
+    uint32_t                                        csTrailTimeouts;
+    uint32_t                                        csHoldSkips;
 
     uint32_t                                        pollingIntervalMs;
 
@@ -1531,6 +1604,9 @@ typedef struct
        plain `= 0` stores do not (an aligned 16-bit store is atomic on
        PIC32MZ, mcu-hygiene section 3). */
     uint16_t                                        detachedPollCount;
+
+    /* #1217: CRC16 of the block being written, between its data and CRC phases. */
+    uint16_t                                        writeBlockCrc16;
 
     /* #756: FORCED detect-poll request/acknowledge pair.
        DRV_SDSPI_DetectPollExpireNow (whichever task dispatched the SCPI
@@ -1571,11 +1647,24 @@ typedef struct
     uint64_t                                        detectForceAt;
     bool                                            detectForceEver;
 
+    /* #1217: lDRV_SDSPI_WriteResyncTasks's working state. */
+    uint8_t                                         resyncStage;
+    uint8_t                                         resyncIdleReads;
+    uint8_t                                         resyncToken;
+
     /* Flag indicating the presence of the SD Card */
     SYS_MEDIA_STATUS                                mediaState;
 
     /* Write protect state */
     uint8_t                                         isWriteProtected;
+
+    /* #1217: CMD24 re-sends spent on the current request after a write in
+       doubt; reset when a request starts. Sits in the alignment hole before
+       resyncFlushLeft, so it costs no RAM. */
+    uint8_t                                         writeInDoubtRetries;
+
+    /* #1217: 0xFF bytes still to clock in the resync's flush. */
+    uint16_t                                        resyncFlushLeft;
 
     /* SD card type, will be updated by initialization function */
     DRV_SDSPI_TYPE                                  sdCardType;
@@ -1635,6 +1724,29 @@ typedef struct
 
     /* SDCARD driver media geomtery table. */
     SYS_MEDIA_REGION_GEOMETRY                       mediaGeometryTable[3];
+
+    /* #1217: observability, reported by SYST:STOR:SD:INFO?. crcEnabled is
+       set when the card accepts CMD59 and cleared at the start of every media
+       init; resyncCount counts writes in doubt that were resynced, i.e. how
+       often the protection actually fired since boot. */
+    bool                                            crcEnabled;
+
+    /* #1217: DRV_SDSPI_ABORT_*, see there. Sits in the alignment hole after
+       crcEnabled, so it costs no RAM (gDrvSDSPIObj stays 280 B, linker map). */
+    uint8_t                                         ioAbortCause;
+    /* #1217: blocks of the current CMD25 attempt that got past their busy. A
+       re-send rewinds by this many and writes the whole request again. A
+       request is bounded by its buffer, which is in RAM (< 1024 blocks), so
+       16 bits cannot overflow. Fills the rest of the alignment hole after
+       crcEnabled, so it costs no RAM either. */
+    uint16_t                                        cmd25BlocksDone;
+    uint32_t                                        resyncCount;
+    /* #1217: SD:PROTect. Read only at media init (DRV_SDSPI_INIT_TURN_ON_CRC);
+     * crcEnabled is what the card actually runs with. */
+    bool                                            crcRequested;
+    /* Set by DRV_SDSPI_SetCrcMode from another task; consumed by the detect
+     * verdict in DRV_SDSPI_Tasks, which then re-runs media init. */
+    volatile bool                                   reinitRequested;
 
 } DRV_SDSPI_OBJ;
 

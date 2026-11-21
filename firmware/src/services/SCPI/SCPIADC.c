@@ -1922,8 +1922,24 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
      * parser.c:144-146), and the standing rule is that the reason for a SCPI
      * error is retrievable through SYST:LOG?. The -222 path above is left
      * alone: its error code already says what happened. */
+    /* #1153: lock across the WHOLE load -> normalize -> validate -> save
+     * span below, so a concurrent transport's own TopLevelSettings
+     * load-modify-save (SCPI_SaveAutoPowerOnUsb / SCPI_SaveDataPrecision /
+     * SCPI_SaveDeviceName, or another daqifi_settings_Update() caller)
+     * cannot load a stale copy in between and revert the calVals this
+     * call is about to persist. Not routed through daqifi_settings_Update()
+     * itself: this sequence is interleaved with a second NVM read
+     * (daqifi_settings_ValidateADCCalBank) and, below, a #1152
+     * readback-recovery path that must run AFTER the save but OUTSIDE
+     * this lock, which does not fit that helper's single load-modify-save
+     * shape -- and tests/host's run_1152_tests pins this function's
+     * existing call sites and their order by exact text, so this uses the
+     * same nvm.c mutex directly (daqifi_settings_Lock/Unlock) around the
+     * unchanged sequence rather than restructuring it. */
+    daqifi_settings_Lock();
     if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings,
             &tmpTopLevelSettings)) {
+        daqifi_settings_Unlock();
         LOG_E("CONF:ADC:USECal %d: top-level settings NVM read failed; "
               "selection unchanged", param1);
         return SCPI_RES_ERR;
@@ -1990,6 +2006,14 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
             // returned. Kept rather than folded into a ternary so that
             // widening that test later cannot silently route a new value to
             // the factory bank.
+            //
+            // #1153: unlock before this return too. Unreachable today, but
+            // an unconditional-unlock-then-branch shape (like the save
+            // below) was not available here because calType still needs
+            // computing after it -- so every exit out of this switch must
+            // carry its own unlock, and this is the one exit that pre-#1153
+            // had no lock to release at all.
+            daqifi_settings_Unlock();
             LOG_E("CONF:ADC:USECal %d: no calibration bank for this value",
                   param1);
             return SCPI_RES_ERR;
@@ -2000,6 +2024,7 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
      * runtime array untouched, so the one remaining fallible step below cannot
      * find anything to leave half-applied. */
     if (!daqifi_settings_ValidateADCCalBank(calType)) {
+        daqifi_settings_Unlock();
         LOG_E("CONF:ADC:USECal %d: %s cal bank failed validation "
               "(blank or corrupt); selection unchanged", param1,
               (param1 == 1) ? "user" : "factory");
@@ -2008,7 +2033,13 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
 
     //  Persist the selector the validation has proved loadable
     tmpTopLevelSettings.settings.topLevelSettings.calVals = param1;
-    if (!daqifi_settings_SaveToNvm(&tmpTopLevelSettings)) {
+    /* #1153: the save is the end of the locked span opened above -- unlock
+     * right after it resolves, before any of the #1152 recovery logic
+     * below, which re-reads NVM independently and does not need this
+     * lock. */
+    bool saveOk = daqifi_settings_SaveToNvm(&tmpTopLevelSettings);
+    daqifi_settings_Unlock();
+    if (!saveOk) {
         /* A reported save failure does NOT mean the write failed. SaveToNvm
          * stages into the shared global gTempFflashBuffer and
          * nvm_WriteRowtoAddr's success test is a READBACK COMPARISON against

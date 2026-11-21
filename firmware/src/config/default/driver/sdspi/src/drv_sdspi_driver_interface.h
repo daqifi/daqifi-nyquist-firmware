@@ -229,8 +229,12 @@ bool DRV_SDSPI_SpiXferTimerStart(
 
 bool DRV_SDSPI_SpiXferTimerStop( DRV_SDSPI_OBJ* const dObj );
 
-/* #567 rework (Qodo #590): record a watchdog-aborted transfer handle so its
- * late completion is ignored exactly once by the SPI completion callback. */
+/* #567 rework (Qodo #590): record the current transfer's handle when it is
+ * abandoned (watchdog abort, or DRV_SDSPI_ReleaseBus), so its late completion
+ * is ignored exactly once by the SPI completion callback. #1217: recorded only
+ * while DRV_SPI still holds the transfer as pending, under a HIGH critical
+ * section; a completed transfer will send no completion, and its entry would
+ * swallow a later transfer's once DRV_SPI reuses the handle value. */
 void DRV_SDSPI_AbortedXferRecord( DRV_SDSPI_OBJ* const dObj );
 
 // *****************************************************************************

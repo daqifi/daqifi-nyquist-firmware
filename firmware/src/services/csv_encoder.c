@@ -19,6 +19,7 @@
 #include "state/board/BoardConfig.h"
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "Util/StringFormatters.h"
+#include "Util/SampleEmit.h"   /* #1199 non-finite guard */
 #include "Util/Logger.h"  // For LOG_E
 #include "encoder.h"
 #include "csv_encoder.h"
@@ -450,16 +451,17 @@ static size_t tryWriteRow(
                 // Integer millivolts (shorter output strings)
                 double voltage_mv = ADC_ConvertToVoltageByIndex(
                     mapConfigIdx[j], ainPeek->Values[j]) * 1000.0;
+                // #1199: the clamp this replaces let NaN reach the cast (every
+                // comparison with NaN is false), which is UB.
+                // sample_emit_to_int32 tests finiteness FIRST; a non-finite
+                // value leaves `p` where it is, which emits an EMPTY value
+                // field -- the same shape the !valid arm below already uses,
+                // and the separators for this field are already written.
                 int32_t mv;
-                if (voltage_mv > (double)INT32_MAX) {
-                    mv = INT32_MAX;
-                } else if (voltage_mv < (double)INT32_MIN) {
-                    mv = INT32_MIN;
-                } else {
-                    mv = (int32_t)(voltage_mv >= 0.0 ? voltage_mv + 0.5 : voltage_mv - 0.5);
+                if (sample_emit_to_int32(voltage_mv, &mv)) {
+                    p = int_to_str(mv, p, space);
+                    if (p == NULL) return 0;
                 }
-                p = int_to_str(mv, p, space);
-                if (p == NULL) return 0;
             } else {
                 // Volts with N decimal places.
                 //
@@ -477,10 +479,21 @@ static size_t tryWriteRow(
                 // the two exhaustively across every NQ1 code and stepped NQ3,
                 // 821,880 comparisons, zero mismatches. snprintf remains the
                 // fallback for anything outside that proven envelope (precision
-                // above FIXEDFMT_MAX_PRECISION, non-finite, out-of-range), so
-                // behaviour is unchanged there rather than approximated.
+                // above FIXEDFMT_MAX_PRECISION, out-of-range), so behaviour is
+                // unchanged there rather than approximated.
+                //
+                // #1199: "non-finite" USED to be in that fallback list, and is
+                // not any more -- it is rejected before either formatter runs.
+                // fixedfmt_can_format() still returns false for it, so without
+                // this guard a non-finite value fell through to snprintf and
+                // printed `inf`/`nan` into the CSV. An empty field says
+                // "no reading" in a format that has no literal for it.
                 double voltage_v = ADC_ConvertToVoltageByIndex(
                     mapConfigIdx[j], ainPeek->Values[j]);
+                if (!sample_emit_is_numeric(voltage_v)) {
+                    /* Leave `p` -- empty value field, separators already
+                     * written. Same shape as the !valid arm below. */
+                } else
                 if (fixedfmt_can_format(voltage_v, (unsigned)voltagePrecision)) {
                     /* Not named `q`: the enclosing scope already has one,
                      * and it is read as `p - q` just below. */
@@ -744,27 +757,40 @@ size_t csv_Encode(
                  * the wrong trade (a diagnostic over-count is recoverable,
                  * mispaired exported data is not) and the premise was wrong
                  * anyway, since that counter is per-CALL, as the comment
-                 * above now records. One discarded row books one drop here
-                 * regardless of how many queue heads composed it.
+                 * above now records.
+                 *
+                 * ⛔ #1200: this used to say "one discarded row books one drop
+                 * here regardless of how many queue heads composed it", and
+                 * that was wrong against the contract it was citing. Each
+                 * POPPED QUEUE ENTRY is a destroyed sample -- see the
+                 * parameter name and doc on Streaming_ReportEncoderSampleLoss
+                 * ("report samples an encoder CONSUMED and then destroyed ...
+                 * a site that has already popped the queue entry"). A row
+                 * carrying AIN+DIO destroys TWO samples, and the PB encoder
+                 * books exactly that for the same row
+                 * (`(dioS > 0) ? 2u : 1u`, NanoPB_Encoder.c). Booking one
+                 * made CSV under-report against the other two encoders.
                  *
                  * Both pops discard their return deliberately, matching the
                  * success path: a failed pop (queue torn down concurrently)
                  * means nothing was evicted, which is benign -- the row was
                  * never written either, so the sample stays queued for a
                  * normal retry rather than being mis-reported as gone. */
-                bool evictedAny = false;
+                /* #1200: a COUNT, not a flag. Each successful pop destroyed
+                 * one queued sample, and the counter's unit is samples. */
+                uint32_t evictedSamples = 0u;
                 if (hadAIN) {
                     AInPublicSampleList_t *evicted = NULL;
                     if (AInSampleList_PopFront(&evicted)) {
                         AInSampleList_FreeToPool(evicted);
-                        evictedAny = true;
+                        evictedSamples++;
                     }
                 }
                 if (hadDIO) {
                     DIOSample evictedDio;
                     if (DIOSampleList_PopFront(&state->DIOSamples,
                                                &evictedDio)) {
-                        evictedAny = true;
+                        evictedSamples++;
                     }
                 }
                 /* #970 / PR #991 (audit round 1, both legs): BOOK THE LOSS
@@ -777,14 +803,15 @@ size_t csv_Encode(
                  * read ZERO through repeated real destruction -- a counter
                  * reading zero while the thing it counts is happening.
                  *
-                 * ONE per discarded ROW, not per queue head, which is the
-                 * contract the comment above states: "one discarded row books
-                 * one drop here regardless of how many queue heads composed
-                 * it". tryWriteRow() peeks both queues and writes both heads
-                 * into ONE row, so a row carrying AIN+DIO is still one lost
-                 * row.
+                 * ⛔ #1200: ONE PER POPPED ENTRY, not one per row. The
+                 * previous revision booked one per row and said so here; the
+                 * contract it cited counts SAMPLES, so a row carrying AIN+DIO
+                 * destroys two and must book two. The PB encoder already does
+                 * exactly that for the same row, and JSON books per entry, so
+                 * CSV was the only one under-reporting -- the three now agree.
                  *
-                 * GATED ON evictedAny, so a failed pop books nothing. The
+                 * GATED ON a non-zero count, so a failed pop books nothing (it
+                 * never increments). The
                  * comment above is explicit that a pop failing (queue torn
                  * down concurrently) means nothing was evicted and the sample
                  * stays queued for a normal retry -- reporting there would
@@ -793,8 +820,8 @@ size_t csv_Encode(
                  * previously discarded with `(void)`; it is now read for
                  * exactly this decision, which is the same intent the
                  * discard had. */
-                if (evictedAny) {
-                    Streaming_ReportEncoderSampleLoss(1u);
+                if (evictedSamples > 0u) {
+                    Streaming_ReportEncoderSampleLoss(evictedSamples);
                 }
                 LOG_E_SESSION(LOG_SESSION_CSV_SAMPLE_TOO_LARGE,
                         "CSV: row (%u ch) does not fit a %u B encoder "

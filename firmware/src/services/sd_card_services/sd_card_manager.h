@@ -99,6 +99,11 @@ extern "C" {
          * target DELIBERATELY (the #689 pre-walk reopens a split part in
          * place). Default false. */
         bool uniqueTarget;
+        /* #1217: SD:PROTect. true = CRC checking on and every block written
+         * as its own CMD24 (a stray block is refused, ~1/3 the throughput);
+         * false = CRC off, CMD25 multi-block (fast, a stray block is
+         * programmed). Applied by the driver at media init. Default false (#1234). */
+        bool crcProtect;
     } sd_card_manager_settings_t;
 
 
@@ -383,7 +388,8 @@ extern "C" {
      * write had data to issue this time -- the arm is intact; retry rather
      * than treat it as failed.
      *
-     * SCPI: SYSTem:STORage:SD:FAILNext <0|1>
+     * SCPI: SYSTem:STORage:SD:FAILNext <0|1>  (2 arms the separate
+     * live-session one-shot, sd_card_manager_SetFailNextSessionWrite)
      *
      * @param arm true to arm the one-shot, false to disarm without consuming.
      */
@@ -393,6 +399,16 @@ extern "C" {
      *         false once a write has consumed it (or it was never armed).
      *         Bench/test diagnostic only -- see above. */
     bool sd_card_manager_FailNextWriteArmed(void);
+
+    /** @brief #1031: arm/disarm the one-shot that fails the next write of a
+     *         LIVE session (SYST:STOR:SD:FAILNext 2). Bench/test only; same
+     *         rails as SetFailNextWrite, without its teardown-only gate --
+     *         safe since a failed session write continues the session in its
+     *         next file part instead of truncating the current one. */
+    void sd_card_manager_SetFailNextSessionWrite(bool arm);
+
+    /** @brief #1031: true while a SetFailNextSessionWrite arm is outstanding. */
+    bool sd_card_manager_FailNextSessionWriteArmed(void);
 
     /**
      * @brief Checks if the SD card manager is busy with an active operation.

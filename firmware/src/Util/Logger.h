@@ -191,6 +191,8 @@ extern "C" {
         LOG_ONCE_MDNS_ARM_FAIL,           /**< mdns_responder.c: recvfrom re-arm failed — responder deaf until ServiceHealth() re-opens (#58) */
         LOG_ONCE_ADC_THRESHOLD_TRIP,      /**< AdcThreshold.c: an ADC digital-comparator threshold tripped (#670); one-shot so a signal parked past the limit can't flood */
         LOG_ONCE_SD_WBUF_SUBSECTOR,       /**< sd_card_manager.c: SD DMA write buffer below one sector, so the sector-aligned drain can extract nothing (#738); unreachable with the current 512-byte floor, one-shot so a broken floor can't flood the drain loop */
+        LOG_ONCE_SD_CMD59_REJECTED,       /**< drv_sdspi.c: card refused CRC checking, so it is not mounted (#1217); media init retries about once a second, one-shot so that can't flood */
+        LOG_ONCE_SD_WRITE_RESYNC_FAIL,    /**< drv_sdspi.c: a resync attempt failed and will retry (#1217); a stuck-busy card would otherwise log per attempt */
         /* Add new entries above this line */
         LOG_ONCE_COUNT                     /**< Must be <= 32 */
     } LogOnceBit_t;
@@ -361,25 +363,30 @@ extern "C" {
 /** @brief Maximum size of a single log message in bytes (including \r\n\0) */
 #define LOG_MESSAGE_SIZE 128
 
+/* The ring's bookkeeping lives in LogRing.h as pure functions, so the host
+ * suite can test the real code (#1248). Its sizes are defined from the two
+ * constants above, which stay HERE because tools/lint/log_budget.py and
+ * tests/host/Makefile read them out of this file. */
+#define LOG_RING_CAPACITY LOG_MAX_ENTRY_COUNT
+#define LOG_RING_MSG_SIZE LOG_MESSAGE_SIZE
+#include "LogRing.h"
+
 /**
- * @brief Single log entry in the circular buffer
+ * @brief Single log entry in the circular buffer (also the ISR queue item)
  */
-typedef struct {
-    char message[LOG_MESSAGE_SIZE];  /**< Null-terminated log message */
-} LogEntry;
+typedef LogRingEntry LogEntry;
 
 /**
  * @brief Circular log buffer with thread-safe access
  *
  * Implements a fixed-size circular buffer that drops the oldest entry
- * when full. Protected by a FreeRTOS mutex for thread safety.
+ * when full. Protected by a FreeRTOS mutex for thread safety: every LogRing_*
+ * and LogOwnerSet_* call on these fields is made with `mutex` held.
  */
 typedef struct {
-    LogEntry entries[LOG_MAX_ENTRY_COUNT];  /**< Array of log entries */
-    uint8_t head;                            /**< Index for next write */
-    uint8_t tail;                            /**< Index of oldest entry */
-    uint8_t count;                           /**< Current number of entries */
-    SemaphoreHandle_t mutex;                 /**< Mutex for thread safety */
+    LogRing ring;                  /**< Entries, indices and tailSeq */
+    LogOwnerSet dumping;           /**< Tasks whose own records are not buffered (#1248) */
+    SemaphoreHandle_t mutex;       /**< Mutex for thread safety */
 } LogBuffer;
 
 /**
@@ -405,9 +412,33 @@ size_t LogMessageCount(void);
  * @brief Dumps all log messages to SCPI interface and clears the buffer.
  *        Messages are written oldest-first, with flush after each message.
  *
+ * A record is removed from the buffer only after the transport accepted ALL
+ * of it (#1248). On a short write the dump stops, the record stays in the
+ * buffer for the next dump, and this returns false so the caller can report
+ * the truncation; one-shot log sites are re-armed only by a complete dump.
+ *
+ * Records the CALLING task logs while a dump is between LogMessageDumpBegin()
+ * and LogMessageDumpEnd() are not buffered: on a full buffer they would
+ * overwrite the unsent record a truncated dump is keeping.
+ *
  * @param context SCPI context for output (must not be NULL)
+ * @return true if every record was written in full (or there was nothing to
+ *         write); false if a short write truncated the dump
  */
-void LogMessageDump(scpi_t * context);
+bool LogMessageDump(scpi_t * context);
+
+/**
+ * @brief Stop buffering records logged by the calling task (#1248).
+ *        Pair with LogMessageDumpEnd(); bracket the dump AND any error the
+ *        caller reports about it, since reporting an SCPI error logs too.
+ * @return false if the logger is not initialised or both slots are taken; the
+ *         dump still works, it just is not protected from the caller's own
+ *         records
+ */
+bool LogMessageDumpBegin(void);
+
+/** @brief Resume buffering the calling task's records. */
+void LogMessageDumpEnd(void);
 
 /**
  * @brief Initializes the log buffer and mutex (idempotent).

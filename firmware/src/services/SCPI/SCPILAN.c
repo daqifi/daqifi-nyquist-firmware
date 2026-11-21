@@ -248,7 +248,52 @@ scpi_result_t SCPI_LANPowerSet(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+/* #1186. Selector for the optional argument. 0 (or no argument at all) keeps
+ * the original meaning -- the STAGED runtime setting, what APPLY would bring
+ * up next. 1 asks what the radio is ACTUALLY running. The no-argument form is
+ * byte-for-byte what it was before #1186, so every existing client is
+ * unaffected. */
+#define LAN_NETMODE_QUERY_STAGED  0
+#define LAN_NETMODE_QUERY_ACTIVE  1
+
 scpi_result_t SCPI_LANNetModeGet(scpi_t * context) {
+    int32_t which = LAN_NETMODE_QUERY_STAGED;
+
+    /* Optional argument, read through the #874 helper rather than
+     * SCPI_ParamInt32(..., FALSE): that idiom reports ABSENT and
+     * PRESENT-BUT-UNPARSEABLE as the same FALSE, so `NETType? BANANA` would
+     * silently answer the STAGED value instead of rejecting -- the client
+     * being told its request was replaced only by a -104 it has to go looking
+     * for. The contract is written out once at SCPI_OptionalParamInt32 in
+     * SCPIInterface.h: short form on ABSENT only, reject on BAD. */
+    switch (SCPI_OptionalParamInt32(context, &which)) {
+        case SCPI_OPT_ABSENT:
+            which = LAN_NETMODE_QUERY_STAGED;
+            break;
+        case SCPI_OPT_PRESENT:
+            if (which != LAN_NETMODE_QUERY_STAGED &&
+                which != LAN_NETMODE_QUERY_ACTIVE) {
+                /* A number we do not define. Refuse rather than falling back
+                 * to the staged value: a client that mistyped the selector
+                 * must not be handed a reading it did not ask for. */
+                SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+                return SCPI_RES_ERR;
+            }
+            break;
+        case SCPI_OPT_BAD:
+        default:
+            /* An error is already queued -- libscpi's -104, or the helper's
+             * own where libscpi queued nothing. */
+            return SCPI_RES_ERR;
+    }
+
+    if (which == LAN_NETMODE_QUERY_ACTIVE) {
+        /* 0 when neither mode is up. Deliberately not folded into STA or AP:
+         * see wifi_manager_GetActiveNetworkMode(). */
+        SCPI_ResultInt32(context, (int) wifi_manager_GetActiveNetworkMode());
+        return SCPI_RES_OK;
+    }
+
     wifi_manager_settings_t * pWifiSettings = BoardRunTimeConfig_Get(BOARDRUNTIME_WIFI_SETTINGS);
     uint8_t type = pWifiSettings->networkMode;
     SCPI_ResultInt32(context, (int) type);
@@ -685,18 +730,23 @@ scpi_result_t SCPI_LANBssidGet(scpi_t * context) {
  *              wifi_manager_GetWiFiStatus() reports as WIFI_STATUS_CONNECTED.
  *
  *
- *              CAVEAT, #1060: CONNECTED can be reported with no peer
+ *              CAVEAT, #1060: CONNECTED can still be reported with no peer
  *              attached, because the association flag behind it is
- *              event-latched rather than a live measurement. It can happen
- *              around an AP stop or restart, or a mode switch -- in at least
- *              one path with no time bound. Do not treat CONNECTED as proof
- *              that a peer is attached now.
+ *              event-latched rather than a live measurement, and not every
+ *              path that can leave it stale is closed. Do not treat CONNECTED
+ *              as proof that a peer is attached now.
  *
- *              The flag behaviour is PRE-EXISTING and unchanged here -- the
- *              legacy 3-value status tests the same flag first, verified
- *              against main at d71147e31 -- but this command is what newly
- *              PUBLISHES "a peer is attached", so the caveat belongs with the
- *              promise. #1060 carries the fix.
+ *              Closed: #1060's AP->STA APPLY path (that branch now resets the
+ *              flag before tearing the AP down, mirroring the STA->AP branch),
+ *              and a stale association event still queued across a mode
+ *              switch, disable or teardown (the handler now drops an event
+ *              whose mode is no longer up, instead of re-setting the flag).
+ *              Still open, by code reading: an in-place soft-AP restart never
+ *              clears the flag, so a station that was associated before it
+ *              and does not come back leaves CONNECTED standing -- see
+ *              wifi_manager_GetLinkState(). This command is what newly
+ *              PUBLISHES "a peer is attached", so the caveat stays with the
+ *              promise until no such path is left.
  *              APIDLE and CONNECTED are deliberately NOT split on "has a TCP
  *              client". An adversarial audit of PR #1044 showed that they
  *              cannot be: a station that merely associates to our soft-AP

@@ -105,6 +105,10 @@ int8_t nm_read_reg_with_ret(uint32_t u32Addr, uint32_t* pu32RetVal);
 */
 int8_t nm_write_reg(uint32_t u32Addr, uint32_t u32Val);
 
+/* #881 (DAQiFi): write a register in one attempt, never retried; see
+ * nm_spi_write_reg_once(). */
+int8_t nm_write_reg_once(uint32_t u32Addr, uint32_t u32Val);
+
 /**
 *   @fn     nm_read_block
 *   @brief  Read block of data

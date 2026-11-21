@@ -18,6 +18,7 @@
 //// 3rd Party
 //#include "HAL/NVM/DaqifiSettings.h"
 #include "HAL/Power/PowerApi.h"
+#include "HAL/UI/UI.h"
 #include "services/DaqifiPB/DaqifiOutMessage.pb.h"
 #include "services/DaqifiPB/NanoPB_Encoder.h"
 //#include "Util/StringFormatters.h"
@@ -1405,12 +1406,32 @@ __stalled_exit:
 
 /**
  * Gets the system log
+ *
+ * #1248: a dump cut short by a stalled transport answers -200, so a host can
+ * tell "the log ended" from "the log was cut off". The records that did not go
+ * out stay in the ring for the next SYSTem:LOG?.
+ *
+ * ⛔ The -200 is pushed with SCPI_ErrorPush, NOT SCPI_ExecutionError: the
+ * latter LOG_E's its reason, and on a full ring that record would overwrite
+ * the tail -- the unsent record the truncation just kept. SCPI_ErrorPush is
+ * not log-free either (the transport error callbacks, SCPI_USB_Error and
+ * SCPI_TCP_Error, LOG_E every error they emit), which is why the push sits
+ * INSIDE the LogMessageDumpBegin/End bracket: records this task logs there
+ * are not buffered.
+ *
  * @param context
- * @return 
+ * @return SCPI_RES_OK, or SCPI_RES_ERR with -200 queued if truncated
  */
 static scpi_result_t SCPI_SysLogGet(scpi_t * context) {
-    LogMessageDump(context);
-    return SCPI_RES_OK;
+    bool bracketed = LogMessageDumpBegin();
+    bool complete = LogMessageDump(context);
+    if (!complete) {
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+    }
+    if (bracketed) {
+        LogMessageDumpEnd();
+    }
+    return complete ? SCPI_RES_OK : SCPI_RES_ERR;
 }
 
 /**
@@ -1974,6 +1995,26 @@ static scpi_result_t SCPI_GetAutoPowerOnUsb(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+/* #1153: daqifi_settings_Update() callback for SCPI_SaveAutoPowerOnUsb
+ * below. No failure path of its own -- a failed load falls back to
+ * factory defaults, exactly as the pre-#1153 code did -- so this always
+ * asks Update() to save. */
+static DaqifiSettingsUpdateDecision SaveAutoPowerOnUsbUpdateFn(
+        DaqifiSettings* settings, bool loaded, void* context) {
+    (void)context;
+    if (!loaded) {
+        daqifi_settings_LoadFactoryDeafult(DaqifiSettings_TopLevelSettings, settings);
+    }
+    /* Set autoPowerOnUsb from PowerData runtime explicitly (don't rely on
+     * SaveToNvm's auto-capture — that path would also affect unrelated
+     * saves like CONF:VOLT:SAVE). */
+    tPowerData *pPwr = BoardData_Get(BOARDDATA_POWER_DATA, 0);
+    if (pPwr != NULL) {
+        settings->settings.topLevelSettings.autoPowerOnUsb = pPwr->autoPowerOnUsb;
+    }
+    return DAQIFI_SETTINGS_UPDATE_SAVE;
+}
+
 static scpi_result_t SCPI_SaveAutoPowerOnUsb(scpi_t * context) {
     /* Use shared SCPI response buffer instead of stack-local —
      * DaqifiSettings is ~500 bytes (union includes WiFi settings),
@@ -1985,21 +2026,11 @@ static scpi_result_t SCPI_SaveAutoPowerOnUsb(scpi_t * context) {
         SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
         return SCPI_RES_ERR;
     }
-    memset(pSettings, 0, sizeof(*pSettings));
-    /* Load existing NVM to preserve other TopLevelSettings fields.
-     * Set autoPowerOnUsb from PowerData runtime explicitly (don't rely
-     * on SaveToNvm's auto-capture — that path would also affect
-     * unrelated saves like CONF:VOLT:SAVE).
-     */
-    if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings, pSettings)) {
-        daqifi_settings_LoadFactoryDeafult(DaqifiSettings_TopLevelSettings, pSettings);
-    }
-    pSettings->type = DaqifiSettings_TopLevelSettings;
-    tPowerData *pPwr = BoardData_Get(BOARDDATA_POWER_DATA, 0);
-    if (pPwr != NULL) {
-        pSettings->settings.topLevelSettings.autoPowerOnUsb = pPwr->autoPowerOnUsb;
-    }
-    bool ok = daqifi_settings_SaveToNvm(pSettings);
+    /* #1153: load, apply, and save as ONE sequence under the NVM mutex, so
+     * a concurrent transport's own TopLevelSettings load-modify-save
+     * cannot land between this load and this save. */
+    bool ok = daqifi_settings_Update(DaqifiSettings_TopLevelSettings,
+            pSettings, SaveAutoPowerOnUsbUpdateFn, NULL);
     SCPI_ResponseBuf_Give();
     return ok ? SCPI_RES_OK : SCPI_RES_ERR;
 }
@@ -2697,20 +2728,160 @@ static scpi_result_t SCPI_RefuseSessionStartBusy(scpi_t * context,
  * literal, so a NULL is a compile-time impossibility rather than a runtime
  * one. Same reasoning, and the same statement of it, as SCPI_MemRunClaimed.
  */
+/* #1120: tentative (no-initializer) forward declarations, so the runner below
+ * can take the stop pin itself. This is legal C: a file-scope static may have
+ * any number of declarations without an initializer, and they all name the
+ * same object as the one initialized definition. (#1201: this used to defer
+ * the argument to "the #938 block further down", which was FindMeasureStep's
+ * own copy of these declarations -- #1201 deleted that block, because the
+ * function no longer reads either global, so the argument is stated here
+ * instead of pointed at.) Needed here because
+ * SCPI_RunSessionStartClaimed is defined earlier in this file than the
+ * definitions next to SCPI_StartStreaming's #861 guard, and must observe the
+ * same stop-requested generation they do. */
+static volatile uint32_t gStreamStopGen;
+static volatile uint32_t gStreamStopsActive;
+
+/* #1201: "has a stop been requested since this command pinned?" -- the ONE
+ * implementation of the three-term test.
+ *
+ * It existed TWICE before this, copy-pasted: in SCPI_StartStreamingClaimed off
+ * its pinned locals, and in FindMeasureStep off the sweep's basis. Both are
+ * replaced by a call to this. Two sites that had NO copy gain one -- the
+ * SYSTem:STReam:THRoughput arm, and the finder's post-observation check -- and
+ * those two facts are related rather than coincidental: a test that has to be
+ * re-typed to be reused is a test that does not get reused. Writing it once is
+ * most of why the two missing sites are cheap to add.
+ *
+ * Returns THE ANSWER, and through *outStopInFlight the one refinement both
+ * existing callers need: whether the stop is still RUNNING, as opposed to
+ * having begun and finished inside the window. Only the log message
+ * distinguishes those, so it is an out-param while the predicate's answer is
+ * the return value -- the same split FindMeasureStep's own *outStopRequested
+ * already uses, and it keeps the call reading as the predicate it is.
+ *
+ * ⛔ CALL IT WITH A CRITICAL SECTION ALREADY HELD. It deliberately does not
+ * take one itself, and that is the one property this factoring must not
+ * "tidy": at the arm sites the reads have to be inside the SAME section that
+ * publishes IsEnabled, which is what makes the answer USABLE rather than
+ * merely atomic -- a stop cannot then slip between the test and the publish. A
+ * section acquired in here would make each call atomic and reopen precisely
+ * that window, so a caller holding none gets a correct value of a useless
+ * instant. Each load is individually atomic on PIC32MZ anyway
+ * (docs/MCU_REFERENCE.md, "Atomicity & Concurrency Rules", first bullet); the
+ * section exists to make the PAIR describe ONE INSTANT, which is #969's fix.
+ *
+ * The three terms, each covering a case the other two cannot -- the full
+ * argument lives at gStreamStopsActive's definition and is not restated here:
+ *   pinnedActive        a stop was ALREADY RUNNING when this command pinned,
+ *                       and finished before this check. The other two miss it:
+ *                       the count is back to zero and the generation was
+ *                       bumped BEFORE the pin, so it compares equal.
+ *   gStreamStopsActive  a stop is running RIGHT NOW, so it will clear
+ *                       IsEnabled after we publish it.
+ *   gStreamStopGen      a stop began and ended entirely inside the window --
+ *                       the original #861 case.
+ * Term order and short-circuiting are kept exactly as both copies had them, so
+ * this is a textual no-op at the two existing sites rather than a rewrite that
+ * happens to agree. */
+static inline bool StopRequestedSince(uint32_t pinnedGen, bool pinnedActive,
+                                      bool *outStopInFlight) {
+    const bool inFlight = pinnedActive || (gStreamStopsActive != 0u);
+    *outStopInFlight = inFlight;
+    return inFlight || (gStreamStopGen != pinnedGen);
+}
+
 static scpi_result_t SCPI_RunSessionStartClaimed(scpi_t * context,
-                                                 scpi_result_t (*body)(scpi_t *),
+                                                 scpi_result_t (*body)(scpi_t *,
+                                                                       uint32_t,
+                                                                       bool),
                                                  const char *what) {
+    /* #1120: THE STOP PIN IS TAKEN HERE, AS THIS RUNNER'S FIRST ACTION, and
+     * passed to `body` as real parameters.
+     *
+     * It must precede Streaming_BeginSessionStart() because that call can
+     * itself REFUSE: once the claim is held a call on the other transport
+     * already answers -200, so the claim is an observable effect of this
+     * command, and a stop landing during claim acquisition would be invisible
+     * to any pin taken later. That is #973's conclusion, reached for the
+     * finder; taking the pin in the runner gives it to every body routed
+     * through here instead of to one of them.
+     *
+     * One critical section, because the pair has to describe a single instant
+     * rather than two.
+     *
+     * What remains ahead of this line is the gap between the registered
+     * callback's entry and this statement, and that is not a window to be
+     * closed: a preemption there orders the stop before this command did
+     * anything at all, which is what "before" means. Same non-window
+     * SCPI_StartStreaming documents at its own pin.
+     *
+     * ⭐ This REPLACES #973's file-scope mailbox
+     * (gWifiFindPinStopGen/gWifiFindPinStopActive/gWifiFindPinOwner, deleted
+     * by this change). A mailbox written outside the #850 claim is clobberable
+     * by a concurrent call on the other transport, which is why it needed an
+     * owner stamp and a refusal path; a stack-resident pin threaded as an
+     * argument has no cross-transport clobber hazard to guard against, so both
+     * the stamp and the refusal go away rather than being re-derived for the
+     * next command added here. */
+    uint32_t stopGenPinned;
+    bool     stopActivePinned;
+    taskENTER_CRITICAL();
+    stopGenPinned    = gStreamStopGen;
+    stopActivePinned = (gStreamStopsActive != 0u);
+    taskEXIT_CRITICAL();
+
     if (Streaming_BeginSessionStart() != STREAM_START_CLAIM_OK) {
         return SCPI_RefuseSessionStartBusy(context, what);
     }
-    scpi_result_t result = body(context);
+    scpi_result_t result = body(context, stopGenPinned, stopActivePinned);
     Streaming_EndSessionStart();
     return result;
 }
 
 /* #850: the session-start claim is taken by the SCPI_RunThroughputBench wrapper
  * below, which is the only caller of this body. */
-static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context) {
+static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context,
+                                                    uint32_t stopGenPinned,
+                                                    bool stopActivePinned) {
+    /* #1201 + #1226: the pin #1120 made available is ACTED ON at this
+     * command's arm, through the shared StopRequestedSince() predicate.
+     *
+     * TWO ISSUES CONVERGED HERE and both reasons are kept, because they are
+     * different hazards that happen to need the same test:
+     *   #1226  a POWER-OFF advances gStreamStopGen to cancel any arm still in
+     *          its setup window. Without this check a benchmark that was in
+     *          setup when the button was pressed arms in STANDBY with the
+     *          rails off and samples for up to 60 s.
+     *   #1201  a SYST:STR:STOP that completes in the same window was lost, so
+     *          the bench streamed for up to its full duration after the
+     *          operator asked it to stop, and the command returned OK.
+     * #1226 implemented the three terms inline here, which was the THIRD
+     * copy of them in this file; main's own comment anticipated that "#1201 /
+     * PR #1215 generalises the same check into one StopRequestedSince()
+     * predicate", and that is what this is. The predicate is unchanged by the
+     * merge -- only this call site stops carrying its own copy.
+     *
+     * ⭐ THIS IS A BEHAVIOUR CHANGE AT THIS COMMAND'S ARM, taken on purpose,
+     * and this file already contains the rule for when that is allowed. The
+     * #868/#891/#895 comment at the arm below declines to inherit the finder's
+     * inputs-present test and the finder's split refusal token "by symmetry",
+     * on the ground that each would be a NEW refusal on a command that has
+     * always accepted the case, and so belongs at this command's own front
+     * door as a deliberate change. That rule is honoured, not bypassed: this
+     * IS that deliberate change, made because a stop is categorically unlike
+     * the other two.
+     *
+     * Why categorically. #891 was declined here because this command's output
+     * is the sample and byte count it measured, which stays TRUE of a run with
+     * nothing enabled -- empty, not wrong. A stop is not a consistency
+     * failure, it is an explicit operator instruction, and the failure it
+     * leaves is not an empty measurement: the bench goes on to stream AFTER
+     * the operator asked it to stop. No reading of "the counts are still true"
+     * excuses that. So the symmetry argument that declined #891 does not reach
+     * this, which is exactly why this one is taken and those two stay
+     * declined. */
+
     int32_t freq, duration;
     if (!SCPI_ParamInt32(context, &freq, TRUE)) return SCPI_RES_ERR;
     if (!SCPI_ParamInt32(context, &duration, TRUE)) return SCPI_RES_ERR;
@@ -2831,7 +3002,20 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context) {
      * do, and with no session running it can only discard stale samples. */
     bool cfgBusy;
     bool mappingMoved = false;
+    bool stopInFlight = false;
+    bool stopRequested = false;
     taskENTER_CRITICAL();
+    /* #1201/#1226: computed FIRST, ahead of cfgBusy, matching the ordering
+     * both other arms use -- so a stop or power-off that landed anywhere in
+     * this command's window is reported as itself rather than folded into
+     * whichever consistency check also happens to be true at the time. Inside
+     * this section, not before it, for the reason StopRequestedSince states:
+     * the answer is only usable if nothing can slip between the test and the
+     * publish below. #1226's inline three-term copy is replaced by the
+     * predicate; the terms and their order are identical, so this is a
+     * textual change at this site and not a behavioural one. */
+    stopRequested = StopRequestedSince(stopGenPinned, stopActivePinned,
+                                       &stopInFlight);
     cfgBusy = Streaming_ConfigChangeInProgress();
     if (!cfgBusy) {
         /* #868: the enabled-channel set moved after this command built its
@@ -2880,18 +3064,18 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context) {
                                 pBoardConfig, (const AInRuntimeArray*)pRtAin)
                         != mappingSelAtBuild);
     }
-    if (!cfgBusy && !mappingMoved) {
+    if (!cfgBusy && !mappingMoved && !stopRequested) {
         pStreamCfg->ClockPeriod = periodCycles - 1;
         pStreamCfg->Frequency = (uint64_t)freq;
         pStreamCfg->IsEnabled = true;
     }
     taskEXIT_CRITICAL();
 
-    /* #868: this call armed nothing -- neither refusal reason reaches the
-     * writes above -- so every "did WE arm it?" test below is this, not
-     * cfgBusy alone.  Getting that wrong would disarm a concurrent session's
+    /* #868: this call armed nothing -- no refusal reason reaches the writes
+     * above -- so every "did WE arm it?" test below is this, not cfgBusy
+     * alone.  Getting that wrong would disarm a concurrent session's
      * IsEnabled on the mapping-moved path. */
-    const bool armRefused = cfgBusy || mappingMoved;
+    const bool armRefused = cfgBusy || mappingMoved || stopRequested;
 
     /* Only pump the state machine if we actually armed. On the refused path
      * Streaming_UpdateState() would call Streaming_Stop(), and if a concurrent
@@ -2906,8 +3090,24 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context) {
      * leaves Running true, and the benchmark would then adopt that session as
      * its own and stop it after the dwell (Qodo). */
     if (armRefused || !pStreamCfg->Running) {
+        /* #1201: stopRequested is named FIRST when it fired, even if another
+         * cause is also true -- same precedence the other two arms use, and
+         * for the same reason: it is the one cause of the set that is an
+         * explicit operator instruction rather than a consistency failure. */
+        /* log_budget: max=78 -- #1201 BRINGS THIS SITE UNDER THE CHECK. It
+         * was listed in tools/lint/log_budget-baseline.txt as an unresolvable
+         * %s, and the baseline matches by format-string TEXT, so the two
+         * longer strings #1201 adds here would have ridden that waiver
+         * unmeasured. They fit (78 + the 22-byte prefix = 100 of 125), but
+         * that was luck until it was bounded. The baseline entry is removed in
+         * the same change, which is what its own header asks for: it exists to
+         * stop the count growing AND to shrink as sites are fixed. */
         LOG_E("Throughput benchmark: %s",
-              cfgBusy ? "refused, a streaming config change is in flight (#847)"
+              stopRequested
+                      ? (stopInFlight
+                         ? "refused, a stop/power-off is in flight (#1201/#1226)"
+                         : "refused, a stop/power-off completed in setup (#1201/#1226)")
+                      : cfgBusy ? "refused, a streaming config change is in flight (#847)"
                       : mappingMoved
                       ? "refused, the enabled-channel set moved after the mapping was built (#868)"
                       : "streaming failed to start");
@@ -2933,6 +3133,41 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context) {
 
     // Wait for duration
     vTaskDelay(pdMS_TO_TICKS(duration * 1000));
+
+    /* #1201: did a stop land DURING THE DWELL? Read here -- after the dwell,
+     * before the first teardown statement -- for the same reason the finder's
+     * post-observation read sits where it does: a read taken after the
+     * teardown could not tell an operator's stop apart from this function's
+     * own, and a read taken before the dwell is the arm check, which has
+     * already passed.
+     *
+     * ⭐ IT CANNOT SELF-TRIGGER, and that is a property of the teardown
+     * below, not of this placement. Only SCPI_PerformStreamingStop() and the
+     * power-down path advance gStreamStopGen; this function's teardown pokes
+     * IsEnabled and calls Streaming_UpdateState() directly and reaches
+     * neither, which is the same reason a START's own teardown of a previous
+     * session does not refuse itself. Reading before the teardown makes the
+     * placement robust to that changing, rather than relying on it.
+     *
+     * One critical section, for the pair, and that is ALL it is for -- the
+     * same note the finder's site carries: there is no publish of IsEnabled
+     * here to make the answer actionable, because this is judging a run that
+     * has already finished rather than deciding whether to arm.
+     *
+     * The pinnedActive term is NECESSARILY FALSE here -- a stop already
+     * running at this command's entry is caught by the arm check above, which
+     * refuses -- so of the three terms only the live count and the generation
+     * delta can fire. Unlike pinnedActive, the LIVE COUNT genuinely can: a
+     * stop issued during the dwell and still parked in its SD close is in
+     * flight at this moment, which is why the message below distinguishes the
+     * two. Noted so a reader does not conclude the first term is doing work it
+     * cannot do. */
+    bool dwellStopInFlight = false;
+    bool dwellStopped;
+    taskENTER_CRITICAL();
+    dwellStopped = StopRequestedSince(stopGenPinned, stopActivePinned,
+                                      &dwellStopInFlight);
+    taskEXIT_CRITICAL();
 
     // Stop
     pStreamCfg->IsEnabled = false;
@@ -2983,6 +3218,65 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context) {
     pStreamCfg->ClockPeriod = savedClockPeriod;
     Streaming_RestoreRateConfigured(savedRateConfigured);   /* #730 */
     RestoreSdMode(savedSdMode);
+
+    /* #1201: a stop during the dwell DISCARDS the measurement instead of
+     * reporting it as a completed run.
+     *
+     * ⛔ WHAT WAS WRONG. The stop executed -- sampling really did end -- and
+     * this command printed its whole result block and returned OK anyway, so
+     * the numbers described a run the operator had cancelled. Measured on this
+     * lane's board (#1201 image, crc32 BD809517, 12/12 attempts): the reply
+     * was always a result block with no wire error, carrying TotalSamples
+     * 333-393 and SamplesPerSec 66-78, against a matched unraced baseline on
+     * the same image of 24999 / 4999. About 1.4% of the requested samples
+     * survived and the command still called it a success. A client has no way
+     * to tell that from a device that is simply slow, which is the whole
+     * defect: a cancelled benchmark reads as a catastrophic one.
+     *
+     * Placed AFTER the teardown and the restore above, so every exit from
+     * this function still restores the same six things and the stop is
+     * honoured rather than raced -- and BEFORE Streaming_GetStats() below,
+     * which is the computation that must not happen, not merely a print that
+     * must not be made. There is nothing to suppress downstream because
+     * nothing downstream runs.
+     *
+     * An ERROR, not a zeroed result block: #861's rule is that a refusal must
+     * be distinguishable from a measurement, and a result block of zeroes is
+     * exactly the thing a client cannot distinguish. THRoughput's error channel
+     * is the WIRE (it pushes on the live context, unlike WIFI:FINd?, whose
+     * push is queue-only to protect its five-field reply -- #965), so this
+     * reaches the caller as **ERROR: -200 and the result block is absent. */
+    if (dwellStopped) {
+        /* ⛔ ITS OWN MARKER (#1230), DISTINCT FROM THE ARM'S (#1226) ABOVE.
+         * These issue pairs are a CROSS-REPO CONTRACT, not decoration: the
+         * companion test in daqifi-python-test-suite decides WHICH window
+         * caught a stop by matching them, and its own comment says the
+         * surrounding sentence may be reworded while the marker may not.
+         *
+         * This is written down because the merge that produced this function
+         * broke it twice over, silently and invisibly to any firmware-only
+         * review -- the expectation that broke lives in the other repo.
+         * Folding #1226 into the predicate rewrote the ARM's marker from
+         * (#1201/#861) to (#1201/#1226), which (a) removed (#1201/#861) from
+         * this file entirely, so the companion's MARK_THR_ARM matched nothing
+         * and the arm refusal became undetectable, and (b) left this new site
+         * reusing (#1201/#1226), so the arm and the dwell reported as one
+         * window. The guard below is what makes that a BUILD failure instead
+         * of a test that quietly stops discriminating.
+         */
+        /* log_budget: max=62 -- both candidate strings below are exactly 62
+         * bytes and the fixed prefix is 41, so the worst case is 103 of
+         * Logger's 125. Bounded rather than left as a bare %s for the reason
+         * this gate exists: the remedy is written last in these messages, so
+         * a truncation eats the actionable half and the line still reads as
+         * complete. */
+        LOG_E("Throughput benchmark: result discarded - %s",
+              dwellStopInFlight
+                  ? "a stop is still in flight on the other transport (#1201/#1230)"
+                  : "a stop was issued and completed during the dwell (#1201/#1230)");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
 
     // Collect and report results
     StreamingStats s;
@@ -3119,27 +3413,25 @@ typedef struct {
     uint64_t               mappingSelAtBuild;
     /* #938/#973: the sweep's stop-request pin -- generation and "a stop is
      * running right now", read together in one critical section at command
-     * DISPATCH (SCPI_WifiFindRate, ahead of the #850 session-start claim),
-     * not at basis build -- see the gWifiFindPinOwner mailbox declared
-     * ahead of SCPI_WifiFindRateClaimed for why the placement moved and how
-     * the values get here. It lives in the basis, not in FindMeasureStep,
+     * DISPATCH (#1120: by SCPI_RunSessionStartClaimed, ahead of the #850
+     * session-start claim), not at basis build -- the values reach
+     * SCPI_WifiFindRateClaimed as parameters. It lives in the basis, not in
+     * FindMeasureStep,
      * because a per-step re-pin cannot see a stop that began and ended
      * between two steps; see that function's header. */
     uint32_t               stopGenAtBuild;
     bool                   stopActiveAtBuild;
 } FindStepBasis;
 
-/* #938: tentative (no-initializer) forward declarations. The full definitions,
- * with the mechanism's rationale, live later in this file next to
- * SCPI_StartStreaming's own #861 guard -- read them there. This is legal C: a
- * file-scope static may have any number of declarations without an
- * initializer, and they all name the same object as the one initialized
- * definition. Needed only because FindMeasureStep (below) is defined earlier
- * in the file than SCPI_StartStreaming and must observe the same
- * stop-requested generation it does -- the same "forward-declared here
- * because" shape already used for SCPI_PerformStreamingStop further down. */
-static volatile uint32_t gStreamStopGen;
-static volatile uint32_t gStreamStopsActive;
+/* #1201: FindMeasureStep's own tentative forward declarations of
+ * gStreamStopGen/gStreamStopsActive USED TO BE HERE, and are gone because it
+ * no longer touches either global: it asks StopRequestedSince() instead, which
+ * is declared with the runner near the top of this file and carries the only
+ * copy of the three-term test. The declarations the runner needs are still
+ * there, next to it. Removed rather than left harmless -- a declaration whose
+ * comment says it is "needed because FindMeasureStep must observe the same
+ * generation" would be a false statement about this function once it stopped
+ * doing so. */
 
 // One measurement cycle for SCPI_WifiFindRate: start streaming at `freq`, dwell,
 // observe the sample-pool high-water mark (the last-to-fill buffer — see header),
@@ -3147,14 +3439,18 @@ static volatile uint32_t gStreamStopsActive;
 // Returns false on start failure (NOT "saturated") — that case is signaled via
 // *outStartFailed, which callers must check first.
 // Outputs the measured wire KB/s.  *outStartFailed is set if the stream never
-// went Running, or if the arm was refused (caller aborts).  Factored (#520,
+// went Running, if the arm was refused, or (#1201) if a stop landed during the
+// dwell, which makes the observation unscoreable rather than clean (caller
+// aborts in all three cases).  Factored (#520,
 // 2026-05-31) so the coarse AIMD climb and the binary-search refinement share
 // one code path.  wRingCap is used only for the diagnostic log line.
 // `basis` is the sweep's #868 channel-mapping provenance and is required --
 // the sole caller passes the address of its own local, so it is never NULL and
 // is not tested for it.
-// *outStopRequested (#965) is set true only when the refusal's cause was
-// specifically the #938 stopRequested pin -- never for cfgBusy/mappingMoved/
+// *outStopRequested (#965) is set true only when the failure's cause was
+// specifically a stop -- the #938 pin at the arm, or (#1201) the same test
+// repeated at the end of the observation, which discards a measurement a stop
+// cut short instead of scoring it clean. Never for cfgBusy/mappingMoved/
 // inputsGone, and never on the "armed but never ran" or freq==0 producers.
 // It is how the caller learns WHICH cause fired without widening this
 // function's return shape: *outStartFailed alone (pre-existing) tells the
@@ -3259,8 +3555,9 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
      * matching that function's ordering, so a stop that landed anywhere in
      * this sweep is reported as itself and not folded into whichever
      * consistency check also happens to be true. */
-    stopInFlight = basis->stopActiveAtBuild || (gStreamStopsActive != 0u);
-    stopRequested = stopInFlight || (gStreamStopGen != basis->stopGenAtBuild);
+    stopRequested = StopRequestedSince(basis->stopGenAtBuild,
+                                       basis->stopActiveAtBuild,
+                                       &stopInFlight);
     cfgBusy = Streaming_ConfigChangeInProgress();
     if (!cfgBusy) {
         /* #868: the enabled-channel set moved since the sweep built its
@@ -3436,6 +3733,50 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
     StreamingStats s;
     Streaming_GetStats(&s);
 
+    /* #1201: THE SECOND HALF OF THE STOP CHECK -- taken HERE, at the end of
+     * the observed window, because until now this step checked for a stop only
+     * at its arm and a stop landing after that was not merely unreported, it
+     * read as a CLEAN measurement.
+     *
+     * The mechanism: a stop clears IsEnabled, the session ends, and every
+     * metric the verdict below is computed from then stays at zero -- no pool
+     * high-water, no dropped samples, no window loss. `tripped` comes out
+     * false, which this function returns as "this rate is sustainable". On the
+     * final soak step that sets soakClean, so the whole query answers OK and
+     * recommends a rate derived from a measurement that was cancelled partway
+     * through. Clean-looking output that is entirely wrong, which is the shape
+     * this family of fixes exists to stop.
+     *
+     * PLACED AT THE END OF THE OBSERVATION, NOT AFTER THE TEARDOWN, and the
+     * difference matters. The window this must cover is exactly the span over
+     * which the numbers in `s` were accumulated; a stop arriving during our
+     * OWN teardown, after the data was collected, invalidates nothing and must
+     * not fail a measurement that completed. So the read goes between the last
+     * statistic and the first teardown statement.
+     *
+     * One critical section, for the pair, and that is ALL it is for here --
+     * stated because the other two call sites' sections do more. There they
+     * also contain the publish of IsEnabled, which is what makes the answer
+     * actionable; there is no publish here, because this step is judging data
+     * it already holds rather than deciding whether to arm. Do not read this
+     * site as carrying the stronger property.
+     *
+     * The predicate's pinnedActive term is NECESSARILY FALSE by the time we
+     * get here -- a stop already running at the sweep's pin would have been
+     * caught by the arm check above, which refuses -- so of the three terms
+     * only the live count and the generation delta can fire at this site. The
+     * shared predicate is still the right thing to call: the degenerate term
+     * costs one test, and a hand-written two-term copy here is exactly the
+     * duplication #1201 is removing. Noted so a reader does not conclude the
+     * third term is doing work it cannot do. */
+    bool stopAfterObsInFlight = false;
+    bool stopAfterObs;
+    taskENTER_CRITICAL();
+    stopAfterObs = StopRequestedSince(basis->stopGenAtBuild,
+                                      basis->stopActiveAtBuild,
+                                      &stopAfterObsInFlight);
+    taskEXIT_CRITICAL();
+
     // Clean teardown BEFORE evaluating / changing rate (WINC dislikes mid-
     // stream transitions — #425/#467/#517).
     cfg->IsEnabled = false;
@@ -3462,6 +3803,43 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
      * path also arms by poking IsEnabled, never sets OPER_MEASURING, and is
      * not interlocked against a STOP parked in the SD close. */
     SCPI_ClearStreamingOperBits(cfg);
+
+    /* #1201: a stop during the dwell discards the measurement instead of
+     * scoring it. Placed AFTER the teardown above so the session is torn down
+     * and the OPER bits repaired exactly as on every other path out of this
+     * function -- the stop is honoured, not raced -- and before the verdict
+     * below, which is the thing that must not be computed from these numbers.
+     *
+     * NO NEW REPORTING PATH IS ADDED, which is most of why this fix is small.
+     * *outStartFailed and *outStopRequested already exist, all three call
+     * sites already break on them, and #965's machinery already turns
+     * *outStopRequested into a queued -200 without corrupting this query's
+     * five-field reply. This site only has to raise the two flags the sweep
+     * already knows how to read.
+     *
+     * WHICH TOKEN THE SWEEP THEN REPORTS is #895's rule, unchanged and not
+     * overridden here: START_FAIL when an earlier step had measured
+     * something, START_REFUSED when none had. The issue text says "the
+     * existing START_FAIL path", and on the FIRST step it is actually
+     * START_REFUSED -- correctly, because #895's token says whether the sweep
+     * produced data the reply reports, and a sweep stopped during its first
+     * dwell produced none. Spelled out because the discrepancy with the issue
+     * is deliberate rather than an oversight. */
+    if (stopAfterObs) {
+        /* log_budget: max=61 -- both candidate strings below are exactly 61
+         * bytes, and the prefix with a 10-digit uint32 freq is 49, so the
+         * worst case is 110 of Logger's 125. The remedy is written LAST in
+         * these messages, so an unbounded %s here would silently truncate
+         * away the thing a reader needs. */
+        LOG_E("WIFI:FIND %u Hz: observation discarded - %s", (unsigned)freq,
+              stopAfterObsInFlight
+                  ? "a stop is still in flight on the other transport (#1201/#938)"
+                  : "a stop was issued and completed during the dwell (#1201/#938)");
+        *outStopRequested = true;
+        *outStartFailed = true;
+        *outKBps = 0;
+        return false;   // not "saturated" -- see *outStartFailed
+    }
 
     // Primary trip: the SAMPLE POOL high-water reached ~full (>= FIND_BUF_FULL_PCT
     // of capacity).  After the #520 backpressure fix (streaming.c, solo WiFi/USB
@@ -3504,157 +3882,61 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
     return tripped;
 }
 
-/* #973: the finder's stop-request pin, handed from SCPI_WifiFindRate (the
- * registered callback) to SCPI_WifiFindRateClaimed (the body it runs through
- * SCPI_RunSessionStartClaimed).
+/* #973 / #1120: the finder's stop-request pin, and why there is no longer a
+ * mailbox here.
  *
- * WHY A FILE-SCOPE MAILBOX AND NOT A PARAMETER. The pin has to be taken
- * before Streaming_BeginSessionStart, because the claim is this command's
- * first OBSERVABLE effect and a stop that races it must land on the near
- * side of the baseline -- see #973's issue comment for why the previous pin
- * site (inside this function, after the parse and the power/interface/
- * channel-count gates) was still too late. But SCPI_RunSessionStartClaimed's
- * `body` signature is shared with SCPI_RunThroughputBenchClaimed and is out
- * of scope for this ticket (Size S), so the values cannot travel as real
- * arguments the way SCPI_StartStreaming's stopGenPinned/stopActivePinned do
- * (SCPIInterface.c:5942/5948, passed to SCPI_StartStreamingClaimed at
- * :6027-6031) -- that path can do it because it deliberately bypasses the
- * runner entirely (see its own header comment, "#850 + pre-merge audit").
- * That makes this a mailbox, and a mailbox written OUTSIDE the claim has a
- * hazard a stack local does not: USBDeviceTask boosts itself to priority 7
- * after init (app_freertos.c:316, `vTaskPrioritySet(NULL, 7)`) and WifiTask
- * -- which runs SCPI-over-TCP dispatch on its own stack -- stays at priority
- * 2 (app_freertos.c:1204-1222), so USB PREEMPTS WifiTask at an arbitrary
- * instruction whenever it has work (the same asymmetry the #938 companion
- * test's module docstring documents for the STOP-vs-sweep race this mailbox
- * replaces). Streaming_BeginSessionStart refuses rather than blocks
- * (streaming.c:3933), so it does not serialise the WRAPPERS, only the
- * bodies -- both transports can be inside SCPI_WifiFindRate at once. A
- * second finder call that goes on to LOSE the claim and return -200 can
- * still write this mailbox before the winner reads it: the clobbering write
- * is always later in time than the winner's own, so the substituted
- * baseline is always too NEW, and a stop issued between the two writes
- * would be folded into it and become invisible -- the exact defect this
- * ticket closes, reopened through a different door.
+ * #973 established the placement that still governs: the pin must be taken
+ * BEFORE Streaming_BeginSessionStart, because the claim is this command's
+ * first OBSERVABLE effect (once it is held, a finder call on the other
+ * transport already answers -200) and a stop racing it must land on the near
+ * side of the baseline. That reasoning is unchanged and now lives at
+ * SCPI_RunSessionStartClaimed, which takes the pin as its first action.
  *
- * gWifiFindPinOwner is what makes the mailbox self-invalidating. The writer
- * stamps its own scpi_t*; the reader accepts the pin ONLY if the stamp is
- * its own, and clears it on the way out so one pin serves exactly one
- * sweep. The pointer is an IDENTITY TOKEN and is never dereferenced --
- * typed const void* so that is structural rather than a promise. Comparing
- * a context pointer against a known transport's address is this file's
- * established idiom (SCPI_GetMicroRLClient and SCPI_GetInterface above,
- * SCPIInterface.c:240-264); the two contexts are distinct stable globals,
- * UsbCdc.c's gRunTimeUsbSttings.scpiContext and wifi_tcp_server.c's
- * gpServerData->client.scpiContext.
+ * What is GONE is how the values travelled. #973 shipped them through
+ * file-scope statics (gWifiFindPinStopGen/gWifiFindPinStopActive, plus a
+ * gWifiFindPinOwner stamp and a refusal path), because
+ * SCPI_RunSessionStartClaimed's `body` signature was shared with
+ * SCPI_RunThroughputBenchClaimed and changing it was out of scope for a
+ * Size-S ticket. A mailbox written outside the #850 claim is clobberable by a
+ * concurrent finder call on the other transport -- the claim serialises the
+ * BODIES, not the wrappers -- so it needed an owner stamp to detect the
+ * clobber and a -200 refusal to survive it.
  *
- * A mismatch REFUSES rather than re-pinning locally. A local re-pin would
- * look harmless and would silently restore the too-late baseline this
- * ticket exists to remove -- failing closed keeps the guarantee honest, and
- * the caller that clobbered us is already being answered -200 by the #850
- * claim, so "one of two racing finders is refused" is a contract this file
- * already ships. A stale stamp left by a refused writer cannot poison
- * anything: the next writer overwrites all three fields unconditionally
- * before any reader runs.
+ * #1120 took the route that block itself named as the fix: thread the pinned
+ * values as real per-call arguments through the runner. The finder is now
+ * structurally identical to SCPI_StartStreaming/SCPI_StartStreamingClaimed,
+ * which pinned into stack locals and passed them down all along, and a
+ * stack-resident pin has no cross-transport clobber hazard to guard against.
+ * So the mailbox, the owner stamp AND the refusal path are deleted together,
+ * exactly as predicted -- the hazard is absent by construction rather than
+ * detected and reported.
  *
- * TWO FIXES FOR "THE WINNER CAN ALSO BE REFUSED" WERE CONSIDERED AND BOTH
- * REJECTED (Qodo, pre-merge review round 4, "Both concurrent finder calls
- * fail" -- the scenario: USB preempts WiFi after WiFi's own #850 claim
- * win but before WiFi reads this mailbox, USB's own finder call clobbers
- * the stamp, USB then loses ITS claim attempt and returns -200, and WiFi
- * resumes to find a foreign stamp and refuses too -- even though WiFi did
- * nothing wrong):
- *
- * (1) Re-pin from LIVE gStreamStopGen/gStreamStopsActive on a mismatch,
- * instead of refusing. REJECTED: this reopens #973 itself. gStreamStopsActive
- * is decremented when a stop BODY finishes (SCPIInterface.c:6575), so a
- * stop that begins and ends entirely inside the gap between dispatch and
- * this read leaves the active term back at zero -- only the GENERATION
- * term would have caught it, and a fresh re-pin captures the ALREADY-BUMPED
- * generation as its own baseline, making that comparison read clean. That
- * is the exact defect this ticket exists to close, reopened by the fix.
- *
- * (2) Write-side compare-and-set: only claim an EMPTY slot, so the mailbox
- * holds the FIRST unconsumed pin rather than the LAST, and a losing call
- * can no longer overwrite a winner's entry. REJECTED, on closer analysis,
- * because it does not narrow the residual in THIS codebase -- it only
- * relocates it. USBDeviceTask is boosted to priority 7 after init
- * (app_freertos.c:316) and can preempt WifiTask (priority 2) at will, but
- * never the reverse. Under compare-and-set, the dangerous interleaving
- * becomes: WiFi claims the EMPTY slot first, is preempted before its own
- * claim attempt, USB's concurrent call finds the slot occupied (so USB's
- * OWN write is skipped) and goes on to WIN the #850 claim outright (WiFi
- * had not reached it yet) -- USB then enters its claimed body, finds a
- * foreign (WiFi's) stamp, and refuses ITSELF despite being the legitimate
- * claim winner. Same shape, same width (a preemption landing between one
- * write and the very next statement, in either design), just with the two
- * transports' roles exchanged. Given USB can preempt WiFi but not the
- * reverse, this is not a rarer trigger than the one it replaces.
- *
- * A REGRESSION, adjudicated as such in pre-merge audit round 2 (not a
- * pre-existing, merely-disclosed residual, which an earlier revision of
- * this comment called it): against merge-base 4edc4dd6e, which had no
- * mailbox at all, the #850 session-start claim WINNER always proceeded and
- * only the loser saw -200. With this mailbox, a losing concurrent finder
- * can clobber the winner's stamp before the winner reads it, so the winner
- * refuses itself too. The characterization changed; the decision did not --
- * deferred rather than fixed here, because under a genuine two-transport
- * race for the SAME command, either party can be the one refused, always
- * with a plain -200 the caller can retry -- never a sweep that silently ran
- * across an unobserved stop. That is a narrower guarantee than
- * SCPI_StartStreaming's stack-local pin has (SCPIInterface.c:5917 onward),
- * which has no mailbox to contend over at all, and closing the gap needs
- * that same shape here -- tracked as the #973 follow-up below (filed as
- * #1120), not attempted piecemeal in this Size-S ticket a second time.
- *
- * FINDING carried to the #973 follow-up: this hazard is specific to route 1
- * (file-scope statics). Route 2 (threading pinned values as real per-call
- * arguments through SCPI_RunSessionStartClaimed, deferred out of this S-sized
- * ticket) would make the finder structurally identical to SCPI_StartStreaming
- * and delete this mailbox, the owner stamp, and the refusal path together. */
-static uint32_t     volatile gWifiFindPinStopGen    = 0u;
-static bool         volatile gWifiFindPinStopActive = false;
-static const void * volatile gWifiFindPinOwner      = NULL;
+ * The clobber-refusal was therefore the only observable behaviour removed,
+ * and it could only ever fire on the race the mailbox introduced. Every other
+ * input keeps the same tokens and the same #973/#938 log causes. */
 
 /* #850: the session-start claim is taken by the SCPI_WifiFindRate wrapper
  * below, which is the only caller of this body. */
-static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
-    /* #973: collect the stop pin the wrapper took at dispatch, BEFORE the
-     * parameter parse and before any of the save-state calls below.
+static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context,
+                                              uint32_t pinnedStopGen,
+                                              bool pinnedStopActive) {
+    /* #1120: the stop pin arrives as REAL PARAMETERS, taken by
+     * SCPI_RunSessionStartClaimed ahead of its claim.
      *
-     * First statement for two reasons. It minimises the wrapper-write ->
-     * body-read window, which is the interval a concurrent finder call's
-     * wrapper can clobber the mailbox in (see gWifiFindPinOwner's
-     * declaration above); and it puts the refusal path ahead of every
-     * save-and-restore pair in this function (benchmark mode, test pattern,
-     * frequency, SD mode), so the refusal returns with nothing to unwind.
+     * This replaces #973's read-and-clear of a file-scope mailbox, and with
+     * it the owner-stamp refusal that used to stand here. That refusal
+     * existed because a mailbox written outside the #850 claim could be
+     * clobbered by a concurrent finder call on the other transport between
+     * the wrapper's write and this read; a stack-resident pin threaded as an
+     * argument has no such window, so the hazard is gone by construction
+     * rather than detected and refused. The finder is now structurally
+     * identical to SCPI_StartStreaming/SCPI_StartStreamingClaimed, which
+     * pinned into locals and passed them down all along.
      *
-     * Read-and-clear: the stamp is consumed here so one pin serves exactly
-     * one sweep. Cleared only when it is OURS -- a foreign stamp is left
-     * alone rather than destroyed, since it is not this call's to discard. */
-    uint32_t pinnedStopGen;
-    bool     pinnedStopActive;
-    bool     pinIsMine;
-    taskENTER_CRITICAL();
-    pinIsMine        = (gWifiFindPinOwner == context);
-    pinnedStopGen    = gWifiFindPinStopGen;
-    pinnedStopActive = gWifiFindPinStopActive;
-    if (pinIsMine) {
-        gWifiFindPinOwner = NULL;
-    }
-    taskEXIT_CRITICAL();
-    if (!pinIsMine) {
-        /* A finder call on the other SCPI transport overwrote our pin
-         * between the wrapper's write and this read. Its snapshot is
-         * strictly newer than ours, so using it would hide any stop issued
-         * in between -- refuse instead, the same remedy #850 already gives
-         * the losing side of this exact race. 99 characters, against
-         * Logger.c's usable 125. */
-        LOG_E("SYST:STR:WIFI:FIND refused (#973): its stop pin was "
-              "overwritten by a concurrent finder call. Retry.");
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-        return SCPI_RES_ERR;
-    }
+     * Behaviour for every input that is not that race is unchanged: same
+     * refusal tokens, same #973/#938 log causes, same basis comparison
+     * below. The one path that disappears is the refusal OF the race the
+     * mailbox itself introduced. */
 
     // Optional params: startHz, maxHz (0/absent => defaults).
     int32_t startArg = 0, maxArg = 0;
@@ -3734,16 +4016,16 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
         .pBoardConfig     = pBoardConfig,
         .pRuntimeChannels = (const AInRuntimeArray*)pRtAin,
         .mappingSelAtBuild = 0,
-        /* #973: taken at DISPATCH (SCPI_WifiFindRate, via the gWifiFindPin*
-         * mailbox above) and collected at this function's first statement,
-         * not re-read here. The #938 pin that used to sit at this line was
-         * inside the claim and after the parse and the power/interface/
-         * channel-count gates, so a stop that raced the arm had already been
-         * folded into the baseline by the time it ran -- moving the pin
-         * ahead of Streaming_BeginSessionStart (in the wrapper) is the fix.
+        /* #973/#1120: taken at DISPATCH by SCPI_RunSessionStartClaimed and
+         * received here as this function's parameters, not re-read. The #938
+         * pin that used to sit at this line was inside the claim and after
+         * the parse and the power/interface/channel-count gates, so a stop
+         * that raced the arm had already been folded into the baseline by the
+         * time it ran -- taking the pin ahead of
+         * Streaming_BeginSessionStart is the fix.
          * The pair still describes one instant: they were read together in
-         * one critical section, just an earlier one (this function's
-         * first-statement read of the mailbox). */
+         * one critical section, just an earlier one (the runner's, ahead of
+         * its claim). */
         .stopGenAtBuild    = pinnedStopGen,
         .stopActiveAtBuild = pinnedStopActive,
     };
@@ -4067,33 +4349,11 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
 }
 
 static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
-    /* #973: the FIRST statement of the callback, ahead of the #850
-     * session-start claim -- the same placement, and for the same reason,
-     * as SCPI_StartStreaming's #861 pin (SCPIInterface.c:5917 onward).
-     * Where the pin sits IS the definition of "before this sweep", so it
-     * belongs before anything this command does, and in particular before
-     * Streaming_BeginSessionStart, which can REFUSE: once that claim is
-     * held, a finder call on the other transport already answers -200, so
-     * the claim is itself an observable effect of this command.
-     *
-     * One critical section, because the pair has to describe a single
-     * instant rather than two (the same reason the previous pin site gave),
-     * and because the owner stamp must become visible atomically with the
-     * values it authenticates -- see gWifiFindPinOwner's declaration ahead
-     * of SCPI_WifiFindRateClaimed for why the mailbox needs one at all,
-     * which SCPI_StartStreaming's plain-local pin does not.
-     *
-     * What remains ahead of this line is the gap between the callback's
-     * entry and this statement, and that is not a window to be closed: a
-     * preemption there orders the stop before this sweep did anything at
-     * all, which is what "before" means. Same non-window SCPI_StartStreaming
-     * documents at its own pin. */
-    taskENTER_CRITICAL();
-    gWifiFindPinStopGen    = gStreamStopGen;
-    gWifiFindPinStopActive = (gStreamStopsActive != 0u);
-    gWifiFindPinOwner      = context;
-    taskEXIT_CRITICAL();
-
+    /* #1120: no pin is taken here any more. SCPI_RunSessionStartClaimed
+     * takes it as its own first action, ahead of its claim, and passes it
+     * down -- so this wrapper is now the three-line shape every other
+     * wrapper in this file has, and a future command routed through the
+     * runner inherits the guard instead of having to remember it. */
     return SCPI_RunSessionStartClaimed(context, SCPI_WifiFindRateClaimed,
                                        "SYSTem:STReam:WIFI:FINd?");
 }
@@ -4986,9 +5246,12 @@ static volatile StreamingInterface gStreamIfaceLastSet = StreamingInterface_USB;
  * because a START that bumped this would refuse itself, every time.
  *
  * #938: the WiFi rate finder (FindMeasureStep, defined earlier in this file --
- * see its own pin and the tentative forward declarations at its definition,
- * needed because it is textually ahead of this initializer) now pins and
- * observes this the same way SCPI_StartStreamingClaimed does, once per step.
+ * see its own pin there) now pins and observes this the same way
+ * SCPI_StartStreamingClaimed does, once per step. (#1201: this used to also
+ * point at "the tentative forward declarations at its definition". Those are
+ * gone -- that function reads neither global now, it asks
+ * StopRequestedSince(), so there is nothing there to forward-declare and the
+ * pointer would have sent a reader looking for deleted code.)
  * A stop landing in a step's PRE-ARM window is refused as itself, with a
  * cause, instead of being lost the way it was here before -- lost silently,
  * note, not as a `!Running`: pre-arm the publish happens AFTER the stop, so
@@ -5006,12 +5269,24 @@ static volatile StreamingInterface gStreamIfaceLastSet = StreamingInterface_USB;
  * cause. It still reports one; it now says so in the log. Both halves are
  * #938, and only one of them is a guard.
  *
- * SYSTem:STReam:THRoughput (SCPI_RunThroughputBenchClaimed) still does NOT
- * pin or observe it, so a stop racing ITS pre-arm window is still lost. It is
- * a bench/diagnostic path and lands on the same WINC-delicate territory that
- * wants its own bench run; tracked as its own gap rather than folded in here
- * (#938's scope is the finder only) so it is a recorded line rather than
- * something to rediscover. */
+ * #1201: SYSTem:STReam:THRoughput (SCPI_RunThroughputBenchClaimed) NOW pins
+ * and observes it too, at its arm, through the shared StopRequestedSince()
+ * predicate. This paragraph used to record the opposite -- that the command
+ * did not observe it and a stop racing its pre-arm window was "still lost",
+ * tracked as its own gap so it would be a recorded line rather than something
+ * to rediscover. That gap is the one #1201 closed, and the record is updated
+ * here rather than left asserting a hazard that is now guarded. A stop racing
+ * that command's pre-arm window refuses the arm, logs its cause, and answers
+ * -200, exactly as it does for a START.
+ *
+ * What is still NOT guarded there, so it is not rediscovered as a finding: a
+ * stop arriving during the bench's DWELL. The stop itself ends the session, so
+ * the device does not keep acquiring -- the operator's instruction is carried
+ * out -- but the command still prints the counts of a truncated run, and its
+ * per-second figures divide those counts by the full requested duration. That
+ * is a reply-shape question (this command has no refusal token to report it
+ * with, which is the #895 argument two screens up), deliberately left to its
+ * own ticket rather than folded in here. */
 static volatile uint32_t gStreamStopGen = 0;
 
 /* #861 (Qodo, importance 9): stops CURRENTLY IN FLIGHT, not stops completed.
@@ -5281,10 +5556,9 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
 
     uint16_t activeType1ChannelCount = 0;
     uint16_t totalEnabledPublicChannels = 0;
-    bool hasActiveAD7609Channels = false;
     Streaming_CountActiveChannels(&activeType1ChannelCount,
                                   &totalEnabledPublicChannels,
-                                  &hasActiveAD7609Channels);
+                                  NULL);
     bool hasEnabledChannels = (totalEnabledPublicChannels > 0);
 
     // Build channel mapping for compact sample pool (#177).
@@ -5438,12 +5712,14 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
      * publishes it. Zero means "not computed"; the check below enforces it. */
     uint32_t periodCycles = 0;
     {
-        // NQ3 Smart Frequency Management:
-        // When external AD7609 channels are active WITHOUT any Type 1 MC12bADC channels,
-        // force internal monitoring to 1Hz (since only monitoring channels would be streaming)
-        if (hasActiveAD7609Channels && activeType1ChannelCount == 0 && freq > 1) {
-            freq = 1; // Override to 1Hz for internal monitoring when external ADC active
-        }
+        /* #1158: no AD7609 rate override. An earlier "NQ3 Smart Frequency
+         * Management" block forced freq = 1 whenever an AD7609 channel was
+         * enabled with no type-1 MC12b channel. On NQ3 that is EVERY analog
+         * stream (its public analog channels are the AD7609's; its MC12b
+         * channels are non-public type 2), and the same timer triggers the
+         * AD7609 conversions, so it throttled NQ3's acquisition path to 1 Hz
+         * silently. The rate is now bounded only by the cap computation
+         * below, like every other variant. */
 
         // Three-constraint frequency capping (validated via benchmark testing)
         // See https://github.com/daqifi/daqifi-nyquist-firmware/issues/215
@@ -6319,8 +6595,8 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
      *                     IsEnabled after we publish it.
      *   gStreamStopGen    a stop began and ended entirely inside this start's
      *                     window: the original #861 case. */
-    stopInFlight = stopActivePinned || (gStreamStopsActive != 0u);
-    stopRequested = stopInFlight || (gStreamStopGen != stopGenPinned);
+    stopRequested = StopRequestedSince(stopGenPinned, stopActivePinned,
+                                       &stopInFlight);
     /* The interface must still be the one everything above was set up for.
      * The rate check alone does not catch this, because the new interface's
      * cap can be perfectly happy with the requested rate: a WiFi START whose
@@ -7078,6 +7354,26 @@ static void SCPI_PerformStreamingStop(void) {
         taskEXIT_CRITICAL();
     }
 
+    /* #1227: let the encoder finish the iteration it is in before the
+     * teardown below. Streaming_UpdateState() -> Streaming_Start() zeroes the
+     * shared encoder buffer, and a stop running above the Stream task's
+     * priority could do that between the encoder building a packet and
+     * writing it, which sent the final packet as zeros. The encoder re-checks
+     * IsEnabled after raising its in-critical flag, so once it is quiescent it
+     * will not start another packet. Bounded, like the START path's identical
+     * wait: on timeout the teardown proceeds as it always did, and says so. */
+    {
+        const TickType_t qStart = xTaskGetTickCount();
+        while (!Streaming_TasksAreQuiescent()) {
+            if ((xTaskGetTickCount() - qStart) > pdMS_TO_TICKS(200)) {
+                LOG_E("Streaming stop: encoder not quiescent after 200 ms - "
+                      "tearing down anyway (#1227)");
+                break;
+            }
+            vTaskDelay(1);
+        }
+    }
+
     Streaming_UpdateState();
 
     // Flush any remaining USB CDC data so the host receives all streamed bytes.
@@ -7301,6 +7597,72 @@ static void SCPI_PerformStreamingStop(void) {
  * here, so this comment does not put a non-canonical form into new lines.
  * The disable form SYSTem:STReam:START 0 calls the same body from
  * SCPI_StartStreaming. */
+/* Upper bound on how long a power-off waits for the SD log to finalise, on top
+ * of the stop's own 5 s wait. Long enough for an ordinary close/unmount, short
+ * enough that a wedged card cannot hold a battery shutdown hostage. */
+#define POWER_DOWN_SD_WAIT_MS 10000u
+
+bool SCPI_StopStreamingForPowerDown(void) {
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+    /* Without this the stream kept running in STANDBY with the analog rails
+     * off, and the SD log was never closed: its tail was lost on USB power,
+     * and on battery the card lost power mid-write. */
+    /* Advance the stop generation FIRST, then look at IsEnabled (#1226 audit
+     * r2/r3). A START that has not published IsEnabled yet re-checks the
+     * generation in the critical section that publishes it and refuses; one
+     * that already published is seen below and goes through the ordinary
+     * SYST:STReam:STOP teardown. Reading IsEnabled first left a gap between the
+     * read and the bump for a START to publish through. A START that pins the
+     * generation after this bump sees powerState == STANDBY at its own entry
+     * check: every caller publishes STANDBY before calling here.
+     *
+     * The throughput benchmark's arm checks the generation too (#1226; it
+     * used to ignore its pin), and the shared teardown waits for the encoder
+     * to finish its iteration before clearing its buffer (#1227).
+     *
+     * KNOWN RESIDUAL, narrow and shared with SYST:STReam:STOP, not introduced
+     * here (#1226 audit r4): the ordinary teardown inherits the
+     * Streaming_Start/Streaming_Stop race -- a Streaming_Start preempted
+     * between its IsEnabled check and setting Running is skipped by
+     * Streaming_Stop (which sees Running == false) and then sets Running with
+     * IsEnabled already false. */
+    taskENTER_CRITICAL();
+    gStreamStopGen++;
+    taskEXIT_CRITICAL();
+    /* Stop on SD-log ownership too, not just IsEnabled (#1226 audit r6): a
+     * transport-loss auto-stop clears IsEnabled and stops sampling but leaves
+     * the streaming log's SD session in WRITE with its file open, and the
+     * sub-sector tail is only written by the close this teardown requests. */
+    const sd_card_manager_settings_t* pSdCfg = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_SD_CARD_SETTINGS);
+    const bool streamingLogOpen = (pSdCfg != NULL) &&
+            SCPI_SdWriteIsStreamingLog(pSdCfg);
+    if ((pRunTimeStreamConfig != NULL && pRunTimeStreamConfig->IsEnabled) ||
+        streamingLogOpen) {
+        LOG_I("[POWER] stopping stream and closing SD log before power-down");
+        SCPI_PerformStreamingStop();
+    }
+    /* IsEnabled == false proves sampling stopped, not that the log is closed:
+     * a stop on another transport clears it first and THEN waits for the SD
+     * manager, and a stop whose own wait timed out leaves the close pending.
+     * So wait for both, whoever started them (#1226 audit). */
+    const TickType_t start = xTaskGetTickCount();
+    for (;;) {
+        bool stopInFlight;
+        taskENTER_CRITICAL();
+        stopInFlight = (gStreamStopsActive != 0u);
+        taskEXIT_CRITICAL();
+        if (!stopInFlight && sd_card_manager_IsIdle()) {
+            return true;
+        }
+        if ((xTaskGetTickCount() - start) >= pdMS_TO_TICKS(POWER_DOWN_SD_WAIT_MS)) {
+            return false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
 static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
     (void)context;
     SCPI_PerformStreamingStop();
@@ -7478,16 +7840,26 @@ static scpi_result_t SCPI_GetDataPrecision(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+/* #1153: daqifi_settings_Update() callback shared by SCPI_SaveDataPrecision
+ * and SCPI_SaveDeviceName below -- both have the identical shape (fall
+ * back to factory defaults on a failed load, then always save; the field
+ * each actually persists is auto-captured by SaveToNvm itself, not set
+ * here). */
+static DaqifiSettingsUpdateDecision LoadOrDefaultTopLevelThenSaveFn(
+        DaqifiSettings* settings, bool loaded, void* context) {
+    (void)context;
+    if (!loaded) {
+        daqifi_settings_LoadFactoryDeafult(DaqifiSettings_TopLevelSettings, settings);
+    }
+    return DAQIFI_SETTINGS_UPDATE_SAVE;
+}
+
 static scpi_result_t SCPI_SaveDataPrecision(scpi_t * context) {
     DaqifiSettings settings;
-    memset(&settings, 0, sizeof(DaqifiSettings));
-    // Load existing NVM to preserve other fields (e.g. calVals)
-    if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings, &settings)) {
-        daqifi_settings_LoadFactoryDeafult(DaqifiSettings_TopLevelSettings, &settings);
-    }
-    settings.type = DaqifiSettings_TopLevelSettings;
-    // SaveToNvm captures current precision from runtime config automatically
-    if (!daqifi_settings_SaveToNvm(&settings)) {
+    // SaveToNvm captures current precision from runtime config
+    // automatically. #1153: load + save as one locked sequence.
+    if (!daqifi_settings_Update(DaqifiSettings_TopLevelSettings, &settings,
+            LoadOrDefaultTopLevelThenSaveFn, NULL)) {
         return SCPI_RES_ERR;
     }
     return SCPI_RES_OK;
@@ -7570,17 +7942,11 @@ static scpi_result_t SCPI_GetDeviceName(scpi_t * context) {
 
 static scpi_result_t SCPI_SaveDeviceName(scpi_t * context) {
     DaqifiSettings settings;
-    memset(&settings, 0, sizeof(DaqifiSettings));
-    // Load existing NVM to preserve other TopLevelSettings fields.
-    if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings,
-            &settings)) {
-        daqifi_settings_LoadFactoryDeafult(DaqifiSettings_TopLevelSettings,
-                &settings);
-    }
-    settings.type = DaqifiSettings_TopLevelSettings;
     // SaveToNvm captures the current friendly name from the runtime cache
-    // automatically (same pattern as voltagePrecision).
-    if (!daqifi_settings_SaveToNvm(&settings)) {
+    // automatically (same pattern as voltagePrecision). #1153: load + save
+    // as one locked sequence (LoadOrDefaultTopLevelThenSaveFn, above).
+    if (!daqifi_settings_Update(DaqifiSettings_TopLevelSettings, &settings,
+            LoadOrDefaultTopLevelThenSaveFn, NULL)) {
         return SCPI_RES_ERR;
     }
     return SCPI_RES_OK;
@@ -7762,6 +8128,26 @@ static scpi_result_t SCPI_GetEcho(scpi_t * context) {
     microrl_t* console;
     console = SCPI_GetMicroRLClient(context);
     SCPI_ResultInt32(context, (int) console->echoOn);
+    return SCPI_RES_OK;
+}
+
+/* SYSTem:IDENtify <0|1>: flash both LEDs (~1 s fast flash, ~1 s off,
+ * repeating) so an operator can see which board a host is talking to. */
+static scpi_result_t SCPI_SetIdentify(scpi_t * context) {
+    int param1;
+    if (!SCPI_ParamInt32(context, &param1, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (param1 < 0 || param1 > 1) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+    UI_SetIdentify(param1 == 1);
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_GetIdentify(scpi_t * context) {
+    SCPI_ResultInt32(context, UI_GetIdentify() ? 1 : 0);
     return SCPI_RES_OK;
 }
 
@@ -9043,10 +9429,14 @@ static void EmitAoutChannelJson(scpi_t* context,
         (unsigned)ch->DaqifiDacChannelId,
         (unsigned)ao->resolutionBits);
 
+    /* user_override_supported is false (#1202): since #993/#1002 every
+     * CONF:DAC calibration command (CHANCALM/B, SAVE/LOAD[F]cal, USECal)
+     * is routed to SCPI_NotImplemented and answers -200, so a client that
+     * trusted true would be told it can do something every setter refuses. */
     scpi_printf(context,
         "\"ranges\":[{\"min\":%.3f,\"max\":%.3f}],"
         "\"calibration\":{\"model\":\"linear\","
-        "\"user_override_supported\":true},"
+        "\"user_override_supported\":false},"
         "\"extensions\":{}}",
         ao->moduleMinVoltage, ao->moduleMaxVoltage);
 }
@@ -9070,10 +9460,12 @@ static void EmitDioChannelJson(scpi_t* context,
 
     if (dio->IsPwmCapable) {
         /* PWM freq/res reflect OCMP HAL support
-         * (HAL/DIO.c:DIO_PWMFrequencySet, 16-bit OCMP timer). */
+         * (HAL/DIO.c:DIO_PWMFrequencySet, 16-bit OCMP timer). The floor is
+         * the one DIO:PWM:FREQ enforces (#902), not a literal. */
         scpi_printf(context,
-            "\"pwm\":{\"min_freq_hz\":1,\"max_freq_hz\":50000,"
-            "\"resolution_bits\":16}},\"extensions\":{}}");
+            "\"pwm\":{\"min_freq_hz\":%u,\"max_freq_hz\":50000,"
+            "\"resolution_bits\":16}},\"extensions\":{}}",
+            (unsigned)DIO_PwmMinFrequencyHz());
     }
 }
 
@@ -9187,8 +9579,8 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
      * actually stream on. When ActiveInterface is still the default USB (or already
      * matches the detected connection), START will auto-detect this connection — so
      * advertise the cap for the DETECTED interface, computed WITHOUT mutating the
-     * shared runtime config (#524 Qodo). Skip when no channels are enabled
-     * (st.maxFreqHz == 0). */
+     * shared runtime config (#524 Qodo). Skip when there is no streaming
+     * input (st.maxFreqHz == 0). */
     if (st.maxFreqHz > 0) {
         StreamingRuntimeConfig* scq =
             BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
@@ -9209,8 +9601,10 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
          * other SCPI transport can disable the last channel in between, and the
          * zero-channel branch of the cap deliberately returns ISR_MAX rather
          * than 0. Without this check the blob would advertise a healthy rate,
-         * and non-zero terms, for a device with no inputs. */
-        if (terms.totalChannels > 0) {
+         * and non-zero terms, for a device with no inputs. "Inputs" includes
+         * DIO alone, which START accepts (#1202) -- the same predicate as
+         * Capabilities_GetStreamingSummary, so the two gates cannot disagree. */
+        if (Capabilities_HasStreamingInput(terms.totalChannels)) {
             st.maxFreqHz        = ifaceMaxHz;
             st.capAdcAdditiveHz = terms.adcAdditiveHz;
             st.capTransportHz   = terms.transportHz;
@@ -10010,6 +10404,8 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:LOG:CMDHistory?", .callback = SCPI_GetCommandHistory,},
     {.pattern = "SYSTem:ECHO", .callback = SCPI_SetEcho,},
     {.pattern = "SYSTem:ECHO?", .callback = SCPI_GetEcho,},
+    {.pattern = "SYSTem:IDENtify", .callback = SCPI_SetIdentify,},
+    {.pattern = "SYSTem:IDENtify?", .callback = SCPI_GetIdentify,},
     //    {.pattern = "SYSTem:NVMRead?", .callback = SCPI_NVMRead, },  
     //    {.pattern = "SYSTem:NVMWrite", .callback = SCPI_NVMWrite, }, 
     //    {.pattern = "SYSTem:NVMErasePage", .callback = SCPI_NVMErasePage, },
@@ -10370,6 +10766,8 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:STORage:SD:MINFree?", .callback = SCPI_StorageSDMinFreeGet},  // #498
     {.pattern = "SYSTem:STORage:SD:SPACe?", .callback = SCPI_StorageSDSpaceGet},
     {.pattern = "SYSTem:STORage:SD:ABORt", .callback = SCPI_StorageSDAbort},
+    {.pattern = "SYSTem:STORage:SD:PROTect", .callback = SCPI_StorageSDProtectSet,},   /* #1217 */
+    {.pattern = "SYSTem:STORage:SD:PROTect?", .callback = SCPI_StorageSDProtectGet,},  /* #1217 */
     {.pattern = "SYSTem:STORage:SD:INFO?", .callback = SCPI_StorageSDInfo},
     // DIO debug probe framework
     {.pattern = "SYSTem:DIOProbe:MODE", .callback = SCPI_DioProbeModeSet,},

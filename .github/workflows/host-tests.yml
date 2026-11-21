@@ -354,6 +354,10 @@ on:
       - 'firmware/src/Util/Logger.h'
       - 'firmware/src/Util/Logger.c'
       - 'firmware/src/services/SCPI/**'
+      # #1202: test_1202_cap_json_streaming_input.c extracts two functions
+      # from Capabilities.c and includes the real Capabilities.h.
+      - 'firmware/src/services/Capabilities.c'
+      - 'firmware/src/services/Capabilities.h'
       # #1039: test_1039_log_message_ceiling.c (PR #1116) greps these two for
       # the shipped format strings it hardcodes (SCPIADC.c is already covered
       # by the entry above). Also #1039/#1110's test_1039_log_message_budget.c
@@ -420,6 +424,9 @@ on:
       - 'firmware/src/HAL/Power/PowerApi.c'
       - 'firmware/src/HAL/UI/UI.c'
       - 'firmware/src/HAL/BQ24297/BQ24297.c'
+      # #1153: run_1153_tests greps nvm.c for the recursive mutex and its
+      # three write/erase entry points' lock/unlock bracket.
+      - 'firmware/src/HAL/NVM/nvm.c'
       - 'firmware/src/services/sd_card_services/sd_card_manager.h'
       - 'firmware/src/config/default/FreeRTOSConfig.h'
       # #1056: the shared wait loop test_1056_wait_loop.c compiles, plus its
@@ -429,6 +436,7 @@ on:
       - 'firmware/src/HAL/UserSpi/UserSpi.c'
       - 'firmware/src/HAL/UserUart/UserUart.c'
       - 'firmware/src/HAL/UserI2c/UserI2c.c'
+      - 'firmware/src/services/wifi_services/wifi_manager.c'
       # #1004: the ms<->tick assumptions test_1004_help_write_abort.c derives
       # are grepped straight out of this file (configTICK_RATE_HZ,
       # configTICK_TYPE_WIDTH_IN_BITS).
@@ -466,6 +474,12 @@ on:
       # tests/host/Makefile) for the Timestamp field the fix adds; no entry
       # above matches firmware/src/state/data/.
       - 'firmware/src/state/data/AOutSample.h'
+      # #1231: test_1231_clamp_report_latch.c's Makefile target SPLICES
+      # ClampReportDue() out of this file and grep-guards that the resize-skip
+      # LOG_E is still behind it. Without this entry a change to the predicate
+      # or its call site would not trigger this job, and the gate guarding them
+      # would never run -- "a green gate constrains only what the gate runs".
+      - 'firmware/src/state/data/AInSample.c'
       - 'firmware/src/services/streaming.c'
       - 'firmware/src/services/DaqifiPB/NanoPB_Encoder.c'
       - 'firmware/src/services/streaming.h'
@@ -474,6 +488,17 @@ on:
       # driver for the detect-force gate's shape, so a DRIVER-ONLY PR must run
       # the guard. Without this the pin existed and CI never reached it.
       - 'firmware/src/config/default/driver/sdspi/src/drv_sdspi.c'
+      # #1217: test_1217_abandoned_write.c compiles this driver for real, and
+      # test_1217_sd_crc.c its CRC header. Whole directory: the driver's headers
+      # are part of what gets compiled.
+      - 'firmware/src/config/default/driver/sdspi/**'
+      # #881: test_881_hif_rx_done.c and test_881_spi_socket.c compile the WINC
+      # driver's m2m_hif.c, nmbus.c, nmspi.c and socket.c for real, against its
+      # headers, so a DRIVER-ONLY change must run them.
+      - 'firmware/src/config/default/driver/winc/**'
+      # #881: test_881_wifi_reset.c splices Iperf2_Stop()/MaybeAutoReset() out
+      # of this file (iperf2's auto-reset is one of the hard-reset callers).
+      - 'firmware/src/services/wifi_services/iperf2/iperf2.c'
   push:
     branches: [main]
     paths:
@@ -494,6 +519,10 @@ on:
       - 'firmware/src/Util/Logger.h'
       - 'firmware/src/Util/Logger.c'
       - 'firmware/src/services/SCPI/**'
+      # #1202: test_1202_cap_json_streaming_input.c extracts two functions
+      # from Capabilities.c and includes the real Capabilities.h.
+      - 'firmware/src/services/Capabilities.c'
+      - 'firmware/src/services/Capabilities.h'
       # #1039: test_1039_log_message_ceiling.c (PR #1116) greps these two for
       # the shipped format strings it hardcodes (SCPIADC.c is already covered
       # by the entry above). Also #1039/#1110's test_1039_log_message_budget.c
@@ -556,6 +585,9 @@ on:
       - 'firmware/src/HAL/Power/PowerApi.c'
       - 'firmware/src/HAL/UI/UI.c'
       - 'firmware/src/HAL/BQ24297/BQ24297.c'
+      # #1153: run_1153_tests greps nvm.c for the recursive mutex and its
+      # three write/erase entry points' lock/unlock bracket.
+      - 'firmware/src/HAL/NVM/nvm.c'
       - 'firmware/src/services/sd_card_services/sd_card_manager.h'
       - 'firmware/src/config/default/FreeRTOSConfig.h'
       # #1056: the shared wait loop test_1056_wait_loop.c compiles, plus its
@@ -565,6 +597,7 @@ on:
       - 'firmware/src/HAL/UserSpi/UserSpi.c'
       - 'firmware/src/HAL/UserUart/UserUart.c'
       - 'firmware/src/HAL/UserI2c/UserI2c.c'
+      - 'firmware/src/services/wifi_services/wifi_manager.c'
       # #1004: the ms<->tick assumptions test_1004_help_write_abort.c derives
       # are grepped straight out of this file (configTICK_RATE_HZ,
       # configTICK_TYPE_WIDTH_IN_BITS).
@@ -584,6 +617,8 @@ on:
       - 'firmware/src/Util/CRC32.h'
       # #1034: see the matching entry under pull_request above.
       - 'firmware/src/state/data/AOutSample.h'
+      # #1231: see the matching entry under pull_request above.
+      - 'firmware/src/state/data/AInSample.c'
       - 'firmware/src/services/streaming.c'
       - 'firmware/src/services/DaqifiPB/NanoPB_Encoder.c'
       - 'firmware/src/services/streaming.h'
@@ -592,6 +627,17 @@ on:
       # driver for the detect-force gate's shape, so a DRIVER-ONLY PR must run
       # the guard. Without this the pin existed and CI never reached it.
       - 'firmware/src/config/default/driver/sdspi/src/drv_sdspi.c'
+      # #1217: test_1217_abandoned_write.c compiles this driver for real, and
+      # test_1217_sd_crc.c its CRC header. Whole directory: the driver's headers
+      # are part of what gets compiled.
+      - 'firmware/src/config/default/driver/sdspi/**'
+      # #881: test_881_hif_rx_done.c and test_881_spi_socket.c compile the WINC
+      # driver's m2m_hif.c, nmbus.c, nmspi.c and socket.c for real, against its
+      # headers, so a DRIVER-ONLY change must run them.
+      - 'firmware/src/config/default/driver/winc/**'
+      # #881: test_881_wifi_reset.c splices Iperf2_Stop()/MaybeAutoReset() out
+      # of this file (iperf2's auto-reset is one of the hard-reset callers).
+      - 'firmware/src/services/wifi_services/iperf2/iperf2.c'
 
 permissions:
   contents: read   # checkout + gcc build + run only, no writes
