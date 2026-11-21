@@ -590,21 +590,25 @@ def registered_callbacks(scpi_c):
 
 
 def callback_violations(callbacks, wiki_cbs):
-    """Wiki rows whose Firmware Callback cell is not the registered callback.
+    """Wiki rows whose Firmware Callback cell is not the callback that runs.
 
-    `callbacks` is registered_callbacks(), `wiki_cbs` is wiki_callbacks().
-    Returns sorted (wiki command, wiki cell, registered callbacks) for each row
-    that names a live pattern (`is_form_of`) yet whose cell equals NONE of the
-    callbacks registered under that pattern -- including an EMPTY cell, since a
+    `callbacks` is registered_callbacks(), in TABLE ORDER; `wiki_cbs` is
+    wiki_callbacks(). The expected callback is the FIRST registration whose
+    pattern accepts the wiki spelling (`is_form_of`), because that is the only
+    one libscpi dispatches to: `findCommandHeader` (libscpi parser.c) returns
+    on the first `matchCommand` hit. Accepting ANY matching registration would
+    pass `SYST:S | SCPI_StopStreaming`, a spelling that reaches
+    SCPI_StartStreaming (#1035). Returns sorted (wiki command, wiki cell,
+    (expected callback,)) for each mismatch, including an EMPTY cell, since a
     row that is supposed to carry a handler name and does not is the same
     unenforced promise. Rows naming no live pattern are the ghost check's
     business, not this one's.
     """
     bad = set()
     for cmd, cell in wiki_cbs:
-        regs = sorted({cb for pat, cb in callbacks if is_form_of(cmd, pat)})
-        if regs and cell not in regs:
-            bad.add((cmd, cell, tuple(regs)))
+        first = next((cb for pat, cb in callbacks if is_form_of(cmd, pat)), None)
+        if first is not None and cell != first:
+            bad.add((cmd, cell, (first,)))
     return sorted(bad)
 
 
@@ -1412,6 +1416,7 @@ def _self_test_callbacks():
       - a callback that does not exist         -> non-zero (the #1196 repro)
       - an EMPTY cell in a callback column     -> non-zero
       - a table WITHOUT the column             -> 0 (nothing is invented)
+      - a spelling two patterns accept must name the FIRST (direct call)
     """
     import contextlib
     import io
@@ -1476,6 +1481,28 @@ def _self_test_callbacks():
             failures += 1
             print(f"  FAIL callback check ({label}): main() --wiki returned "
                   f"{rc}, expected {'non-zero' if want_fail else 0}")
+
+    # First-match dispatch. A spelling accepted by two registrations reaches
+    # only the FIRST one in table order (findCommandHeader), so the wiki must
+    # name that one. Driven directly: through main() the collision itself would
+    # trip the #907 style gate and mask the callback check's verdict.
+    collide = [("SYSTem:StartStreamData", "SCPI_StartStreaming"),
+               ("SYSTem:StopStreamData", "SCPI_StopStreaming")]
+    first_match_def = (
+        ([("SYST:S", "SCPI_StopStreaming")], 1,
+         "SYST:S names the SECOND match (unreachable)"),
+        ([("SYST:S", "SCPI_StartStreaming")], 0,
+         "SYST:S names the first match"),
+        ([("SYSTem:StopStreamData", "SCPI_StopStreaming")], 0,
+         "full spelling reaches its own registration"),
+    )
+    for wiki_cbs, want, label in first_match_def:
+        cases += 1
+        got = len(callback_violations(collide, wiki_cbs))
+        if got != want:
+            failures += 1
+            print(f"  FAIL callback check ({label}): {got} violation(s), "
+                  f"expected {want}")
     return cases, failures
 
 
