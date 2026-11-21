@@ -47,6 +47,7 @@ WHAT IT DOES NOT COVER (disclosed, not argued away)
 import hashlib
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -256,8 +257,10 @@ def compile_run(text, workdir, tag, out=None, extra=()):
     with open(src, "w", encoding="utf-8") as fh:
         fh.write(text)
     cc = os.environ.get("CC", "gcc")
-    cmd = [cc, "-std=c11", "-O0", "-g", "-I", HERE] + list(extra) + \
-          ["-o", exe, src]
+    # -Werror=unused-function matches tests/host/Makefile:29: a TEST never RUN()
+    # must fail the build here too, or dropping a RUN() passes unseen.
+    cmd = [cc, "-std=c11", "-O0", "-g", "-Werror=unused-function",
+           "-I", HERE] + list(extra) + ["-o", exe, src]
     cp = subprocess.run(cmd, capture_output=True, text=True)
     if cp.returncode != 0:
         raise Refused("compile failed (%s):\n%s" % (tag, cp.stderr[-3000:]))
@@ -270,6 +273,11 @@ def main(argv):
     out_exe = None
     if "--out" in argv:
         out_exe = os.path.abspath(argv[argv.index("--out") + 1])
+        # Never leave a stale passing binary: `make` would treat it as up to
+        # date. --out is published ONLY after the baseline passes and every
+        # mutant is killed; every other path leaves it absent.
+        if os.path.lexists(out_exe):
+            os.remove(out_exe)
     helpers, sites = build_units()
 
     digests = {s: region_digest(v[0][v[1]["start"]:v[1]["end"]])
@@ -291,8 +299,7 @@ def main(argv):
         return 1
 
     with tempfile.TemporaryDirectory(prefix="t1160_") as wd:
-        rc, out, _ = compile_run(render(helpers, sites), wd, "base",
-                                 out=out_exe)
+        rc, out, base_exe = compile_run(render(helpers, sites), wd, "base")
         if rc != 0:
             sys.stdout.write(out)
             print("BASELINE FAILED: the real arm sites do not all exit on "
@@ -314,6 +321,16 @@ def main(argv):
             print("SURVIVING MUTANTS (the test cannot see these): %s" %
                   survived)
             return 1
+        if out_exe:
+            # Same-directory temp then atomic rename (wd may be another fs).
+            stage = out_exe + ".tmp%d" % os.getpid()
+            try:
+                shutil.copyfile(base_exe, stage)
+                shutil.copymode(base_exe, stage)
+                os.replace(stage, out_exe)
+            finally:
+                if os.path.lexists(stage):
+                    os.remove(stage)
     print("OK: %d sites x %d shapes, all killed" % (len(sites), len(MUTANTS)))
     return 0
 
