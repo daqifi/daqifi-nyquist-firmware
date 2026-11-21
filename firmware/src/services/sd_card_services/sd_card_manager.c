@@ -883,9 +883,10 @@ static const char* sd_get_open_window(void) {
          * had just fixed: the caller's sd_get_send_end then queued
          * `FAILED stream` with input ALREADY RESUMED, so a pending packet's
          * echo and reply could be queued ahead of the terminator. Leave it
-         * open; sd_get_send_end closes it after queueing, like every other
-         * path. ONE place closes the window -- that is the whole discipline,
-         * and the count is greppable: one call in this file. */
+         * open; sd_get_send_end releases it after queueing, like every other
+         * path. ONE function releases the window -- that is the whole
+         * discipline, and it is greppable: every ScpiSdWindow_ release call
+         * in this file is inside sd_get_send_end. */
         return "stream";
     }
     return NULL;
@@ -928,18 +929,20 @@ static bool sd_get_send_header(uint32_t length) {
     return false;
 }
 
-/* The end line, and the ONE place the data window closes.
+/* The end line, and the ONE place a transfer gives up its data window.
  *
- * Closing here rather than at each teardown is deliberate: the READ state has
- * several exits and at least two hand-duplicated teardowns, so a close placed
- * per-exit is a close that will eventually be missed -- and a window left open
+ * Here rather than at each teardown is deliberate: the READ state has several
+ * exits and at least two hand-duplicated teardowns, so a release placed
+ * per-exit is one that will eventually be missed -- and a window left open
  * silences that transport for good. Every exit DOES reach an end line, and
  * ScpiSdWindow_Service()'s staleness bound is the independent backstop for any
  * path that somehow does not.
  *
  * Nothing is held or replayed: the requesting transport produced no output at
  * all while its window was open, and resumes feeding input -- and so
- * answering -- on its first pass after this close. */
+ * answering -- once the window is released. For a completed transfer that is
+ * when its tail and end line have left the transport's write ring
+ * (ScpiSdWindow_ReleaseWhenDrained), not when they were queued. */
 static void sd_get_send_end(bool ok, uint32_t count, const char* reason,
                             bool blockDelivered) {
     const ScpiSdWindowTransport_t transport = sd_get_window_transport();
@@ -1045,8 +1048,8 @@ static void sd_get_send_end(bool ok, uint32_t count, const char* reason,
         }
     }
 
-    /* ⭐ THE END LINE IS QUEUED FIRST AND THE WINDOW CLOSES AFTER IT, AND THAT
-     * ORDER IS THE WHOLE PROMISE (#1267 round-2 audit, 3).
+    /* ⭐ THE END LINE IS QUEUED FIRST AND THE WINDOW IS RELEASED AFTER IT, AND
+     * THAT ORDER IS THE WHOLE PROMISE (#1267 round-2 audit, 3).
      *
      * It used to close first. Closing resumes the transport's input, so the
      * SD task could then lose its slice to the equal-priority USB task (both
@@ -1064,17 +1067,28 @@ static void sd_get_send_end(bool ok, uint32_t count, const char* reason,
      * ⚠ QUEUED IS NOT TRANSMITTED, AND THE ORIGINAL WORDING HERE OVERCLAIMED.
      * It said the ordering "holds however the scheduler behaves", and the
      * round-4 audit disproved that twice over: between queueing and
-     * transmission the ring can still be DISCARDED by a pool re-partition
-     * (closed by the drain wait in PrepareStreamingBuffers) or APPENDED to
-     * behind a short block (closed by ending the session). What this ordering
-     * alone buys is the narrower and true statement above -- relative order
-     * within the ring -- and the two mechanisms just named are what make the
-     * ring's contents survive to the host.
+     * transmission the ring can still be DISCARDED by a pool re-partition, or
+     * APPENDED to behind a short block. What this ordering alone buys is the
+     * narrower and true statement above -- relative order within the ring.
      *
-     * Unconditional, and after the write rather than inside its `if`: a
-     * malformed snprintf or a refused write must still release the transport.
-     * A window left open makes it deaf. */
-    ScpiSdWindow_Close(transport);
+     * ⭐ SO A COMPLETED TRANSFER DOES NOT CLOSE ITS WINDOW HERE; IT HANDS IT
+     * OVER (#1267 round-5 audit, 1). The window stays open -- input still
+     * paused -- until the ring is empty, and ScpiSdWindow_Service releases it
+     * then. That is what stops a deferred SYST:MEM:AUTO discarding the tail:
+     * it cannot be FED while the tail is queued. Round 4 tried to close this
+     * with a drain wait inside PrepareStreamingBuffers instead, which ran on
+     * the very task that drains the USB ring and so could never be satisfied;
+     * that wait is gone. The other transport's re-partition is refused there
+     * while any window is open.
+     *
+     * After the write rather than inside its `if`: a malformed snprintf or a
+     * refused write must still hand the window on, or it would be released
+     * only by the staleness backstop. */
+    if (blockDelivered) {
+        ScpiSdWindow_ReleaseWhenDrained(transport);
+    } else {
+        ScpiSdWindow_Close(transport);
+    }
 }
 
 /* #914: per-transport, one-deep latch for a failure the SD TASK detects AFTER

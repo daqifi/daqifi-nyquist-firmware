@@ -234,7 +234,8 @@ extern "C" {
      *
      * ⚠ AND THE FOLLOW-ON PROMISE HOLDS ONLY FOR A COMPLETED BLOCK. Everything
      * the host sent waits in the transport's own receive path and is processed,
-     * in order, after the end line -- WHEN the block was delivered in full.
+     * in order, once the end line has LEFT the transport's write ring (see
+     * ScpiSdWindow_ReleaseWhenDrained) -- WHEN the block was delivered in full.
      * When it was not (the host stopped reading), processing that input would
      * append replies behind a partial block, where a host resuming its blind
      * read counts them as file data; so that case ends the host's SESSION
@@ -252,10 +253,12 @@ extern "C" {
      * ⚠ A WINDOW LEFT OPEN MAKES THE TRANSPORT DEAF, which is a worse lockout
      * than the output hold could cause -- the host cannot even send an abort.
      * Two independent mechanisms prevent it: every path that ends a transfer
-     * closes the window (through the single sd_get_send_end), AND an open
-     * window with no data progress for SCPI_SD_WINDOW_STALE_MS closes itself.
-     * The second is the lockout guard, and it is what makes a missed close
-     * recoverable rather than terminal.
+     * releases the window (through the single sd_get_send_end, which hands a
+     * completed transfer's window over to be closed once its ring drains),
+     * AND an open window that no transfer handed over closes itself after
+     * SCPI_SD_WINDOW_STALE_MS without data progress. The second is the
+     * lockout guard, and it is what makes a missed release recoverable rather
+     * than terminal.
      */
 
     /*! Which transport's window. Only the transport that asked for the file is
@@ -277,13 +280,6 @@ extern "C" {
      *  for another task to finish a packet it is already processing, not for a
      *  host to do anything. */
 #define SCPI_SD_WINDOW_IDLE_WAIT_MS 2000u
-
-    /*! How long PrepareStreamingBuffers waits for both transports' write rings
-     *  to drain before refusing to re-partition. Re-partitioning discards
-     *  whatever is queued, so a tagged SD:GET's tail and end line would be
-     *  thrown away -- see the wait itself for the audit scenario. One second
-     *  matches the USB-DMA quiesce wait the same function already performs. */
-#define SCPI_PREPARE_DRAIN_WAIT_MS 1000u
 
     /*! The span in which a transport is feeding received bytes to microrl and
      *  SCPI. The window cannot open inside it -- see ScpiSdWindow_TryOpen. */
@@ -339,6 +335,24 @@ extern "C" {
 
     /*! Close the window, so the transport resumes arming reads. */
     void ScpiSdWindow_Close(ScpiSdWindowTransport_t transport);
+
+    /*! A transfer that queued its whole block AND its end line hands the
+     *  window over: it stays open -- input still paused -- until that
+     *  transport's write ring is EMPTY, and ScpiSdWindow_Service closes it
+     *  then (or as soon as the owning session is gone). No-op on a window
+     *  that is not open.
+     *
+     * ⭐ WHY NOT CLOSE AT ONCE (#1267 round-4 audit A, round-5 audit 1).
+     * Queued is not transmitted. Input that resumes while the tail is still
+     * in the ring can run a command that DISCARDS the ring (SYST:MEM:AUTO
+     * re-partitions the pool and resets both write rings), so the host loses
+     * its tail and its verdict. Keeping input paused until the ring is empty
+     * closes that at source, without anyone waiting: the SD task returns at
+     * once, and the release is polled from its ~1 ms loop. A host that has
+     * stopped reading keeps the window open, and input paused, for exactly as
+     * long as it does not read -- which costs it nothing it could have used.
+     */
+    void ScpiSdWindow_ReleaseWhenDrained(ScpiSdWindowTransport_t transport);
 
     /*! Record data progress, so the staleness bound is measured from the last
      *  byte delivered rather than from the window opening.
