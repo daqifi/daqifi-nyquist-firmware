@@ -177,6 +177,20 @@ class AmbiguousDefinition(Exception):
     """
 
 
+class UnreadDefinition(AmbiguousDefinition):
+    """A function body at file scope that the declarator grammar does not
+    read as the definition it is (#1274 round 3).
+
+    `compiler_view()` raises it; see `_unread_definitions` for the shape.
+    It SUBCLASSES `AmbiguousDefinition` on purpose: every caller of this
+    module already catches that and REFUSES, so the new refusal reaches all
+    of them without any caller having to learn a new exception -- a caller
+    that had to opt in would be one more place for the refusal to be
+    silently missing. The two mean the same thing to a caller: "this module
+    cannot say which text is the function", so do not trust either.
+    """
+
+
 def line_comment_end(src, start, already_spliced=False):
     """Index of the newline that truly ends a `//` comment beginning at
     `start` (the index of its leading `/`).
@@ -691,6 +705,8 @@ class _View(object):
         self.spans = _spans(self.matchmask, self.masked)
         self._newlines = [m.start() for m in re.finditer("\n", src)]
         self._raw_matchmask = None
+        # Bodies the grammar above misread; `compiler_view()` refuses on them.
+        self.unread = _unread_definitions(self)
 
     def raw_matchmask(self):
         """`mask_for_match(src)` -- the AS-WRITTEN view every
@@ -729,8 +745,193 @@ def compiler_view(src):
     offset) and `.line(j)` / `.line_of_orig(o)` (physical lines). Cached by
     identity, so every caller reading one file shares one view, which is what
     lets `scpi_sd_arm_path.py`'s census and occurrence accounting read the
-    same characters."""
-    return _view(src)
+    same characters.
+
+    ⛔ RAISES `UnreadDefinition` when a function body at file scope is not
+    read as the definition it is (`_unread_definitions`). `.spans` is what
+    every caller takes to BE the file's functions, and before this it was
+    silently wrong for exactly the shapes occurrence accounting already
+    refuses: a LEADING `__attribute__((...))` lost the function entirely,
+    and TWO stacked attribute prefixes made it a function NAMED
+    `__attribute__`. Either way the real function's body was absent from
+    every caller's view while the caller reported clean -- the #1274 gate
+    lost a writer that way (round 3). The census refused those shapes; the
+    view that callers build on did not, and now does.
+    """
+    view = _view(src)
+    if view.unread:
+        raise UnreadDefinition("; ".join(view.unread))
+    return view
+
+
+# ---------------------------------------------------------------------------
+# Definition SITES, found without the declarator grammar, so the grammar's
+# answer can be checked against them (#1274 round 3).
+# ---------------------------------------------------------------------------
+_ATTR_WORDS = ("__attribute__", "__attribute")
+_SPACE = " \t\r\n\f\v"
+
+
+def _prev_nonspace(code, i):
+    """Index of the last non-whitespace character before `i`, or -1."""
+    i -= 1
+    while i >= 0 and code[i] in _SPACE:
+        i -= 1
+    return i
+
+
+def _open_paren_of(code, close):
+    """Index of the `(` matching the `)` at `close`, or -1."""
+    depth = 0
+    for i in range(close, -1, -1):
+        if code[i] == ")":
+            depth += 1
+        elif code[i] == "(":
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
+
+def _is_ident_char(c):
+    return c.isalnum() or c in "_$"
+
+
+def _word_ending_at(code, end):
+    """The identifier whose LAST character is at `end` (inclusive)."""
+    s = end
+    while s >= 0 and _is_ident_char(code[s]):
+        s -= 1
+    return code[s + 1:end + 1], s + 1
+
+
+def _skip_attributes_back(code, k):
+    """From index `k`, step back over every `__attribute__((...))` that ENDS
+    at `k`; -> the index of the last character before them."""
+    while k >= 0 and code[k] == ")":
+        o = _open_paren_of(code, k)
+        if o < 0:
+            return k
+        p = _prev_nonspace(code, o)
+        if p < 0 or not _is_ident_char(code[p]):
+            return k
+        word, start = _word_ending_at(code, p)
+        if word not in _ATTR_WORDS:
+            return k
+        k = _prev_nonspace(code, start)
+    return k
+
+
+_ATTR_GROUP = re.compile(r"\b__attribute(?:__)?\s*\(\((?:[^()]|\([^()]*\))*\)\)")
+_FIRST_IDENT = re.compile(r"[A-Za-z_$][\w$]*")
+
+
+def _declarator_name(code, before_brace):
+    """The name a body opening right after `before_brace` belongs to, read
+    as attributes -> declarator -> parameter list -> body; None when the
+    text there is not shaped like a function definition at all.
+
+    The parameter list is the `(...)` the body follows (after any
+    `__attribute__((...))`, which GCC rejects there on a definition but
+    which costs nothing to step over). The declarator is what precedes THAT
+    `(`: an identifier, or a parenthesized declarator -- `(F)`, `((F))`,
+    `(((F)))`, `(__attribute__((x)) F)` -- whose first non-attribute
+    identifier is the name. Anything else -- `= (T){` (a compound literal),
+    `struct S {`, `= {` -- is not a definition and gets None.
+    """
+    k = _skip_attributes_back(code, before_brace)
+    if k < 0 or code[k] != ")":
+        return None
+    params = _open_paren_of(code, k)
+    if params < 0:
+        return None
+    q = _skip_attributes_back(code, _prev_nonspace(code, params))
+    if q < 0:
+        return None
+    if _is_ident_char(code[q]):
+        return _word_ending_at(code, q)[0]
+    if code[q] == ")":
+        wrap = _open_paren_of(code, q)
+        if wrap < 0:
+            return None
+        inner = _ATTR_GROUP.sub(lambda m: " " * len(m.group(0)),
+                                code[wrap:q])
+        m = _FIRST_IDENT.search(inner)
+        return m.group(0) if m else None
+    return None
+
+
+def parameters_before(code, brace):
+    """The text INSIDE the parameter list a body opening at `brace` follows,
+    or None. Read the way `_declarator_name` reads a definition site, so a
+    caller asking "what are this function's parameters" and this module
+    asking "is this a definition" cannot disagree about where the list is."""
+    k = _skip_attributes_back(code, _prev_nonspace(code, brace))
+    if k < 0 or code[k] != ")":
+        return None
+    start = _open_paren_of(code, k)
+    return None if start < 0 else code[start + 1:k]
+
+
+def _definition_sites(code):
+    """[(name, brace)] for every `{` at FILE SCOPE shaped like a function
+    body. `extern "C" {` (its literal blanked, so it reads `extern {`) is
+    transparent: a definition inside it is still at file scope."""
+    sites, stack, depth = [], [], 0
+    for i, c in enumerate(code):
+        if c == "{":
+            p = _prev_nonspace(code, i)
+            transparent = (p >= 0 and _is_ident_char(code[p])
+                           and _word_ending_at(code, p)[0] == "extern")
+            if depth == 0 and not transparent:
+                name = _declarator_name(code, p)
+                if name is not None:
+                    sites.append((name, i))
+            stack.append(transparent)
+            if not transparent:
+                depth += 1
+        elif c == "}" and stack:
+            if not stack.pop():
+                depth -= 1
+    return sites
+
+
+def _unread_definitions(view):
+    """[problem] for every definition-shaped file-scope body the declarator
+    grammar did not read as ITS OWN definition.
+
+    REFUSED, NOT TAUGHT. The grammar (`HEAD`, `_NAME_WRAP_OPEN`) reads one
+    attribute between the type and the name and two levels of wrapping
+    parens; GCC accepts more -- a LEADING attribute, several stacked, one
+    inside the declarator's parens, three wrapping parens. Teaching the
+    grammar each spelling is the non-terminating game this module's
+    docstring describes, so instead every body is found WITHOUT the grammar
+    (a `{` at file scope after a parameter list) and the grammar's answer
+    must agree with it: same brace, same name. Data declarations carry no
+    body -- the three leading/stacked-attribute sites in the firmware today
+    are all data (a DMA-buffer macro in app_freertos.h and two persistent
+    variables in PowerApi.c and SCPIInterface.c) -- and an initializer's
+    `{` follows `=`, so neither is a definition site.
+
+    NOT covered: a K&R definition, whose body follows the `;` of its last
+    parameter declaration rather than a `)`. Not a site here, so not
+    refused; none exists in the firmware.
+    """
+    by_brace = {start: name for name, start, _ in view.spans}
+    problems = []
+    for name, brace in _definition_sites(view.code):
+        got = by_brace.get(brace)
+        if got == name:
+            continue
+        how = ("not read as a definition at all"
+               if got is None else "read as a definition of %r" % got)
+        problems.append(
+            "line %d: the body of %r is %s -- a declarator spelling this "
+            "module's grammar does not read (a leading or stacked "
+            "`__attribute__((...))`, one inside the declarator's parentheses, "
+            "or three wrapping parens), so every caller would silently lose "
+            "the function" % (view.line(brace), name, how))
+    return problems
 
 
 def identifier_re(name):
@@ -1709,7 +1910,10 @@ def _accounting_self_test():
         src = ("static bool F(int x)\n{\n    return x;\n}\n" + head
                + "    __extension__ F(2);\n    do F(3); while (0);\n"
                "    return F(1);\n}\n")
-        shaped = len(_named_proto_re("F").findall(compiler_view(src).matchmask))
+        # `_view`, not `compiler_view`: two of these three heads are bodies
+        # the grammar does not read, which `compiler_view` now refuses
+        # outright -- this row is about the prototype grammar, not that.
+        shaped = len(_named_proto_re("F").findall(_view(src).matchmask))
         expect("VACUITY: inside a body behind %s the prototype grammar must "
                "still read all three statements as prototype-shaped; got %d"
                % (label, shaped), shaped == 3)
@@ -2241,6 +2445,60 @@ def _accounting_self_test():
     return bad, ran[0]
 
 
+# (why, source, "refused" | "read") for `compiler_view` (#1274 round 3).
+# Validity of each attribute placement on a DEFINITION was checked with
+# host gcc 13.3 and xc32-gcc v4.60 (`-fsyntax-only`, 2026-11-21): leading,
+# stacked, and inside the declarator's parens are VALID; between the name
+# and the parameter list, and after the parameter list, are REJECTED. The
+# rejected two still get rows -- what this module must never do with any
+# spelling is lose the function silently.
+_UNREAD_CASES = [
+    ("a LEADING attribute on the definition's own line (valid GCC): the "
+     "grammar loses the function entirely",
+     "__attribute__((noinline)) static void F(int a)\n{\n}\n", "refused"),
+    ("two STACKED attributes between type and name (valid GCC): the grammar "
+     "reads a function named `__attribute__`",
+     "static void __attribute__((noinline)) __attribute__((unused)) "
+     "F(int a)\n{\n}\n", "refused"),
+    ("an attribute INSIDE the declarator's parentheses (valid GCC)",
+     "static void (__attribute__((noinline)) F)(int a)\n{\n}\n", "refused"),
+    ("an attribute between the NAME and the parameter list (GCC rejects "
+     "it; the grammar reads a function named `__attribute__`)",
+     "static void F __attribute__((noinline)) (int a)\n{\n}\n", "refused"),
+    ("three wrapping parens, one past what the grammar reads",
+     "static bool (((F)))(void)\n{\n}\n", "refused"),
+    ("a leading-attribute definition inside `extern \"C\" {` is still at "
+     "file scope -- the wrapper must not hide it",
+     "extern \"C\" {\n__attribute__((noinline)) static void F(int a)\n{\n}\n"
+     "}\n", "refused"),
+    # ---- shapes that are read, and must not be refused ----
+    ("an ordinary definition", "static void F(int a)\n{\n}\n", "read"),
+    ("ONE attribute between type and name -- the grammar reads it",
+     "bool __attribute__((weak)) F(int a)\n{\n}\n", "read"),
+    ("an attribute on its own line ABOVE the definition: the definition "
+     "line itself is ordinary",
+     "__attribute__((noinline))\nstatic void F(int a)\n{\n}\n", "read"),
+    ("an attribute AFTER the parameter list (GCC rejects it on a "
+     "definition; the grammar still reads F, so nothing is lost)",
+     "static void F(int a) __attribute__((noinline))\n{\n}\n", "read"),
+    ("one and two wrapping parens", "static bool (F)(void)\n{\n}\n"
+     "static bool ((G))(void)\n{\n}\n", "read"),
+    ("a definition inside `extern \"C\" {`",
+     "extern \"C\" {\nstatic void F(int a)\n{\n}\n}\n", "read"),
+    ("DATA with a stacked attribute macro -- app_freertos.h's DMA-buffer "
+     "shape -- and a persistent variable with its attribute on the next "
+     "line -- PowerApi.c's and SCPIInterface.c's -- carry no body",
+     "#define DMA_READY __attribute__((coherent)) __attribute__((aligned(16)))\n"
+     "static volatile uint32_t s[4]\n"
+     "    __attribute__((persistent, coherent, address(0x80000000)));\n"
+     "__attribute__((unused)) static int t[2] = { 1, 2 };\n", "read"),
+    ("a file-scope compound literal and a struct definition are not "
+     "function bodies",
+     "struct S { int a; };\nstatic struct S *p = &(struct S){ 1 };\n",
+     "read"),
+]
+
+
 def self_test():
     """Prove the rule on canned sources. Device-free, import-free.
 
@@ -2299,15 +2557,26 @@ def self_test():
                       "F") is None:
         bad.append("the matcher found nothing in an ordinary definition")
 
+    for why, src, expect in _UNREAD_CASES:
+        try:
+            compiler_view(src)
+            got = "read"
+        except UnreadDefinition:
+            got = "refused"
+        if got != expect:
+            bad.append("compiler_view: %s: expected %s, got %s"
+                       % (why, expect, got))
+
     accounting_bad, accounting_ran = _accounting_self_test()
     bad.extend(accounting_bad)
 
     for b in bad:
         print("  - %s" % b)
     print("cdef self-test: %s (%d failure(s); %d definition-matcher rows, "
-          "%d occurrence-accounting checks, plus the scanner and mask checks)"
+          "%d compiler_view refusal rows, %d occurrence-accounting checks, "
+          "plus the scanner and mask checks)"
           % ("FAILED" if bad else "all cases pass", len(bad), len(_CASES),
-             accounting_ran))
+             len(_UNREAD_CASES), accounting_ran))
     return 1 if bad else 0
 
 

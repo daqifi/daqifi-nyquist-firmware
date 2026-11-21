@@ -1,0 +1,48 @@
+# Context-carrying calls to callees with NO source in the scan set (#1274).
+#
+# Round 3 made an unnamed callee fail closed: a call inside the non-query
+# closure whose arguments carry a SCPI context, and whose target this gate
+# cannot name, is refused -- the context is the one thing that lets a callee
+# reach the response stream. Function pointers are resolved or refused by the
+# checker itself; NOTHING of ours may be declared here. What remains are calls
+# to the toolchain's C library, which has no source in the tree to follow.
+#
+# A declaration cannot mask a write: it applies only to a callee that
+# resolves to NOTHING in the scan set. The day a name below is defined in our
+# sources or libscpi's, the call is followed and its line here is reported
+# stale. Keyed on the CALL SITE (file:line), so a declaration covers the one
+# call it was checked against and no other -- a new call, or this one moved,
+# fails the gate until a person looks at it.
+#
+# "Carries a context" is deliberately over-approximate: an argument that
+# mentions a name bound to a context, transitively through helper parameters
+# (`state` in the lexer is bound because callers pass
+# `&context->param_list.lex_state`). So most entries pass a CHARACTER or a
+# heap pointer derived from the context, not the context itself. Each was
+# read, 2026-11-21, against firmware/src/libraries/scpi/libscpi at 4ec4f91c:
+#
+#   lexer.c   isdigit/isalpha/isalnum/isxdigit on `(uint8_t)state->pos[0]`
+#             or an int `c` -- <ctype.h> classification of one byte.
+#   parser.c  memset(context, 0, sizeof(*context)) in SCPI_Init -- zeroes
+#             the context before its interface is installed.
+#   utils.c   memcpy into `heap->data`, strnlen over a heap string -- the
+#             error-info heap, bytes only.
+#
+# None is a function that can call back into the program, so none can reach
+# scpi_printf, SCPI_Result*, SCPI_Write* or a ->write() transport call.
+#
+# Shrink-only, both directions, like the other lists.
+#
+# Format: <file>:<line>\t<callee>\t#<issue>
+libraries/scpi/libscpi/src/lexer.c:193	isdigit	#1274
+libraries/scpi/libscpi/src/lexer.c:208	isdigit	#1274
+libraries/scpi/libscpi/src/lexer.c:236	isalpha	#1274
+libraries/scpi/libscpi/src/lexer.c:455	isalpha	#1274
+libraries/scpi/libscpi/src/lexer.c:457	isalnum	#1274
+libraries/scpi/libscpi/src/lexer.c:566	isxdigit	#1274
+libraries/scpi/libscpi/src/lexer.c:709	isdigit	#1274
+libraries/scpi/libscpi/src/lexer.c:732	isdigit	#1274
+libraries/scpi/libscpi/src/parser.c:277	memset	#1274
+libraries/scpi/libscpi/src/utils.c:814	memcpy	#1274
+libraries/scpi/libscpi/src/utils.c:821	memcpy	#1274
+libraries/scpi/libscpi/src/utils.c:858	strnlen	#1274

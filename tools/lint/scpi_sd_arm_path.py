@@ -1738,9 +1738,11 @@ def check(source_text):
     `_format_problems` and `_census_problems` each independently refuse
     rather than pass if the helper cannot be found or called, so no separate
     vacuity gate is needed here for that case."""
-    text = compiler_text(source_text)
     problems = []
     try:
+        # Inside the `try`: `compiler_view` raises `UnreadDefinition` (an
+        # `AmbiguousDefinition`) on a body its grammar misreads (#1274 r3).
+        text = compiler_text(source_text)
         spans = function_spans(text)
         fmt_problems, retraction = _format_problems(text)
         problems.extend(fmt_problems)
@@ -1766,8 +1768,8 @@ def check_stream(source_text):
     and like it reads `compiler_text(source_text)` and nothing else. Besides
     `STREAM_FN`'s own body, it refuses a call to the arm from any other
     function (`_stream_arm_escape_problems`)."""
-    text = compiler_text(source_text)
     try:
+        text = compiler_text(source_text)      # may refuse; see check()
         problems, examined = _stream_arm_problems(text)
         problems = (problems + _stream_arm_escape_problems(source_text)
                     + _accounting_problems(source_text, text,
@@ -2706,6 +2708,11 @@ static scpi_result_t decoy(scpi_t * c) {
         # `_accounting_problems`.
         unaccounted = "no recogniser accounts for"
         disagree = "disagree about WHICH text is a call"
+        # Rows 1 and 2 below are REFUSED one layer earlier since #1274 r3:
+        # `cdef.compiler_view` itself now refuses a body its declarator
+        # grammar misreads, before accounting runs. Either text is the
+        # refusal the rows exist to demand; what must never happen is a pass.
+        unread = "grammar does not read"
         helper = _GOOD[_GOOD.index("static bool SD_ArmOrRefuseWithCleanup("):
                        _GOOD.index("static bool SD_ArmOrRefuse(scpi_t")]
 
@@ -2720,7 +2727,8 @@ static scpi_result_t decoy(scpi_t * c) {
         assert two_attr != _GOOD
         _ck("an #if 0 helper plus a live DOUBLE-__attribute__ replacement is "
             "refused, not read as the dead one",
-            any(unaccounted in p for p in check(two_attr)[0]), True)
+            any(unaccounted in p or unread in p
+                for p in check(two_attr)[0]), True)
 
         # 2. The same with THREE wrapping parens -- one past what the
         #    definition matcher supports, and so call-shaped to nothing.
@@ -2729,7 +2737,8 @@ static scpi_result_t decoy(scpi_t * c) {
             "static bool (((SD_ArmOrRefuseWithCleanup)))(", 1), 1)
         assert three != _GOOD
         _ck("an #if 0 helper plus a live (((F))) replacement is refused",
-            any(unaccounted in p for p in check(three)[0]), True)
+            any(unaccounted in p or unread in p
+                for p in check(three)[0]), True)
 
         # 3. A SECOND arm, spelled with a parenthesized callee. `(F)(x)` is
         #    a call; the census's `\bF\s*\(` cannot see it, so the "arms

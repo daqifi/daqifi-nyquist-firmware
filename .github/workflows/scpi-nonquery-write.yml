@@ -23,9 +23,10 @@ name: scpi-nonquery-write
 #
 # Deliberately NOT covered: the `**ERROR` line every queued error prints from
 # the transport error callbacks (UsbCdc.c SCPI_USB_Error,
-# wifi_tcp_server.c SCPI_TCP_Error). Those are not table callbacks, so this
-# gate does not see them and must not be widened to guess at them; they are
-# part of #1274 stage 3.
+# wifi_tcp_server.c SCPI_TCP_Error). libscpi reaches them through
+# `context->interface->error(...)`, and those two libscpi call sites are
+# DECLARED in tools/lint/scpi_nonquery_write-indirect.txt rather than
+# followed; they are part of #1274 stage 3.
 #
 # Known limits, stated rather than discovered later: this is a textual call
 # graph with no control flow, so a write behind an impossible condition still
@@ -33,18 +34,31 @@ name: scpi-nonquery-write
 # counts. Both over-approximate -- a false positive costs an argument, the
 # opposite costs a missed defect.
 #
-# Two things the checker genuinely CANNOT analyse, so both are DECLARED and a
-# new one fails the gate rather than passing quietly:
-#   - an indirect call whose target no assignment names
-#     (tools/lint/scpi_nonquery_write-indirect.txt);
-#   - a registered non-query callback defined outside the scan set, i.e.
-#     libscpi's own eight (tools/lint/scpi_nonquery_write-unresolved.txt).
-# Round 1 of the adversarial audit found BOTH of these failing toward
-# silence -- the second was being skipped outright, under a docstring claim
-# that a vendor function "cannot write because it has no access to the
-# context", which is false for a table callback since libscpi hands it the
-# context. Each of the eight was then checked against libscpi's own call
-# graph rather than assumed safe.
+# Since round 3 libscpi (firmware/src/libraries/scpi/libscpi) is indexed as a
+# second layer of the same graph, so a non-query callback that calls a
+# libscpi function which writes -- SCPI_CoreIdnQ, say -- is reported, and
+# libscpi's own eight table callbacks are analysed rather than declared.
+# A call that hands a SCPI context to a target the checker cannot name is
+# REFUSED: a parenthesised callee is normalised, a local or parameter
+# function pointer is resolved to its assigned targets or refused, and a
+# definition cdef's grammar misreads (a leading or stacked __attribute__)
+# is refused. What is left is DECLARED, and a new one fails the gate:
+#   - an indirect call the checker does not follow
+#     (tools/lint/scpi_nonquery_write-indirect.txt: a member no assignment
+#     names, libscpi's two `->error` calls, the WiFi transport's call into
+#     libscpi's parser);
+#   - a context-carrying call to a callee with no source in the tree, i.e.
+#     the C library (tools/lint/scpi_nonquery_write-external.txt, per call
+#     site);
+#   - a registered non-query callback defined outside the scan set
+#     (tools/lint/scpi_nonquery_write-unresolved.txt -- empty since round 3).
+# Round 1 of the adversarial audit found the last two kinds failing toward
+# silence -- a callback outside the scan set was being skipped outright,
+# under a docstring claim that a vendor function "cannot write because it
+# has no access to the context", which is false for a table callback since
+# libscpi hands it the context. Round 2's audit found a libscpi callee, a
+# local function pointer, a parenthesised callee and attribute placements
+# failing the same way; round 3 closes them.
 
 on:
   pull_request:
@@ -62,6 +76,7 @@ on:
       - 'tools/lint/scpi_nonquery_write-allow.txt'
       - 'tools/lint/scpi_nonquery_write-indirect.txt'
       - 'tools/lint/scpi_nonquery_write-unresolved.txt'
+      - 'tools/lint/scpi_nonquery_write-external.txt'
       # The checker IMPORTS this. Without it, a change that gutted the shared
       # splice/mask/span primitives would pass this gate without the gate ever
       # running.
@@ -75,6 +90,7 @@ on:
       - 'tools/lint/scpi_nonquery_write-allow.txt'
       - 'tools/lint/scpi_nonquery_write-indirect.txt'
       - 'tools/lint/scpi_nonquery_write-unresolved.txt'
+      - 'tools/lint/scpi_nonquery_write-external.txt'
       - 'tools/lint/cdef.py'
       - '.github/workflows/scpi-nonquery-write.yml'
 
@@ -99,10 +115,13 @@ jobs:
       # decides whether the gate below means anything, and a checker that
       # examines nothing reports a pass. Its --self-test covers one synthetic
       # case per syntactic route to a write (direct, via a helper, via a
-      # FUNCTION-POINTER ARGUMENT, on an else/error branch), a '?' writer it
-      # must pass, and the vacuity cases that must FAIL: an empty scan set, a
-      # scan set missing a SCPI source, an unparseable table entry, and an
-      # allowlist line with no issue reference.
+      # FUNCTION-POINTER ARGUMENT, on an else/error branch, through a libscpi
+      # callee, a local function pointer, a parenthesised callee, a macro, and
+      # a writer defined under each __attribute__ placement), a '?' writer it
+      # must pass, the declarations that must NOT mask a write, and the
+      # vacuity cases that must FAIL: an empty scan set, a scan set missing a
+      # SCPI source, an unparseable table entry, and a list line with no
+      # issue reference.
       - name: Self-test the checker
         run: python3 tools/lint/scpi_nonquery_write.py --self-test
 
