@@ -242,15 +242,19 @@ def strip_c_comments(text, spliced=False):
 
 # `.pattern = "A" "B", .callback = X` is legal C -- adjacent string literals
 # concatenate -- so the string part is one-or-more literals, joined.
-# The callback must be a BARE identifier that ends the initializer (`,` or `}`
-# next). Without that anchor `.callback = SCPI_Old ? SCPI_New : SCPI_Old`
-# captured `SCPI_Old`, the first token of an expression whose value is
-# SCPI_New, and the #1196 callback check then approved the wrong wiki row. Any
-# other form now fails to match, so registered_patterns' count guard exits
-# loudly instead (#1196 audit r2).
+#
+# The match is the WHOLE brace-enclosed entry, in exactly one shape:
+#     { .pattern = "<literal(s)>", .callback = <bare identifier> [,] }
+# Anything else in an entry -- a compound initializer (`A ? B : A`), a
+# repeated designator (`.callback = A, .callback = B`, where C runs the LAST),
+# or an extra field -- does not match, so registered_patterns' count guard
+# exits loudly. A tolerant regex kept reading the FIRST token of such entries
+# and approving a wiki row for a handler that never runs (#1196 audits r2 and
+# r3, one per construct). Refusing every non-canonical shape closes the class
+# instead of the next instance. Every live entry on main has this shape.
 _REGISTRATION = re.compile(
-    r'\.pattern\s*=\s*((?:"[^"]*"\s*)+),\s*\.callback\s*=\s*([A-Za-z_]\w*)'
-    r'(?=\s*[,}])')
+    r'\{\s*\.pattern\s*=\s*((?:"[^"]*"\s*)+),\s*'
+    r'\.callback\s*=\s*([A-Za-z_]\w*)\s*,?\s*\}')
 _PATTERN_FIELD = re.compile(r"\.pattern\s*=")
 # libscpi requires the command table to end with a {NULL, ...} sentinel. It is
 # a real `.pattern =` field and deliberately not a command, so the parse guard
@@ -652,7 +656,10 @@ def _iter_command_rows(wiki_dir):
             first = cells[0]
             if first.lower() in ("scpi command", "command"):  # header: rows below are commands
                 in_command_table = True
-                header = [c.strip().lower() for c in cells]
+                # Markdown emphasis/code marks are not part of a column name:
+                # `**Firmware Callback**` must still select the column, or the
+                # callback check silently skips the whole table (#1196 r3).
+                header = [re.sub(r"[*_`]", "", c).strip().lower() for c in cells]
                 continue
             # Cells of NON-command tables are not consulted at all (#807). They
             # used to be, as a weaker kind of mention, because the legacy-alias
@@ -1451,6 +1458,10 @@ def _self_test_callbacks():
          "short 'Callback' header, wrong callback"),
         (hdr4 + "| SYSTem:DEVice:NAME | x | y | |\n", 1,
          "empty callback cell"),
+        ("| SCPI Command | Description | Example | **Firmware Callback** |\n"
+         "| -- | -- | -- | -- |\n"
+         "| SYSTem:DEVice:NAME | x | y | SCPI_Imaginary |\n", 1,
+         "bold callback header, wrong callback"),
         ("| SCPI Command | Description |\n| -- | -- |\n"
          "| SYSTem:DEVice:NAME | x |\n", 0, "no callback column"),
     )
@@ -1503,27 +1514,37 @@ def _self_test_callbacks():
         ([("SYSTem:StopStreamData", "SCPI_StopStreaming")], 0,
          "full spelling reaches its own registration"),
     )
-    # A callback initializer that is not a bare identifier must be REFUSED
-    # (registered_patterns exits), never read as its first token.
-    with tempfile.TemporaryDirectory() as d:
-        c = os.path.join(d, "scpi.c")
-        with open(c, "w", encoding="utf-8") as fh:
-            fh.write('const scpi_command_t scpi_commands[] = {\n'
-                     '    {.pattern = "SYSTem:DEVice:NAME", '
-                     '.callback = SCPI_Old ? SCPI_New : SCPI_Old,},\n'
-                     '    {.pattern = NULL, .callback = SCPI_NotImplemented,},\n'
-                     '};\n')
-        cases += 1
-        try:
-            with contextlib.redirect_stdout(io.StringIO()):
-                registered_patterns(c)
-            refused = False
-        except SystemExit:
-            refused = True
-        if not refused:
-            failures += 1
-            print("  FAIL callback check (compound initializer): parsed as a "
-                  "registration instead of refused")
+    # A non-canonical entry must be REFUSED (registered_patterns exits), never
+    # read as its first callback token. One case per construct the audits used,
+    # plus a canonical control that must still parse.
+    shapes = (
+        ('.callback = SCPI_Old ? SCPI_New : SCPI_Old,', True,
+         "compound initializer"),
+        ('.callback = SCPI_Real, .callback = SCPI_New,', True,
+         "repeated .callback (C runs the last)"),
+        ('.callback = SCPI_Real, .extra = 1,', True, "extra field"),
+        ('.callback = SCPI_Real,', False, "canonical entry (control)"),
+    )
+    for tail, want_refused, label in shapes:
+        with tempfile.TemporaryDirectory() as d:
+            c = os.path.join(d, "scpi.c")
+            with open(c, "w", encoding="utf-8") as fh:
+                fh.write('const scpi_command_t scpi_commands[] = {\n'
+                         '    {.pattern = "SYSTem:DEVice:NAME", ' + tail + '},\n'
+                         '    {.pattern = NULL, .callback = SCPI_NotImplemented,},\n'
+                         '};\n')
+            cases += 1
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    registered_patterns(c)
+                refused = False
+            except SystemExit:
+                refused = True
+            if refused != want_refused:
+                failures += 1
+                print(f"  FAIL callback check ({label}): "
+                      f"{'refused' if refused else 'parsed'}, expected "
+                      f"{'refused' if want_refused else 'parsed'}")
 
     for wiki_cbs, want, label in first_match_def:
         cases += 1
