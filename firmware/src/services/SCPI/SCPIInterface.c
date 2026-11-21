@@ -5122,6 +5122,16 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
         ? (uint32_t)((s.queueDroppedSamples * 100ULL) / totalSampleAttempts) : 0;
     scpi_printf(context, "SampleLossPercent=%u\r\n", (unsigned)sampleLoss);
 
+    // #1249: SampleLossPercent floors to 0 below 1%, which hides up to
+    // ~5,700 dropped samples on a 120 s run. SampleLossPPM is the same ratio
+    // in parts per million (dropped * 1e6 / attempts), so a 0.44% loss reads
+    // ~4400. SampleLossPercent is unchanged: shipped clients parse it. The
+    // 64-bit product cannot overflow: queueDroppedSamples is uint32, so
+    // the product is < 2^52.
+    uint32_t sampleLossPpm = totalSampleAttempts > 0
+        ? (uint32_t)((s.queueDroppedSamples * 1000000ULL) / totalSampleAttempts) : 0;
+    scpi_printf(context, "SampleLossPPM=%u\r\n", (unsigned)sampleLossPpm);
+
     // Compute byte loss percentage (combined across all outputs).
     // Can exceed 100% when multiple outputs drop simultaneously.
     uint64_t totalDroppedBytes = s.usbDroppedBytes + s.wifiDroppedBytes + s.sdDroppedBytes;
@@ -9659,7 +9669,11 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
      * source then names the bank the overlay was applied on top of, which is
      * the closest true statement a single key can make about provenance.
      * The second closing brace closes identity{}. */
-    const bool factoryCalMissing = daqifi_settings_FactoryCalIsMissing();
+    /* #1185 r1: factory_present and factory_slot from ONE load, so the pair
+     * is one the device actually had. */
+    bool factoryCalMissing = false;
+    const DaqifiFactorySlotState factorySlotState =
+        daqifi_settings_GetFactoryCal(&factoryCalMissing);
     /* ONE coherent read, not two. Pairing CalIsIdentity() with
      * GetActiveCalBank() here let a higher-priority LOADcal/LOADFcal land
      * between them and produce a source the device never had -- codex-r6
@@ -9690,10 +9704,26 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
         case DAQIFI_CAL_SOURCE_UNKNOWN: calSource = "unknown"; break;
         default:                        calSource = "unknown"; break;
     }
+    /* #1185: factory_slot answers a THIRD question the two keys above
+     * cannot -- WHY the slot is not populated: "blank" (erased, normal on a
+     * new unit) vs "invalid" (holds data that failed validation, needs
+     * attention). Every value spelled out; the fallthrough is "unknown",
+     * never "blank", for the same reason as calSource above. Appended after
+     * factory_present so existing parsers are unaffected. */
+    const char * factorySlot;
+    switch (factorySlotState) {
+        case DAQIFI_FACTORY_SLOT_BLANK:   factorySlot = "blank";   break;
+        case DAQIFI_FACTORY_SLOT_VALID:   factorySlot = "valid";   break;
+        case DAQIFI_FACTORY_SLOT_INVALID: factorySlot = "invalid"; break;
+        case DAQIFI_FACTORY_SLOT_UNKNOWN: factorySlot = "unknown"; break;
+        default:                          factorySlot = "unknown"; break;
+    }
     scpi_printf(context,
-        "\"cal\":{\"factory_present\":%s,\"source\":\"%s\","
+        "\"cal\":{\"factory_present\":%s,\"factory_slot\":\"%s\","
+        "\"source\":\"%s\","
         "\"cal_channel_ids\":[",
         factoryCalMissing ? "false" : "true",
+        factorySlot,
         calSource);
 
     /* #1272: every channel ID the calibration commands accept, store and

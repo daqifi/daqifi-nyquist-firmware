@@ -2693,6 +2693,15 @@ static void Streaming_Stop(void) {
         TimerApi_Stop(gpStreamingConfig->TimerIndex);
         TimerApi_InterruptDisable(gpStreamingConfig->TimerIndex);
 
+        /* #1301: latch "no scan ever completed this session" BEFORE the idle
+         * scan list is restored -- Streaming_NoteEosFired() is called from the
+         * ADC EOS ISR for idle/monitoring scans too, so a later EOS would bump
+         * gScanEosSeq and hide the condition. Dry ticks only accrue while
+         * gPrimingPending (an enabled user T2 channel), and gScanEosSeq == 1 is
+         * the EOS ISR's own "no scan completed" signal, so T1-only sessions and
+         * a normal priming window (EOS arrives within a few ticks) never set it. */
+        const bool noScanEver = (gDryTicks > 0u) && (gScanEosSeq == 1u);
+
         // Revert ADC to software triggering so non-streaming reads
         // (ADC_Tasks polling) still work.
         MC12b_ConfigureHardwareTrigger(false, false);
@@ -2748,6 +2757,22 @@ static void Streaming_Stop(void) {
         taskENTER_CRITICAL();
         gQuesBits &= (QUES_BIT_TRANSPORT_DOWN | QUES_BIT_SPI_BUS_FAULT);
         taskEXIT_CRITICAL();
+
+        /* #1301: a session whose shared scan never completed streamed nothing
+         * and booked every tick as a dry tick, which #745 deliberately keeps
+         * out of the loss counters -- so every loss figure read 0%. Report it
+         * as total loss in the window figure, set BEFORE the session snapshot
+         * so the SCPI read and the deferred summary both see it. The queue-only
+         * fields (SampleLossPercent/PPM) and the TimerISRCalls invariant are
+         * unchanged. */
+        if (noScanEver) {
+            uint32_t dryTicks = gDryTicks;
+            taskENTER_CRITICAL();
+            gStreamStats.windowLossPercent = 100u;
+            taskEXIT_CRITICAL();
+            LOG_E("Stream end: no scan completed; %u ticks emitted nothing",
+                  (unsigned)dryTicks);
+        }
 
         /* #982: do NOT decide hadDrops or print here. The stop-time SD
          * teardown (SD_CARD_MANAGER_PROCESS_STATE_UNMOUNT_DISK,
@@ -3023,9 +3048,10 @@ static void Streaming_EmitSessionSummaryImpl(bool recordDying) {
                                   snap.encoderDroppedSamplesSteady +
                                   snap.dioDroppedSamplesSteady +
                                   snap.scanStaleDroppedSteady;
+        /* #1301: nothing attempted but stale ticks booked is total loss, not 0%. */
         uint32_t lossPercent = totalAttempted > 0
             ? (uint32_t)((totalSampleLoss * 100ULL) / totalAttempted)
-            : 0;
+            : (totalSampleLoss > 0 ? 100u : 0u);
         // #982: by construction this runs after the stop-time SD teardown
         // has had its chance to call Streaming_ReportSdDiscard(), so
         // sdDroppedBytesSteady here already reflects any stop-time drain
