@@ -3352,6 +3352,23 @@ scpi_result_t SCPI_StorageSDFormatQuery(scpi_t * context) {
  */
 scpi_result_t SCPI_StorageSDInfo(scpi_t * context) {
     uint8_t cid[16];
+
+    /* #1271: DRV_SDSPI_GetCID() below only copies the driver's static CID
+     * buffer (zeros before any card was read, otherwise the LAST card read,
+     * which may since have been removed), so its false return can never mean
+     * "no card". Ask the media layer first, exactly as SD:SPACe? / SD:LISt?
+     * do, so an absent card is an error and not a plausible-looking reply.
+     *
+     * While SPI4 belongs to WiFi (SD task suspended) nothing refreshes the
+     * attach cache, so a negative would be stale rather than true; the CID
+     * does not depend on the bus, so keep answering from the buffer then, as
+     * before. Both checks return before the response-buffer take below, so no
+     * Give is owed on this path. */
+    if (!app_SDCard_SpiOwnedByWifi() && !SpiBusHealth_IsSdSuspended()
+            && !SCPI_CheckSDCardPresent(context)) {
+        return SCPI_RES_ERR;
+    }
+
     if (!DRV_SDSPI_GetCID(cid, sizeof(cid))) {
         LOG_E("[SD] Card info not available (driver CID support missing or no card)");
         SCPI_ErrorPush(context, SCPI_ERROR_HARDWARE_MISSING);
