@@ -1607,6 +1607,31 @@ TEST(every_sd_unlock_follows_a_miso_release_clock)
     assertCardHealthy(56U);
 }
 
+/* #1262 audit: INIT_INCR_CLK_SPD now takes the bus before its dummy read.
+ * If that read fails, init goes to INIT_ERROR and the attach FSM leaves for
+ * the polling timer at once, so INIT_ERROR's own release waits for the next
+ * init attempt; with the card gone there may be none, and WiFi stays locked
+ * out. The lock must be back at depth 0 as soon as init has failed. */
+TEST(failed_init_dummy_read_gives_the_bus_back)
+{
+    resetAll();
+    gFault.action = FAULT_REJECT;   /* the 10-byte dummy read is init's only one */
+    gFault.isRead = 1;
+    gFault.len = 10;
+    startDriver();
+    unsigned i;
+    for (i = 0U; (i < 20000U) && (gFault.action != FAULT_NONE); i++)
+    {
+        pass();
+    }
+    ASSERT_TRUE(gFault.action == FAULT_NONE);   /* the premise: it was rejected */
+    passes(3U);
+    ASSERT_FALSE(DRV_SDSPI_IsAttached(gHandle));
+    ASSERT_EQ(gLockDepth, 0);
+    ASSERT_TRUE(runUntilAttached(20000U));       /* and the retry still attaches */
+    assertCardHealthy(60U);
+}
+
 /* #1255 audit: after a watchdog abandon the MISO-release byte queues behind
  * the stuck transfer and starts only after the SD lock is gone, when a WINC
  * transfer can be on the bus. Sent by switching the client setup, it would
@@ -2863,6 +2888,7 @@ int main(void)
     RUN(aborted_transfer_still_pending_survives_the_prune_until_it_completes);
     RUN(cs_is_held_for_a_whole_request_then_clocked_once_deselected);
     RUN(every_sd_unlock_follows_a_miso_release_clock);
+    RUN(failed_init_dummy_read_gives_the_bus_back);
     RUN(miso_release_byte_behind_an_abandoned_transfer_never_selects_the_card);
     RUN(no_hold_while_an_abandoned_requests_transfers_are_queued);
     return TEST_SUMMARY();

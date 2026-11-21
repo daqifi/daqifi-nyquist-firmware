@@ -1876,6 +1876,14 @@ static void lDRV_SDSPI_MediaInitialize ( SYS_MODULE_OBJ object )
             }
             else if (dObj->spiTransferStatus == DRV_SDSPI_SPI_TRANSFER_STATUS_ERROR)
             {
+                /* #1262: give back the lock INIT_INCR_CLK_SPD took. The
+                 * DRV_SDSPI_INIT_ERROR case below does not run now:
+                 * DRV_SDSPI_TASK_MEDIA_INIT sees the error state and goes to
+                 * the polling timer, so that release would come only with the
+                 * next init attempt, and with no card there may be none.
+                 * (That later release then finds the lock already free, as
+                 * it does after an error in any state before this one.) */
+                (void) DRV_SDSPI_SPIExclusiveAccess(dObj, false);
                 dObj->mediaInitState = DRV_SDSPI_INIT_ERROR;
             }
             else
