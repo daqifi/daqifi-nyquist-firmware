@@ -10,18 +10,56 @@
 #
 # Suppressions file: tools/lint/cppcheck-suppress.txt
 # Include paths derived from firmware/daqifi.X/nbproject/Makefile-default.mk.
+#
+# Invocation (#1169 -- the DEFAULT checks, writing the baseline is opt-in):
+#   bash tools/lint/cppcheck.sh                          CHECK: diff against the
+#                                                        committed baseline, exit 1 on any difference
+#   bash tools/lint/cppcheck.sh --write-baseline         regenerate the committed baseline
+#                                                        (refuses if the finding count grew)
+#   bash tools/lint/cppcheck.sh --write-baseline --force regenerate even when findings grew
+#   bash tools/lint/cppcheck.sh <path>                   write findings to <path> (the CI form)
 
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
-OUT="${1:-tools/lint/cppcheck-baseline.txt}"
+BASELINE="tools/lint/cppcheck-baseline.txt"
+MODE=check
+FORCE=0
+OUT=""
+for arg in "$@"; do
+  case "$arg" in
+    --write-baseline) MODE=write ;;
+    --force) FORCE=1 ;;
+    -*)
+      echo "::error::unknown option: $arg (see the header of $0)" >&2
+      exit 2
+      ;;
+    *)
+      if [ -n "$OUT" ]; then
+        echo "::error::more than one output path given" >&2
+        exit 2
+      fi
+      MODE=path
+      OUT="$arg"
+      ;;
+  esac
+done
+if [ "$FORCE" = 1 ] && [ "$MODE" != write ]; then
+  echo "::error::--force only applies to --write-baseline" >&2
+  exit 2
+fi
+if [ "$MODE" = write ] && [ -n "$OUT" ]; then
+  echo "::error::--write-baseline and an output path are mutually exclusive" >&2
+  exit 2
+fi
 
 # Capture cppcheck output to a temp file first, then sort into the final
 # OUT path. Sorting (LC_ALL=C bytewise) eliminates baseline drift from
 # filesystem-traversal-order differences across runners and OSes.
 TMP_OUT="$(mktemp)"
-trap 'rm -f "$TMP_OUT"' EXIT
+SORTED_OUT="$(mktemp)"
+trap 'rm -f "$TMP_OUT" "$SORTED_OUT"' EXIT
 
 # Parallelism: cppcheck emits findings in non-deterministic order under
 # `-j N`, but the LC_ALL=C sort below normalizes ordering — so parallel
@@ -74,9 +112,36 @@ if ! LC_ALL=C LANG=C cppcheck \
   exit 1
 fi
 
-LC_ALL=C sort "$TMP_OUT" >"$OUT"
+LC_ALL=C sort "$TMP_OUT" >"$SORTED_OUT"
 
-echo "Findings: $(wc -l < "$OUT") lines → $OUT"
+case "$MODE" in
+  check)
+    # --strip-trailing-cr matches the CI comparison (CRLF stragglers).
+    if diff -u --strip-trailing-cr "$BASELINE" "$SORTED_OUT"; then
+      echo "OK: cppcheck findings match $BASELINE ($(wc -l < "$BASELINE") lines)"
+      exit 0
+    fi
+    echo "::error::cppcheck findings differ from $BASELINE ('+' = new finding, '-' = resolved)" >&2
+    echo "Fix a real bug, or suppress a false positive in tools/lint/cppcheck-suppress.txt;" >&2
+    echo "regenerate the baseline ONLY for resolved findings: $0 --write-baseline" >&2
+    exit 1
+    ;;
+  write)
+    OUT="$BASELINE"
+    OLD_COUNT="$(wc -l < "$BASELINE" 2>/dev/null || echo 0)"
+    NEW_COUNT="$(wc -l < "$SORTED_OUT")"
+    if [ "$NEW_COUNT" -gt "$OLD_COUNT" ] && [ "$FORCE" != 1 ]; then
+      echo "::error::refusing to write the baseline: findings grew $OLD_COUNT -> $NEW_COUNT." >&2
+      echo "A growing baseline adopts new findings. Fix or suppress them; use --force only if deliberate." >&2
+      diff -u --strip-trailing-cr "$BASELINE" "$SORTED_OUT" >&2 || true
+      exit 1
+    fi
+    ;;
+esac
+
+cp "$SORTED_OUT" "$OUT"
+
+echo "Findings: $(wc -l < "$OUT") lines -> $OUT"
 echo "By severity:"
 # `|| true` so the script doesn't exit non-zero under `set -euo pipefail`
 # when there are zero findings (grep returns 1 when nothing matches).
