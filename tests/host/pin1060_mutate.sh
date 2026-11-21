@@ -23,10 +23,17 @@
 # Usage:  bash tests/host/pin1060_mutate.sh [WORKTREE]
 set -u
 
+# Every refusal path prints a terminal RESULT line (#1183): a caller that
+# filters for ^RESULT must never read a refused run as a clean one.
+refuse() {      # refuse <exit-code> <reason>
+    echo "RESULT: 0 passed, 0 failed (REFUSED: $2)"
+    exit "$1"
+}
+
 W="${1:-$(git rev-parse --show-toplevel)}"
 F="$W/firmware/src/services/wifi_services/wifi_manager.c"
 
-[ -f "$F" ] || { echo "FATAL: $F missing."; exit 2; }
+[ -f "$F" ] || { echo "FATAL: $F missing."; refuse 2 "source file missing"; }
 
 echo "################################################################"
 echo "# OPERATING ON: $W"
@@ -37,7 +44,7 @@ if [ -n "$(git -C "$W" status --porcelain -- "$F" 2>/dev/null)" ]; then
     echo "FATAL: uncommitted changes in $F. Commit or set them aside --"
     echo "       restore here is a byte copy and cannot arbitrate between"
     echo "       your edits and the mutants'."
-    exit 2
+    refuse 2 "uncommitted changes in the mutated files"
 fi
 
 # The backup is checked and verified byte-identical BEFORE the EXIT trap is
@@ -49,7 +56,7 @@ backup_failed() {
     echo "       Nothing mutated and no trap installed; the worktree is"
     echo "       untouched."
     [ -n "$BK" ] && rm -f "$BK"
-    exit 2
+    refuse 2 "backup failed: $1"
 }
 BK=$(mktemp 2>/dev/null) || backup_failed "mktemp failed"
 [ -n "$BK" ] && [ -f "$BK" ] || backup_failed "mktemp gave no usable path"
@@ -97,10 +104,10 @@ cleanup() { restore; rm -f "$BK"; }
 # The signal handlers exit EXPLICITLY: on INT/TERM bash runs the handler and
 # then RESUMES, so a plain `trap ... EXIT INT TERM` restores and re-mutates.
 trap cleanup EXIT
-trap 'printf "\n** INTERRUPTED -- restoring **\n" >&2; exit 130' INT
-trap 'printf "\n** TERMINATED -- restoring **\n" >&2; exit 143' TERM
+trap 'printf "\n** INTERRUPTED -- restoring **\n" >&2; echo "RESULT: ${pass:-0} passed, ${fail:-0} failed (INTERRUPTED)"; exit 130' INT
+trap 'printf "\n** TERMINATED -- restoring **\n" >&2; echo "RESULT: ${pass:-0} passed, ${fail:-0} failed (TERMINATED)"; exit 143' TERM
 
-cd "$W/tests/host" || exit 2
+cd "$W/tests/host" || refuse 2 "cannot cd to tests/host"
 pass=0; fail=0
 
 first_error() {
@@ -158,7 +165,7 @@ echo "== setup: the baseline must be clean, or every result below is noise =="
 expect "baseline" CLEAN
 if [ "$fail" -ne 0 ]; then
     echo "ABORT: baseline is not clean; mutants would be meaningless."
-    exit 1
+    refuse 1 "baseline not clean"
 fi
 
 echo "== M1 (PIN 6): drop the REINIT-side re-attempt. The bounded retry in the =="

@@ -36,11 +36,18 @@
 # Usage:  bash tests/host/pin1201_mutate.sh [WORKTREE]
 set -u
 
+# Every refusal path prints a terminal RESULT line (#1183): a caller that
+# filters for ^RESULT must never read a refused run as a clean one.
+refuse() {      # refuse <exit-code> <reason>
+    echo "RESULT: 0 passed, 0 failed (REFUSED: $2)"
+    exit "$1"
+}
+
 W="${1:-$(git rev-parse --show-toplevel)}"
 S="$W/firmware/src/services/SCPI/SCPIInterface.c"
 T="$W/tests/host"
 
-[ -f "$S" ] || { echo "FATAL: $S missing."; exit 2; }
+[ -f "$S" ] || { echo "FATAL: $S missing."; refuse 2 "source file missing"; }
 
 echo "################################################################"
 echo "# OPERATING ON: $W"
@@ -51,7 +58,7 @@ if [ -n "$(git -C "$W" status --porcelain -- "$S" 2>/dev/null)" ]; then
     echo "FATAL: uncommitted changes in $S. Commit or set them aside first --"
     echo "       restore here is a byte copy and cannot arbitrate between your"
     echo "       edits and the mutants'."
-    exit 2
+    refuse 2 "uncommitted changes in the mutated files"
 fi
 
 # ⛔ BACKUP CHECKED **BEFORE** THE TRAP IS INSTALLED, and verified byte-
@@ -65,7 +72,7 @@ backup_failed() {
     echo "       Nothing mutated and no trap installed; the worktree is"
     echo "       untouched."
     rm -f "$BS"
-    exit 2
+    refuse 2 "backup failed: $1"
 }
 BS=$(mktemp 2>/dev/null) || backup_failed "mktemp failed"
 [ -n "$BS" ] && [ -f "$BS" ] || backup_failed "mktemp returned no usable path"
@@ -78,10 +85,10 @@ cleanup() { restore; rm -f "$BS" "$T/run_1201_tests" "$T/gen_1201_stop_predicate
 # equivalent, because on INT/TERM bash runs the handler and then RESUMES, so
 # the tree is restored and then re-mutated.
 trap cleanup EXIT
-trap 'printf "\n** INTERRUPTED -- restoring **\n" >&2; exit 130' INT
-trap 'printf "\n** TERMINATED -- restoring **\n" >&2; exit 143' TERM
+trap 'printf "\n** INTERRUPTED -- restoring **\n" >&2; echo "RESULT: ${pass:-0} passed, ${fail:-0} failed (INTERRUPTED)"; exit 130' INT
+trap 'printf "\n** TERMINATED -- restoring **\n" >&2; echo "RESULT: ${pass:-0} passed, ${fail:-0} failed (TERMINATED)"; exit 143' TERM
 
-cd "$T" || exit 2
+cd "$T" || refuse 2 "cannot cd to tests/host"
 pass=0; fail=0
 
 # sub <literal-find> <literal-replace> -- exit non-zero if the anchor is not
@@ -123,7 +130,7 @@ if [ "$_probe" != "alpha_case=OK beta_case=FAIL " ]; then
     echo "       Every verdict below would be about the parser rather than"
     echo "       about the firmware. This check exists because exactly that"
     echo "       happened on this harness's first run."
-    exit 1
+    refuse 1 "result parser broken"
 fi
 echo "  OK   parser maps both line shapes to their test names"
 
@@ -225,7 +232,7 @@ echo "== setup: the baseline must be clean, or every result below is noise  =="
 expect_clean "baseline"
 if [ "$fail" -ne 0 ]; then
     echo "ABORT: baseline is not clean; mutants would be meaningless."
-    exit 1
+    refuse 1 "baseline not clean"
 fi
 
 INFLIGHT='    const bool inFlight = pinnedActive || (gStreamStopsActive != 0u);'
