@@ -29,6 +29,7 @@ extern "C" {
 
 //scpi_result_t SCPI_StorageSDCreateFolder(scpi_t * context);
 scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context);
+scpi_result_t SCPI_StorageSDLoggingGet(scpi_t * context);   /* #1176 */
 scpi_result_t SCPI_StorageSDLoggingGet(scpi_t * context);
 scpi_result_t SCPI_StorageSDListDir(scpi_t * context);
 scpi_result_t SCPI_StorageSDGetData(scpi_t * context);

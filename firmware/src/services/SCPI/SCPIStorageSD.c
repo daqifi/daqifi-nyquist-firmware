@@ -1034,6 +1034,37 @@ __exit_point:
     return result;
 }
 
+/**
+ * @brief Query the staged SD logging filename (#1176)
+ *
+ * Command: SYST:STOR:SD:FILE?
+ *
+ * SD:FILE is a setter that only STAGES the name the next log opens, and
+ * SD:ENAble preserves it, so a host that changed it had no way to read the
+ * original back and restore it. The reply is the stored name exactly as the
+ * setter wrote it (no directory prefix; SD:DIRectory? holds that), so the
+ * setter accepts it back unchanged. Quote characters cannot be stored in the
+ * field (#1175), so the quoted text reply round-trips.
+ *
+ * While a benchmark owns the target this reports its temporary name, which is
+ * what the device is configured to write; the setter refuses until it ends.
+ */
+scpi_result_t SCPI_StorageSDLoggingGet(scpi_t * context) {
+    sd_card_manager_settings_t* pSDCardRuntimeConfig =
+            BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    char snapshot[sizeof(pSDCardRuntimeConfig->file)];
+
+    /* Same snapshot-under-critical-section as SCPI_StorageSDDirectoryGet: the
+     * setter publishes the name from the other transport's SCPI task. */
+    taskENTER_CRITICAL();
+    memcpy(snapshot, pSDCardRuntimeConfig->file, sizeof(snapshot));
+    taskEXIT_CRITICAL();
+    snapshot[sizeof(snapshot) - 1u] = '\0';
+
+    SCPI_ResultText(context, snapshot);
+    return SCPI_RES_OK;
+}
+
 /* #306: start an async CRC32 computation over a stored file. Result via
  * SYST:STOR:SD:CRC? - mirrors the GET_SPACE request/query split so the SCPI
  * task never blocks on a multi-second file scan. */
