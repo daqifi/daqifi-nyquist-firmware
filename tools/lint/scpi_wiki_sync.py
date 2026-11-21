@@ -168,8 +168,21 @@ _CODE_OR_COMMENT = re.compile(
     r"|//(?:\\\n|[^\n])*",     # line comment (incl. spliced continuations) -- dropped
     re.S)
 
+# The same scanner for text that has ALREADY been through phase 2 (`splice`).
+# Its line-comment alternative has no backslash-newline continuation: the
+# splice has consumed every one the compiler would, and a backslash that
+# survives it (two backslashes + newline leave one) is an ordinary character,
+# so the comment ends at the first newline. Re-applying the continuation here
+# ran phase 2 twice.
+_CODE_OR_COMMENT_SPLICED = re.compile(
+    r'"(?:\\.|[^"\\])*"'
+    r"|'(?:\\.|[^'\\])*'"
+    r"|/\*.*?\*/"
+    r"|//[^\n]*",
+    re.S)
 
-def strip_c_comments(text):
+
+def strip_c_comments(text, spliced=False):
     """Remove C comments, leaving string and character literals intact.
 
     Single-pass rather than "strip block comments, then line comments". The
@@ -205,8 +218,14 @@ def strip_c_comments(text):
     (#976 audit round 6 -- the same defect this docstring already names
     for `hash_function.py`'s separate stripper, reached here through this
     file's own, independent one).
+
+    `spliced=True` is for text that already went through `splice()`: it drops
+    the continuation branch so phase 2 is not applied a second time (a line
+    comment ending in two backslashes + newline + a blank line ends at the
+    blank line, as GCC reads it). The default stays for raw callers.
     """
-    return _CODE_OR_COMMENT.sub(
+    rx = _CODE_OR_COMMENT_SPLICED if spliced else _CODE_OR_COMMENT
+    return rx.sub(
         lambda m: m.group(0) if m.group(0)[0] in "\"'" else " ", text)
 
 
@@ -260,7 +279,7 @@ def registered_patterns(scpi_c):
     # shapes `_CODE_OR_COMMENT` cannot see on raw text. A `.pattern` entry
     # deleted that way used to stay in `live`.
     raw, _omap = splice(raw)
-    live_src = strip_c_comments(raw)
+    live_src = strip_c_comments(raw, spliced=True)
     every = {_joined(g) for g, _ in _REGISTRATION.findall(raw)}
     live_list = [_joined(g) for g, _ in _REGISTRATION.findall(live_src)]
     live = set(live_list)
@@ -1358,7 +1377,7 @@ def _self_test_end_to_end():
     pinned here rather than trusted to stay fixed.
     """
     import tempfile
-    cases, failures = 7, 0
+    cases, failures = 9, 0
     src = ('const scpi_command_t scpi_commands[] = {\n'
            '    {.pattern = "SYSTem:WIFI:" "DEBUG?", .callback = SCPI_A,},\n'
            '    {.pattern = "SYSTem:POWer:OTG", .callback = SCPI_B,},\n'
@@ -1472,6 +1491,33 @@ def _self_test_end_to_end():
             if not ok:
                 print("  FAIL end-to-end: a splice-made " + label + " marker "
                       "was misread -- the compiler reads the joined text")
+                failures += 1
+
+        # (6)/(7) Phase 2 must run ONCE. `// note ` + two backslashes +
+        # newline + a blank line: the splice consumes the second backslash and
+        # the newline, the first survives as plain text, and the comment ends
+        # at the blank line -- so the registration after it is LIVE. A
+        # scanner that re-applies the continuation swallowed it.
+        for label, pats in (("registration", ("SYSTem:HIDDEN",)),
+                            ("duplicate", ("SYSTem:HIDDEN", "SYSTem:HIDDEN"))):
+            body = "".join('    {.pattern = "' + q + '", .callback = SCPI_C,},\n'
+                           for q in pats)
+            src4 = ("const scpi_command_t scpi_commands[] = {\n"
+                    "    // note " + bs + bs + "\n\n" + body +
+                    "    {.pattern = NULL, .callback = SCPI_NotImplemented,},\n};\n")
+            c4 = os.path.join(d, "double_splice.c")
+            with open(c4, "w", encoding="utf-8") as fh:
+                fh.write(src4)
+            live4, _c4, ll4 = registered_patterns(c4)
+            if label == "registration":
+                ok = "SYSTem:HIDDEN" in live4
+            else:
+                ok = (ll4.count("SYSTem:HIDDEN") == 2
+                      and bool(duplicate_pattern_violations(ll4)))
+            if not ok:
+                print("  FAIL end-to-end: a hidden " + label + " after a "
+                      "double-backslash line comment + blank line was "
+                      "swallowed -- phase 2 ran twice")
                 failures += 1
     return cases, failures
 
