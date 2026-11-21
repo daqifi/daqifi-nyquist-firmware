@@ -340,13 +340,13 @@ on:
       - 'firmware/src/Util/DoubleFmt.h'
       - 'firmware/src/Util/LogRing.h'
       - 'firmware/src/Util/SampleEmit.h'
-      # #1300: headers the host-test sources reach through -I (found by the
-      # gcc -M pass in tests/host/check_ci_path_filters.py), named by no recipe.
-      - 'firmware/src/config/default/driver/driver_common.h'
-      - 'firmware/src/config/default/system/system.h'
-      - 'firmware/src/config/default/system/system_common.h'
-      - 'firmware/src/config/default/system/system_media.h'
-      - 'firmware/src/config/default/system/system_module.h'
+      # #1300: a header reached through a Makefile -I directory is named by no
+      # recipe, so no per-file entry can be complete (five were missing). Cover
+      # the four -I roots host-test sources reach with whole-directory globs.
+      - 'firmware/src/HAL/**'
+      - 'firmware/src/Util/**'
+      - 'firmware/src/services/**'
+      - 'firmware/src/config/default/**'
       # #1000: the generated log-budget fixture reads the ceiling out of both
       # of these -- the constant from the .h, the two reservations that make
       # it effective from the .c.
@@ -515,13 +515,13 @@ on:
       - 'firmware/src/Util/DoubleFmt.h'
       - 'firmware/src/Util/LogRing.h'
       - 'firmware/src/Util/SampleEmit.h'
-      # #1300: headers the host-test sources reach through -I (found by the
-      # gcc -M pass in tests/host/check_ci_path_filters.py), named by no recipe.
-      - 'firmware/src/config/default/driver/driver_common.h'
-      - 'firmware/src/config/default/system/system.h'
-      - 'firmware/src/config/default/system/system_common.h'
-      - 'firmware/src/config/default/system/system_media.h'
-      - 'firmware/src/config/default/system/system_module.h'
+      # #1300: a header reached through a Makefile -I directory is named by no
+      # recipe, so no per-file entry can be complete (five were missing). Cover
+      # the four -I roots host-test sources reach with whole-directory globs.
+      - 'firmware/src/HAL/**'
+      - 'firmware/src/Util/**'
+      - 'firmware/src/services/**'
+      - 'firmware/src/config/default/**'
       # #1000: the generated log-budget fixture reads the ceiling out of both
       # of these -- the constant from the .h, the two reservations that make
       # it effective from the .c.

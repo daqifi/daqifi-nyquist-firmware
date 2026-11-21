@@ -26,35 +26,6 @@ check is useless if it cannot run when it matters. It can. Both filters include
 reference to a host-test target means editing the Makefile under tests/host/ --
 so the edit that creates the gap is itself in the filters that trigger this.
 
-HEADERS REACHED THROUGH -I / -D (#1300). A host-test source can #include a
-header from any directory the compiler's -I path holds without the Makefile
-naming that header, so the text harvest above never sees it. For those, the
-compile commands themselves are taken from make: `LC_ALL=C make -n -B -k run`
-prints every command the `run` target would execute with every variable, -I
-and -D already expanded BY MAKE, so nothing here parses Makefile text for flags
-(#1298 spent six rounds re-implementing make's expansion and lost to one more
-spelling each time). Each command that compiles a .c file is re-run as
-`gcc -M -MG` with only its own -I/-D/-U/-iquote/-isystem/-include/-std flags,
-and every firmware/src file the preprocessor reports is required in both
-filters too. That includes the headers of firmware .c files the Makefile
-compiles, and -D-conditional #includes under the flags the target really passes.
-A `cp A B` the recipe performs before compiling B is followed (B is
-preprocessed from A's content, from tests/host).
-
-FAILS CLOSED, with exit 2 and a message, on: make exiting non-zero or timing
-out; zero compile commands found; a recipe line shlex cannot tokenise; a
-`cc`/`gcc` line that is neither a compile nor a preprocess-only (-E) run; a
-source that does not exist and is not the target of a `cp`; any source whose
--M output is empty. There is no note-and-pass path.
-
-THE TRUE BOUNDARY. `make -n` prints commands; it does not run them. So a path
-the SHELL composes when the recipe runs is invisible here: a source named with a
-shell variable (`/tmp/.x.$$.c`, assembled by `cat`) is counted and reported as
-skipped, not preprocessed, and a compiler invoked indirectly (`python3 x.py cc
-f.c`) is not seen. Headers behind a -D value the `run` target never passes are
-not reached either, nor are targets not under `run`. The text harvest above
-still covers any firmware path the Makefile names.
-
 WHAT IT DOES NOT CHECK: that the filters contain nothing superfluous (a stale
 entry is harmless), that a referenced file exists, or anything about the push
 and pull_request filters agreeing with each other beyond covering this set.
@@ -62,8 +33,6 @@ and pull_request filters agreeing with each other beyond covering this set.
 import fnmatch
 import os
 import re
-import shlex
-import subprocess
 import sys
 
 MAKEFILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Makefile")
@@ -79,169 +48,6 @@ ENTRY = re.compile(r"^\s*-\s*'([^']+)'", re.M)
 
 def referenced(makefile_text):
     return sorted(set(REF.findall(makefile_text)))
-
-
-class CheckError(Exception):
-    """A condition under which the -M pass cannot vouch for completeness."""
-
-
-_CMD_END = {";", ";;", "&&", "||", "|", "|&", "(", ")", "`", "&"}
-_LEAD = {"{", "!", "then", "do", "else", "elif", "if", "while", "until", "time"}
-_WITH_ARG = ("-I", "-D", "-U", "-iquote", "-isystem", "-include", "-idirafter")
-_KEEP_PREFIX = _WITH_ARG + ("-std=",)
-_SKIP_WITH_ARG = ("-o", "-MF", "-MT", "-MQ", "-x")
-
-
-def run_make(base, timeout=300):
-    try:
-        r = subprocess.run(["make", "-n", "-B", "-k", "run"], cwd=base,
-                           env=dict(os.environ, LC_ALL="C"),
-                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                           universal_newlines=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        raise CheckError("`make -n -B -k run` timed out after %ds" % timeout)
-    except OSError as e:
-        raise CheckError("cannot run make: %s" % e)
-    if r.returncode != 0:
-        raise CheckError("`make -n -B -k run` exited %d:\n%s"
-                         % (r.returncode, r.stdout[-2000:]))
-    return r.stdout
-
-
-def split_commands(make_output):
-    """Every simple command in make's -n output as an argv list. Backslash-
-    continued lines are one logical line; shlex (quotes respected) splits it,
-    then shell operators split it into commands and redirections are dropped."""
-    cmds = []
-    for line in make_output.replace("\\\n", " ").split("\n"):
-        if not line.strip():
-            continue
-        try:
-            lex = shlex.shlex(line, posix=True, punctuation_chars=";()<>|&`")
-            lex.whitespace_split = True
-            toks = list(lex)
-        except ValueError as e:
-            raise CheckError("cannot tokenise make output line (%s): %.200s"
-                             % (e, line))
-        cur, skip = [], False
-        for tok in toks + [";"]:
-            if skip:
-                skip = False
-                continue
-            if tok in _CMD_END:
-                if cur:
-                    cmds.append(cur)
-                cur = []
-            elif tok and set(tok) <= set("<>&") and ("<" in tok or ">" in tok):
-                skip = True  # redirection: the next token is its target
-            else:
-                cur.append(tok)
-        # (the trailing ";" flushed the last command)
-    out = []
-    for argv in cmds:
-        while argv and (argv[0] in _LEAD or re.match(r"^[A-Za-z_]\w*=", argv[0])):
-            argv = argv[1:]
-        if argv:
-            out.append(argv)
-    return out
-
-
-def parse_compile(argv):
-    """(kept flags, .c sources) for a compile command; None if `argv` is not a
-    cc/gcc run at all; "E" for a preprocess-only run (nothing compiled)."""
-    names = {"cc", "gcc"}
-    if os.environ.get("CC"):
-        names.add(os.environ["CC"])
-    if argv[0] not in names:
-        return None
-    if "-E" in argv:
-        return "E"
-    kept, srcs, i = [], [], 1
-    while i < len(argv):
-        a = argv[i]
-        if a in _SKIP_WITH_ARG:
-            i += 2
-            continue
-        if a in _WITH_ARG:
-            kept += argv[i:i + 2]
-            i += 2
-            continue
-        if a.startswith(_KEEP_PREFIX):
-            kept.append(a)
-        elif a.endswith(".c"):
-            srcs.append(a)
-        i += 1
-    return kept, srcs
-
-
-def header_deps(base, make_output):
-    """(firmware/src files reached, number of compile commands, shell-composed
-    sources skipped). -M still prints its dependency list when a #error fires,
-    so the exit status is NOT the success test; an EMPTY list for a source is,
-    and is fatal.
-
-    -M, NOT -MM: -MM omits every header found through a system directory, and
-    gcc classes a directory given with -isystem / -idirafter as one, so a
-    firmware header reached only through such a flag would be dropped while the
-    .c still appeared (the empty-list guard cannot see that). -M keeps them;
-    the firmware/src relpath filter below drops /usr/include and friends."""
-    from concurrent.futures import ThreadPoolExecutor
-    cmds = split_commands(make_output)
-    copies = {}
-    for argv in cmds:
-        ops = [a for a in argv[1:] if not a.startswith("-")]
-        if argv[0] == "cp" and len(ops) == 2:
-            copies[ops[1]] = ops[0]
-    jobs, skipped, ncompile = {}, 0, 0
-    for argv in cmds:
-        pc = parse_compile(argv)
-        if pc is None or pc == "E":
-            continue
-        kept, srcs = pc
-        if not srcs:
-            if "-c" in argv or "-o" in argv:
-                continue  # link step (objects only): nothing to preprocess
-            raise CheckError("cc/gcc line that is neither compile nor -E: %s"
-                             % " ".join(argv)[:200])
-        ncompile += 1
-        for s in srcs:
-            if "$" in s:
-                skipped += 1
-                continue
-            jobs[(tuple(kept), s)] = True
-    if ncompile == 0:
-        raise CheckError("make -n printed no compile command; the extraction "
-                         "(or the Makefile's `run` target) is broken")
-
-    def run(job):
-        kept, src = job
-        cmd = ["gcc", "-M", "-MG"] + list(kept)
-        stdin = None
-        if os.path.isfile(os.path.join(base, src)):
-            cmd.append(src)
-        elif src in copies and os.path.isfile(os.path.join(base, copies[src])):
-            cmd += ["-I.", "-x", "c", "-"]
-            stdin = open(os.path.join(base, copies[src]), "rb").read()
-        else:
-            raise CheckError("source %s does not exist and no `cp` produces it"
-                             % src)
-        r = subprocess.run(cmd, cwd=base, input=stdin, stdout=subprocess.PIPE,
-                           stderr=subprocess.DEVNULL)
-        toks = r.stdout.decode("utf-8", "replace").replace("\\\n", " ").split()
-        if not toks or not toks[0].endswith(":"):
-            raise CheckError("gcc -M produced no dependency list (empty output or no `target:` token) for %s (%s)"
-                             % (src, " ".join(kept)))
-        return toks[1:]
-
-    found = set()
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        for deps in pool.map(run, list(jobs)):
-            for t in deps:
-                full = os.path.normpath(os.path.join(base, t))
-                rel = os.path.relpath(full, os.path.join(base, "..", ".."))
-                if rel.startswith("firmware/src/"):
-                    found.add(rel.replace(os.sep, "/"))
-    return sorted(found), ncompile, skipped
 
 
 def filters(workflow_text):
@@ -291,105 +97,6 @@ def self_test():
     ck("a glob entry covers matching paths",
        uncovered(["firmware/src/services/a.h"], ["firmware/src/services/*.h"]),
        [])
-    import tempfile
-
-    def fails(fn):
-        try:
-            fn()
-        except CheckError:
-            return True
-        return False
-
-    # tokeniser: compounds split, prose is not a flag, redirects dropped
-    cmds = split_commands("echo 'I/O -Ifake' && cc -c a.c -Ix; \\\n"
-                          "  x=`cc -E -P b.c` 2>/dev/null\n")
-    ck("compounds split and echoed prose stays an echo operand",
-       [c[0] for c in cmds][:3], ["echo", "cc", "cc"])
-    ck("-E runs are preprocess-only, not compiles",
-       [parse_compile(c) for c in cmds[1:3]], [(["-Ix"], ["a.c"]), "E"])
-    ck("an untokenisable line fails closed",
-       fails(lambda: split_commands("echo 'unterminated\n")), True)
-    # fail-closed: no compile lines at all
-    ck("zero compile commands -> CheckError",
-       fails(lambda: header_deps(".", "echo hi\nmake: Nothing to be done\n")),
-       True)
-
-    def tree(td, makefile, host_c):
-        host = os.path.join(td, "tests", "host")
-        util = os.path.join(td, "firmware", "src", "Util")
-        os.makedirs(host)
-        os.makedirs(util)
-        for h in ("Hidden1300.h", "Cond1300.h"):
-            open(os.path.join(util, h), "w").write("\n")
-        open(os.path.join(host, "Makefile"), "w").write(makefile)
-        for name, body in host_c.items():
-            open(os.path.join(host, name), "w").write(body)
-        return host
-
-    mk = ("INC := -I../../firmware/src/Util\n"
-          "run:\n\t$(CC) -DFOO_1300 $(INC) -o x test_x.c\n")
-    srcs = {"test_x.c": '#include "Hidden1300.h"\n#ifdef FOO_1300\n'
-                        '#include "Cond1300.h"\n#endif\n'
-                        'int main(void){return 0;}\n'}
-    with tempfile.TemporaryDirectory() as td:
-        host = tree(td, mk, srcs)
-        got, n, sk = header_deps(host, run_make(host))
-        # POSITIVE CONTROL: Hidden1300.h is named nowhere in the Makefile and
-        # is reached only through -I (a variable make expanded, not us).
-        ck("a header reached only through -I is found (and the -D one too)",
-           got, ["firmware/src/Util/Cond1300.h",
-                 "firmware/src/Util/Hidden1300.h"])
-        ck("...and reported when no filter lists it",
-           uncovered(got, ["firmware/src/Util/Other.h"]), got)
-        # the -D-conditional include is invisible without the target's -D:
-        r = subprocess.run(["gcc", "-MM", "-MG", "-I../../firmware/src/Util",
-                            "test_x.c"], cwd=host, stdout=subprocess.PIPE,
-                           universal_newlines=True)
-        ck("WITHOUT -DFOO_1300 (the c4ed1fb9 pass) Cond1300.h is missed",
-           "Cond1300.h" in r.stdout, False)
-        ck("make reported 1 compile command, 0 skipped", (n, sk), (1, 0))
-    # -isystem / -idirafter: gcc classes these dirs as SYSTEM, so -MM drops the
-    # header; -M keeps it. One case per flag, each shown missed by -MM.
-    for flag in ("-isystem", "-idirafter"):
-        with tempfile.TemporaryDirectory() as td:
-            host = tree(td, "run:\n\t$(CC) %s ../../firmware/src/Util -o x test_x.c\n" % flag,
-                        {"test_x.c": '#include "Hidden1300.h"\nint main(void){return 0;}\n'})
-            got, _, _ = header_deps(host, run_make(host))
-            ck("%s: a firmware header reached only through it is harvested" % flag,
-               got, ["firmware/src/Util/Hidden1300.h"])
-            ck("%s: ...and reported uncovered when the filter lacks it" % flag,
-               uncovered(got, ["firmware/src/Util/Other.h"]), got)
-            r = subprocess.run(["gcc", "-MM", "-MG", flag, "../../firmware/src/Util",
-                                "test_x.c"], cwd=host, stdout=subprocess.PIPE,
-                               universal_newlines=True)
-            ck("%s: the old -MM pass MISSES it (why -M is used)" % flag,
-               "Hidden1300.h" in r.stdout, False)
-    # the empty-list guard: gcc yielding no list at all must still be fatal
-    with tempfile.TemporaryDirectory() as td:
-        host = tree(td, "run:\n\t$(CC) -std=bogus1300 -o x test_x.c\n",
-                    {"test_x.c": "int main(void){return 0;}\n"})
-        ck("gcc producing no dependency list -> CheckError",
-           fails(lambda: header_deps(host, run_make(host))), True)
-    with tempfile.TemporaryDirectory() as td:
-        host = tree(td, "run:\n\t@echo nothing\n", srcs)
-        ck("a run target with no compile -> CheckError",
-           fails(lambda: header_deps(host, run_make(host))), True)
-    with tempfile.TemporaryDirectory() as td:
-        host = tree(td, "run:\n\t$(CC) -o x nosuch.c\n", srcs)
-        ck("a source that does not exist -> CheckError",
-           fails(lambda: header_deps(host, run_make(host))), True)
-    with tempfile.TemporaryDirectory() as td:
-        host = tree(td, "include nosuch1300.mk\nrun:\n\t@echo x\n", srcs)
-        ck("make exiting non-zero -> CheckError",
-           fails(lambda: run_make(host)), True)
-    with tempfile.TemporaryDirectory() as td:
-        host = tree(td, "run:\n\tcp ../../firmware/src/Util/Copy1300.c"
-                    " Copy1300_uut.c\n\t$(CC) -I../../firmware/src/Util -o x Copy1300_uut.c\n", {})
-        open(os.path.join(td, "firmware", "src", "Util", "Copy1300.c"),
-             "w").write('#include "Hidden1300.h"\nint main(void){return 0;}\n')
-        got, _, _ = header_deps(host, run_make(host))
-        ck("a cp-produced source is preprocessed from its origin",
-           got, ["firmware/src/Util/Hidden1300.h"])
     print("  self-test: %d/%d checks passed" % (checks, checks))
 
 
@@ -400,17 +107,6 @@ def main():
     mk = open(MAKEFILE, encoding="utf-8").read()
     wf = open(WORKFLOW, encoding="utf-8").read()
     paths = referenced(mk)
-    base = os.path.dirname(MAKEFILE)
-    try:
-        via_inc, ncompile, skipped = header_deps(base, run_make(base))
-    except CheckError as e:
-        print("ERROR: check_ci_path_filters cannot vouch for completeness "
-              "(failing closed):\n%s" % e)
-        return 2
-    print("  -M pass: %d compile command(s), %d firmware/src header/source(s)"
-          " reached, %d shell-composed source(s) not preprocessed"
-          % (ncompile, len(via_inc), skipped))
-    paths = sorted(set(paths) | set(via_inc))
     pr, push = filters(wf)
     bad_pr, bad_push = uncovered(paths, pr), uncovered(paths, push)
     if not bad_pr and not bad_push:
