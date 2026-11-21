@@ -424,7 +424,11 @@ void wifi_tcp_server_Initialize(wifi_tcp_server_context_t *pServerData) {
             gpServerData->client.inflightSizes[i] = 0;
         }
         microrl_init(&gpServerData->client.console, microrl_echo);
-        microrl_set_echo(&gpServerData->client.console, false);
+        // #1268: echo is deliberately left ON for the TCP session. microrl's echoOn is an int
+        // and only -1 disables echo (microrl.c echo gates test echoOn > -1); both the
+        // microrl_init default (1) and the old microrl_set_echo(..., false) (0) echo, so that
+        // call was a no-op that read as "TCP is echo-free". Do not re-add it with a bool.
+        // Disabling TCP echo (-1) is a wire change for every shipped TCP host.
         microrl_set_execute_callback(&gpServerData->client.console, microrl_commandComplete);
         gpServerData->client.scpiContext = CreateSCPIContext(&scpi_interface,
                                                              &gpServerData->client,
