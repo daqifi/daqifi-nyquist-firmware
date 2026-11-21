@@ -1576,8 +1576,13 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     }
     
     // Get optional pattern parameter
-    if (!SCPI_ParamInt32(context, &pattern, FALSE)) {
-        pattern = 0; // Default to zeros
+    // #876: an unparseable pattern (`BENCH 64,BANANA`) rejects instead of
+    // running pattern 0 and attributing the result to it. Same exit as the
+    // range check below, i.e. BEFORE the atomic claim.
+    pattern = 0; // Default to zeros
+    if (SCPI_OptionalParamInt32(context, &pattern) == SCPI_OPT_BAD) {
+        result = SCPI_RES_ERR;
+        goto __exit_point;
     }
     
     // Validate pattern

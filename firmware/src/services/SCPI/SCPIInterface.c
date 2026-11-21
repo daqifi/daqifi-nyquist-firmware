@@ -765,8 +765,10 @@ static scpi_result_t SCPI_SysInfoGet(scpi_t * context) {
     int param1;
     tBoardData * pBoardData = BoardData_Get(BOARDDATA_ALL_DATA, 0);
 
-    if (!SCPI_ParamInt32(context, &param1, FALSE)) {
-        param1 = 0;
+    // #876: an unparseable argument rejects; absent means the default (0).
+    param1 = 0;
+    if (SCPI_OptionalParamInt32(context, &param1) == SCPI_OPT_BAD) {
+        return SCPI_RES_ERR;
     }
 
     uint8_t* buf = SCPI_ResponseBuf_Take();
@@ -1641,7 +1643,14 @@ static scpi_result_t SCPI_SysLogLevelGet(scpi_t * context) {
     const char* moduleName;
     size_t moduleLen;
 
-    if (SCPI_ParamCharacters(context, &moduleName, &moduleLen, FALSE) && moduleLen > 0) {
+    const bool haveName = SCPI_ParamCharacters(context, &moduleName, &moduleLen, FALSE);
+    /* #876: a CHARACTER parameter, so the integer helper does not apply. The
+     * only way SCPI_Parameter fails with a token present is a malformed
+     * separator, which queues an error -- that is a reject, not "dump all". */
+    if (!haveName && SCPI_ParamErrorOccurred(context)) {
+        return SCPI_RES_ERR;
+    }
+    if (haveName && moduleLen > 0) {
         LogModule_t module;
         if (!Logger_FindModule(moduleName, moduleLen, &module)) {
             SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
@@ -3948,8 +3957,12 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context,
 
     // Optional params: startHz, maxHz (0/absent => defaults).
     int32_t startArg = 0, maxArg = 0;
-    SCPI_ParamInt32(context, &startArg, FALSE);
-    SCPI_ParamInt32(context, &maxArg, FALSE);
+    // #876: a present-but-unparseable rate (`FIND? 1000.5`) rejects instead of
+    // silently running at the default -- contract at SCPI_OptionalParamInt32.
+    if (SCPI_OptionalParamInt32(context, &startArg) == SCPI_OPT_BAD ||
+        SCPI_OptionalParamInt32(context, &maxArg) == SCPI_OPT_BAD) {
+        return SCPI_RES_ERR;
+    }
 
     StreamingRuntimeConfig* cfg = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
@@ -4399,7 +4412,10 @@ static bool Iperf2_RefuseIfStreaming(scpi_t * context) {
 // Optional [port=5001] arg
 static scpi_result_t SCPI_Iperf2_TcpServer(scpi_t * context) {
     int32_t port = IPERF2_DEFAULT_PORT;
-    if (!SCPI_ParamInt32(context, &port, FALSE)) port = IPERF2_DEFAULT_PORT;
+    // #876: an unparseable port rejects; absent keeps the default.
+    if (SCPI_OptionalParamInt32(context, &port) == SCPI_OPT_BAD) {
+        return SCPI_RES_ERR;
+    }
     if (port <= 0 || port > 65535) {
         SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
         return SCPI_RES_ERR;
@@ -4414,7 +4430,10 @@ static scpi_result_t SCPI_Iperf2_TcpServer(scpi_t * context) {
 
 static scpi_result_t SCPI_Iperf2_UdpServer(scpi_t * context) {
     int32_t port = IPERF2_DEFAULT_PORT;
-    if (!SCPI_ParamInt32(context, &port, FALSE)) port = IPERF2_DEFAULT_PORT;
+    // #876: an unparseable port rejects; absent keeps the default.
+    if (SCPI_OptionalParamInt32(context, &port) == SCPI_OPT_BAD) {
+        return SCPI_RES_ERR;
+    }
     if (port <= 0 || port > 65535) {
         SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
         return SCPI_RES_ERR;
@@ -4438,8 +4457,12 @@ static bool Iperf2_ParseClientArgs(scpi_t * context, char* ipBuf,
         SCPI_ErrorPush(context, SCPI_ERROR_MISSING_PARAMETER);
         return false;
     }
-    if (!SCPI_ParamInt32(context, port, FALSE)) *port = IPERF2_DEFAULT_PORT;
-    if (!SCPI_ParamInt32(context, duration_sec, FALSE)) *duration_sec = 10;
+    // #876: unparseable port/duration rejects instead of arming on a default
+    // the client never chose; absent keeps the default.
+    if (SCPI_OptionalParamInt32(context, port) == SCPI_OPT_BAD ||
+        SCPI_OptionalParamInt32(context, duration_sec) == SCPI_OPT_BAD) {
+        return false;
+    }
     if (*port <= 0 || *port > 65535 || *duration_sec < 1 ||
         *duration_sec > 3600) {
         SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
