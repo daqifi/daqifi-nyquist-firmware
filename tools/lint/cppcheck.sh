@@ -16,20 +16,21 @@
 #                                                        committed baseline, exit 1 on any difference
 #   bash tools/lint/cppcheck.sh --write-baseline         regenerate the committed baseline
 #                                                        (refuses if any finding is not already in it)
-#   bash tools/lint/cppcheck.sh --write-baseline --force regenerate even when findings grew
-#   bash tools/lint/cppcheck.sh <path>                   write findings to <path> (the CI form)
+#   bash tools/lint/cppcheck.sh --write-baseline --force regenerate even with new findings
+#   bash tools/lint/cppcheck.sh <path>                   write findings to <path> (the CI form;
+#                                                        <path> may not be the committed baseline)
 
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
 BASELINE="tools/lint/cppcheck-baseline.txt"
-MODE=check
+WRITE=0
 FORCE=0
 OUT=""
 for arg in "$@"; do
   case "$arg" in
-    --write-baseline) MODE=write ;;
+    --write-baseline) WRITE=1 ;;
     --force) FORCE=1 ;;
     -*)
       echo "::error::unknown option: $arg (see the header of $0)" >&2
@@ -40,18 +41,32 @@ for arg in "$@"; do
         echo "::error::more than one output path given" >&2
         exit 2
       fi
-      MODE=path
       OUT="$arg"
       ;;
   esac
 done
-if [ "$FORCE" = 1 ] && [ "$MODE" != write ]; then
+# Validate AFTER parsing, so no combination depends on argument order.
+if [ "$WRITE" = 1 ] && [ -n "$OUT" ]; then
+  echo "::error::--write-baseline and an output path are mutually exclusive" >&2
+  exit 2
+fi
+if [ "$FORCE" = 1 ] && [ "$WRITE" != 1 ]; then
   echo "::error::--force only applies to --write-baseline" >&2
   exit 2
 fi
-if [ "$MODE" = write ] && [ -n "$OUT" ]; then
-  echo "::error::--write-baseline and an output path are mutually exclusive" >&2
+# The path form is unguarded by design (CI writes to a scratch file), so it
+# must not reach the committed baseline: that would re-open #1169 under
+# another spelling.
+if [ -n "$OUT" ] && [ "$(realpath -m -- "$OUT")" = "$(realpath -m -- "$BASELINE")" ]; then
+  echo "::error::an output path may not be the committed baseline; use --write-baseline" >&2
   exit 2
+fi
+if [ "$WRITE" = 1 ]; then
+  MODE=write
+elif [ -n "$OUT" ]; then
+  MODE=path
+else
+  MODE=check
 fi
 
 # Capture cppcheck output to a temp file first, then sort into the final
