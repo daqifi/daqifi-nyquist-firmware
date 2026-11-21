@@ -65,19 +65,21 @@ COMMON=(
   -I firmware/src/third_party/rtos/FreeRTOS/Source/include
   -I firmware/src/third_party/rtos/FreeRTOS/Source/portable/MPLAB/PIC32MZ
   -DHAVE_CONFIG_H
+  # Without this, every translation unit that includes FreeRTOS hits
+  # portmacro.h:150's FPU #error (suppressed in cppcheck-suppress.txt),
+  # cppcheck drops that configuration, and the file is silently NOT
+  # analysed (#1309: an injected out-of-bounds write in streaming.c
+  # produced zero findings). The XC32 build defines it for the PIC32MZ.
+  -D__mips_hard_float=1
 )
 
 # Hand-edited sub-trees of firmware/src/config that ARE analysed (#1165).
 # driver/sdspi carries our shared-SPI4 lock / quarantine / detect-poll logic.
 # Adding one is a deliberate act: regenerate the baseline and read the delta.
 #
-# They get their OWN pass because they need -D__mips_hard_float=1. Without it
-# every translation unit that includes FreeRTOS hits portmacro.h's FPU #error
-# (suppressed above), cppcheck drops that configuration, and the file is
-# silently NOT analysed -- measured: an injected out-of-bounds write in
-# drv_sdspi_file_system.c produced zero findings under the main pass's flags.
-# The define is NOT added to the main pass: doing so surfaces ~250 findings
-# in files that are currently blind (tracked as #1309).
+# They get their OWN pass only because they sit outside the main pass's
+# `-i firmware/src/config` exclusion. Both passes carry
+# -D__mips_hard_float=1 (see COMMON) so FreeRTOS-including files are analysed.
 ANALYSED_CONFIG=(firmware/src/config/default/driver/sdspi)
 
 # `if !` so set -e doesn't abort on cppcheck failure; we want to surface
@@ -95,7 +97,7 @@ fi
 
 TMP_CFG="$(mktemp)"
 trap 'rm -f "$TMP_OUT" "$TMP_CFG"' EXIT
-if ! LC_ALL=C LANG=C cppcheck "${COMMON[@]}" -D__mips_hard_float=1 \
+if ! LC_ALL=C LANG=C cppcheck "${COMMON[@]}" \
   "${ANALYSED_CONFIG[@]}" 2>"$TMP_CFG"; then
   echo "::error::cppcheck (ANALYSED_CONFIG pass) exited non-zero — captured output below:"
   cat "$TMP_CFG"
