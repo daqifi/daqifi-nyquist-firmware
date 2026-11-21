@@ -1101,6 +1101,9 @@ void app_SystemInit() {
         LOG_E("Factory ADC calibration is missing or invalid; the factory "
               "baseline defaults to identity until CONF:ADC:SAVEFcal is run.");
     }
+    /* #1185: say WHY (blank vs populated-but-invalid) in CONF:CAP:JSON?'s
+     * identity.cal.factory_slot. Read-only: it touches no coefficients. */
+    daqifi_settings_ProbeFactoryCalSlot();
     // If calVals has been set to 1 (user cal params), overwrite with user 
     // calibration parameters
     if (tmpTopLevelSettings.settings.topLevelSettings.calVals) {

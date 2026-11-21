@@ -1597,6 +1597,8 @@ static void RefreshFactoryCalPresence(void) {
     } else {
         daqifi_settings_MarkFactoryCalMissing();
     }
+    /* #1185: factory_slot follows the page too (blank / valid / invalid). */
+    (void) daqifi_settings_ProbeFactoryCalSlot();
 }
 
 static scpi_result_t CalSaveCommon(scpi_t * context,

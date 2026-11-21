@@ -484,6 +484,32 @@ extern "C" {
     bool daqifi_settings_FactoryCalIsMissing(void);
 
     /**
+     * #1185: the factory calibration page's OWN state, which
+     * daqifi_settings_FactoryCalIsMissing() cannot give -- that flag is
+     * true for an erased page AND for a populated page that fails
+     * validation, so "never calibrated" (normal on a new unit) and
+     * "calibration corrupt" (needs attention) read the same.
+     */
+    typedef enum {
+        DAQIFI_FACTORY_SLOT_UNKNOWN = 0, /* not probed since boot */
+        DAQIFI_FACTORY_SLOT_BLANK,       /* every byte erased (0xFF) */
+        DAQIFI_FACTORY_SLOT_VALID,       /* passes CRC32 / legacy MD5 */
+        DAQIFI_FACTORY_SLOT_INVALID      /* holds data that FAILS validation */
+    } DaqifiFactorySlotState;
+
+    /**
+     * #1185: classify the factory page from the medium and remember the
+     * answer. Called at boot after the factory load, and by SCPIADC.c's
+     * RefreshFactoryCalPresence after a SAVEFcal/LOADFcal, so the reported
+     * state follows the page and never lags it. Touches no coefficients.
+     * Task context only (it reads the page into its own stack frame).
+     */
+    DaqifiFactorySlotState daqifi_settings_ProbeFactoryCalSlot(void);
+
+    /** #1185: the state recorded by the last probe (UNKNOWN before any). */
+    DaqifiFactorySlotState daqifi_settings_GetFactoryCalSlot(void);
+
+    /**
      * #908 (Qodo item 3): which calibration bank the live coefficients were
      * last successfully loaded from.
      *

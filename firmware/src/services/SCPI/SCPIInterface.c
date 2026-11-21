@@ -9700,9 +9700,25 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
         case DAQIFI_CAL_SOURCE_UNKNOWN: calSource = "unknown"; break;
         default:                        calSource = "unknown"; break;
     }
+    /* #1185: factory_slot answers a THIRD question the two keys above
+     * cannot -- WHY the slot is not populated: "blank" (erased, normal on a
+     * new unit) vs "invalid" (holds data that failed validation, needs
+     * attention). Every value spelled out; the fallthrough is "unknown",
+     * never "blank", for the same reason as calSource above. Appended after
+     * factory_present so existing parsers are unaffected. */
+    const char * factorySlot;
+    switch (daqifi_settings_GetFactoryCalSlot()) {
+        case DAQIFI_FACTORY_SLOT_BLANK:   factorySlot = "blank";   break;
+        case DAQIFI_FACTORY_SLOT_VALID:   factorySlot = "valid";   break;
+        case DAQIFI_FACTORY_SLOT_INVALID: factorySlot = "invalid"; break;
+        case DAQIFI_FACTORY_SLOT_UNKNOWN: factorySlot = "unknown"; break;
+        default:                          factorySlot = "unknown"; break;
+    }
     scpi_printf(context,
-        "\"cal\":{\"factory_present\":%s,\"source\":\"%s\"}},",
+        "\"cal\":{\"factory_present\":%s,\"factory_slot\":\"%s\","
+        "\"source\":\"%s\"}},",
         factoryCalMissing ? "false" : "true",
+        factorySlot,
         calSource);
 
     /* ---- channels[] array (flat, kind-grouped) ----

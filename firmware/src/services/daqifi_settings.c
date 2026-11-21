@@ -176,6 +176,41 @@ bool daqifi_settings_FactoryCalIsMissing(void) {
     return gFactoryCalMissing;
 }
 
+/* #1185: written only from task context (boot, or the SCPI task handling
+ * SAVEFcal/LOADFcal); a single aligned enum word, so a reader needs no lock.
+ * Never persisted: re-derived from the medium on every probe. */
+static DaqifiFactorySlotState gFactorySlot = DAQIFI_FACTORY_SLOT_UNKNOWN;
+
+DaqifiFactorySlotState daqifi_settings_ProbeFactoryCalSlot(void) {
+    /* BLANK is "every byte erased", read straight off the page with no copy.
+     * The span is the whole stored record (settings + checksum), the same
+     * bytes LoadFromNvm reads. A page with ANY programmed byte that then
+     * fails validation is INVALID, not blank: a failed SAVEFcal erases and
+     * then writes, so it can leave a partly written page. */
+    const uint8_t* page = (const uint8_t*) PA_TO_KVA1(FAINCAL_SETTINGS_ADDR);
+    bool blank = true;
+    for (size_t i = 0; i < sizeof(DaqifiSettings); i++) {
+        if (page[i] != 0xFFu) {
+            blank = false;
+            break;
+        }
+    }
+    DaqifiFactorySlotState state;
+    if (blank) {
+        state = DAQIFI_FACTORY_SLOT_BLANK;
+    } else if (daqifi_settings_ValidateADCCalBank(DaqifiSettings_FactAInCalParams)) {
+        state = DAQIFI_FACTORY_SLOT_VALID;
+    } else {
+        state = DAQIFI_FACTORY_SLOT_INVALID;
+    }
+    gFactorySlot = state;
+    return state;
+}
+
+DaqifiFactorySlotState daqifi_settings_GetFactoryCalSlot(void) {
+    return gFactorySlot;
+}
+
 DaqifiSettingsType daqifi_settings_GetActiveCalBank(void) {
     return gActiveCalBank;
 }
