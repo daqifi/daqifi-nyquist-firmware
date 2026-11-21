@@ -1004,18 +1004,57 @@ static void sd_get_send_end(bool ok, uint32_t count, const char* reason,
      * that session. USB has no way for us to end it -- see the USB branch --
      * so it ends when the host closes the port.
      *
-     * The reason still reaches the host out of band, through SYST:ERR? and
-     * SYST:LOG?, which is where this product puts failures anyway (the #914
-     * queue-only rule).
+     * The reason reaches the host through SYST:LOG? (the LOG_E below),
+     * readable from the next session or the other transport. NOT through
+     * SYST:ERR?: an earlier version of this comment said so, but nothing on
+     * this path latches an error -- the only #914 latch in the GET is the
+     * open failure's.
      *
      * What remains true from before: the verdict is never conditional. A
      * transfer that did not deliver <n> real bytes reports FAILED, never OK --
      * a host can lose its session, but it cannot be told a short file is
      * complete. */
-    if (!blockDelivered) {
+    /* ⛔ AN END LINE THE TRANSPORT DID NOT TAKE IS NOT AN END LINE (#1267
+     * round-5 audit, 3). This used to discard sd_get_emit's return. A host that
+     * stops reading near EOF lets the last data bytes in (so the block counts
+     * as delivered) and then leaves no room for the terminator; the writer's
+     * retries run out, and the transfer ended with no verdict and no session
+     * end -- the host got the whole block and then silence, or whatever
+     * deferred input produced next, where it expected OK/FAILED. A partial end
+     * line is the same case: "__END_OF_FILE__ O" is not a verdict either.
+     *
+     * So the end line is queued FIRST, and only an end line taken in full
+     * counts. Anything less is handled exactly like a short block below: the
+     * block may be whole, but the host is still waiting for a line that will
+     * never complete, so nothing else may follow it on that session. */
+    const char* const label = (reason != NULL) ? reason
+                                               : (ok ? "ok" : "error");
+    bool endQueued = false;
+    if (blockDelivered) {
+        char line[64];
+        int n;
+        if (ok) {
+            n = snprintf(line, sizeof(line), "%s OK %u\r\n", eofMarker,
+                         (unsigned) count);
+        } else {
+            n = snprintf(line, sizeof(line), "%s FAILED %s\r\n", eofMarker,
+                         label);
+        }
+        if ((n > 0) && ((size_t) n < sizeof(line))) {
+            endQueued = (sd_get_emit((const uint8_t*) line, (uint32_t) n)
+                         == (uint32_t) n);
+        }
+        if (!endQueued) {
+            /* log_budget: max=6 */
+            LOG_E("[SD] GET: end line not delivered (%s) - holding the session",
+                  label);
+        }
+    } else {
         /* log_budget: max=6 */
-        LOG_E("[SD] GET: block left short, no end line sent (%s)",
-              (reason != NULL) ? reason : "error");
+        LOG_E("[SD] GET: block left short, no end line sent (%s)", label);
+    }
+
+    if (!endQueued) {
         if (transport == SCPI_SD_WINDOW_TCP) {
             wifi_tcp_server_RequestClientClose(
                     gpSDCardSettings->replyGeneration);
@@ -1034,9 +1073,12 @@ static void sd_get_send_end(bool ok, uint32_t count, const char* reason,
              *
              * What replaces it is the hold itself: the window stays open for
              * THIS CDC session, so nothing the host queued is fed and nothing
-             * is appended behind the partial block. What the host can rely on
-             * is the declared length -- fewer than <n> bytes ever arrive, and
-             * no end line -- and its own read timeout. It recovers by closing
+             * is appended behind the partial block or the partial end line.
+             * What the host can rely on is the framing it was promised: fewer
+             * than <n> block bytes arrive, or the end line never completes
+             * with its CRLF -- and its own read timeout to stop waiting for
+             * the rest. Either means FAILED; nothing after it on this session
+             * will ever be ours. It recovers by closing
              * and reopening the port: that is a new CDC session, which the
              * window does not pause (it is keyed by session), and
              * ScpiSdWindow_Service then releases it. A real detach/re-attach
@@ -1049,19 +1091,6 @@ static void sd_get_send_end(bool ok, uint32_t count, const char* reason,
              * there either). A tagged host skips everything before its own
              * `#SDGET <tag>` header, which is what the tag is for. */
             ScpiSdWindow_HoldUntilSessionEnd(transport);
-        }
-    } else {
-        char line[64];
-        int n;
-        if (ok) {
-            n = snprintf(line, sizeof(line), "%s OK %u\r\n", eofMarker,
-                         (unsigned) count);
-        } else {
-            n = snprintf(line, sizeof(line), "%s FAILED %s\r\n", eofMarker,
-                         (reason != NULL) ? reason : "error");
-        }
-        if ((n > 0) && ((size_t) n < sizeof(line))) {
-            (void) sd_get_emit((const uint8_t*) line, (uint32_t) n);
         }
     }
 
@@ -1098,10 +1127,11 @@ static void sd_get_send_end(bool ok, uint32_t count, const char* reason,
      * that wait is gone. The other transport's re-partition is refused there
      * while any window is open.
      *
-     * After the write rather than inside its `if`: a malformed snprintf or a
-     * refused write must still hand the window on, or it would be released
-     * only by the staleness backstop. */
-    if (blockDelivered) {
+     * Keyed on `endQueued`, not `blockDelivered`: a refused or partial end
+     * line was handed to the session-end branch above, and a malformed
+     * snprintf (endQueued stays false) goes the same way rather than being
+     * left to the staleness backstop. */
+    if (endQueued) {
         ScpiSdWindow_ReleaseWhenDrained(transport);
     } else if (transport == SCPI_SD_WINDOW_TCP) {
         ScpiSdWindow_Close(transport);
