@@ -242,8 +242,15 @@ def strip_c_comments(text, spliced=False):
 
 # `.pattern = "A" "B", .callback = X` is legal C -- adjacent string literals
 # concatenate -- so the string part is one-or-more literals, joined.
+# The callback must be a BARE identifier that ends the initializer (`,` or `}`
+# next). Without that anchor `.callback = SCPI_Old ? SCPI_New : SCPI_Old`
+# captured `SCPI_Old`, the first token of an expression whose value is
+# SCPI_New, and the #1196 callback check then approved the wrong wiki row. Any
+# other form now fails to match, so registered_patterns' count guard exits
+# loudly instead (#1196 audit r2).
 _REGISTRATION = re.compile(
-    r'\.pattern\s*=\s*((?:"[^"]*"\s*)+),\s*\.callback\s*=\s*([A-Za-z_]\w*)')
+    r'\.pattern\s*=\s*((?:"[^"]*"\s*)+),\s*\.callback\s*=\s*([A-Za-z_]\w*)'
+    r'(?=\s*[,}])')
 _PATTERN_FIELD = re.compile(r"\.pattern\s*=")
 # libscpi requires the command table to end with a {NULL, ...} sentinel. It is
 # a real `.pattern =` field and deliberately not a command, so the parse guard
@@ -1496,6 +1503,28 @@ def _self_test_callbacks():
         ([("SYSTem:StopStreamData", "SCPI_StopStreaming")], 0,
          "full spelling reaches its own registration"),
     )
+    # A callback initializer that is not a bare identifier must be REFUSED
+    # (registered_patterns exits), never read as its first token.
+    with tempfile.TemporaryDirectory() as d:
+        c = os.path.join(d, "scpi.c")
+        with open(c, "w", encoding="utf-8") as fh:
+            fh.write('const scpi_command_t scpi_commands[] = {\n'
+                     '    {.pattern = "SYSTem:DEVice:NAME", '
+                     '.callback = SCPI_Old ? SCPI_New : SCPI_Old,},\n'
+                     '    {.pattern = NULL, .callback = SCPI_NotImplemented,},\n'
+                     '};\n')
+        cases += 1
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                registered_patterns(c)
+            refused = False
+        except SystemExit:
+            refused = True
+        if not refused:
+            failures += 1
+            print("  FAIL callback check (compound initializer): parsed as a "
+                  "registration instead of refused")
+
     for wiki_cbs, want, label in first_match_def:
         cases += 1
         got = len(callback_violations(collide, wiki_cbs))
