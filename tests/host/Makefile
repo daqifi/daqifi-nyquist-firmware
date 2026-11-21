@@ -5369,6 +5369,17 @@ $(ARMREFUSE_BIN): test_936_bench_arm_refusal.c test_framework.h $(SD_BENCH_SRC) 
 	fi
 	$(CC) $(CFLAGS) -o $(ARMREFUSE_BIN) test_936_bench_arm_refusal.c
 
+# #1160: does a REFUSED SD arm EXIT the handler? Compiles and RUNS the real text
+# of every arm site (six handlers whole, the SD:BENCHmark and SYST:STR:START arms
+# as slices) against host stand-ins, then proves the cases can fail by running the
+# four unchecked shapes (bare call, (void) cast, captured-never-tested, guard whose
+# branch does not exit) as mutants of each site. See check_1160_arm_exit.py -- the
+# extraction, the mutants and the per-region sha256 drift pin all live there, so
+# there is ONE extraction rule and it fails loudly (exit 2 = REFUSED, never a pass).
+ARMEXIT_BIN := run_1160_tests
+$(ARMEXIT_BIN): check_1160_arm_exit.py test_1160_sd_arm_exit.scaffold.c test_framework.h hash_function.py $(CDEF) $(SD_BENCH_SRC) $(SCPI_INTERFACE_SRC) $(RECIPES)
+	python3 check_1160_arm_exit.py --out $(ARMEXIT_BIN)
+
 # #1248: SYSTem:LOG? must not lose a record to a short write. Two layers of
 # REAL code: LogRing.h is included unchanged, and LogMessageDump is spliced
 # out of Logger.c (not host-includable: FreeRTOS + libscpi + xc.h) and compiled
@@ -5467,7 +5478,7 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(USECALTYPE_BIN) $(ARM_BIN) $(NAME_BIN) \
      $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) check-1200-parity check-885-savecal-claim \
      $(NVM1153_BIN) $(ARMREFUSE_BIN) $(SDCRC_BIN) $(SDWRITE_BIN) $(LOGRING1248_BIN) $(HIF881_BIN) \
-     $(HIF881SPI_BIN) $(WIFI881_BIN)
+     $(HIF881SPI_BIN) $(WIFI881_BIN) $(ARMEXIT_BIN)
 	./$(HIF881_BIN)
 	./$(HIF881SPI_BIN)
 	./$(WIFI881_BIN)
@@ -5475,6 +5486,7 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
 	./$(SDCRC_BIN)
 	./$(SDWRITE_BIN)
 	./$(ARMREFUSE_BIN)
+	./$(ARMEXIT_BIN)
 	./$(NVM1153_BIN)
 	./$(SEQ908_BIN)
 	./$(APSTA1060_BIN)
@@ -6062,7 +6074,7 @@ clean:
 	      $(STOP1201_BIN) $(STOP1201_GEN) $(CLAMP1231_BIN) $(CLAMP1231_GEN) \
 	      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(SDLOG1029_GEN).tmp \
 	      $(USECALTYPE_BIN) $(NAME_BIN) $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(ARM_BIN) $(SCPIDAC_RAILGATE_BIN) \
-	      $(FORCEGATE_BIN) $(LOG1039_BIN) $(LOG1039_GEN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) $(ARMREFUSE_BIN)
+	      $(FORCEGATE_BIN) $(LOG1039_BIN) $(LOG1039_GEN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) $(ARMREFUSE_BIN) $(ARMEXIT_BIN)
 
 # #1200: the three encoders must book the same loss for the same discard.
 # A source-derived check rather than a mock, because a model of the encoders
