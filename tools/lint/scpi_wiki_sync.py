@@ -116,7 +116,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # Translation phase 2 (backslash-newline splicing) is done once, in cdef, for
 # every lint that reads C text (#1066).
-from cdef import splice  # noqa: E402
+from cdef import line_comment_end, literal_end, splice  # noqa: E402
 
 NOT_IMPLEMENTED_MARK = "not implemented"
 
@@ -168,20 +168,6 @@ _CODE_OR_COMMENT = re.compile(
     r"|//(?:\\\n|[^\n])*",     # line comment (incl. spliced continuations) -- dropped
     re.S)
 
-# The same scanner for text that has ALREADY been through phase 2 (`splice`).
-# Its line-comment alternative has no backslash-newline continuation: the
-# splice has consumed every one the compiler would, and a backslash that
-# survives it (two backslashes + newline leave one) is an ordinary character,
-# so the comment ends at the first newline. Re-applying the continuation here
-# ran phase 2 twice.
-_CODE_OR_COMMENT_SPLICED = re.compile(
-    r'"(?:\\.|[^"\\])*"'
-    r"|'(?:\\.|[^'\\])*'"
-    r"|/\*.*?\*/"
-    r"|//[^\n]*",
-    re.S)
-
-
 def strip_c_comments(text, spliced=False):
     """Remove C comments, leaving string and character literals intact.
 
@@ -224,9 +210,34 @@ def strip_c_comments(text, spliced=False):
     comment ending in two backslashes + newline + a blank line ends at the
     blank line, as GCC reads it). The default stays for raw callers.
     """
-    rx = _CODE_OR_COMMENT_SPLICED if spliced else _CODE_OR_COMMENT
-    return rx.sub(
-        lambda m: m.group(0) if m.group(0)[0] in "\"'" else " ", text)
+    if not spliced:
+        return _CODE_OR_COMMENT.sub(
+            lambda m: m.group(0) if m.group(0)[0] in "\"'" else " ", text)
+    # Already-spliced text: walk it with cdef's audited boundary finders, as
+    # `cdef.mask()` does, rather than a second hand-written lexer. A regex
+    # literal alternative runs an unterminated literal (`#define U "x` plus
+    # two backslashes, in an `#if 0` block) on past the newline;
+    # `literal_end` ends it there, as the compiler does. Literals are copied
+    # VERBATIM (the patterns live in them).
+    out = []
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c in ('"', "'"):
+            end = literal_end(text, i, already_spliced=True)
+            out.append(text[i:end])
+            i = end
+        elif c == "/" and text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            i = n if end < 0 else end + 2
+            out.append(" ")
+        elif c == "/" and text.startswith("//", i):
+            i = line_comment_end(text, i, already_spliced=True)
+            out.append(" ")
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
 
 
 # `.pattern = "A" "B", .callback = X` is legal C -- adjacent string literals
@@ -1377,7 +1388,7 @@ def _self_test_end_to_end():
     pinned here rather than trusted to stay fixed.
     """
     import tempfile
-    cases, failures = 9, 0
+    cases, failures = 11, 0
     src = ('const scpi_command_t scpi_commands[] = {\n'
            '    {.pattern = "SYSTem:WIFI:" "DEBUG?", .callback = SCPI_A,},\n'
            '    {.pattern = "SYSTem:POWer:OTG", .callback = SCPI_B,},\n'
@@ -1518,6 +1529,32 @@ def _self_test_end_to_end():
                 print("  FAIL end-to-end: a hidden " + label + " after a "
                       "double-backslash line comment + blank line was "
                       "swallowed -- phase 2 ran twice")
+                failures += 1
+
+        # (8)/(9) An unterminated literal inside `#if 0` ends at its newline
+        # (as the compiler reads it), it does not run on to the next quote.
+        # `#define UNUSED "x` + two backslashes ends the line, then a lone
+        # quote line: a scanner that lets the literal swallow newlines pairs
+        # the quotes across the `#endif` and reads the commented GHOST
+        # registration as live.
+        for q in ('"', "'"):
+            src5 = ("const scpi_command_t scpi_commands[] = {\n"
+                    "#if 0\n"
+                    "#define UNUSED " + q + "x" + bs + bs + "\n" + q + "\n"
+                    "#endif\n"
+                    "    // {.pattern = \"SYSTem:GHOST\", .callback = SCPI_A,},\n"
+                    "    {.pattern = \"SYSTem:LIVE\", .callback = SCPI_A,},\n"
+                    "    {.pattern = NULL, .callback = SCPI_NotImplemented,},\n};\n"
+                    "#define LATER " + q + "y" + q + "\n")
+            c5 = os.path.join(d, "open_literal.c")
+            with open(c5, "w", encoding="utf-8") as fh:
+                fh.write(src5)
+            live5, commented5, _l5 = registered_patterns(c5)
+            if not ("SYSTem:GHOST" in commented5 and "SYSTem:GHOST" not in live5
+                    and "SYSTem:LIVE" in live5):
+                print("  FAIL end-to-end: an unterminated " + q + " literal "
+                      "in `#if 0` ran past its newline and flipped a "
+                      "commented registration to live")
                 failures += 1
     return cases, failures
 
