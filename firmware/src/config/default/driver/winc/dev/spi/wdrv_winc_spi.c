@@ -290,6 +290,17 @@ bool WDRV_WINC_SPIOpen(void)
         .csPolarity     = DRV_SPI_CS_POLARITY_ACTIVE_LOW
     };
 
+    /* #1278: DRV_SPI_TransferSetup stores a 0 rate and reports success, but
+     * SPI4_TransferSetup refuses it on every switch to this client, before it
+     * writes SPI4BRG or the CKE/CKP bits, and drv_spi.c discards that result.
+     * The WINC would then silently run at the previous client's clock and SPI
+     * mode. Refuse here instead, before anything is created. */
+    if (0U == spiDcpt.cfg.baudRateInHz)
+    {
+        LOG_E("WiFi SPI: no baudRateInHz in wdrvWincSpiInitData (#1278)\r\n");
+        return false;
+    }
+
     if (OSAL_RESULT_TRUE != OSAL_SEM_Create(&spiDcpt.txSyncSem, OSAL_SEM_TYPE_COUNTING, 10, 0))
     {
         WDRV_DBG_ERROR_PRINT("WiFi SPI: txSyncSem create failed\r\n");
