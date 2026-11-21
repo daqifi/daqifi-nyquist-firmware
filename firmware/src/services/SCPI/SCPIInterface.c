@@ -3325,8 +3325,16 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
 //
 // SYSTem:STReam:WIFI:FINd? [startHz][,maxHz]
 //   -> <recommendedHz>,<recommendedKBps>,<reason>,<ceilingHz>,<ceilingKBps>
-//   recommendedHz/KBps = soak-confirmed clean rate, clamped to the bench wire
+//   recommendedHz      = soak-confirmed clean rate, clamped to the bench wire
 //                        ceiling (WIFI_BENCH_CEILING_KBPS) — the rate to stream.
+//                        0 when no clean soak streak locked.
+//   recommendedKBps    = when recommendedHz > 0: the locked rate's wire rate,
+//                        scaled by the same bench clamp (KBps * capHz /
+//                        recommendedHz) when the clamp fires. When recommendedHz
+//                        is 0: whatever the last clean-but-unconfirmed soak
+//                        iteration measured, or 0 if none was clean -- it is
+//                        never cleared on a streak reset. Read it as a
+//                        recommendation only when recommendedHz > 0 (#1239).
 //   reason             = START_REFUSED | START_FAIL | NO_LINK | NO_CLEAN_SOAK |
 //                        BENCH_CAP | LINK_SATURATED | HIT_MAX
 //                        #895 splits what used to be one START_FAIL token in
@@ -4339,7 +4347,10 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context,
     }
 
     // Output: recommendedHz,recommendedKBps,reason,ceilingHz,ceilingKBps
-    //   recommendedHz/KBps = soak-confirmed clean rate + its wire rate (0 if none)
+    //   recommendedHz      = soak-confirmed clean rate, bench-clamped (0 if none)
+    //   recommendedKBps    = recommendedHz > 0: its wire rate (clamp-scaled). Else the
+    //                        last clean-but-unconfirmed iteration, NOT zeroed on a
+    //                        streak reset -- read it only when recommendedHz > 0 (#1239)
     //   ceilingHz/KBps      = raw arc/refine ceiling (the pre-soak overestimate,
     //                         kept for diagnostics so the soak correction is visible)
     scpi_printf(context, "%u,%u,%s,%u,%u\r\n",
