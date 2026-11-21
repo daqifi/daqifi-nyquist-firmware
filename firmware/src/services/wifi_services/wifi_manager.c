@@ -1040,12 +1040,6 @@ static bool OpenUdpSocket(SOCKET *pSocket) {
 }
 
 /**
- * Appends the last 4 hex digits of the MAC address to the default SSID and
- * hostname ("DAQiFi" → "DAQiFi-95A7") so multiple devices are distinguishable.
- * Also syncs the result to the runtime config and sets the WINC device name.
- * The strcmp guard prevents double-appending on repeated calls.
- */
-/**
  * #1266: set once ApplyDefaultSuffixAndDeviceName has run with the WINC's MAC
  * address. Until then the runtime SSID/hostname hold the unsuffixed default
  * "DAQiFi", which is not what the AP will broadcast. Single writer (WiFi
@@ -1058,6 +1052,12 @@ bool wifi_manager_IsDefaultSsidSuffixPending(const char *ssid) {
             (strcmp(ssid, "DAQiFi") == 0);
 }
 
+/**
+ * Appends the last 4 hex digits of the MAC address to the default SSID and
+ * hostname ("DAQiFi" → "DAQiFi-95A7") so multiple devices are distinguishable.
+ * Also syncs the result to the runtime config and sets the WINC device name.
+ * The strcmp guard prevents double-appending on repeated calls.
+ */
 static void ApplyDefaultSuffixAndDeviceName(stateMachineInst_t *pInstance) {
     char macSuffix[6];
     uint8_t *mac = pInstance->pWifiSettings->macAddr.addr;
