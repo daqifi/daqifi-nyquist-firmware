@@ -561,7 +561,7 @@ def wiki_rows(wiki_dir):
     return [(cmd, row) for cmd, row, _hdr in _iter_command_rows(wiki_dir)]
 
 
-CALLBACK_COLUMN = "firmware callback"
+CALLBACK_COLUMNS = ("firmware callback", "callback")  # three wiki tables say plain "Callback"
 
 
 def wiki_callbacks(wiki_dir):
@@ -573,10 +573,11 @@ def wiki_callbacks(wiki_dir):
     """
     out = []
     for cmd, row, hdr in _iter_command_rows(wiki_dir):
-        if CALLBACK_COLUMN not in hdr:
+        name = next((c for c in CALLBACK_COLUMNS if c in hdr), None)
+        if name is None:
             continue
         cells = split_row(row)
-        idx = hdr.index(CALLBACK_COLUMN)
+        idx = hdr.index(name)
         cell = cells[idx] if idx < len(cells) else ""
         out.append((cmd, clean_cell(cell)))
     return out
@@ -1431,6 +1432,11 @@ def _self_test_callbacks():
          "trailing prose"),
         (hdr4 + "| SYSTem:DEVice:NAME | x | y | SCPI_Imaginary |\n", 1,
          "nonexistent callback"),
+        (hdr4 + "| SYST:DEV:NAME | x | y | SCPI_Imaginary |\n", 1,
+         "abbreviated command, wrong callback"),
+        ("| Command | Description | Example | Callback |\n| -- | -- | -- | -- |\n"
+         "| SYSTem:DEVice:NAME | x | y | SCPI_Imaginary |\n", 1,
+         "short 'Callback' header, wrong callback"),
         (hdr4 + "| SYSTem:DEVice:NAME | x | y | |\n", 1,
          "empty callback cell"),
         ("| SCPI Command | Description |\n| -- | -- |\n"
