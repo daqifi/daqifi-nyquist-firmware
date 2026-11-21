@@ -166,7 +166,8 @@ from cdef import (AmbiguousDefinition, compiler_view,  # noqa: E402
 # the command it was written to catch reports a pass.
 # ---------------------------------------------------------------------------
 _REGISTRATION = re.compile(
-    r'\.pattern\s*=\s*((?:"[^"]*"\s*)+),\s*\.callback\s*=\s*([A-Za-z_]\w*)')
+    r'\.pattern\s*=\s*((?:"[^"]*"\s*)+),\s*\.callback\s*=\s*([A-Za-z_]\w*)'
+    r'(?=\s*[,}])')   # r4: ANCHORED -- `cond ? A : B` must not parse as `cond`
 _PATTERN_FIELD = re.compile(r"\.pattern\s*=")
 _NULL_SENTINEL = re.compile(r"\.pattern\s*=\s*NULL\b")
 _ONE_LITERAL = re.compile(r'"([^"]*)"')
@@ -1927,6 +1928,44 @@ def self_test():
                             "dropped")
         except SystemExit:
             pass
+
+    # r4 (audit r3 finding 4): a callback that is an EXPRESSION, not a bare
+    # identifier, must exit -- `AUDIT_ENABLE ? AuditWriter : AuditQuiet`
+    # used to parse as `AUDIT_ENABLE` and satisfy the completeness guard.
+    for why, cb in (("a ternary callback", "AUDIT_ENABLE ? AuditWriter : AuditQuiet"),
+                    ("a parenthesised-call callback", "Pick(1)"),
+                    ("a cast callback", "(cb_t)Writer")):
+        with tempfile.TemporaryDirectory() as td:
+            d = os.path.join(td, "services", "SCPI")
+            os.makedirs(d)
+            scpi_c = os.path.join(d, "SCPIInterface.c")
+            with open(scpi_c, "w") as fh:
+                fh.write('const scpi_command_t c[] = {\n'
+                         '    {.pattern = "SYST:AUDIT", .callback = %s,},\n'
+                         '    {.pattern = NULL, .callback = NULL,},\n};\n' % cb)
+            checks += 1
+            try:
+                registered(scpi_c)
+                failures.append("%s must exit, not parse as a prefix" % why)
+            except SystemExit:
+                pass
+    # ...and the anchored regex still accepts the three legal endings.
+    for end in (",", " ,", "}", "\n,"):
+        with tempfile.TemporaryDirectory() as td:
+            d = os.path.join(td, "services", "SCPI")
+            os.makedirs(d)
+            scpi_c = os.path.join(d, "SCPIInterface.c")
+            with open(scpi_c, "w") as fh:
+                fh.write('const scpi_command_t c[] = {\n'
+                         '    {.pattern = "SYST:A", .callback = CbA%s}\n'
+                         '    {.pattern = NULL, .callback = NULL,},\n};\n'
+                         % (end if end != "}" else "}" + ","))
+            checks += 1
+            try:
+                failures.extend(_ck("anchored form %r still parses" % end,
+                                    registered(scpi_c), [("SYST:A", "CbA")]))
+            except SystemExit:
+                failures.append("anchored form %r must parse" % end)
 
     # The allowlist's own rules.
     with tempfile.TemporaryDirectory() as td:
