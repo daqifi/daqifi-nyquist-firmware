@@ -24,6 +24,7 @@
 /* ************************************************************************** */
 /* ************************************************************************** */
 #include "SCPIStorageSD.h"
+#include "SDSuspendReasons.h"  /* #1001: measured reason strings */
 #include "Util/SpiBusHealth.h"
 #include "services/streaming.h"
 #include "SCPIInterface.h"
@@ -216,17 +217,18 @@ const char *SD_SuspendReasonText(void)
          * NOT guarded by a test. Three attempts at one were each defeated in
          * review -- a grep for the reason's own words matched the string it
          * replaced, a hash of the function collapsed whitespace inside the
-         * literals, and a copy in the test can drift from this line. The guard
-         * has to measure the REAL string, which is a design rather than a
-         * patch: #1001. Until then this length is held by review. */
-        return "SD quarantined after a bus jam - reseat the card, "
-               "then SYST:STOR:SD:ENAble 1";
+         * literals, and a copy in the test can drift from this line. #1001:
+         * the strings are now macros in SDSuspendReasons.h and a
+         * _Static_assert there measures each with sizeof against
+         * SD_SUSPEND_REASON_MAX (76), the bound the callers' log_budget
+         * annotations assume. */
+        return SD_SUSPEND_REASON_QUARANTINE;
     }
     if (fwUpdate) {
-        return "a WiFi firmware update owns SPI4 - retry when it completes";
+        return SD_SUSPEND_REASON_FW_UPDATE;
     }
     if (wifiStream) {
-        return "WiFi streaming owns SPI4 - SYST:STR:STOP first";
+        return SD_SUSPEND_REASON_WIFI_STREAM;
     }
     if (suspended) {
         /* #985: suspended, with not one of the three owners set in THIS
@@ -241,10 +243,10 @@ const char *SD_SuspendReasonText(void)
          * flatly does not show, and sending the operator to stop a stream
          * that is not running.
          *
-         * Says only what was observed: the task has not resumed. 46
-         * characters, the same as the WiFi-streaming string above and well
+         * Says only what was observed: the task has not resumed. 47
+         * characters, one more than the WiFi-streaming string above and well
          * inside the 84 the note above derives for this file's callers. */
-        return "the SD task has not resumed yet - retry shortly";
+        return SD_SUSPEND_REASON_NOT_RESUMED;
     }
     return NULL;
 }
