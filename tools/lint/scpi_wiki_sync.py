@@ -113,6 +113,11 @@ import os
 import re
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Translation phase 2 (backslash-newline splicing) is done once, in cdef, for
+# every lint that reads C text (#1066).
+from cdef import line_comment_end, literal_end, splice  # noqa: E402
+
 NOT_IMPLEMENTED_MARK = "not implemented"
 
 # The #324 legacy camelCase aliases (CLAUDE.md "Stream-control namespace
@@ -163,8 +168,7 @@ _CODE_OR_COMMENT = re.compile(
     r"|//(?:\\\n|[^\n])*",     # line comment (incl. spliced continuations) -- dropped
     re.S)
 
-
-def strip_c_comments(text):
+def strip_c_comments(text, spliced=False):
     """Remove C comments, leaving string and character literals intact.
 
     Single-pass rather than "strip block comments, then line comments". The
@@ -200,9 +204,40 @@ def strip_c_comments(text):
     (#976 audit round 6 -- the same defect this docstring already names
     for `hash_function.py`'s separate stripper, reached here through this
     file's own, independent one).
+
+    `spliced=True` is for text that already went through `splice()`: it drops
+    the continuation branch so phase 2 is not applied a second time (a line
+    comment ending in two backslashes + newline + a blank line ends at the
+    blank line, as GCC reads it). The default stays for raw callers.
     """
-    return _CODE_OR_COMMENT.sub(
-        lambda m: m.group(0) if m.group(0)[0] in "\"'" else " ", text)
+    if not spliced:
+        return _CODE_OR_COMMENT.sub(
+            lambda m: m.group(0) if m.group(0)[0] in "\"'" else " ", text)
+    # Already-spliced text: walk it with cdef's audited boundary finders, as
+    # `cdef.mask()` does, rather than a second hand-written lexer. A regex
+    # literal alternative runs an unterminated literal (`#define U "x` plus
+    # two backslashes, in an `#if 0` block) on past the newline;
+    # `literal_end` ends it there, as the compiler does. Literals are copied
+    # VERBATIM (the patterns live in them).
+    out = []
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c in ('"', "'"):
+            end = literal_end(text, i, already_spliced=True)
+            out.append(text[i:end])
+            i = end
+        elif c == "/" and text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            i = n if end < 0 else end + 2
+            out.append(" ")
+        elif c == "/" and text.startswith("//", i):
+            i = line_comment_end(text, i, already_spliced=True)
+            out.append(" ")
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
 
 
 # `.pattern = "A" "B", .callback = X` is legal C -- adjacent string literals
@@ -249,7 +284,13 @@ def registered_patterns(scpi_c):
                  f".github/workflows/scpi-wiki-sync.yml.")
     with open(scpi_c, encoding="utf-8", errors="replace") as fh:
         raw = fh.read()
-    live_src = strip_c_comments(raw)
+    # Phase 2 BEFORE comment recognition, as the compiler does (#1066): a
+    # splice can CREATE a comment marker (`/` + backslash-newline + `/` is
+    # `//`) or END a block comment early (`*` + backslash-newline + `/`),
+    # shapes `_CODE_OR_COMMENT` cannot see on raw text. A `.pattern` entry
+    # deleted that way used to stay in `live`.
+    raw, _omap = splice(raw)
+    live_src = strip_c_comments(raw, spliced=True)
     every = {_joined(g) for g, _ in _REGISTRATION.findall(raw)}
     live_list = [_joined(g) for g, _ in _REGISTRATION.findall(live_src)]
     live = set(live_list)
@@ -1347,7 +1388,7 @@ def _self_test_end_to_end():
     pinned here rather than trusted to stay fixed.
     """
     import tempfile
-    cases, failures = 4, 0
+    cases, failures = 11, 0
     src = ('const scpi_command_t scpi_commands[] = {\n'
            '    {.pattern = "SYSTem:WIFI:" "DEBUG?", .callback = SCPI_A,},\n'
            '    {.pattern = "SYSTem:POWer:OTG", .callback = SCPI_B,},\n'
@@ -1429,6 +1470,92 @@ def _self_test_end_to_end():
                   "`//` comment by a trailing backslash was not correctly "
                   "classified as dead -- the compiler never builds it")
             failures += 1
+
+        # (5) #1066: a splice that CREATES (or ENDS) a comment marker. `/` +
+        # backslash-newline + `/` is `//` to the compiler, so the
+        # registration after it is dead; likewise a splice-made `/*`. A
+        # splice-made `*/` closes a block comment early, so the registration
+        # after it is LIVE, which a raw reader hid. A live neighbour keeps
+        # each case non-vacuous.
+        bs = "\\"
+        for label, body, dead in (
+                ("`//`", "    /" + bs + "\n/ {.pattern = \"SYSTem:SPLICE:OPEN\","
+                 " .callback = SCPI_C,},\n", True),
+                ("`/*`", "    /" + bs + "\n* {.pattern = \"SYSTem:SPLICE:OPEN\","
+                 " .callback = SCPI_C,}, */\n", True),
+                ("`*/`", "    /* x *" + bs + "\n/ {.pattern = \"SYSTem:SPLICE:OPEN\","
+                 " .callback = SCPI_C,},\n    /* y */\n", False)):
+            src3 = ("const scpi_command_t scpi_commands[] = {\n" + body +
+                    "    {.pattern = \"SYSTem:LIVE:ONE\", .callback = SCPI_C,},\n"
+                    "    {.pattern = NULL, .callback = SCPI_NotImplemented,},\n};\n")
+            c3 = os.path.join(d, "spliced_open.c")
+            with open(c3, "w", encoding="utf-8") as fh:
+                fh.write(src3)
+            live3, commented3, _ll3 = registered_patterns(c3)
+            if dead:
+                ok = ("SYSTem:SPLICE:OPEN" not in live3
+                      and "SYSTem:SPLICE:OPEN" in commented3
+                      and "SYSTem:LIVE:ONE" in live3)
+            else:
+                ok = ("SYSTem:SPLICE:OPEN" in live3
+                      and "SYSTem:LIVE:ONE" in live3)
+            if not ok:
+                print("  FAIL end-to-end: a splice-made " + label + " marker "
+                      "was misread -- the compiler reads the joined text")
+                failures += 1
+
+        # (6)/(7) Phase 2 must run ONCE. `// note ` + two backslashes +
+        # newline + a blank line: the splice consumes the second backslash and
+        # the newline, the first survives as plain text, and the comment ends
+        # at the blank line -- so the registration after it is LIVE. A
+        # scanner that re-applies the continuation swallowed it.
+        for label, pats in (("registration", ("SYSTem:HIDDEN",)),
+                            ("duplicate", ("SYSTem:HIDDEN", "SYSTem:HIDDEN"))):
+            body = "".join('    {.pattern = "' + q + '", .callback = SCPI_C,},\n'
+                           for q in pats)
+            src4 = ("const scpi_command_t scpi_commands[] = {\n"
+                    "    // note " + bs + bs + "\n\n" + body +
+                    "    {.pattern = NULL, .callback = SCPI_NotImplemented,},\n};\n")
+            c4 = os.path.join(d, "double_splice.c")
+            with open(c4, "w", encoding="utf-8") as fh:
+                fh.write(src4)
+            live4, _c4, ll4 = registered_patterns(c4)
+            if label == "registration":
+                ok = "SYSTem:HIDDEN" in live4
+            else:
+                ok = (ll4.count("SYSTem:HIDDEN") == 2
+                      and bool(duplicate_pattern_violations(ll4)))
+            if not ok:
+                print("  FAIL end-to-end: a hidden " + label + " after a "
+                      "double-backslash line comment + blank line was "
+                      "swallowed -- phase 2 ran twice")
+                failures += 1
+
+        # (8)/(9) An unterminated literal inside `#if 0` ends at its newline
+        # (as the compiler reads it), it does not run on to the next quote.
+        # `#define UNUSED "x` + two backslashes ends the line, then a lone
+        # quote line: a scanner that lets the literal swallow newlines pairs
+        # the quotes across the `#endif` and reads the commented GHOST
+        # registration as live.
+        for q in ('"', "'"):
+            src5 = ("const scpi_command_t scpi_commands[] = {\n"
+                    "#if 0\n"
+                    "#define UNUSED " + q + "x" + bs + bs + "\n" + q + "\n"
+                    "#endif\n"
+                    "    // {.pattern = \"SYSTem:GHOST\", .callback = SCPI_A,},\n"
+                    "    {.pattern = \"SYSTem:LIVE\", .callback = SCPI_A,},\n"
+                    "    {.pattern = NULL, .callback = SCPI_NotImplemented,},\n};\n"
+                    "#define LATER " + q + "y" + q + "\n")
+            c5 = os.path.join(d, "open_literal.c")
+            with open(c5, "w", encoding="utf-8") as fh:
+                fh.write(src5)
+            live5, commented5, _l5 = registered_patterns(c5)
+            if not ("SYSTem:GHOST" in commented5 and "SYSTem:GHOST" not in live5
+                    and "SYSTem:LIVE" in live5):
+                print("  FAIL end-to-end: an unterminated " + q + " literal "
+                      "in `#if 0` ran past its newline and flipped a "
+                      "commented registration to live")
+                failures += 1
     return cases, failures
 
 
