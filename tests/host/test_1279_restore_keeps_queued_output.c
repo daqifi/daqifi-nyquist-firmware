@@ -66,6 +66,7 @@ static struct {
     bool callerIsUsbTask;    /* which SCPI task runs the restore */
     /* gates */
     bool claimOk, sdBusy, prepareOk;
+    bool prepareFallsBack;   /* oversubscribed config: Partition uses minimums */
     /* observations */
     TickType_t tick;
     int delays, prepareCalls, usbPumps, wifiPumps, claims, releases;
@@ -127,6 +128,14 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t elemSize,
     if (!idleLayout || !w.prepareOk) return false;
     w.lost += w.usbQueued + w.wifiQueued;
     w.usbQueued = w.wifiQueued = 0;
+    if (w.prepareFallsBack) {
+        /* StreamingBufferPool_Partition logs LOG_E and carves the minimums
+         * (StreamingBufferPool.c:236-242) yet this function still returns
+         * true: the allocations and the sample slots succeeded. */
+        w.sdCirc = 4096u;
+        w.sdDma = 512u;
+        return true;
+    }
     w.sdCirc = SD_CARD_MANAGER_DEFAULT_CIRCULAR_SIZE;
     w.sdDma = SD_CARD_MANAGER_CONF_WBUFFER_SIZE;
     return true;
@@ -203,6 +212,19 @@ TEST(undeliverable_output_refuses_instead_of_discarding) {
     ASSERT_EQ(w.releases, 1);       /* the claim is still released */
 }
 
+TEST(fallback_to_minimums_is_not_reported_as_restored) {
+    /* Audit r1 finding 2: SD/USB/WIFI buffers all set to 65536 oversubscribe
+     * the pool; the re-partition falls back to a 4 KB SD circular but reports
+     * success. The restore must re-ask the predicate and say false, so
+     * SD:BENCHmark refuses instead of measuring the undersized buffers. */
+    after_non_sd_stream();
+    w.callerIsUsbTask = true;
+    w.prepareFallsBack = true;
+    ASSERT_FALSE(SCPI_RestoreIdleSdBuffers());
+    ASSERT_EQ(w.prepareCalls, 1);
+    ASSERT_EQ(w.releases, 1);
+}
+
 TEST(nothing_queued_restores_without_waiting) {
     after_non_sd_stream();
     w.callerIsUsbTask = true;
@@ -251,6 +273,7 @@ int main(void) {
     RUN(tcp_echo_is_sent_by_the_tcp_task_itself);
     RUN(usb_task_leaves_the_tcp_ring_to_wifitask);
     RUN(undeliverable_output_refuses_instead_of_discarding);
+    RUN(fallback_to_minimums_is_not_reported_as_restored);
     RUN(nothing_queued_restores_without_waiting);
     RUN(idle_layout_touches_nothing);
     RUN(busy_sd_manager_refuses_before_draining);

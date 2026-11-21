@@ -9042,6 +9042,16 @@ bool SCPI_RestoreIdleSdBuffers(void) {
                                          ? mc->samplePoolCount
                                          : DEFAULT_AIN_SAMPLE_COUNT,
                                      0, true);
+        /* A true return from the re-partition means the allocations and
+         * sample slots succeeded, NOT that the SD buffers got their idle
+         * size: an oversubscribed static SYSTem:MEMory:* config (e.g. SD, USB
+         * and WIFI buffers all 65536) makes StreamingBufferPool_Partition log
+         * and fall back to its minimums (StreamingBufferPool.c:236-242),
+         * including a 4 KB SD circular. Ask the predicate again, so that is
+         * reported as "could not restore" and SD:BENCHmark refuses. */
+        ok = ok && !SdIdleRestoreDue(StreamingBufferPool_SdCircularSize(),
+                                     sd_card_manager_GetWriteBufferSize(),
+                                     mc->sdCircularBufSize);
     }
     Streaming_EndConfigChange();
     return ok;

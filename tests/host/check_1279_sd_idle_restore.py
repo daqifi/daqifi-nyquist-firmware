@@ -146,18 +146,23 @@ def check(sd_src, iface_src):
     h = ws(body(iface, "SCPI_RestoreIdleSdBuffers"))
     begin = once(h, r"\bStreaming_BeginConfigChange\(\)!=STREAM_CFG_CLAIM_OK", "helper: claim verdict")
     dues = [m.start() for m in re.finditer(r"\bSdIdleRestoreDue\(", h)]
-    if len(dues) != 2 or not dues[0] < begin < dues[1]:
+    if len(dues) != 3 or not dues[0] < begin < dues[1]:
         raise AssertionError("helper: SdIdleRestoreDue must be asked before "
-                             "the claim AND again under it")
+                             "the claim, again under it, and a third time "
+                             "after the re-partition")
     busy = once(h, r"!sd_card_manager_IsBusy\(\)", "helper: busy refusal")
     prep = once(h, r"\bPrepareStreamingBuffers\(", "helper: re-partition")
     if not re.search(r"\bPrepareStreamingBuffers\([^;]*,true\);", h):
         raise AssertionError("helper: re-partition must request the idle "
                              "layout (last argument `true`)")
     end = once(h, r"\bStreaming_EndConfigChange\(\);", "helper: release")
-    if not begin < dues[1] < busy < prep < end:
+    if not begin < dues[1] < busy < prep < dues[2] < end:
         raise AssertionError("helper: order must be claim -> re-ask -> busy "
-                             "-> re-partition -> release")
+                             "-> re-partition -> verify -> release")
+    if not re.search(r"ok=ok&&!SdIdleRestoreDue\(", h[dues[2] - 10:]):
+        raise AssertionError("helper: the post-re-partition predicate must "
+                             "turn a fallback to minimum buffers into false "
+                             "(`ok = ok && !SdIdleRestoreDue(...)`)")
 
     # 4. PrepareStreamingBuffers and its other callers
     p = ws(body(iface, "PrepareStreamingBuffers"))
@@ -254,6 +259,12 @@ def self_test():
         "helper re-partitions after a failed drain": (sd, iface.replace(
             "        ok = ok &&\n             PrepareStreamingBuffers(",
             "        ok =\n             PrepareStreamingBuffers(", 1)),
+        "helper trusts the re-partition's true": (sd, iface.replace(
+            "ok = ok && !SdIdleRestoreDue(", "ok = ok && SdIdleRestoreDue(", 1)),
+        "helper drops the post-re-partition verify": (sd, iface.replace(
+            "        ok = ok && !SdIdleRestoreDue(StreamingBufferPool_SdCircularSize(),\n"
+            "                                     sd_card_manager_GetWriteBufferSize(),\n"
+            "                                     mc->sdCircularBufSize);\n", "", 1)),
         "helper pumps TCP from the USB task": (sd, iface.replace(
             "if (wifiQueued && !UsbCdc_CallerIsUsbTask()) {",
             "if (wifiQueued) {", 1)),
