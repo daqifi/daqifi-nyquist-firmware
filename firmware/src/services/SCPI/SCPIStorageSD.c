@@ -1067,7 +1067,7 @@ __exit_point:
  * what the device is configured to write; the setter refuses until it ends.
  */
 scpi_result_t SCPI_StorageSDLoggingGet(scpi_t * context) {
-    sd_card_manager_settings_t* pSDCardRuntimeConfig =
+    const sd_card_manager_settings_t* pSDCardRuntimeConfig =
             BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
     char snapshot[sizeof(pSDCardRuntimeConfig->file)];
     char dirSnap[sizeof(pSDCardRuntimeConfig->directory)];
