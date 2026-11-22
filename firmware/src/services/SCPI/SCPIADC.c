@@ -139,7 +139,7 @@ static bool AdcChannelArgInRange(scpi_t * context, int channel, const char * cmd
 static bool AdcChannelResolve(scpi_t * context, int channel, const char * cmd,
                               const char * hint, size_t * index)
 {
-    AInArray * pBoardConfigAInChannels = BoardConfig_Get(
+    const AInArray * pBoardConfigAInChannels = BoardConfig_Get(
             BOARDCONFIG_AIN_CHANNELS,
             0);
     size_t resolved = ADC_FindChannelIndex((uint8_t) channel);
@@ -152,6 +152,11 @@ static bool AdcChannelResolve(scpi_t * context, int channel, const char * cmd,
         return true;
     }
 
+    /* log_budget: max=21,62 -- the two %s, in order. `cmd` is the longest
+     * spelling any of the nine callers passes, CONFigure:ADC:CHANnel (21);
+     * `hint` is the one non-NULL argument, CONFigure:ADC:CHANnel's remedy
+     * (62). 21 + 62 + 26 fixed + 11 for a 32-bit %d = 120, margin 5, the
+     * same total the sizing above derives. */
     LOG_E("%s: channel %d not addressable%s", cmd, channel,
           (hint != NULL) ? hint : "");
     SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
