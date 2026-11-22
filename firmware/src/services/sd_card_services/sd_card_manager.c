@@ -1504,6 +1504,15 @@ bool sd_card_manager_Init(sd_card_manager_settings_t *pSettings) {
     return true;
 }
 
+/* #1187: the extension is taken from the LEAF only. A dot in a subdirectory
+ * name ("sub.dir/exp") is not an extension; both extractBaseFilename and
+ * generateFilename must derive it here so they cannot disagree. */
+static const char* sd_leafExtension(const char* path) {
+    const char* slash = strrchr(path, '/');
+    const char* leaf = (slash != NULL) ? slash + 1 : path;
+    return strrchr(leaf, '.');
+}
+
 /**
  * @brief Extracts base filename (without extension) from given filename.
  *
@@ -1515,10 +1524,10 @@ static void extractBaseFilename(const char* filename) {
     strncpy(gSDCardData.baseFilename, filename, sizeof(gSDCardData.baseFilename) - 1);
     gSDCardData.baseFilename[sizeof(gSDCardData.baseFilename) - 1] = '\0';
 
-    // Find last dot for extension
-    char* ext = strrchr(gSDCardData.baseFilename, '.');
+    // Find last dot of the leaf for the extension
+    const char* ext = sd_leafExtension(gSDCardData.baseFilename);
     if (ext != NULL) {
-        *ext = '\0';  // Remove extension from base filename
+        gSDCardData.baseFilename[ext - gSDCardData.baseFilename] = '\0';  // Remove extension from base filename
     }
 }
 
@@ -1648,7 +1657,7 @@ static void generateFilename(char* outPath, size_t maxLen, uint32_t counter,
                              const char* directory, const char* baseFilename,
                              const char* originalFilename) {
     // Extract extension (includes leading dot if present)
-    const char* ext = strrchr(originalFilename, '.');
+    const char* ext = sd_leafExtension(originalFilename);
     const char* useExt = (ext != NULL) ? ext : "";
 
     // Pre-validate length to avoid truncation

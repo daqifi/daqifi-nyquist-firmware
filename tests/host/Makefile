@@ -5507,6 +5507,27 @@ $(WIFI881_BIN): test_881_wifi_reset.c test_framework.h $(WIFI_MGR_SRC) $(IPERF2_
 	 rm -f $(WIFI881_GEN).part
 	$(CC) $(CFLAGS) -o $@ test_881_wifi_reset.c
 
+# #1187: the extension of a log filename comes from the LEAF only. The three
+# functions are spliced out of the real sd_card_manager.c (same technique as
+# $(WIFI881_BIN)); each must be found exactly once and end in a closing brace.
+SDLEAF1187_BIN := run_1187_tests
+SDLEAF1187_GEN := gen_1187_leaf.h
+SDLEAF1187_FNS := 'static const char* sd_leafExtension(const char* path) {' \
+                  'static void extractBaseFilename(const char* filename) {' \
+                  'static void generateFilename(char* outPath, size_t maxLen, uint32_t counter,'
+$(SDLEAF1187_BIN): test_1187_sd_leaf_extension.c test_framework.h $(SD_MGR_SRC) $(RECIPES)
+	@rm -f $(SDLEAF1187_GEN); \
+	 for f in $(SDLEAF1187_FNS); do \
+	   n=`tr -d '\r' < $(SD_MGR_SRC) | grep -cxF "$$f"`; \
+	   test "$$n" = 1 || { echo "ERROR: '$$f' found $$n time(s) in $(SD_MGR_SRC)"; rm -f $(SDLEAF1187_GEN); exit 1; }; \
+	   tr -d '\r' < $(SD_MGR_SRC) \
+	     | awk -v f="$$f" '$$0 == f { p = 1 } p { print } p && /^}/ { p = 0 }' > $(SDLEAF1187_GEN).part; \
+	   last=`tail -1 $(SDLEAF1187_GEN).part | tr -d '[:space:]'`; \
+	   test "$$last" = "}" || { echo "ERROR: '$$f' did not end in '}'"; rm -f $(SDLEAF1187_GEN) $(SDLEAF1187_GEN).part; exit 1; }; \
+	   cat $(SDLEAF1187_GEN).part >> $(SDLEAF1187_GEN); \
+	 done; rm -f $(SDLEAF1187_GEN).part
+	$(CC) $(CFLAGS) -o $@ test_1187_sd_leaf_extension.c
+
 run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) \
      $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) \
      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(CAP1202_BIN) $(ISRLOG1197_BIN) $(STOP1201_BIN) $(CLAMP1231_BIN) \
@@ -5514,10 +5535,12 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
      $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) check-1200-parity check-885-savecal-claim \
      $(NVM1153_BIN) $(NVM1206_BIN) $(ARMREFUSE_BIN) $(SDCRC_BIN) $(SDWRITE_BIN) $(LOGRING1248_BIN) $(HIF881_BIN) \
      $(HIF881SPI_BIN) $(WIFI881_BIN) $(ARMEXIT_BIN) \
-     $(CMDHIST_BIN)
+     $(CMDHIST_BIN) \
+     $(SDLEAF1187_BIN)
 	./$(HIF881_BIN)
 	./$(HIF881SPI_BIN)
 	./$(WIFI881_BIN)
+	./$(SDLEAF1187_BIN)
 	./$(LOGRING1248_BIN)
 	./$(SDCRC_BIN)
 	./$(SDWRITE_BIN)
@@ -6154,7 +6177,7 @@ clean:
 	rm -f $(SEQ908_BIN) \
 	      $(CMDHIST_BIN)
 	rm -f $(TEAR904_BIN)
-	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
+	rm -f $(SDLEAF1187_BIN) $(SDLEAF1187_GEN) $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
 	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) \
 	      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(GEN_1125) $(CAP1202_BIN) $(GEN_1202) $(ISRLOG1197_BIN) $(GEN_1197) \
 	      $(STOP1201_BIN) $(STOP1201_GEN) $(CLAMP1231_BIN) $(CLAMP1231_GEN) \
