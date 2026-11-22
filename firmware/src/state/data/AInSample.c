@@ -187,8 +187,9 @@ void AInSampleList_Initialize(size_t maxSize, bool dropOnOverflow){
 void AInSampleList_InitializeExternal(void* poolMem, int16_t* freeMem,
                                        size_t maxSize, size_t elementSize) {
     if (poolMem == NULL || freeMem == NULL || maxSize == 0 || elementSize == 0) {
-        LOG_E("Sample pool external init: NULL or zero (%p, %p, %u, %u)",
-              poolMem, freeMem, (unsigned)maxSize, (unsigned)elementSize);
+        LOG_E("Sample pool external init: NULL or zero (0x%08X, 0x%08X, %u, %u)",
+              (unsigned)(uintptr_t)poolMem, (unsigned)(uintptr_t)freeMem,
+              (unsigned)maxSize, (unsigned)elementSize);
         /* #950: by the time this path is reached, StreamingBufferPool_Partition
          * has already re-carved gPoolStorage and reassigned this address range
          * -- typically to the USB or WiFi circular buffer. Simply returning
