@@ -61,13 +61,11 @@ void vApplicationIdleHook( void );
 void vApplicationTickHook( void );
 void vAssertCalled( const char * pcFile, unsigned long ulLine );
 
-/* #552 crash capture — shared globals defined in exceptions.c. Written here so
- * the guard-caught (configCHECK_FOR_STACK_OVERFLOW == 2) overflow names its
- * culprit into fixed BSS (not the dying task's stack) for mdb / Logger dump. */
-extern volatile uint32_t gCrashReason;
-extern volatile uint32_t gCrashTaskHandle;
-extern volatile char     gCrashTaskName[];
-extern void CrashCapture_CopyName( const char * nm );  /* bounds-checked, in exceptions.c */
+/* #552/#1190 crash record -- defined in exceptions.c, persisted across reset.
+ * Written here so the guard-caught (configCHECK_FOR_STACK_OVERFLOW == 2)
+ * overflow and a failed heap allocation name their culprit into the fixed block
+ * (not the dying task's stack) for SYSTem:LOG? after the reset. */
+#include "Util/CrashRecord.h"
 
 /*
 *********************************************************************************************************
@@ -91,12 +89,16 @@ void vApplicationStackOverflowHook( TaskHandle_t xTask, char *pcTaskName )
     * mdb (`print gCrashTaskName`) or a Logger dump without a live repro.
     * FreeRTOS hands us the name and handle directly here — no TCB deref needed,
     * and no vsnprintf/LOG_E (that printf frame is itself what overflows). */
-   gCrashReason     = 1U;
-   gCrashTaskHandle = (uint32_t) xTask;
-   gCrashTaskName[0] = '\0';   /* fresh per-crash; a NULL/bad name can't leave stale data */
+   CrashRecord_Begin();   /* invalidates any earlier record; Seal() validates LAST */
+   CrashRecord_SetWord( CRASH_W_REASON, CRASH_REASON_OVERFLOW );
+   CrashRecord_SetWord( CRASH_W_TCB, (uint32_t) xTask );
    /* Shared hardened copy — bounds-checks every byte and filters non-printables,
     * so a name field clobbered by the overflow can't nested-fault or mislead. */
-   CrashCapture_CopyName( pcTaskName );
+   CrashRecord_CopyName( pcTaskName );
+   CrashRecord_Seal();
+#ifdef CRASH_RECORD_TEST_HOOK
+   CrashRecord_TestReset();
+#endif
 
    ( void ) xTask;
 
@@ -150,6 +152,22 @@ void vApplicationMallocFailedHook( void )
       FreeRTOSConfig.h, and the xPortGetFreeHeapSize() API function can be used
       to query the size of free heap space that remains (although it does not
       provide information on how the remaining heap might be fragmented). */
+
+   /* #1190: record who asked for the memory. Reason 3 was documented in #552 but
+    * never captured. The caller of pvPortMalloc is the current task; before the
+    * scheduler starts there is no valid TCB to read, so the name stays empty. */
+   CrashRecord_Begin();
+   CrashRecord_SetWord( CRASH_W_REASON, CRASH_REASON_MALLOC );
+   if ( xTaskGetSchedulerState() != taskSCHEDULER_NOT_STARTED )
+   {
+       TaskHandle_t tcb = xTaskGetCurrentTaskHandle();
+       CrashRecord_SetWord( CRASH_W_TCB, (uint32_t) tcb );
+       CrashRecord_CopyName( pcTaskGetName( tcb ) );
+   }
+   CrashRecord_Seal();
+#ifdef CRASH_RECORD_TEST_HOOK
+   CrashRecord_TestReset();
+#endif
 
    taskDISABLE_INTERRUPTS();
    for( ;; )
