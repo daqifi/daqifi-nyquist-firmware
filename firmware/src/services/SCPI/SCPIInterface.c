@@ -4471,9 +4471,10 @@ static bool Iperf2_ParseClientArgs(scpi_t * context, char* ipBuf,
     // itself (:1267). See #885's fuller walk on ADCChanRangeSetClaimed
     // (SCPIADC.c) for why this property is the precondition for removing a push.
     //
-    // The two OPTIONAL parses below are a different class and deliberately
-    // untouched: they pass FALSE, where a present-but-malformed value queues an
-    // error AND is silently replaced by the default. That is #876.
+    // The two OPTIONAL parses below are a different class: absent keeps the
+    // default, and present-but-unparseable is rejected through
+    // SCPI_OptionalParamInt32 (#876, merged from main), so they push exactly
+    // one error themselves.
     if (!SCPI_ParamCopyText(context, ipBuf, ipBufLen, &ipLen, TRUE)) {
         return false;
     }
