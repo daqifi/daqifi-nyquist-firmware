@@ -29,6 +29,15 @@
  * corrupts them -- that is what this catches, along with a copy from the wrong
  * buffer (payload check).
  *
+ * r4 (codex): the span must prove EVERY coherent-DMA owner idle, not just the
+ * WINC. The REAL UsbCdc_DmaSwap* and sd_card_manager_DmaSwap* are spliced
+ * verbatim too (USB_SWAP_SRC / SD_SWAP_SRC), against fakes of the USB and SD
+ * state they read and of the mutex (zero-wait take; a nonzero wait while
+ * suspended is a violation). The scenarios DRIVE the interleaving: the swap's
+ * own retry yield flips the CDC to PROCESS and starts a transfer from the old
+ * region, and a transfer that is still running when the swap returns, or whose
+ * region was handed to another owner, fails the test.
+ *
  * The driver source and the splice are parameters, so the Makefile's mutation
  * targets can point them at deliberately broken copies.
  * ========================================================================== */
@@ -65,6 +74,18 @@ static void vTaskDelay(TickType_t t) {
 }
 void test1279_log_e(void) { if (gSuspendDepth > 0) gViolations++; }
 
+/* mutex: zero-wait take only while suspended */
+typedef struct { bool held; } FakeSem;
+typedef FakeSem *SemaphoreHandle_t;
+#define pdTRUE 1
+#define pdFALSE 0
+static int xSemaphoreTake(SemaphoreHandle_t m, TickType_t t) {
+    if (t != 0 && gSuspendDepth > 0) gViolations++;   /* would block suspended */
+    if (m->held) return pdFALSE;
+    m->held = true; return pdTRUE;
+}
+static int xSemaphoreGive(SemaphoreHandle_t m) { m->held = false; return pdTRUE; }
+
 #include "CoherentPool.h"
 
 /* ---- the driver under test, verbatim ---- */
@@ -73,17 +94,67 @@ void test1279_log_e(void) { if (gSuspendDepth > 0) gViolations++; }
 #endif
 #include WINC_SPI_SRC
 
-/* ---- consumers the swap installs ---- */
-static int gUsbDmaSets, gSdSets;
-static uint8_t *gUsbDmaBuf, *gSdBuf;
-void UsbCdc_SetDmaWriteBuffer(uint8_t* b, uint32_t n) {
-    (void)n; if (gSuspendDepth == 0) gViolations++;  /* must be inside the block */
-    gUsbDmaSets++; gUsbDmaBuf = b;
+/* ---- USB state the real UsbCdc_DmaSwap* read ---- */
+#define USB_CDC_STATE_WAIT 1
+#define USB_CDC_STATE_PROCESS 2
+#define USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID 0
+typedef struct { uint32_t n; } CircularBuf_t;
+static uint32_t CircularBuf_NumBytesAvailable(CircularBuf_t *c) { return c->n; }
+static void CircularBuf_Reset(CircularBuf_t *c) { c->n = 0; }
+static FakeSem gUsbMutex, gSdMutex;
+static struct {
+    SemaphoreHandle_t wMutex;
+    int state;
+    volatile bool writeInProgress;
+    uint32_t writeTransferHandle;
+    CircularBuf_t wCirbuf;
+    uint8_t *dmaWriteBuffer;
+    uint32_t dmaWriteBufferSize;
+} gRunTimeUsbSttings;
+static bool gUsbSwapDiscardRing;
+#include "gen_1279_usb.h"
+
+/* ---- SD state the real sd_card_manager_DmaSwap* read ---- */
+#define SD_CARD_MANAGER_PROCESS_STATE_IDLE 0
+#define SD_CARD_MANAGER_PROCESS_STATE_INIT 1
+#define SD_CARD_MANAGER_PROCESS_STATE_WRITE_TO_FILE 2
+#define SD_CARD_MANAGER_MODE_NONE 0
+#define SD_CARD_MANAGER_MODE_READ 1
+#define SD_CARD_MANAGER_MODE_WRITE 2
+static struct {
+    SemaphoreHandle_t wMutex;
+    int currentProcessState;
+    uint8_t *writeBuffer;
+    uint32_t writeBufferSize, writeBufferLength, sdCardWriteBufferOffset;
+} gSDCardData;
+struct SdSet { int mode; };
+static struct SdSet gSdSettings;
+static struct SdSet *gpSDCardSettings = &gSdSettings;
+#include "gen_1279_sd.h"
+
+/* a fake USB task: with the CDC in PROCESS and a ring, it starts a transfer
+ * from the CURRENT staging buffer, exactly as UsbCdc_BeginWrite would */
+static struct { bool inFlight; uint8_t *src; int completions; bool ownedAtCompletion; } gXfer;
+static bool gPumpDrains;       /* UsbCdc_PumpWrite really drains the ring */
+static bool in_partition(const char *name, const void *p, size_t n);
+static void fake_usb_begin_write(void) {
+    if (gRunTimeUsbSttings.state != USB_CDC_STATE_PROCESS) return;
+    if (gRunTimeUsbSttings.writeInProgress ||
+        gRunTimeUsbSttings.writeTransferHandle != 0) return;
+    if (gRunTimeUsbSttings.wCirbuf.n == 0) return;
+    gRunTimeUsbSttings.writeInProgress = true;
+    gRunTimeUsbSttings.writeTransferHandle = 1;
+    gRunTimeUsbSttings.wCirbuf.n = 0;
+    gXfer.inFlight = true; gXfer.src = gRunTimeUsbSttings.dmaWriteBuffer;
 }
-void sd_card_manager_SetWriteBuffer(uint8_t* b, uint32_t n) {
-    (void)n; if (gSuspendDepth > 0) gViolations++;   /* takes a mutex */
-    gSdSets++; gSdBuf = b;
+static void fake_usb_complete(void) {
+    if (!gXfer.inFlight) return;
+    gXfer.ownedAtCompletion = in_partition("USB_write", gXfer.src, 64);
+    gXfer.completions++; gXfer.inFlight = false;
+    gRunTimeUsbSttings.writeTransferHandle = 0;
+    gRunTimeUsbSttings.writeInProgress = false;
 }
+void UsbCdc_PumpWrite(void) { if (gPumpDrains) fake_usb_begin_write(); }
 
 /* ---- the REAL swap, spliced ---- */
 #include "gen_1279_swap.h"
@@ -99,16 +170,19 @@ static struct {
     bool wireOwned, rxOwned;
 } gSpi;
 
-static bool in_wifi_partition(const void *p, size_t n) {
+static bool in_partition(const char *name, const void *p, size_t n) {
     CoherentPoolInfo info; CoherentPool_GetInfo(&info);
     for (uint32_t i = 0; i < info.partitionCount; i++) {
-        if (strcmp(info.partitions[i].name, "WiFi_SPI") == 0) {
+        if (strcmp(info.partitions[i].name, name) == 0) {
             const uint8_t *a = info.partitions[i].ptr;
             return (const uint8_t *)p >= a &&
                    (const uint8_t *)p + n <= a + info.partitions[i].size;
         }
     }
     return false;
+}
+static bool in_wifi_partition(const void *p, size_t n) {
+    return in_partition("WiFi_SPI", p, n);
 }
 void test1279_spi_rx_add(void *rx, size_t n, DRV_SPI_TRANSFER_HANDLE *h) {
     if (gSpi.addInvalidOnce > 0) { gSpi.addInvalidOnce--; *h = DRV_SPI_TRANSFER_HANDLE_INVALID; return; }
@@ -147,13 +221,21 @@ OSAL_RESULT test1279_sem_pend(OSAL_SEM_HANDLE_TYPE *s) {
 static uint8_t gOutBuf[64];
 static bool gOutOk;
 static bool gSwapResult;
+static bool gKeep = true;       /* keepQueuedOutput: the idle restore */
 
 static void reset_world(void) {
     CoherentPool_Init();
     CoherentPool_Reset();
     gTick = 0; gSuspendDepth = 0; gViolations = 0;
     gResumeHook = gDelayHook = gPendHook = NULL;
-    gUsbDmaSets = gSdSets = 0; gUsbDmaBuf = gSdBuf = NULL;
+    memset(&gUsbMutex, 0, sizeof gUsbMutex); memset(&gSdMutex, 0, sizeof gSdMutex);
+    memset(&gRunTimeUsbSttings, 0, sizeof gRunTimeUsbSttings);
+    gRunTimeUsbSttings.wMutex = &gUsbMutex; gRunTimeUsbSttings.state = USB_CDC_STATE_WAIT;
+    memset(&gSDCardData, 0, sizeof gSDCardData);
+    gSDCardData.wMutex = &gSdMutex;
+    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
+    gSdSettings.mode = SD_CARD_MANAGER_MODE_NONE;
+    memset(&gXfer, 0, sizeof gXfer); gPumpDrains = false; gUsbSwapDiscardRing = false;
     memset(&gSpi, 0, sizeof(gSpi));
     for (unsigned i = 0; i < N; i++) gSpi.rxPayload[i] = (uint8_t)(0xA0 + i);
     memset(gOutBuf, 0, sizeof(gOutBuf));
@@ -162,12 +244,19 @@ static void reset_world(void) {
     (void)CoherentPool_Alloc("USB_write", OLD_USB);
     uint8_t *w = CoherentPool_Alloc("WiFi_SPI", OLD_WIFI);
     WDRV_WINC_SPI_SetBuffer(w, OLD_WIFI);
+    {
+        CoherentPoolInfo i0; CoherentPool_GetInfo(&i0);
+        gSDCardData.writeBuffer = (uint8_t *)i0.partitions[0].ptr;
+        gSDCardData.writeBufferSize = OLD_SD;
+        gRunTimeUsbSttings.dmaWriteBuffer = (uint8_t *)i0.partitions[1].ptr;
+        gRunTimeUsbSttings.dmaWriteBufferSize = OLD_USB;
+    }
 }
 static void do_receive(void) {
     gOutOk = WDRV_WINC_SPIReceive(gOutBuf, N);
 }
 static void do_swap(void) {
-    gSwapResult = SCPI_SwapCoherentDmaBuffers(NEW_SD, NEW_USB, NEW_WIFI);
+    gSwapResult = SCPI_SwapCoherentDmaBuffers(NEW_SD, NEW_USB, NEW_WIFI, gKeep);
 }
 static bool payload_intact(void) {
     return memcmp(gOutBuf, gSpi.rxPayload, N) == 0;
@@ -195,8 +284,6 @@ TEST(test_swap_refused_while_receive_in_flight) {
     ASSERT_TRUE(gOutOk);
     ASSERT_FALSE(gSwapResult);
     ASSERT_TRUE(same_pool(&before, &after));
-    ASSERT_EQ(0, gUsbDmaSets);
-    ASSERT_EQ(0, gSdSets);
     ASSERT_TRUE(gSpi.rxOwned);
     ASSERT_TRUE(payload_intact());
     ASSERT_EQ(0, gViolations);
@@ -244,15 +331,18 @@ TEST(test_receive_started_at_resume_uses_new_buffer) {
     ASSERT_EQ(0, gViolations);
 }
 
-/* T4: a transfer that lands after a clean swap, sized to the NEW buffer, and
- * the swap installs every consumer inside the block / after it as required. */
+/* T4: a clean swap installs each consumer once, inside the span, and both
+ * mutexes are released. */
 TEST(test_swap_installs_each_consumer_once) {
     reset_world();
     do_swap();
     ASSERT_TRUE(gSwapResult);
-    ASSERT_EQ(1, gUsbDmaSets);
-    ASSERT_EQ(1, gSdSets);
-    ASSERT_TRUE(gUsbDmaBuf != NULL && gSdBuf != NULL);
+    ASSERT_TRUE(in_partition("USB_write", gRunTimeUsbSttings.dmaWriteBuffer, NEW_USB));
+    ASSERT_EQ(NEW_USB, (int)gRunTimeUsbSttings.dmaWriteBufferSize);
+    ASSERT_TRUE(in_partition("SD_write", gSDCardData.writeBuffer, NEW_SD));
+    ASSERT_EQ(NEW_SD, (int)gSDCardData.writeBufferSize);
+    ASSERT_FALSE(gUsbMutex.held);
+    ASSERT_FALSE(gSdMutex.held);
     ASSERT_EQ(0, gSuspendDepth);
     ASSERT_EQ(0, gViolations);
     CoherentPoolInfo i; snapshot(&i);
@@ -263,12 +353,224 @@ TEST(test_swap_installs_each_consumer_once) {
 TEST(test_oversize_layout_refused_untouched) {
     reset_world();
     CoherentPoolInfo before, after; snapshot(&before);
-    bool r = SCPI_SwapCoherentDmaBuffers(CoherentPool_TotalSize(), NEW_USB, NEW_WIFI);
+    bool r = SCPI_SwapCoherentDmaBuffers(CoherentPool_TotalSize(), NEW_USB, NEW_WIFI, true);
     snapshot(&after);
     ASSERT_FALSE(r);
     ASSERT_TRUE(same_pool(&before, &after));
-    ASSERT_EQ(0, gUsbDmaSets + gSdSets);
     ASSERT_EQ(0, gSuspendDepth);
+}
+
+
+/* ===================== r4: every coherent-DMA owner ===================== */
+static void assert_untouched(const CoherentPoolInfo *before) {
+    CoherentPoolInfo after; snapshot(&after);
+    ASSERT_TRUE(same_pool(before, &after));
+    ASSERT_FALSE(gUsbMutex.held);
+    ASSERT_FALSE(gSdMutex.held);
+    ASSERT_EQ(0, gSuspendDepth);
+}
+
+/* the codex r4 interleaving: USB is in WAIT with 4096 B queued and the WINC is
+ * busy, so the swap yields. During the yield DTR rises, the CDC goes PROCESS
+ * and the USB task submits the ring from the OLD staging region. The swap must
+ * NOT reset the pool while that transfer is in flight. */
+static void usb_wakes_and_submits(void) {
+    gRunTimeUsbSttings.state = USB_CDC_STATE_PROCESS;
+    fake_usb_begin_write();
+    gWincSpiRxBusy = false;          /* WINC goes idle in the same yield */
+    gDelayHook = fake_usb_complete;  /* the transfer finishes on the NEXT yield */
+}
+TEST(test_usb_transfer_started_in_retry_yield_blocks_the_reset) {
+    reset_world();
+    gRunTimeUsbSttings.wCirbuf.n = 4096;
+    gWincSpiRxBusy = true;
+    gDelayHook = usb_wakes_and_submits;
+    do_swap();
+    ASSERT_TRUE(gSwapResult);
+    ASSERT_EQ(1, gXfer.completions);       /* it was waited for ... */
+    ASSERT_TRUE(gXfer.ownedAtCompletion);  /* ... and finished on a region USB still owned */
+    ASSERT_FALSE(gXfer.inFlight);
+    ASSERT_EQ(0, gViolations);
+}
+
+/* the transfer never completes: refuse after 1 s with nothing changed */
+static void usb_wakes_and_hangs(void) {
+    gRunTimeUsbSttings.state = USB_CDC_STATE_PROCESS;
+    fake_usb_begin_write();
+    gWincSpiRxBusy = false;
+}
+TEST(test_usb_transfer_that_never_ends_refuses_untouched) {
+    reset_world();
+    gRunTimeUsbSttings.wCirbuf.n = 4096;
+    gWincSpiRxBusy = true;
+    CoherentPoolInfo before; snapshot(&before);
+    uint8_t *oldUsb = gRunTimeUsbSttings.dmaWriteBuffer;
+    gDelayHook = usb_wakes_and_hangs;
+    do_swap();
+    ASSERT_FALSE(gSwapResult);
+    ASSERT_TRUE(gXfer.inFlight);
+    assert_untouched(&before);
+    ASSERT_TRUE(gRunTimeUsbSttings.dmaWriteBuffer == oldUsb);
+    ASSERT_EQ(OLD_USB, (int)gRunTimeUsbSttings.dmaWriteBufferSize);
+    ASSERT_EQ(0, gViolations);
+}
+
+/* each half of the USB "transfer in progress" predicate, alone, must refuse
+ * (submit claims writeInProgress BEFORE the handle exists; the handle is what
+ * remains after a claim was released by a teardown) */
+static void clear_usb_claim(void) {
+    gRunTimeUsbSttings.writeInProgress = false;
+    gRunTimeUsbSttings.writeTransferHandle = 0;
+}
+TEST(test_usb_claim_alone_refuses_until_released) {
+    reset_world();
+    gRunTimeUsbSttings.writeInProgress = true;      /* handle still INVALID */
+    gDelayHook = clear_usb_claim;
+    do_swap();
+    ASSERT_TRUE(gSwapResult);
+    ASSERT_TRUE(gTick >= 1);
+    ASSERT_EQ(0, gViolations);
+}
+TEST(test_usb_handle_alone_refuses_until_released) {
+    reset_world();
+    gRunTimeUsbSttings.writeTransferHandle = 7;     /* claim already released */
+    gDelayHook = clear_usb_claim;
+    do_swap();
+    ASSERT_TRUE(gSwapResult);
+    ASSERT_TRUE(gTick >= 1);
+    ASSERT_EQ(0, gViolations);
+}
+
+/* a task is mid-UsbCdc_BeginWrite (it holds wMutex and has read the OLD size as
+ * its length cap): committing a smaller buffer under it would overflow. */
+static void usb_writer_leaves(void) { gUsbMutex.held = false; }
+TEST(test_usb_task_mid_begin_write_blocks_the_swap) {
+    reset_world();
+    gUsbMutex.held = true;
+    gDelayHook = usb_writer_leaves;
+    do_swap();
+    ASSERT_TRUE(gSwapResult);
+    ASSERT_TRUE(gTick >= 1);
+    ASSERT_EQ(0, gViolations);
+}
+
+/* WAIT + queued: not deliverable now, so it is discarded atomically with the
+ * swap -- DTR rising right after resume finds an empty ring and the NEW buffer. */
+static void dtr_rises_at_resume(void) {
+    gRunTimeUsbSttings.state = USB_CDC_STATE_PROCESS;
+    fake_usb_begin_write();
+}
+TEST(test_undeliverable_ring_is_discarded_with_the_swap) {
+    reset_world();
+    gRunTimeUsbSttings.wCirbuf.n = 4096;
+    gResumeHook = dtr_rises_at_resume;
+    do_swap();
+    ASSERT_TRUE(gSwapResult);
+    ASSERT_EQ(0, (int)gRunTimeUsbSttings.wCirbuf.n);
+    ASSERT_FALSE(gXfer.inFlight);               /* nothing torn went out */
+    ASSERT_TRUE(in_partition("USB_write", gRunTimeUsbSttings.dmaWriteBuffer, NEW_USB));
+    ASSERT_EQ(0, gViolations);
+}
+
+/* PROCESS + queued and nothing drains it: refuse (never discard), ring intact */
+TEST(test_deliverable_ring_refuses_not_discards) {
+    reset_world();
+    gRunTimeUsbSttings.state = USB_CDC_STATE_PROCESS;
+    gRunTimeUsbSttings.wCirbuf.n = 4096;
+    CoherentPoolInfo before; snapshot(&before);
+    do_swap();
+    ASSERT_FALSE(gSwapResult);
+    ASSERT_EQ(4096, (int)gRunTimeUsbSttings.wCirbuf.n);
+    assert_untouched(&before);
+    ASSERT_EQ(0, gViolations);
+}
+
+/* PROCESS + queued, and the swap's own pump delivers it: then it proceeds,
+ * after the transfer ends */
+TEST(test_deliverable_ring_is_pumped_then_swap_proceeds) {
+    reset_world();
+    gRunTimeUsbSttings.state = USB_CDC_STATE_PROCESS;
+    gRunTimeUsbSttings.wCirbuf.n = 4096;
+    gPumpDrains = true;
+    gDelayHook = fake_usb_complete;
+    do_swap();
+    ASSERT_TRUE(gSwapResult);
+    ASSERT_EQ(1, gXfer.completions);
+    ASSERT_TRUE(gXfer.ownedAtCompletion);
+    ASSERT_EQ(0, gViolations);
+}
+
+/* the streaming callers (keepQueuedOutput=false) keep their old behaviour:
+ * the swap neither refuses on nor discards the ring (SetWriteBuffer does) */
+TEST(test_streaming_caller_does_not_refuse_on_queued_bytes) {
+    reset_world();
+    gKeep = false;
+    gRunTimeUsbSttings.state = USB_CDC_STATE_PROCESS;
+    gRunTimeUsbSttings.wCirbuf.n = 4096;
+    do_swap();
+    gKeep = true;
+    ASSERT_TRUE(gSwapResult);
+    ASSERT_EQ(4096, (int)gRunTimeUsbSttings.wCirbuf.n);
+    ASSERT_EQ(0, gViolations);
+}
+
+/* ---- SD write DMA owner ---- */
+static void sd_goes_idle(void) {
+    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
+    gSdSettings.mode = SD_CARD_MANAGER_MODE_NONE;
+    gSdMutex.held = false;
+}
+TEST(test_sd_write_in_flight_blocks_the_swap) {
+    reset_world();
+    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_WRITE_TO_FILE;
+    gDelayHook = sd_goes_idle;
+    do_swap();
+    ASSERT_TRUE(gSwapResult);
+    ASSERT_TRUE(gTick >= 1);
+    ASSERT_EQ(0, gViolations);
+}
+TEST(test_sd_write_armed_blocks_the_swap) {
+    reset_world();
+    gSdSettings.mode = SD_CARD_MANAGER_MODE_WRITE;   /* armed, task not started */
+    gDelayHook = sd_goes_idle;
+    do_swap();
+    ASSERT_TRUE(gSwapResult);
+    ASSERT_TRUE(gTick >= 1);
+    ASSERT_EQ(0, gViolations);
+}
+TEST(test_sd_task_mid_copy_blocks_the_swap) {
+    reset_world();
+    gSdMutex.held = true;
+    gDelayHook = sd_goes_idle;
+    do_swap();
+    ASSERT_TRUE(gSwapResult);
+    ASSERT_TRUE(gTick >= 1);
+    ASSERT_EQ(0, gViolations);
+}
+TEST(test_stale_read_mode_does_not_block_the_swap) {
+    reset_world();
+    gSdSettings.mode = SD_CARD_MANAGER_MODE_READ;    /* finished op, mode left set */
+    do_swap();
+    ASSERT_TRUE(gSwapResult);
+    ASSERT_EQ(0, (int)gTick);
+}
+TEST(test_sd_busy_for_good_refuses_untouched_and_releases_usb) {
+    reset_world();
+    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_WRITE_TO_FILE;
+    CoherentPoolInfo before; snapshot(&before);
+    do_swap();
+    ASSERT_FALSE(gSwapResult);
+    assert_untouched(&before);
+    ASSERT_EQ(0, gViolations);
+}
+TEST(test_winc_busy_for_good_releases_both_mutexes) {
+    reset_world();
+    gWincSpiRxBusy = true;
+    CoherentPoolInfo before; snapshot(&before);
+    do_swap();
+    ASSERT_FALSE(gSwapResult);
+    assert_untouched(&before);
+    ASSERT_EQ(0, gViolations);
 }
 
 int main(void) {
@@ -277,5 +579,20 @@ int main(void) {
     RUN(test_receive_started_at_resume_uses_new_buffer);
     RUN(test_swap_installs_each_consumer_once);
     RUN(test_oversize_layout_refused_untouched);
+    RUN(test_usb_transfer_started_in_retry_yield_blocks_the_reset);
+    RUN(test_usb_transfer_that_never_ends_refuses_untouched);
+    RUN(test_usb_claim_alone_refuses_until_released);
+    RUN(test_usb_handle_alone_refuses_until_released);
+    RUN(test_usb_task_mid_begin_write_blocks_the_swap);
+    RUN(test_undeliverable_ring_is_discarded_with_the_swap);
+    RUN(test_deliverable_ring_refuses_not_discards);
+    RUN(test_deliverable_ring_is_pumped_then_swap_proceeds);
+    RUN(test_streaming_caller_does_not_refuse_on_queued_bytes);
+    RUN(test_sd_write_in_flight_blocks_the_swap);
+    RUN(test_sd_write_armed_blocks_the_swap);
+    RUN(test_sd_task_mid_copy_blocks_the_swap);
+    RUN(test_stale_read_mode_does_not_block_the_swap);
+    RUN(test_sd_busy_for_good_refuses_untouched_and_releases_usb);
+    RUN(test_winc_busy_for_good_releases_both_mutexes);
     return TEST_SUMMARY();
 }

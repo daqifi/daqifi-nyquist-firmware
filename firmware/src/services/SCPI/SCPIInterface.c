@@ -5163,49 +5163,80 @@ _Static_assert(SD_CARD_MANAGER_MIN_WBUFFER_SIZE + USBCDC_DMA_WBUFFER_MIN + WIFI_
                + 3u * COHERENT_POOL_ALIGNMENT <= COHERENT_POOL_DEFAULT_SIZE,
                "the minimum DMA layout must fit the coherent pool");
 
-/* #1279 r3: reset the coherent pool, carve the three DMA buffers and install
- * the USB and WINC ones with NO task able to run in between. The WINC driver
- * starts SPI transfers from several tasks at any time, so "idle" is only true
- * at the instant it is read; the check and the swap are one step (the old
- * sequence checked, then yielded in wifi_tcp_server_SetWriteBuffer's
- * tcpInFlight wait, and swapped later: a receive started in between DMA'd into
- * the old buffer and was copied out of the new one). NOTHING in the suspended
- * block may block, yield, log or take a lock. The SD buffer is installed after
- * resume because its setter takes the SD wMutex; SD is quiesced (mode NONE,
- * idle) and its buffer lock is held by the caller. Refuses (false) with
- * NOTHING changed if the WINC is mid-transfer for 1 s or the layout does not
+/* #1279 r3/r4: reset the coherent pool, carve the three DMA buffers and install
+ * ALL THREE with NO task able to run in between, and only if EVERY owner of
+ * coherent-pool memory is proven idle INSIDE that same suspended span.
+ *
+ * Why inside the span: each owner is idle only at the instant it is read.
+ * r3 re-checked the WINC SPI there and left USB outside; during the retry
+ * yield DTR rose, CDC went WAIT->PROCESS and UsbCdc_BeginWrite submitted queued
+ * bytes from the OLD USB staging region, which the reset then handed to the SD
+ * buffer (codex r4). The owners, from every CoherentPool_Alloc caller:
+ *   USB_write  UsbCdc_DmaSwapAcquire          (transfer, mid-BeginWrite, ring)
+ *   SD_write   sd_card_manager_DmaSwapAcquire (state IDLE/INIT, mode NONE,
+ *                                              no task mid-copy)
+ *   WiFi_SPI   WDRV_WINC_SPI_IdleForSwap      (busy flags, r3)
+ * Each Acquire's header comment carries its proof that nothing can START a
+ * transfer from the old region once the scheduler is suspended.
+ *
+ * NOTHING in the span may block, yield or log. The Acquires take the owners'
+ * mutexes with a ZERO wait (legal suspended) and hold them to Commit/Release,
+ * which is how the SD buffer install moved inside the span.
+ *
+ * keepQueuedOutput: an idle restore must not lose reply bytes queued on the
+ * USB ring; Acquire refuses (this loop retries and pumps the writer) while a
+ * deliverable ring is non-empty, and discards bytes that cannot be delivered
+ * (CDC not in PROCESS) at commit, atomically with the swap, so DTR rising
+ * later cannot deliver a ring the re-carve is about to reset. Refuses (false)
+ * with NOTHING changed if an owner stays busy for 1 s or the layout does not
  * fit. */
 static bool SCPI_SwapCoherentDmaBuffers(uint32_t sdDmaSize, uint32_t usbDmaSize,
-                                        uint32_t wifiDmaSize) {
+                                        uint32_t wifiDmaSize, bool keepQueuedOutput) {
+    enum { BUSY_USB = 1u, BUSY_SD = 2u, BUSY_WINC = 4u };
     if ((uint64_t)sdDmaSize + usbDmaSize + wifiDmaSize + 3u * COHERENT_POOL_ALIGNMENT
             > CoherentPool_TotalSize()) {
         return false;
     }
-    uint8_t *sdDmaBuf = NULL, *usbDmaBuf = NULL, *wifiDmaBuf = NULL;
+    uint32_t busy = 0u, discarded = 0u;
     bool swapped = false;
     TickType_t start = xTaskGetTickCount();
     for (;;) {
         vTaskSuspendAll();
-        if (WDRV_WINC_SPI_IdleForSwap()) {
+        bool usbHeld = UsbCdc_DmaSwapAcquire(keepQueuedOutput, &discarded);
+        bool sdHeld  = usbHeld && sd_card_manager_DmaSwapAcquire();
+        busy = !usbHeld ? BUSY_USB : !sdHeld ? BUSY_SD
+             : !WDRV_WINC_SPI_IdleForSwap() ? BUSY_WINC : 0u;
+        if (busy == 0u) {
             CoherentPool_Reset();
-            sdDmaBuf   = CoherentPool_Alloc("SD_write", sdDmaSize);
-            usbDmaBuf  = CoherentPool_Alloc("USB_write", usbDmaSize);
-            wifiDmaBuf = CoherentPool_Alloc("WiFi_SPI", wifiDmaSize);
-            UsbCdc_SetDmaWriteBuffer(usbDmaBuf, usbDmaSize);
+            uint8_t *sdDmaBuf   = CoherentPool_Alloc("SD_write", sdDmaSize);
+            uint8_t *usbDmaBuf  = CoherentPool_Alloc("USB_write", usbDmaSize);
+            uint8_t *wifiDmaBuf = CoherentPool_Alloc("WiFi_SPI", wifiDmaSize);
+            sd_card_manager_DmaSwapCommitAndRelease(sdDmaBuf, sdDmaSize);
+            UsbCdc_DmaSwapCommitAndRelease(usbDmaBuf, usbDmaSize);
             WDRV_WINC_SPI_SetBuffer(wifiDmaBuf, wifiDmaSize);
             swapped = true;
+        } else {
+            if (sdHeld)  sd_card_manager_DmaSwapRelease();
+            if (usbHeld) UsbCdc_DmaSwapRelease();
         }
         (void)xTaskResumeAll();
         if (swapped) {
             break;
         }
         if ((xTaskGetTickCount() - start) > pdMS_TO_TICKS(1000)) {
-            LOG_E("WiFi SPI busy 1 s - DMA buffers not resized (#1279)");
+            LOG_E("DMA buffers not resized: owner busy 0x%x for 1 s (#1279)",
+                  (unsigned)busy);
             return false;
+        }
+        if (busy == BUSY_USB) {
+            UsbCdc_PumpWrite();   /* drain the ring / finish a transfer */
         }
         vTaskDelay(1);
     }
-    sd_card_manager_SetWriteBuffer(sdDmaBuf, sdDmaSize);
+    if (discarded != 0u) {
+        LOG_I("idle restore: discarded %u B queued with no USB host (#1279)",
+              (unsigned)discarded);
+    }
     return true;
 }
 
@@ -8847,6 +8878,13 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize,
      * only in the WINC bridge state, where USB is transparent and there is no
      * TCP client (inferred from its state machine, not driven).
      *
+     * #1279 r4: for the USB ring this check is FAIL-FAST ONLY. It reads 0 while
+     * the CDC is not in PROCESS, yet DTR rising flips it to PROCESS at any
+     * moment and the USB task then delivers the ring. The authoritative USB
+     * decision is made inside SCPI_SwapCoherentDmaBuffers' suspended span
+     * (UsbCdc_DmaSwapAcquire: refuse a deliverable non-empty ring, discard an
+     * undeliverable one atomically with the swap).
+     *
      * Idle restores only: the streaming callers re-partition with the same
      * reset and are left as they were (out of #1279's scope). */
     if (idleLayout && (!ScpiCmdGate_OthersIdle() ||
@@ -8878,7 +8916,7 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize,
     /* #1279 r3: swap the coherent DMA buffers BEFORE the re-carve, so every
      * refusal up to and including this one leaves the device as it was. */
     if (!SCPI_QuiesceSdForDmaResize() ||
-        !SCPI_SwapCoherentDmaBuffers(sdDmaSize, usbDmaSize, wifiDmaSize)) {
+        !SCPI_SwapCoherentDmaBuffers(sdDmaSize, usbDmaSize, wifiDmaSize, idleLayout)) {
         sd_card_manager_UnlockBuffer();
         return false;
     }

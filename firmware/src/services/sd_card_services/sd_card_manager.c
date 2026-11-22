@@ -4664,6 +4664,44 @@ void sd_card_manager_SetWriteBuffer(uint8_t* buf, uint32_t size) {
     xSemaphoreGive(gSDCardData.wMutex);
 }
 
+/* #1279 r4: SD side of the coherent-DMA swap; same contract as the USB one
+ * (UsbCdc_DmaSwapAcquire): scheduler suspended, never blocks.
+ *
+ * The SD write DMA reads writeBuffer inside SYS_FS_FileWrite, which is
+ * synchronous in the SD task (disk_write spins to completion), and that
+ * happens in WRITE_TO_FILE / UNMOUNT_DISK. So the region is idle when the
+ * state machine is IDLE/INIT and no WRITE is armed (mode != WRITE; only the
+ * write path touches writeBuffer, and a stale READ/LIST/DELETE mode must not
+ * refuse a restore) -- a write is armed by a handler setting mode WRITE, and
+ * handlers run on tasks, none of which runs suspended. The wMutex try-take proves no task is mid-copy into
+ * writeBuffer (CircularBufferToSDWrite runs under it). */
+bool sd_card_manager_DmaSwapAcquire(void) {
+    if (xSemaphoreTake(gSDCardData.wMutex, 0) != pdTRUE) {
+        return false;
+    }
+    bool idle = (gSDCardData.currentProcessState == SD_CARD_MANAGER_PROCESS_STATE_IDLE ||
+                 gSDCardData.currentProcessState == SD_CARD_MANAGER_PROCESS_STATE_INIT) &&
+                gpSDCardSettings != NULL &&
+                gpSDCardSettings->mode != SD_CARD_MANAGER_MODE_WRITE;
+    if (!idle) {
+        xSemaphoreGive(gSDCardData.wMutex);
+        return false;
+    }
+    return true;                       /* wMutex stays held until Commit/Release */
+}
+
+void sd_card_manager_DmaSwapCommitAndRelease(uint8_t* buf, uint32_t size) {
+    gSDCardData.writeBuffer = buf;
+    gSDCardData.writeBufferSize = size;
+    gSDCardData.writeBufferLength = 0;
+    gSDCardData.sdCardWriteBufferOffset = 0;
+    xSemaphoreGive(gSDCardData.wMutex);
+}
+
+void sd_card_manager_DmaSwapRelease(void) {
+    xSemaphoreGive(gSDCardData.wMutex);
+}
+
 void sd_card_manager_SetCircularBuffer(uint8_t* buf, uint32_t size) {
     if (buf == NULL || size == 0) return;
 

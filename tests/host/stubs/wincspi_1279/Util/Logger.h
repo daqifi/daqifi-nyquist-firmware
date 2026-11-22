@@ -5,4 +5,5 @@
 extern void test1279_log_e(void);
 #define LOG_MODULE_WIFI 0
 #define LOG_E(...) test1279_log_e()
+#define LOG_I(...) test1279_log_e()
 #endif

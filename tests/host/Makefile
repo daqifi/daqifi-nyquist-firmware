@@ -814,10 +814,20 @@ WINCSWAP1279_BIN := run_1279_winc_swap_tests
 WINCSWAP1279_GEN := gen_1279_swap.h
 WINC_SPI_SRC ?= ../../firmware/src/config/default/driver/winc/dev/spi/wdrv_winc_spi.c
 WINC_SWAP_SRC ?= ../../firmware/src/services/SCPI/SCPIInterface.c
-$(WINCSWAP1279_BIN): test_1279_winc_swap.c test_framework.h $(WINC_SPI_SRC) $(WINC_SWAP_SRC) \
+USB_SWAP_SRC ?= ../../firmware/src/services/UsbCdc/UsbCdc.c
+SD_SWAP_SRC ?= ../../firmware/src/services/sd_card_services/sd_card_manager.c
+$(WINCSWAP1279_BIN): test_1279_winc_swap.c test_framework.h $(WINC_SPI_SRC) $(WINC_SWAP_SRC) $(USB_SWAP_SRC) $(SD_SWAP_SRC) \
                      $(FW_UTIL)/CoherentPool.c $(FW_UTIL)/CoherentPool.h \
                      stubs/wincspi_1279/osal/osal.h stubs/wincspi_1279/driver/spi/drv_spi.h \
                      stubs/wincspi_1279/Util/Logger.h stubs/wincspi_1279/wdrv_winc_common.h
+	@spl() { sed -n "/^$$1(/,/^}/p" $$2 | tr -d '\r'; }; \
+	 { spl "bool UsbCdc_DmaSwapAcquire" $(USB_SWAP_SRC); spl "void UsbCdc_DmaSwapCommitAndRelease" $(USB_SWAP_SRC); \
+	   spl "void UsbCdc_DmaSwapRelease" $(USB_SWAP_SRC); } > gen_1279_usb.h; \
+	 { spl "bool sd_card_manager_DmaSwapAcquire" $(SD_SWAP_SRC); spl "void sd_card_manager_DmaSwapCommitAndRelease" $(SD_SWAP_SRC); \
+	   spl "void sd_card_manager_DmaSwapRelease" $(SD_SWAP_SRC); } > gen_1279_sd.h; \
+	 test "`grep -c '^}' gen_1279_usb.h`" = 3 && test "`grep -c '^}' gen_1279_sd.h`" = 3 \
+	 || { echo "ERROR: #1279 r4 -- could not splice the USB/SD DmaSwap functions (need 3 each)"; \
+	      rm -f gen_1279_usb.h gen_1279_sd.h; exit 1; }
 	@sed -n "/^static bool SCPI_SwapCoherentDmaBuffers(/,/^}/p" $(WINC_SWAP_SRC) | tr -d '\r' > $(WINCSWAP1279_GEN); \
 	 lines=`wc -l < $(WINCSWAP1279_GEN) | tr -d ' '`; \
 	 last=`tail -1 $(WINCSWAP1279_GEN) | tr -d '[:space:]'`; \

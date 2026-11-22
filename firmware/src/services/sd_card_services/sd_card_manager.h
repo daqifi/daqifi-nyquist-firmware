@@ -221,6 +221,16 @@ extern "C" {
     void sd_card_manager_SetWriteBuffer(uint8_t* buf, uint32_t size);
 
     /**
+     * #1279 r4: SD side of the coherent-DMA swap (see UsbCdc_DmaSwapAcquire).
+     * Scheduler suspended only; never blocks. Acquire returns true with wMutex
+     * held only if the SD write DMA region is idle; then exactly one of
+     * Commit (installs the new region) or Release.
+     */
+    bool sd_card_manager_DmaSwapAcquire(void);
+    void sd_card_manager_DmaSwapCommitAndRelease(uint8_t* buf, uint32_t size);
+    void sd_card_manager_DmaSwapRelease(void);
+
+    /**
      * @brief Checks if the SD card manager is currently idle (not processing any operation).
      *
      * @return true if idle, false if busy processing an operation

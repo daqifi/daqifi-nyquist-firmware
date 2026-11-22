@@ -270,13 +270,17 @@ uint64_t UsbCdc_GetWireBytesSent(void);
     bool UsbCdc_CallerIsUsbTask(void);
 
     /**
-     * Set the USB CDC DMA write staging buffer.
-     * Called at each stream start to auto-size for active interfaces.
-     * Must only be called when no USB DMA transfer is in flight.
-     * @param buf Pointer to coherent buffer memory
-     * @param size Buffer size in bytes
+     * #1279 r4: USB side of the coherent-DMA swap. ONLY for
+     * SCPI_SwapCoherentDmaBuffers, with the scheduler suspended: never blocks.
+     * Acquire proves the USB DMA staging region idle (no transfer, no task
+     * mid-BeginWrite, and -- when keepDeliverable -- no deliverable queued
+     * output) and returns true with wMutex HELD; the caller then calls exactly
+     * one of Commit (installs the new region, discards an undeliverable ring if
+     * Acquire reported discardBytes) or Release (changes nothing).
      */
-    void UsbCdc_SetDmaWriteBuffer(uint8_t* buf, uint32_t size);
+    bool UsbCdc_DmaSwapAcquire(bool keepDeliverable, uint32_t *discardBytes);
+    void UsbCdc_DmaSwapCommitAndRelease(uint8_t* buf, uint32_t size);
+    void UsbCdc_DmaSwapRelease(void);
 
     /**
      * Flush any pending data in the USB CDC write circular buffer.
