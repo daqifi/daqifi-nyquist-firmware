@@ -3367,17 +3367,27 @@ scpi_result_t SCPI_StorageSDInfo(scpi_t * context) {
      * do, so an absent card is an error and not a plausible-looking reply.
      *
      * While SPI4 belongs to WiFi (SD task suspended) nothing refreshes the
-     * attach cache, so a negative would be stale rather than true; the CID
-     * does not depend on the bus, so keep answering from the buffer then, as
-     * before. Both checks return before the response-buffer take below, so no
-     * Give is owed on this path. */
+     * attach cache, so that presence check is skipped: a negative there could
+     * be stale. What the bypass guarantees is narrower than "a card is
+     * present": the reply is built only from a buffer that holds a genuine CID
+     * read, never from the never-populated all-zero buffer. During the bypass
+     * it may still describe the last card read, which can have been removed
+     * since. Both early returns come before the response-buffer take below, so
+     * no Give is owed on those paths. */
     if (!app_SDCard_SpiOwnedByWifi() && !SpiBusHealth_IsSdSuspended()
             && !SCPI_CheckSDCardPresent(context)) {
         return SCPI_RES_ERR;
     }
 
-    if (!DRV_SDSPI_GetCID(cid, sizeof(cid))) {
-        LOG_E("[SD] Card info not available (driver CID support missing or no card)");
+    /* A CID that was ever read has bit 0 of its last byte set: the CID
+     * register ends CRC7[7:1] then "not used, always 1" [0:0] (SD Physical
+     * Layer Simplified Spec v9.10, section 5.2, Table 5-2). The driver stores
+     * the data-block token at gDrvSDSPICidData[0] and the 16 CID bytes, MSB
+     * first, from [1], so cid[15] is that CRC7|1 byte (the driver does not
+     * strip it). An all-zero buffer, i.e. no CID ever read since boot, has
+     * bit 0 clear and so cannot be a real CID. */
+    if (!DRV_SDSPI_GetCID(cid, sizeof(cid)) || (cid[15] & 0x01U) == 0U) {
+        LOG_E("[SD] Card info not available (no CID read or driver support missing)");
         SCPI_ErrorPush(context, SCPI_ERROR_HARDWARE_MISSING);
         return SCPI_RES_ERR;
     }
