@@ -1709,7 +1709,7 @@ $(ARM_BIN): test_971_sd_arm_refusal_order.c test_framework.h $(SD_BENCH_SRC) has
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(ARM_BIN) test_971_sd_arm_refusal_order.c
 
-$(SYSINFO_BIN): test_947_sysinfo_write_abort.c test_framework.h $(SCPI_INTERFACE_SRC) $(FREERTOS_CONFIG_SRC)
+$(SYSINFO_BIN): test_947_sysinfo_write_abort.c test_framework.h $(SCPI_INTERFACE_SRC) $(FREERTOS_CONFIG_SRC) $(RECIPES)
 	@grep -qE '^#define[[:space:]]+SCPI_WRITE_MAX_RETRIES[[:space:]]+200[[:space:]]*$$' $(SCPI_INTERFACE_SRC) \
 	  || { echo "ERROR: SCPI_WRITE_MAX_RETRIES is no longer '200' in $(SCPI_INTERFACE_SRC)."; \
 	       echo "       Update FW_WRITE_MAX_RETRIES in test_947_sysinfo_write_abort.c and re-derive its numbers."; \
@@ -2721,7 +2721,7 @@ SCPI_BOUNDED_WRITE_H := ../../firmware/src/services/SCPI/ScpiBoundedWrite.h
 
 $(REPLYBUF_BIN): test_1098_scpi_reply_buffer_pairing.c test_framework.h \
                 $(SCPI_INTERFACE_SRC) $(SCPI_INTERFACE_H) $(SD_BENCH_SRC) \
-                $(SCPI_BOUNDED_WRITE_H) $(RECIPES)
+                $(SCPI_BOUNDED_WRITE_H) $(FREERTOS_CONFIG_SRC) $(RECIPES)
 	@grep -qE '^[[:space:]]*#define[[:space:]]+SCPI_RESPONSE_BUF_SIZE[[:space:]]+2048U' \
 	     $(SCPI_INTERFACE_H) \
 	   || { echo "ERROR: SCPI_RESPONSE_BUF_SIZE is no longer 2048U in"; \
@@ -2928,11 +2928,11 @@ $(SCPI999_BIN): test_999_scpi_context_storage_isolation.c test_framework.h \
 	       echo "       storage parameter -- #999's per-transport isolation may have"; \
 	       echo "       been reverted."; \
 	       exit 1; }
-	@grep -qE '^\s*char scpi_input_buffer\[' $(SCPI_INTERFACE_C) \
+	@grep -qE '^\s*(static\s+)?char scpi_input_buffer\[' $(SCPI_INTERFACE_C) \
 	  && { echo "ERROR: $(SCPI_INTERFACE_C) still declares the OLD file-scope"; \
 	       echo "       scpi_input_buffer[] singleton -- #999's fix removes this."; \
 	       exit 1; } || true
-	@grep -qE '^\s*scpi_error_t scpi_error_queue_data\[' $(SCPI_INTERFACE_C) \
+	@grep -qE '^\s*(static\s+)?scpi_error_t scpi_error_queue_data\[' $(SCPI_INTERFACE_C) \
 	  && { echo "ERROR: $(SCPI_INTERFACE_C) still declares the OLD file-scope"; \
 	       echo "       scpi_error_queue_data[] singleton -- #999's fix removes this."; \
 	       exit 1; } || true
