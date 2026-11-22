@@ -108,6 +108,9 @@ int8_t nm_spi_write_reg(uint32_t u32Addr, uint32_t u32Val);
  * failure (which may have landed) is always returned. See nmspi.c. */
 int8_t nm_spi_write_reg_once(uint32_t u32Addr, uint32_t u32Val);
 
+/* #1262: non-zero command-response state bytes seen since boot (all retried). */
+uint32_t nm_spi_rsp_state_errors(void);
+
 /**
 *   @fn     nm_spi_read_block
 *   @brief  Read block of data
