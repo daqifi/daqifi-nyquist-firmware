@@ -118,6 +118,7 @@
  * $(SDLOG_BIN) recipe. Holds FW_LOG_MESSAGE_SIZE, FW_LOG_VSNPRINTF_RESERVE,
  * FW_LOG_CLAMP_RESERVE, FW_1000_PREFIX and FW_1000_NULL_FALLBACK. */
 #include "gen_1000_log_budget.h"
+#include "../../firmware/src/services/SCPI/SDSuspendReasons.h"  /* #1001: the REAL strings */
 
 /* --------------------------------------------------------------------------
  * Logger.c's truncation, reproduced exactly.
@@ -183,13 +184,11 @@ static int fw_log_emit(char *out, const char *format, ...)
  * The strings.
  * ------------------------------------------------------------------------ */
 
-/* The three SD_SuspendReasonText() returns, in the order that function tests
- * them. COPIED from SCPIStorageSD.c; the Makefile greps each full return
- * statement and fails the build on any drift. */
-#define REASON_QUARANTINE  "SD quarantined after a bus jam - reseat the card, " \
-                           "then SYST:STOR:SD:ENAble 1"
-#define REASON_WIFI_FW     "a WiFi firmware update owns SPI4 - retry when it completes"
-#define REASON_WIFI_STREAM "WiFi streaming owns SPI4 - SYST:STR:STOP first"
+/* #1001: the reasons are the firmware's own macros (SDSuspendReasons.h), not
+ * copies -- a drifted copy measured a string the device does not emit. */
+#define REASON_QUARANTINE  SD_SUSPEND_REASON_QUARANTINE
+#define REASON_WIFI_FW     SD_SUSPEND_REASON_FW_UPDATE
+#define REASON_WIFI_STREAM SD_SUSPEND_REASON_WIFI_STREAM
 
 /* The command a quarantined user needs, and the exact thing the old prefix
  * cut off. Its survival is this test's headline. */
@@ -215,6 +214,7 @@ static const ReasonCase kReasons[] = {
     { "quarantine",    REASON_QUARANTINE      },
     { "wifi-fw-update", REASON_WIFI_FW        },
     { "wifi-streaming", REASON_WIFI_STREAM    },
+    { "not-resumed",   SD_SUSPEND_REASON_NOT_RESUMED },
     { "null-fallback", FW_1000_NULL_FALLBACK  },
 };
 #define N_REASONS ((int)(sizeof(kReasons) / sizeof(kReasons[0])))

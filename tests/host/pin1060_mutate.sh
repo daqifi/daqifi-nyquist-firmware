@@ -100,6 +100,29 @@ if crlf:
 open(p, "w", newline="").write(t)
 sys.stderr.write("    (M2 neutered %d marker setter(s))\n" % n)' "$1"
 }
+# #1188: the CLEAR-side twin of sub_all_setters, keyed on the same kind of
+# PATTERN so it is total over the sites by construction (a mutant that
+# enumerates its targets goes stale the day the code grows another clear).
+# It neuters every `ResetEventFlag(... TEARDOWN_PENDING)` -- the half of PIN 7
+# that nothing else in this harness exercised.
+sub_all_clears() {
+    python3 -c '
+import sys, re
+p = sys.argv[1]
+raw = open(p, newline="").read()
+crlf = "\r\n" in raw
+t = raw.replace("\r\n", "\n") if crlf else raw
+pat = re.compile(
+    r"(?<![A-Za-z])ResetEventFlag\(&pInstance->eventFlags,\s*\n?\s*"
+    r"WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING\);")
+t, n = pat.subn("(void)0;", t)
+if n == 0:
+    sys.exit(9)
+if crlf:
+    t = t.replace("\n", "\r\n")
+open(p, "w", newline="").write(t)
+sys.stderr.write("    (M8 neutered %d marker clear(s))\n" % n)' "$1"
+}
 cleanup() { restore; rm -f "$BK"; }
 # The signal handlers exit EXPLICITLY: on INT/TERM bash runs the handler and
 # then RESUMES, so a plain `trap ... EXIT INT TERM` restores and re-mutates.
@@ -196,10 +219,8 @@ if sub_all_setters "$F"; then
     # ⚠ CONSEQUENCE WORTH KNOWING: PIN 4 now SHADOWS PIN 7's set half for this
     # mutant, so PIN 7's set direction is no longer what catches it. PIN 7 is
     # NOT redundant -- its CLEAR half is unique coverage and nothing else in
-    # this file asserts that anything ever clears the marker. ⛔ And that clear
-    # half has NO mutant of its own: a `sub_all_clears` twin of
-    # sub_all_setters would close it, which is a real hole in this harness and
-    # is left stated rather than fixed in a capped round.
+    # this file asserts that anything ever clears the marker. That half is
+    # exercised by M8 below (#1188), via sub_all_clears.
     expect "M2 marker is set somewhere" "BSSDisconnect failure has 0"
 else
     echo "  FAIL M2 anchor absent."; fail=$((fail+1))
@@ -258,6 +279,18 @@ if sub "$F" '                            ResetEventFlag(&pInstance->eventFlags,
     expect "M6 marker write count" "write(s) of the #1060 teardown marker"
 else
     echo "  FAIL M6 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== M8 (PIN 7, the CLEAR half): never CLEAR the marker anywhere. A set-only =="
+echo "==            implementation would re-issue a BSSDisconnect on every      =="
+echo "==            REINIT for the rest of the session. #1188: until this        =="
+echo "==            mutant nothing exercised PIN 7's clear direction. Measured: =="
+echo "==            PIN 7 itself answers (PIN 4 and PIN 10 do not shadow it).   =="
+if sub_all_clears "$F"; then
+    expect "M8 marker is cleared somewhere" "nothing CLEARS the #1060 teardown-pending flag"
+else
+    echo "  FAIL M8 anchor absent."; fail=$((fail+1))
 fi
 restore
 
