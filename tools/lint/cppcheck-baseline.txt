@@ -22,7 +22,6 @@ firmware/src/HAL/DIO.c:495:22: style: Variable 'DIOChruntimeConfig' can be decla
 firmware/src/HAL/DIO.c:512:29: style: Condition 'DIO_ReadSampleByMask(latest,0xFFFF)' is always true [knownConditionTrueFalse]
 firmware/src/HAL/DioProbe.c:147:30: style: Variable 'rt' can be declared as pointer to const [constVariablePointer]
 firmware/src/HAL/DioProbe.c:27:19: style: Variable 'cfg' can be declared as pointer to const [constVariablePointer]
-firmware/src/HAL/NVM/nvm.c:83:5: style: Found duplicate branches for 'if' and 'else'. [duplicateBranch]
 firmware/src/HAL/Power/PowerApi.c:1076:17: style: The scope of the variable 'sWifiEnabledPreStandby' can be reduced. [variableScope]
 firmware/src/HAL/UserI2c/UserI2c.c:132:39: style: Parameter 'ctx' can be declared as pointer to const. However it seems that 'i2c_WaitBudgetSpent' is a callback function, if 'ctx' is declared with const you might also need to cast function pointer(s). [constParameterCallback]
 firmware/src/HAL/UserSpi/UserSpi.c:359:34: style: Parameter 'ctx' can be declared as pointer to const. However it seems that 'spi_WaitBitMet' is a callback function, if 'ctx' is declared with const you might also need to cast function pointer(s). [constParameterCallback]
