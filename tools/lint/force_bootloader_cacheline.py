@@ -217,11 +217,12 @@ def check(source_text, addr_macro=ADDR_MACRO, whole_lines=False,
     `whole_lines` the size must be a non-zero multiple of CACHE_LINE_BYTES
     instead of exactly one line.
 
-    Finds the one statement that places an object at
-    `address(FORCE_BOOTLOADER_FLAG_ADDR)` and requires it to be:
+    Finds the one statement that places an object at `address(<addr_macro>)`
+    (by default FORCE_BOOTLOADER_FLAG_ADDR) and requires it to be:
       - qualified `persistent` AND `coherent` (both attributes present), and
       - sized (type width * array count, or just the type width for a bare
-        scalar) at least CACHE_LINE_BYTES.
+        scalar) exactly CACHE_LINE_BYTES, or a whole number of lines with
+        `whole_lines`.
 
     Does not attempt to find every object that might overlap the address
     range some other way (e.g. two smaller `address()`-placed objects that

@@ -41,7 +41,6 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#define CRASH_REASON_NONE       0u
 #define CRASH_REASON_OVERFLOW   1u  /* vApplicationStackOverflowHook */
 #define CRASH_REASON_EXCEPTION  2u  /* _general_exception_handler */
 #define CRASH_REASON_MALLOC     3u  /* vApplicationMallocFailedHook */
