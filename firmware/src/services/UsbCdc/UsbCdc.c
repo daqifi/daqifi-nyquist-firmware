@@ -46,6 +46,7 @@ void UsbCdc_Profile_ResetPendingStamp(void) {
 
 // services
 #include "services/SCPI/SCPIInterface.h"
+#include "services/SCPI/SCPICmdGate.h"
 #include "Util/Logger.h"
 
 /* #511: bytes confirmed transferred by the USB peripheral (WRITE_COMPLETE),
@@ -1309,7 +1310,13 @@ static int microrl_commandComplete(microrl_t* context, size_t commandLen, const 
         
         // Log the SCPI command received
         LOG_D("SCPI CMD: %.*s\r\n", commandLen, command);
-        
+
+        // #914: drain any deferred SD-task failure into THIS context before
+        // dispatching the next command -- must run before SCPI_Input (see
+        // SCPI_DrainDeferredSdError's own comment for why the ordering
+        // matters).
+        SCPI_DrainDeferredSdError(&gRunTimeUsbSttings.scpiContext);
+
         int result = SCPI_Input(
                 &gRunTimeUsbSttings.scpiContext,
                 command,
@@ -1460,8 +1467,13 @@ void UsbCdc_ProcessState() {
             // If a write operation is not in progress
             if (gRunTimeUsbSttings.readTransferHandle ==
                     USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID) {
-                // Process any input
-                UsbCdc_FinalizeRead(&gRunTimeUsbSttings);
+                // Process any input. #1279: deferred (not dropped) while an idle
+                // SD-buffer restore on the TCP task holds the command gate; the
+                // bytes stay in readBuffer and the host is NAKed until it lowers.
+                if (ScpiCmdGate_TryEnter(SCPI_CMD_GATE_USB)) {
+                    UsbCdc_FinalizeRead(&gRunTimeUsbSttings);
+                    ScpiCmdGate_Exit(SCPI_CMD_GATE_USB);
+                }
 
                 // Schedule the next read
                 if (!UsbCdc_BeginRead(&gRunTimeUsbSttings)) {
@@ -1589,8 +1601,87 @@ void UsbCdc_SetWriteBuffer(uint8_t* buf, uint32_t size) {
 }
 
 
-void UsbCdc_SetDmaWriteBuffer(uint8_t* buf, uint32_t size) {
-    if (buf == NULL || size == 0) return;
+/* #1279: bytes queued in the write circular buffer that UsbCdc_SetWriteBuffer
+ * would discard. Read under wMutex, the lock every producer and the consumer
+ * hold, so the count is never torn against an AddBytes/ProcessBytes.
+ *
+ * 0 outside PROCESS: an unconfigured or closed CDC has no host to deliver to,
+ * and counting there would make an idle re-partition wait on bytes nobody can
+ * ever drain. */
+uint32_t UsbCdc_PendingWriteBytes(void) {
+    if (gRunTimeUsbSttings.state != USB_CDC_STATE_PROCESS) {
+        return 0u;
+    }
+    xSemaphoreTake(gRunTimeUsbSttings.wMutex, portMAX_DELAY);
+    uint32_t n = CircularBuf_NumBytesAvailable(&gRunTimeUsbSttings.wCirbuf);
+    xSemaphoreGive(gRunTimeUsbSttings.wMutex);
+    return n;
+}
+
+/* #1279: is the caller app_USBDeviceTask, the USB SCPI task? */
+bool UsbCdc_CallerIsUsbTask(void) {
+    return (gUsbCdcTaskHandle != NULL) &&
+           (xTaskGetCurrentTaskHandle() == gUsbCdcTaskHandle);
+}
+
+/* #1279 r4: the USB side of the coherent-DMA swap. SCPI_SwapCoherentDmaBuffers
+ * calls these ONLY with the scheduler suspended, so nothing here may block,
+ * yield or log; the mutex take is the zero-wait kind, which FreeRTOS allows
+ * suspended (the blocking-with-ticks form is what it asserts against).
+ *
+ * WHAT MAKES THE USB DMA STAGING REGION "IDLE", and why each term is needed:
+ *  - writeInProgress / writeTransferHandle: UsbCdc_Wrapper_Write claims
+ *    writeInProgress under a critical section BEFORE it copies into
+ *    dmaWriteBuffer and submits, and UsbCdc_FinalizeWrite (WRITE_COMPLETE ISR)
+ *    releases it, so the pair covers copy, submit and transfer. The only call
+ *    to USB_DEVICE_CDC_Write is in that function, reached only through
+ *    CircularBuf_ProcessBytes from UsbCdc_BeginWrite, in task context; the ISR
+ *    paths only clear or flip state, they never submit. So with the scheduler
+ *    suspended and these clear, nothing can start a transfer from the old
+ *    region until resume.
+ *  - wMutex taken (zero wait): UsbCdc_BeginWrite holds it across
+ *    ProcessBytes -> Wrapper_Write. A task preempted there has read
+ *    dmaWriteBufferSize as its length cap but not yet claimed writeInProgress;
+ *    committing a SMALLER buffer under it would let the copy overflow. Holding
+ *    the mutex proves no such task exists.
+ *  - queued ring bytes: a WAIT (DTR low) ring is not drained, but DTR going
+ *    high flips the state straight to PROCESS and the USB task then delivers
+ *    it (the r4 finding). So an idle restore that must keep queued output
+ *    (keepDeliverable) is refused while a PROCESS ring holds bytes -- the
+ *    caller retries until it drains -- and bytes that can NOT be delivered now
+ *    (non-PROCESS) are discarded at commit, atomically with the swap, so
+ *    nothing is torn between the check and the reset. */
+static bool gUsbSwapDiscardRing;
+
+bool UsbCdc_DmaSwapAcquire(bool keepDeliverable, uint32_t *discardBytes) {
+    *discardBytes = 0u;
+    if (xSemaphoreTake(gRunTimeUsbSttings.wMutex, 0) != pdTRUE) {
+        return false;
+    }
+    uint32_t q = CircularBuf_NumBytesAvailable(&gRunTimeUsbSttings.wCirbuf);
+    bool deliverable = (gRunTimeUsbSttings.state == USB_CDC_STATE_PROCESS);
+    if (gRunTimeUsbSttings.writeInProgress ||
+        gRunTimeUsbSttings.writeTransferHandle != USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID ||
+        (keepDeliverable && deliverable && q != 0u)) {
+        xSemaphoreGive(gRunTimeUsbSttings.wMutex);
+        return false;
+    }
+    gUsbSwapDiscardRing = keepDeliverable && q != 0u;
+    *discardBytes = gUsbSwapDiscardRing ? q : 0u;
+    return true;                       /* wMutex stays held until Commit/Release */
+}
+
+void UsbCdc_DmaSwapCommitAndRelease(uint8_t* buf, uint32_t size) {
+    if (gUsbSwapDiscardRing) {
+        CircularBuf_Reset(&gRunTimeUsbSttings.wCirbuf);
+    }
     gRunTimeUsbSttings.dmaWriteBuffer = buf;
     gRunTimeUsbSttings.dmaWriteBufferSize = size;
+    gUsbSwapDiscardRing = false;
+    xSemaphoreGive(gRunTimeUsbSttings.wMutex);
+}
+
+void UsbCdc_DmaSwapRelease(void) {
+    gUsbSwapDiscardRing = false;
+    xSemaphoreGive(gRunTimeUsbSttings.wMutex);
 }

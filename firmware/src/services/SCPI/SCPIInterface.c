@@ -2,6 +2,7 @@
 #define LOG_MODULE LOG_MODULE_SCPI
 
 #include "SCPIInterface.h"
+#include "SCPICmdGate.h"
 #include "ScpiBoundedWrite.h"  /* #1098: pure bounded-write decision, host-tested */
 #include "semphr.h"  // #347: mutex for SysInfoGet static buffer
 
@@ -18,6 +19,7 @@
 //// 3rd Party
 //#include "HAL/NVM/DaqifiSettings.h"
 #include "HAL/Power/PowerApi.h"
+#include "HAL/UI/UI.h"
 #include "services/DaqifiPB/DaqifiOutMessage.pb.h"
 #include "services/DaqifiPB/NanoPB_Encoder.h"
 //#include "Util/StringFormatters.h"
@@ -61,7 +63,7 @@
 #include "state/data/AInSample.h"  // For AInSampleList_PoolCapacity
 #include "services/wifi_services/wifi_tcp_server.h"  // For WIFI_CIRCULAR_BUFF_SIZE
 #include "services/wifi_services/iperf2/iperf2.h"   // #377 iperf2 control
-#include "config/default/driver/winc/include/dev/wdrv_winc_spi.h"  // For WDRV_WINC_SPI_SetBuffer/WaitIdle
+#include "config/default/driver/winc/include/dev/wdrv_winc_spi.h"  // For WDRV_WINC_SPI_SetBuffer/IdleForSwap
 #include "config/default/WincIdleGate.h"  // For SYST:WINC:GATE? debug accessor
 #ifndef DAQIFI_WINC_SPI_PATCHED
 #error "wdrv_winc_spi.h was overwritten by Harmony/MCC! Re-apply DAQiFi patches. See wiki: Harmony-Driver-Patches"
@@ -516,8 +518,10 @@ static void SCPI_SyncQuesBits(void) {
 static scpi_result_t SCPI_Reset(scpi_t * context) {
     // Send notification that reset is occurring
     // This gives connected clients a chance to know what happened
-    const char* msg = "System reset initiated\r\n";
-    context->interface->write(context, msg, strlen(msg));
+    if (context->interface && context->interface->write) {
+        const char* msg = "System reset initiated\r\n";
+        context->interface->write(context, msg, strlen(msg));
+    }
     
     // Ensure the message is sent before reset
     if (context->interface && context->interface->flush) {
@@ -764,8 +768,10 @@ static scpi_result_t SCPI_SysInfoGet(scpi_t * context) {
     int param1;
     tBoardData * pBoardData = BoardData_Get(BOARDDATA_ALL_DATA, 0);
 
-    if (!SCPI_ParamInt32(context, &param1, FALSE)) {
-        param1 = 0;
+    // #876: an unparseable argument rejects; absent means the default (0).
+    param1 = 0;
+    if (SCPI_OptionalParamInt32(context, &param1) == SCPI_OPT_BAD) {
+        return SCPI_RES_ERR;
     }
 
     uint8_t* buf = SCPI_ResponseBuf_Take();
@@ -1079,7 +1085,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  User ADC: %d/%d | Internal ADC: %d/%d | DIO: %d/%d inputs\r\n", 
         userAdcEnabled, userAdcTotal,
         internalAdcEnabled, internalAdcTotal,
-        dioInputs, pDIOConfig ? pDIOConfig->Size : 0);
+        dioInputs, pDIOConfig ? (int)pDIOConfig->Size : 0);
     SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
     
     // Show which specific user ADC channels are enabled
@@ -1405,12 +1411,32 @@ __stalled_exit:
 
 /**
  * Gets the system log
+ *
+ * #1248: a dump cut short by a stalled transport answers -200, so a host can
+ * tell "the log ended" from "the log was cut off". The records that did not go
+ * out stay in the ring for the next SYSTem:LOG?.
+ *
+ * ⛔ The -200 is pushed with SCPI_ErrorPush, NOT SCPI_ExecutionError: the
+ * latter LOG_E's its reason, and on a full ring that record would overwrite
+ * the tail -- the unsent record the truncation just kept. SCPI_ErrorPush is
+ * not log-free either (the transport error callbacks, SCPI_USB_Error and
+ * SCPI_TCP_Error, LOG_E every error they emit), which is why the push sits
+ * INSIDE the LogMessageDumpBegin/End bracket: records this task logs there
+ * are not buffered.
+ *
  * @param context
- * @return 
+ * @return SCPI_RES_OK, or SCPI_RES_ERR with -200 queued if truncated
  */
 static scpi_result_t SCPI_SysLogGet(scpi_t * context) {
-    LogMessageDump(context);
-    return SCPI_RES_OK;
+    bool bracketed = LogMessageDumpBegin();
+    bool complete = LogMessageDump(context);
+    if (!complete) {
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+    }
+    if (bracketed) {
+        LogMessageDumpEnd();
+    }
+    return complete ? SCPI_RES_OK : SCPI_RES_ERR;
 }
 
 /**
@@ -1620,7 +1646,14 @@ static scpi_result_t SCPI_SysLogLevelGet(scpi_t * context) {
     const char* moduleName;
     size_t moduleLen;
 
-    if (SCPI_ParamCharacters(context, &moduleName, &moduleLen, FALSE) && moduleLen > 0) {
+    const bool haveName = SCPI_ParamCharacters(context, &moduleName, &moduleLen, FALSE);
+    /* #876: a CHARACTER parameter, so the integer helper does not apply. The
+     * only way SCPI_Parameter fails with a token present is a malformed
+     * separator, which queues an error -- that is a reject, not "dump all". */
+    if (!haveName && SCPI_ParamErrorOccurred(context)) {
+        return SCPI_RES_ERR;
+    }
+    if (haveName && moduleLen > 0) {
         LogModule_t module;
         if (!Logger_FindModule(moduleName, moduleLen, &module)) {
             SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
@@ -1854,10 +1887,29 @@ static scpi_result_t SCPI_SetPowerState(scpi_t * context) {
     switch (param1) {
         case 0:  // STANDBY
             pPowerData->requestedPowerState = DO_POWER_DOWN;
-            // #454: latch the per-VBUS-session auto-promote suppression
-            // so the Standby handler doesn't immediately re-promote.
-            // The latch already clears when VBUS goes away.
-            pPowerData->autoPromotedThisVbusSession = true;
+            /* #454: latch the per-VBUS-session auto-promote suppression so the
+             * Standby handler doesn't immediately re-promote.
+             *
+             * ⛔ #1092 r6: FROM A FRESH PHY READ, THE SAME RULE AS THE BUTTON.
+             * It was an unconditional `true`, and the asymmetry was not
+             * defensible once the button path had a better rule: both commands
+             * mean "go to STANDBY", and the question each needs answered is the
+             * same one -- was VBUS present when the power-off was asked for?
+             * One rule is also one thing to reason about when the next
+             * poster appears, which is how #1084 happened (a poster that
+             * forgot the latch entirely).
+             *
+             * The observable delta is small and in the safe direction: on
+             * battery this used to latch, and the standby re-arm then cleared
+             * it on the next pass anyway, so the only behaviour that changes is
+             * within that one window -- where NOT latching is what #454 asks
+             * for. With USB present, which is the case this latch exists for
+             * and the case a USB-CDC client is in by definition, the fresh read
+             * returns true and nothing changes at all.
+             *
+             * The latch also still clears when VBUS goes away. */
+            pPowerData->autoPromotedThisVbusSession =
+                    Power_IsVbusPresentFresh();
             break;
         case 1:  // POWERED_UP
             pPowerData->requestedPowerState = DO_POWER_UP;
@@ -1955,6 +2007,26 @@ static scpi_result_t SCPI_GetAutoPowerOnUsb(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+/* #1153: daqifi_settings_Update() callback for SCPI_SaveAutoPowerOnUsb
+ * below. No failure path of its own -- a failed load falls back to
+ * factory defaults, exactly as the pre-#1153 code did -- so this always
+ * asks Update() to save. */
+static DaqifiSettingsUpdateDecision SaveAutoPowerOnUsbUpdateFn(
+        DaqifiSettings* settings, bool loaded, void* context) {
+    (void)context;
+    if (!loaded) {
+        daqifi_settings_LoadFactoryDeafult(DaqifiSettings_TopLevelSettings, settings);
+    }
+    /* Set autoPowerOnUsb from PowerData runtime explicitly (don't rely on
+     * SaveToNvm's auto-capture — that path would also affect unrelated
+     * saves like CONF:VOLT:SAVE). */
+    tPowerData *pPwr = BoardData_Get(BOARDDATA_POWER_DATA, 0);
+    if (pPwr != NULL) {
+        settings->settings.topLevelSettings.autoPowerOnUsb = pPwr->autoPowerOnUsb;
+    }
+    return DAQIFI_SETTINGS_UPDATE_SAVE;
+}
+
 static scpi_result_t SCPI_SaveAutoPowerOnUsb(scpi_t * context) {
     /* Use shared SCPI response buffer instead of stack-local —
      * DaqifiSettings is ~500 bytes (union includes WiFi settings),
@@ -1966,21 +2038,11 @@ static scpi_result_t SCPI_SaveAutoPowerOnUsb(scpi_t * context) {
         SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
         return SCPI_RES_ERR;
     }
-    memset(pSettings, 0, sizeof(*pSettings));
-    /* Load existing NVM to preserve other TopLevelSettings fields.
-     * Set autoPowerOnUsb from PowerData runtime explicitly (don't rely
-     * on SaveToNvm's auto-capture — that path would also affect
-     * unrelated saves like CONF:VOLT:SAVE).
-     */
-    if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings, pSettings)) {
-        daqifi_settings_LoadFactoryDeafult(DaqifiSettings_TopLevelSettings, pSettings);
-    }
-    pSettings->type = DaqifiSettings_TopLevelSettings;
-    tPowerData *pPwr = BoardData_Get(BOARDDATA_POWER_DATA, 0);
-    if (pPwr != NULL) {
-        pSettings->settings.topLevelSettings.autoPowerOnUsb = pPwr->autoPowerOnUsb;
-    }
-    bool ok = daqifi_settings_SaveToNvm(pSettings);
+    /* #1153: load, apply, and save as ONE sequence under the NVM mutex, so
+     * a concurrent transport's own TopLevelSettings load-modify-save
+     * cannot land between this load and this save. */
+    bool ok = daqifi_settings_Update(DaqifiSettings_TopLevelSettings,
+            pSettings, SaveAutoPowerOnUsbUpdateFn, NULL);
     SCPI_ResponseBuf_Give();
     return ok ? SCPI_RES_OK : SCPI_RES_ERR;
 }
@@ -2588,7 +2650,8 @@ static scpi_result_t SCPI_GetBenchmarkMode(scpi_t * context) {
 // Shared streaming-buffer setup (partition + DMA pool + sample pool).  Defined
 // near SCPI_MemAutoBalance; forward-declared here for the throughput bench, the
 // WiFi finder, and SCPI_StartStreaming, which all route through it.
-static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize);
+static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize,
+                                    bool idleLayout);
 
 // #520/Qodo: PrepareStreamingBuffers() quiesces SD by forcing WRITE->NONE so
 // f_write can't be mid-DMA during the coherent-pool reset (see
@@ -2678,20 +2741,160 @@ static scpi_result_t SCPI_RefuseSessionStartBusy(scpi_t * context,
  * literal, so a NULL is a compile-time impossibility rather than a runtime
  * one. Same reasoning, and the same statement of it, as SCPI_MemRunClaimed.
  */
+/* #1120: tentative (no-initializer) forward declarations, so the runner below
+ * can take the stop pin itself. This is legal C: a file-scope static may have
+ * any number of declarations without an initializer, and they all name the
+ * same object as the one initialized definition. (#1201: this used to defer
+ * the argument to "the #938 block further down", which was FindMeasureStep's
+ * own copy of these declarations -- #1201 deleted that block, because the
+ * function no longer reads either global, so the argument is stated here
+ * instead of pointed at.) Needed here because
+ * SCPI_RunSessionStartClaimed is defined earlier in this file than the
+ * definitions next to SCPI_StartStreaming's #861 guard, and must observe the
+ * same stop-requested generation they do. */
+static volatile uint32_t gStreamStopGen;
+static volatile uint32_t gStreamStopsActive;
+
+/* #1201: "has a stop been requested since this command pinned?" -- the ONE
+ * implementation of the three-term test.
+ *
+ * It existed TWICE before this, copy-pasted: in SCPI_StartStreamingClaimed off
+ * its pinned locals, and in FindMeasureStep off the sweep's basis. Both are
+ * replaced by a call to this. Two sites that had NO copy gain one -- the
+ * SYSTem:STReam:THRoughput arm, and the finder's post-observation check -- and
+ * those two facts are related rather than coincidental: a test that has to be
+ * re-typed to be reused is a test that does not get reused. Writing it once is
+ * most of why the two missing sites are cheap to add.
+ *
+ * Returns THE ANSWER, and through *outStopInFlight the one refinement both
+ * existing callers need: whether the stop is still RUNNING, as opposed to
+ * having begun and finished inside the window. Only the log message
+ * distinguishes those, so it is an out-param while the predicate's answer is
+ * the return value -- the same split FindMeasureStep's own *outStopRequested
+ * already uses, and it keeps the call reading as the predicate it is.
+ *
+ * ⛔ CALL IT WITH A CRITICAL SECTION ALREADY HELD. It deliberately does not
+ * take one itself, and that is the one property this factoring must not
+ * "tidy": at the arm sites the reads have to be inside the SAME section that
+ * publishes IsEnabled, which is what makes the answer USABLE rather than
+ * merely atomic -- a stop cannot then slip between the test and the publish. A
+ * section acquired in here would make each call atomic and reopen precisely
+ * that window, so a caller holding none gets a correct value of a useless
+ * instant. Each load is individually atomic on PIC32MZ anyway
+ * (docs/MCU_REFERENCE.md, "Atomicity & Concurrency Rules", first bullet); the
+ * section exists to make the PAIR describe ONE INSTANT, which is #969's fix.
+ *
+ * The three terms, each covering a case the other two cannot -- the full
+ * argument lives at gStreamStopsActive's definition and is not restated here:
+ *   pinnedActive        a stop was ALREADY RUNNING when this command pinned,
+ *                       and finished before this check. The other two miss it:
+ *                       the count is back to zero and the generation was
+ *                       bumped BEFORE the pin, so it compares equal.
+ *   gStreamStopsActive  a stop is running RIGHT NOW, so it will clear
+ *                       IsEnabled after we publish it.
+ *   gStreamStopGen      a stop began and ended entirely inside the window --
+ *                       the original #861 case.
+ * Term order and short-circuiting are kept exactly as both copies had them, so
+ * this is a textual no-op at the two existing sites rather than a rewrite that
+ * happens to agree. */
+static inline bool StopRequestedSince(uint32_t pinnedGen, bool pinnedActive,
+                                      bool *outStopInFlight) {
+    const bool inFlight = pinnedActive || (gStreamStopsActive != 0u);
+    *outStopInFlight = inFlight;
+    return inFlight || (gStreamStopGen != pinnedGen);
+}
+
 static scpi_result_t SCPI_RunSessionStartClaimed(scpi_t * context,
-                                                 scpi_result_t (*body)(scpi_t *),
+                                                 scpi_result_t (*body)(scpi_t *,
+                                                                       uint32_t,
+                                                                       bool),
                                                  const char *what) {
+    /* #1120: THE STOP PIN IS TAKEN HERE, AS THIS RUNNER'S FIRST ACTION, and
+     * passed to `body` as real parameters.
+     *
+     * It must precede Streaming_BeginSessionStart() because that call can
+     * itself REFUSE: once the claim is held a call on the other transport
+     * already answers -200, so the claim is an observable effect of this
+     * command, and a stop landing during claim acquisition would be invisible
+     * to any pin taken later. That is #973's conclusion, reached for the
+     * finder; taking the pin in the runner gives it to every body routed
+     * through here instead of to one of them.
+     *
+     * One critical section, because the pair has to describe a single instant
+     * rather than two.
+     *
+     * What remains ahead of this line is the gap between the registered
+     * callback's entry and this statement, and that is not a window to be
+     * closed: a preemption there orders the stop before this command did
+     * anything at all, which is what "before" means. Same non-window
+     * SCPI_StartStreaming documents at its own pin.
+     *
+     * ⭐ This REPLACES #973's file-scope mailbox
+     * (gWifiFindPinStopGen/gWifiFindPinStopActive/gWifiFindPinOwner, deleted
+     * by this change). A mailbox written outside the #850 claim is clobberable
+     * by a concurrent call on the other transport, which is why it needed an
+     * owner stamp and a refusal path; a stack-resident pin threaded as an
+     * argument has no cross-transport clobber hazard to guard against, so both
+     * the stamp and the refusal go away rather than being re-derived for the
+     * next command added here. */
+    uint32_t stopGenPinned;
+    bool     stopActivePinned;
+    taskENTER_CRITICAL();
+    stopGenPinned    = gStreamStopGen;
+    stopActivePinned = (gStreamStopsActive != 0u);
+    taskEXIT_CRITICAL();
+
     if (Streaming_BeginSessionStart() != STREAM_START_CLAIM_OK) {
         return SCPI_RefuseSessionStartBusy(context, what);
     }
-    scpi_result_t result = body(context);
+    scpi_result_t result = body(context, stopGenPinned, stopActivePinned);
     Streaming_EndSessionStart();
     return result;
 }
 
 /* #850: the session-start claim is taken by the SCPI_RunThroughputBench wrapper
  * below, which is the only caller of this body. */
-static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context) {
+static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context,
+                                                    uint32_t stopGenPinned,
+                                                    bool stopActivePinned) {
+    /* #1201 + #1226: the pin #1120 made available is ACTED ON at this
+     * command's arm, through the shared StopRequestedSince() predicate.
+     *
+     * TWO ISSUES CONVERGED HERE and both reasons are kept, because they are
+     * different hazards that happen to need the same test:
+     *   #1226  a POWER-OFF advances gStreamStopGen to cancel any arm still in
+     *          its setup window. Without this check a benchmark that was in
+     *          setup when the button was pressed arms in STANDBY with the
+     *          rails off and samples for up to 60 s.
+     *   #1201  a SYST:STR:STOP that completes in the same window was lost, so
+     *          the bench streamed for up to its full duration after the
+     *          operator asked it to stop, and the command returned OK.
+     * #1226 implemented the three terms inline here, which was the THIRD
+     * copy of them in this file; main's own comment anticipated that "#1201 /
+     * PR #1215 generalises the same check into one StopRequestedSince()
+     * predicate", and that is what this is. The predicate is unchanged by the
+     * merge -- only this call site stops carrying its own copy.
+     *
+     * ⭐ THIS IS A BEHAVIOUR CHANGE AT THIS COMMAND'S ARM, taken on purpose,
+     * and this file already contains the rule for when that is allowed. The
+     * #868/#891/#895 comment at the arm below declines to inherit the finder's
+     * inputs-present test and the finder's split refusal token "by symmetry",
+     * on the ground that each would be a NEW refusal on a command that has
+     * always accepted the case, and so belongs at this command's own front
+     * door as a deliberate change. That rule is honoured, not bypassed: this
+     * IS that deliberate change, made because a stop is categorically unlike
+     * the other two.
+     *
+     * Why categorically. #891 was declined here because this command's output
+     * is the sample and byte count it measured, which stays TRUE of a run with
+     * nothing enabled -- empty, not wrong. A stop is not a consistency
+     * failure, it is an explicit operator instruction, and the failure it
+     * leaves is not an empty measurement: the bench goes on to stream AFTER
+     * the operator asked it to stop. No reading of "the counts are still true"
+     * excuses that. So the symmetry argument that declined #891 does not reach
+     * this, which is exactly why this one is taken and those two stay
+     * declined. */
+
     int32_t freq, duration;
     if (!SCPI_ParamInt32(context, &freq, TRUE)) return SCPI_RES_ERR;
     if (!SCPI_ParamInt32(context, &duration, TRUE)) return SCPI_RES_ERR;
@@ -2772,7 +2975,8 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context) {
         uint8_t ec = (chMap != NULL && chMap->count > 0) ? chMap->count : 1;
         MemoryConfig* mcfg = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
         if (!PrepareStreamingBuffers(mcfg->samplePoolCount,
-                                     AInSampleList_ElementSize(ec))) {
+                                     AInSampleList_ElementSize(ec),
+                                     false)) {
             Streaming_SetBenchmarkMode(savedBenchmark);
             Streaming_SetTestPattern(savedPattern);
             StreamFreq_Set(pStreamCfg, savedFrequency);     // no-op here (poke is later), kept for consistency
@@ -2812,7 +3016,20 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context) {
      * do, and with no session running it can only discard stale samples. */
     bool cfgBusy;
     bool mappingMoved = false;
+    bool stopInFlight = false;
+    bool stopRequested = false;
     taskENTER_CRITICAL();
+    /* #1201/#1226: computed FIRST, ahead of cfgBusy, matching the ordering
+     * both other arms use -- so a stop or power-off that landed anywhere in
+     * this command's window is reported as itself rather than folded into
+     * whichever consistency check also happens to be true at the time. Inside
+     * this section, not before it, for the reason StopRequestedSince states:
+     * the answer is only usable if nothing can slip between the test and the
+     * publish below. #1226's inline three-term copy is replaced by the
+     * predicate; the terms and their order are identical, so this is a
+     * textual change at this site and not a behavioural one. */
+    stopRequested = StopRequestedSince(stopGenPinned, stopActivePinned,
+                                       &stopInFlight);
     cfgBusy = Streaming_ConfigChangeInProgress();
     if (!cfgBusy) {
         /* #868: the enabled-channel set moved after this command built its
@@ -2861,18 +3078,18 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context) {
                                 pBoardConfig, (const AInRuntimeArray*)pRtAin)
                         != mappingSelAtBuild);
     }
-    if (!cfgBusy && !mappingMoved) {
+    if (!cfgBusy && !mappingMoved && !stopRequested) {
         pStreamCfg->ClockPeriod = periodCycles - 1;
         pStreamCfg->Frequency = (uint64_t)freq;
         pStreamCfg->IsEnabled = true;
     }
     taskEXIT_CRITICAL();
 
-    /* #868: this call armed nothing -- neither refusal reason reaches the
-     * writes above -- so every "did WE arm it?" test below is this, not
-     * cfgBusy alone.  Getting that wrong would disarm a concurrent session's
+    /* #868: this call armed nothing -- no refusal reason reaches the writes
+     * above -- so every "did WE arm it?" test below is this, not cfgBusy
+     * alone.  Getting that wrong would disarm a concurrent session's
      * IsEnabled on the mapping-moved path. */
-    const bool armRefused = cfgBusy || mappingMoved;
+    const bool armRefused = cfgBusy || mappingMoved || stopRequested;
 
     /* Only pump the state machine if we actually armed. On the refused path
      * Streaming_UpdateState() would call Streaming_Stop(), and if a concurrent
@@ -2887,8 +3104,24 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context) {
      * leaves Running true, and the benchmark would then adopt that session as
      * its own and stop it after the dwell (Qodo). */
     if (armRefused || !pStreamCfg->Running) {
+        /* #1201: stopRequested is named FIRST when it fired, even if another
+         * cause is also true -- same precedence the other two arms use, and
+         * for the same reason: it is the one cause of the set that is an
+         * explicit operator instruction rather than a consistency failure. */
+        /* log_budget: max=78 -- #1201 BRINGS THIS SITE UNDER THE CHECK. It
+         * was listed in tools/lint/log_budget-baseline.txt as an unresolvable
+         * %s, and the baseline matches by format-string TEXT, so the two
+         * longer strings #1201 adds here would have ridden that waiver
+         * unmeasured. They fit (78 + the 22-byte prefix = 100 of 125), but
+         * that was luck until it was bounded. The baseline entry is removed in
+         * the same change, which is what its own header asks for: it exists to
+         * stop the count growing AND to shrink as sites are fixed. */
         LOG_E("Throughput benchmark: %s",
-              cfgBusy ? "refused, a streaming config change is in flight (#847)"
+              stopRequested
+                      ? (stopInFlight
+                         ? "refused, a stop/power-off is in flight (#1201/#1226)"
+                         : "refused, a stop/power-off completed in setup (#1201/#1226)")
+                      : cfgBusy ? "refused, a streaming config change is in flight (#847)"
                       : mappingMoved
                       ? "refused, the enabled-channel set moved after the mapping was built (#868)"
                       : "streaming failed to start");
@@ -2915,9 +3148,62 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context) {
     // Wait for duration
     vTaskDelay(pdMS_TO_TICKS(duration * 1000));
 
+    /* #1201: did a stop land DURING THE DWELL? Read here -- after the dwell,
+     * before the first teardown statement -- for the same reason the finder's
+     * post-observation read sits where it does: a read taken after the
+     * teardown could not tell an operator's stop apart from this function's
+     * own, and a read taken before the dwell is the arm check, which has
+     * already passed.
+     *
+     * ⭐ IT CANNOT SELF-TRIGGER, and that is a property of the teardown
+     * below, not of this placement. Only SCPI_PerformStreamingStop() and the
+     * power-down path advance gStreamStopGen; this function's teardown pokes
+     * IsEnabled and calls Streaming_UpdateState() directly and reaches
+     * neither, which is the same reason a START's own teardown of a previous
+     * session does not refuse itself. Reading before the teardown makes the
+     * placement robust to that changing, rather than relying on it.
+     *
+     * One critical section, for the pair, and that is ALL it is for -- the
+     * same note the finder's site carries: there is no publish of IsEnabled
+     * here to make the answer actionable, because this is judging a run that
+     * has already finished rather than deciding whether to arm.
+     *
+     * The pinnedActive term is NECESSARILY FALSE here -- a stop already
+     * running at this command's entry is caught by the arm check above, which
+     * refuses -- so of the three terms only the live count and the generation
+     * delta can fire. Unlike pinnedActive, the LIVE COUNT genuinely can: a
+     * stop issued during the dwell and still parked in its SD close is in
+     * flight at this moment, which is why the message below distinguishes the
+     * two. Noted so a reader does not conclude the first term is doing work it
+     * cannot do. */
+    bool dwellStopInFlight = false;
+    bool dwellStopped;
+    taskENTER_CRITICAL();
+    dwellStopped = StopRequestedSince(stopGenPinned, stopActivePinned,
+                                      &dwellStopInFlight);
+    taskEXIT_CRITICAL();
+
     // Stop
     pStreamCfg->IsEnabled = false;
     Streaming_UpdateState();
+    /* #1055 r1 finding 3: THIS IS A TERMINATING PATH, so it emits.
+     * Before #982 the summary printed inline in Streaming_Stop(), so
+     * every stop produced one. Moving the emission out left this path
+     * only FLAGGING that a summary is owed, with nothing emitting it
+     * until some LATER session's Streaming_Start() backstop -- which may
+     * never come. That is a regression against pre-#982 behaviour, not a
+     * deferral. Emitting here restores it.
+     *
+     * Straight away, with no SD-idle wait: unlike SYST:STR:STOP these
+     * paths never arm SD logging, so there is no stop-time teardown whose
+     * Streaming_ReportSdDiscard() this would need to wait for -- the
+     * reason #982 deferred the emission in the first place does not apply.
+     *
+     * The ARM sites in these same functions deliberately do NOT emit:
+     * their Streaming_UpdateState() starts a session, and Streaming_Start()
+     * already carries the backstop that flushes the PREVIOUS session's
+     * summary before clearing its counters. */
+    Streaming_EmitSessionSummary();
     /* #870: repair OPER after a run that never set it.
      *
      * This path deliberately never sets OPER_MEASURING -- it arms by poking
@@ -2946,6 +3232,65 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context) {
     pStreamCfg->ClockPeriod = savedClockPeriod;
     Streaming_RestoreRateConfigured(savedRateConfigured);   /* #730 */
     RestoreSdMode(savedSdMode);
+
+    /* #1201: a stop during the dwell DISCARDS the measurement instead of
+     * reporting it as a completed run.
+     *
+     * ⛔ WHAT WAS WRONG. The stop executed -- sampling really did end -- and
+     * this command printed its whole result block and returned OK anyway, so
+     * the numbers described a run the operator had cancelled. Measured on this
+     * lane's board (#1201 image, crc32 BD809517, 12/12 attempts): the reply
+     * was always a result block with no wire error, carrying TotalSamples
+     * 333-393 and SamplesPerSec 66-78, against a matched unraced baseline on
+     * the same image of 24999 / 4999. About 1.4% of the requested samples
+     * survived and the command still called it a success. A client has no way
+     * to tell that from a device that is simply slow, which is the whole
+     * defect: a cancelled benchmark reads as a catastrophic one.
+     *
+     * Placed AFTER the teardown and the restore above, so every exit from
+     * this function still restores the same six things and the stop is
+     * honoured rather than raced -- and BEFORE Streaming_GetStats() below,
+     * which is the computation that must not happen, not merely a print that
+     * must not be made. There is nothing to suppress downstream because
+     * nothing downstream runs.
+     *
+     * An ERROR, not a zeroed result block: #861's rule is that a refusal must
+     * be distinguishable from a measurement, and a result block of zeroes is
+     * exactly the thing a client cannot distinguish. THRoughput's error channel
+     * is the WIRE (it pushes on the live context, unlike WIFI:FINd?, whose
+     * push is queue-only to protect its five-field reply -- #965), so this
+     * reaches the caller as **ERROR: -200 and the result block is absent. */
+    if (dwellStopped) {
+        /* ⛔ ITS OWN MARKER (#1230), DISTINCT FROM THE ARM'S (#1226) ABOVE.
+         * These issue pairs are a CROSS-REPO CONTRACT, not decoration: the
+         * companion test in daqifi-python-test-suite decides WHICH window
+         * caught a stop by matching them, and its own comment says the
+         * surrounding sentence may be reworded while the marker may not.
+         *
+         * This is written down because the merge that produced this function
+         * broke it twice over, silently and invisibly to any firmware-only
+         * review -- the expectation that broke lives in the other repo.
+         * Folding #1226 into the predicate rewrote the ARM's marker from
+         * (#1201/#861) to (#1201/#1226), which (a) removed (#1201/#861) from
+         * this file entirely, so the companion's MARK_THR_ARM matched nothing
+         * and the arm refusal became undetectable, and (b) left this new site
+         * reusing (#1201/#1226), so the arm and the dwell reported as one
+         * window. The guard below is what makes that a BUILD failure instead
+         * of a test that quietly stops discriminating.
+         */
+        /* log_budget: max=62 -- both candidate strings below are exactly 62
+         * bytes and the fixed prefix is 41, so the worst case is 103 of
+         * Logger's 125. Bounded rather than left as a bare %s for the reason
+         * this gate exists: the remedy is written last in these messages, so
+         * a truncation eats the actionable half and the line still reads as
+         * complete. */
+        LOG_E("Throughput benchmark: result discarded - %s",
+              dwellStopInFlight
+                  ? "a stop is still in flight on the other transport (#1201/#1230)"
+                  : "a stop was issued and completed during the dwell (#1201/#1230)");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
 
     // Collect and report results
     StreamingStats s;
@@ -2994,8 +3339,16 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
 //
 // SYSTem:STReam:WIFI:FINd? [startHz][,maxHz]
 //   -> <recommendedHz>,<recommendedKBps>,<reason>,<ceilingHz>,<ceilingKBps>
-//   recommendedHz/KBps = soak-confirmed clean rate, clamped to the bench wire
+//   recommendedHz      = soak-confirmed clean rate, clamped to the bench wire
 //                        ceiling (WIFI_BENCH_CEILING_KBPS) — the rate to stream.
+//                        0 when no clean soak streak locked.
+//   recommendedKBps    = when recommendedHz > 0: the locked rate's wire rate,
+//                        scaled by the same bench clamp (KBps * capHz /
+//                        recommendedHz) when the clamp fires. When recommendedHz
+//                        is 0: whatever the last clean-but-unconfirmed soak
+//                        iteration measured, or 0 if none was clean -- it is
+//                        never cleared on a streak reset. Read it as a
+//                        recommendation only when recommendedHz > 0 (#1239).
 //   reason             = START_REFUSED | START_FAIL | NO_LINK | NO_CLEAN_SOAK |
 //                        BENCH_CAP | LINK_SATURATED | HIT_MAX
 //                        #895 splits what used to be one START_FAIL token in
@@ -3082,27 +3435,25 @@ typedef struct {
     uint64_t               mappingSelAtBuild;
     /* #938/#973: the sweep's stop-request pin -- generation and "a stop is
      * running right now", read together in one critical section at command
-     * DISPATCH (SCPI_WifiFindRate, ahead of the #850 session-start claim),
-     * not at basis build -- see the gWifiFindPinOwner mailbox declared
-     * ahead of SCPI_WifiFindRateClaimed for why the placement moved and how
-     * the values get here. It lives in the basis, not in FindMeasureStep,
+     * DISPATCH (#1120: by SCPI_RunSessionStartClaimed, ahead of the #850
+     * session-start claim), not at basis build -- the values reach
+     * SCPI_WifiFindRateClaimed as parameters. It lives in the basis, not in
+     * FindMeasureStep,
      * because a per-step re-pin cannot see a stop that began and ended
      * between two steps; see that function's header. */
     uint32_t               stopGenAtBuild;
     bool                   stopActiveAtBuild;
 } FindStepBasis;
 
-/* #938: tentative (no-initializer) forward declarations. The full definitions,
- * with the mechanism's rationale, live later in this file next to
- * SCPI_StartStreaming's own #861 guard -- read them there. This is legal C: a
- * file-scope static may have any number of declarations without an
- * initializer, and they all name the same object as the one initialized
- * definition. Needed only because FindMeasureStep (below) is defined earlier
- * in the file than SCPI_StartStreaming and must observe the same
- * stop-requested generation it does -- the same "forward-declared here
- * because" shape already used for SCPI_PerformStreamingStop further down. */
-static volatile uint32_t gStreamStopGen;
-static volatile uint32_t gStreamStopsActive;
+/* #1201: FindMeasureStep's own tentative forward declarations of
+ * gStreamStopGen/gStreamStopsActive USED TO BE HERE, and are gone because it
+ * no longer touches either global: it asks StopRequestedSince() instead, which
+ * is declared with the runner near the top of this file and carries the only
+ * copy of the three-term test. The declarations the runner needs are still
+ * there, next to it. Removed rather than left harmless -- a declaration whose
+ * comment says it is "needed because FindMeasureStep must observe the same
+ * generation" would be a false statement about this function once it stopped
+ * doing so. */
 
 // One measurement cycle for SCPI_WifiFindRate: start streaming at `freq`, dwell,
 // observe the sample-pool high-water mark (the last-to-fill buffer — see header),
@@ -3110,14 +3461,18 @@ static volatile uint32_t gStreamStopsActive;
 // Returns false on start failure (NOT "saturated") — that case is signaled via
 // *outStartFailed, which callers must check first.
 // Outputs the measured wire KB/s.  *outStartFailed is set if the stream never
-// went Running, or if the arm was refused (caller aborts).  Factored (#520,
+// went Running, if the arm was refused, or (#1201) if a stop landed during the
+// dwell, which makes the observation unscoreable rather than clean (caller
+// aborts in all three cases).  Factored (#520,
 // 2026-05-31) so the coarse AIMD climb and the binary-search refinement share
 // one code path.  wRingCap is used only for the diagnostic log line.
 // `basis` is the sweep's #868 channel-mapping provenance and is required --
 // the sole caller passes the address of its own local, so it is never NULL and
 // is not tested for it.
-// *outStopRequested (#965) is set true only when the refusal's cause was
-// specifically the #938 stopRequested pin -- never for cfgBusy/mappingMoved/
+// *outStopRequested (#965) is set true only when the failure's cause was
+// specifically a stop -- the #938 pin at the arm, or (#1201) the same test
+// repeated at the end of the observation, which discards a measurement a stop
+// cut short instead of scoring it clean. Never for cfgBusy/mappingMoved/
 // inputsGone, and never on the "armed but never ran" or freq==0 producers.
 // It is how the caller learns WHICH cause fired without widening this
 // function's return shape: *outStartFailed alone (pre-existing) tells the
@@ -3222,8 +3577,9 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
      * matching that function's ordering, so a stop that landed anywhere in
      * this sweep is reported as itself and not folded into whichever
      * consistency check also happens to be true. */
-    stopInFlight = basis->stopActiveAtBuild || (gStreamStopsActive != 0u);
-    stopRequested = stopInFlight || (gStreamStopGen != basis->stopGenAtBuild);
+    stopRequested = StopRequestedSince(basis->stopGenAtBuild,
+                                       basis->stopActiveAtBuild,
+                                       &stopInFlight);
     cfgBusy = Streaming_ConfigChangeInProgress();
     if (!cfgBusy) {
         /* #868: the enabled-channel set moved since the sweep built its
@@ -3357,6 +3713,24 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
         if (!armRefused) {
             cfg->IsEnabled = false;
             Streaming_UpdateState();
+            /* #1055 r1 finding 3: THIS IS A TERMINATING PATH, so it emits.
+             * Before #982 the summary printed inline in Streaming_Stop(), so
+             * every stop produced one. Moving the emission out left this path
+             * only FLAGGING that a summary is owed, with nothing emitting it
+             * until some LATER session's Streaming_Start() backstop -- which may
+             * never come. That is a regression against pre-#982 behaviour, not a
+             * deferral. Emitting here restores it.
+             *
+             * Straight away, with no SD-idle wait: unlike SYST:STR:STOP these
+             * paths never arm SD logging, so there is no stop-time teardown whose
+             * Streaming_ReportSdDiscard() this would need to wait for -- the
+             * reason #982 deferred the emission in the first place does not apply.
+             *
+             * The ARM sites in these same functions deliberately do NOT emit:
+             * their Streaming_UpdateState() starts a session, and Streaming_Start()
+             * already carries the backstop that flushes the PREVIOUS session's
+             * summary before clearing its counters. */
+            Streaming_EmitSessionSummary();
         }
         *outStartFailed = true; *outKBps = 0;
         return false;   // not "saturated" — start failure is signaled via *outStartFailed
@@ -3381,14 +3755,113 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
     StreamingStats s;
     Streaming_GetStats(&s);
 
+    /* #1201: THE SECOND HALF OF THE STOP CHECK -- taken HERE, at the end of
+     * the observed window, because until now this step checked for a stop only
+     * at its arm and a stop landing after that was not merely unreported, it
+     * read as a CLEAN measurement.
+     *
+     * The mechanism: a stop clears IsEnabled, the session ends, and every
+     * metric the verdict below is computed from then stays at zero -- no pool
+     * high-water, no dropped samples, no window loss. `tripped` comes out
+     * false, which this function returns as "this rate is sustainable". On the
+     * final soak step that sets soakClean, so the whole query answers OK and
+     * recommends a rate derived from a measurement that was cancelled partway
+     * through. Clean-looking output that is entirely wrong, which is the shape
+     * this family of fixes exists to stop.
+     *
+     * PLACED AT THE END OF THE OBSERVATION, NOT AFTER THE TEARDOWN, and the
+     * difference matters. The window this must cover is exactly the span over
+     * which the numbers in `s` were accumulated; a stop arriving during our
+     * OWN teardown, after the data was collected, invalidates nothing and must
+     * not fail a measurement that completed. So the read goes between the last
+     * statistic and the first teardown statement.
+     *
+     * One critical section, for the pair, and that is ALL it is for here --
+     * stated because the other two call sites' sections do more. There they
+     * also contain the publish of IsEnabled, which is what makes the answer
+     * actionable; there is no publish here, because this step is judging data
+     * it already holds rather than deciding whether to arm. Do not read this
+     * site as carrying the stronger property.
+     *
+     * The predicate's pinnedActive term is NECESSARILY FALSE by the time we
+     * get here -- a stop already running at the sweep's pin would have been
+     * caught by the arm check above, which refuses -- so of the three terms
+     * only the live count and the generation delta can fire at this site. The
+     * shared predicate is still the right thing to call: the degenerate term
+     * costs one test, and a hand-written two-term copy here is exactly the
+     * duplication #1201 is removing. Noted so a reader does not conclude the
+     * third term is doing work it cannot do. */
+    bool stopAfterObsInFlight = false;
+    bool stopAfterObs;
+    taskENTER_CRITICAL();
+    stopAfterObs = StopRequestedSince(basis->stopGenAtBuild,
+                                      basis->stopActiveAtBuild,
+                                      &stopAfterObsInFlight);
+    taskEXIT_CRITICAL();
+
     // Clean teardown BEFORE evaluating / changing rate (WINC dislikes mid-
     // stream transitions — #425/#467/#517).
     cfg->IsEnabled = false;
     Streaming_UpdateState();
+    /* #1055 r1 finding 3: THIS IS A TERMINATING PATH, so it emits.
+     * Before #982 the summary printed inline in Streaming_Stop(), so
+     * every stop produced one. Moving the emission out left this path
+     * only FLAGGING that a summary is owed, with nothing emitting it
+     * until some LATER session's Streaming_Start() backstop -- which may
+     * never come. That is a regression against pre-#982 behaviour, not a
+     * deferral. Emitting here restores it.
+     *
+     * Straight away, with no SD-idle wait: unlike SYST:STR:STOP these
+     * paths never arm SD logging, so there is no stop-time teardown whose
+     * Streaming_ReportSdDiscard() this would need to wait for -- the
+     * reason #982 deferred the emission in the first place does not apply.
+     *
+     * The ARM sites in these same functions deliberately do NOT emit:
+     * their Streaming_UpdateState() starts a session, and Streaming_Start()
+     * already carries the backstop that flushes the PREVIOUS session's
+     * summary before clearing its counters. */
+    Streaming_EmitSessionSummary();
     /* #870: same repair as SYST:STR:THRoughput -- see the comment there. This
      * path also arms by poking IsEnabled, never sets OPER_MEASURING, and is
      * not interlocked against a STOP parked in the SD close. */
     SCPI_ClearStreamingOperBits(cfg);
+
+    /* #1201: a stop during the dwell discards the measurement instead of
+     * scoring it. Placed AFTER the teardown above so the session is torn down
+     * and the OPER bits repaired exactly as on every other path out of this
+     * function -- the stop is honoured, not raced -- and before the verdict
+     * below, which is the thing that must not be computed from these numbers.
+     *
+     * NO NEW REPORTING PATH IS ADDED, which is most of why this fix is small.
+     * *outStartFailed and *outStopRequested already exist, all three call
+     * sites already break on them, and #965's machinery already turns
+     * *outStopRequested into a queued -200 without corrupting this query's
+     * five-field reply. This site only has to raise the two flags the sweep
+     * already knows how to read.
+     *
+     * WHICH TOKEN THE SWEEP THEN REPORTS is #895's rule, unchanged and not
+     * overridden here: START_FAIL when an earlier step had measured
+     * something, START_REFUSED when none had. The issue text says "the
+     * existing START_FAIL path", and on the FIRST step it is actually
+     * START_REFUSED -- correctly, because #895's token says whether the sweep
+     * produced data the reply reports, and a sweep stopped during its first
+     * dwell produced none. Spelled out because the discrepancy with the issue
+     * is deliberate rather than an oversight. */
+    if (stopAfterObs) {
+        /* log_budget: max=61 -- both candidate strings below are exactly 61
+         * bytes, and the prefix with a 10-digit uint32 freq is 49, so the
+         * worst case is 110 of Logger's 125. The remedy is written LAST in
+         * these messages, so an unbounded %s here would silently truncate
+         * away the thing a reader needs. */
+        LOG_E("WIFI:FIND %u Hz: observation discarded - %s", (unsigned)freq,
+              stopAfterObsInFlight
+                  ? "a stop is still in flight on the other transport (#1201/#938)"
+                  : "a stop was issued and completed during the dwell (#1201/#938)");
+        *outStopRequested = true;
+        *outStartFailed = true;
+        *outKBps = 0;
+        return false;   // not "saturated" -- see *outStartFailed
+    }
 
     // Primary trip: the SAMPLE POOL high-water reached ~full (>= FIND_BUF_FULL_PCT
     // of capacity).  After the #520 backpressure fix (streaming.c, solo WiFi/USB
@@ -3431,162 +3904,70 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
     return tripped;
 }
 
-/* #973: the finder's stop-request pin, handed from SCPI_WifiFindRate (the
- * registered callback) to SCPI_WifiFindRateClaimed (the body it runs through
- * SCPI_RunSessionStartClaimed).
+/* #973 / #1120: the finder's stop-request pin, and why there is no longer a
+ * mailbox here.
  *
- * WHY A FILE-SCOPE MAILBOX AND NOT A PARAMETER. The pin has to be taken
- * before Streaming_BeginSessionStart, because the claim is this command's
- * first OBSERVABLE effect and a stop that races it must land on the near
- * side of the baseline -- see #973's issue comment for why the previous pin
- * site (inside this function, after the parse and the power/interface/
- * channel-count gates) was still too late. But SCPI_RunSessionStartClaimed's
- * `body` signature is shared with SCPI_RunThroughputBenchClaimed and is out
- * of scope for this ticket (Size S), so the values cannot travel as real
- * arguments the way SCPI_StartStreaming's stopGenPinned/stopActivePinned do
- * (SCPIInterface.c:5942/5948, passed to SCPI_StartStreamingClaimed at
- * :6027-6031) -- that path can do it because it deliberately bypasses the
- * runner entirely (see its own header comment, "#850 + pre-merge audit").
- * That makes this a mailbox, and a mailbox written OUTSIDE the claim has a
- * hazard a stack local does not: USBDeviceTask boosts itself to priority 7
- * after init (app_freertos.c:316, `vTaskPrioritySet(NULL, 7)`) and WifiTask
- * -- which runs SCPI-over-TCP dispatch on its own stack -- stays at priority
- * 2 (app_freertos.c:1204-1222), so USB PREEMPTS WifiTask at an arbitrary
- * instruction whenever it has work (the same asymmetry the #938 companion
- * test's module docstring documents for the STOP-vs-sweep race this mailbox
- * replaces). Streaming_BeginSessionStart refuses rather than blocks
- * (streaming.c:3933), so it does not serialise the WRAPPERS, only the
- * bodies -- both transports can be inside SCPI_WifiFindRate at once. A
- * second finder call that goes on to LOSE the claim and return -200 can
- * still write this mailbox before the winner reads it: the clobbering write
- * is always later in time than the winner's own, so the substituted
- * baseline is always too NEW, and a stop issued between the two writes
- * would be folded into it and become invisible -- the exact defect this
- * ticket closes, reopened through a different door.
+ * #973 established the placement that still governs: the pin must be taken
+ * BEFORE Streaming_BeginSessionStart, because the claim is this command's
+ * first OBSERVABLE effect (once it is held, a finder call on the other
+ * transport already answers -200) and a stop racing it must land on the near
+ * side of the baseline. That reasoning is unchanged and now lives at
+ * SCPI_RunSessionStartClaimed, which takes the pin as its first action.
  *
- * gWifiFindPinOwner is what makes the mailbox self-invalidating. The writer
- * stamps its own scpi_t*; the reader accepts the pin ONLY if the stamp is
- * its own, and clears it on the way out so one pin serves exactly one
- * sweep. The pointer is an IDENTITY TOKEN and is never dereferenced --
- * typed const void* so that is structural rather than a promise. Comparing
- * a context pointer against a known transport's address is this file's
- * established idiom (SCPI_GetMicroRLClient and SCPI_GetInterface above,
- * SCPIInterface.c:240-264); the two contexts are distinct stable globals,
- * UsbCdc.c's gRunTimeUsbSttings.scpiContext and wifi_tcp_server.c's
- * gpServerData->client.scpiContext.
+ * What is GONE is how the values travelled. #973 shipped them through
+ * file-scope statics (gWifiFindPinStopGen/gWifiFindPinStopActive, plus a
+ * gWifiFindPinOwner stamp and a refusal path), because
+ * SCPI_RunSessionStartClaimed's `body` signature was shared with
+ * SCPI_RunThroughputBenchClaimed and changing it was out of scope for a
+ * Size-S ticket. A mailbox written outside the #850 claim is clobberable by a
+ * concurrent finder call on the other transport -- the claim serialises the
+ * BODIES, not the wrappers -- so it needed an owner stamp to detect the
+ * clobber and a -200 refusal to survive it.
  *
- * A mismatch REFUSES rather than re-pinning locally. A local re-pin would
- * look harmless and would silently restore the too-late baseline this
- * ticket exists to remove -- failing closed keeps the guarantee honest, and
- * the caller that clobbered us is already being answered -200 by the #850
- * claim, so "one of two racing finders is refused" is a contract this file
- * already ships. A stale stamp left by a refused writer cannot poison
- * anything: the next writer overwrites all three fields unconditionally
- * before any reader runs.
+ * #1120 took the route that block itself named as the fix: thread the pinned
+ * values as real per-call arguments through the runner. The finder is now
+ * structurally identical to SCPI_StartStreaming/SCPI_StartStreamingClaimed,
+ * which pinned into stack locals and passed them down all along, and a
+ * stack-resident pin has no cross-transport clobber hazard to guard against.
+ * So the mailbox, the owner stamp AND the refusal path are deleted together,
+ * exactly as predicted -- the hazard is absent by construction rather than
+ * detected and reported.
  *
- * TWO FIXES FOR "THE WINNER CAN ALSO BE REFUSED" WERE CONSIDERED AND BOTH
- * REJECTED (Qodo, pre-merge review round 4, "Both concurrent finder calls
- * fail" -- the scenario: USB preempts WiFi after WiFi's own #850 claim
- * win but before WiFi reads this mailbox, USB's own finder call clobbers
- * the stamp, USB then loses ITS claim attempt and returns -200, and WiFi
- * resumes to find a foreign stamp and refuses too -- even though WiFi did
- * nothing wrong):
- *
- * (1) Re-pin from LIVE gStreamStopGen/gStreamStopsActive on a mismatch,
- * instead of refusing. REJECTED: this reopens #973 itself. gStreamStopsActive
- * is decremented when a stop BODY finishes (SCPIInterface.c:6575), so a
- * stop that begins and ends entirely inside the gap between dispatch and
- * this read leaves the active term back at zero -- only the GENERATION
- * term would have caught it, and a fresh re-pin captures the ALREADY-BUMPED
- * generation as its own baseline, making that comparison read clean. That
- * is the exact defect this ticket exists to close, reopened by the fix.
- *
- * (2) Write-side compare-and-set: only claim an EMPTY slot, so the mailbox
- * holds the FIRST unconsumed pin rather than the LAST, and a losing call
- * can no longer overwrite a winner's entry. REJECTED, on closer analysis,
- * because it does not narrow the residual in THIS codebase -- it only
- * relocates it. USBDeviceTask is boosted to priority 7 after init
- * (app_freertos.c:316) and can preempt WifiTask (priority 2) at will, but
- * never the reverse. Under compare-and-set, the dangerous interleaving
- * becomes: WiFi claims the EMPTY slot first, is preempted before its own
- * claim attempt, USB's concurrent call finds the slot occupied (so USB's
- * OWN write is skipped) and goes on to WIN the #850 claim outright (WiFi
- * had not reached it yet) -- USB then enters its claimed body, finds a
- * foreign (WiFi's) stamp, and refuses ITSELF despite being the legitimate
- * claim winner. Same shape, same width (a preemption landing between one
- * write and the very next statement, in either design), just with the two
- * transports' roles exchanged. Given USB can preempt WiFi but not the
- * reverse, this is not a rarer trigger than the one it replaces.
- *
- * A REGRESSION, adjudicated as such in pre-merge audit round 2 (not a
- * pre-existing, merely-disclosed residual, which an earlier revision of
- * this comment called it): against merge-base 4edc4dd6e, which had no
- * mailbox at all, the #850 session-start claim WINNER always proceeded and
- * only the loser saw -200. With this mailbox, a losing concurrent finder
- * can clobber the winner's stamp before the winner reads it, so the winner
- * refuses itself too. The characterization changed; the decision did not --
- * deferred rather than fixed here, because under a genuine two-transport
- * race for the SAME command, either party can be the one refused, always
- * with a plain -200 the caller can retry -- never a sweep that silently ran
- * across an unobserved stop. That is a narrower guarantee than
- * SCPI_StartStreaming's stack-local pin has (SCPIInterface.c:5917 onward),
- * which has no mailbox to contend over at all, and closing the gap needs
- * that same shape here -- tracked as the #973 follow-up below (filed as
- * #1120), not attempted piecemeal in this Size-S ticket a second time.
- *
- * FINDING carried to the #973 follow-up: this hazard is specific to route 1
- * (file-scope statics). Route 2 (threading pinned values as real per-call
- * arguments through SCPI_RunSessionStartClaimed, deferred out of this S-sized
- * ticket) would make the finder structurally identical to SCPI_StartStreaming
- * and delete this mailbox, the owner stamp, and the refusal path together. */
-static uint32_t     volatile gWifiFindPinStopGen    = 0u;
-static bool         volatile gWifiFindPinStopActive = false;
-static const void * volatile gWifiFindPinOwner      = NULL;
+ * The clobber-refusal was therefore the only observable behaviour removed,
+ * and it could only ever fire on the race the mailbox introduced. Every other
+ * input keeps the same tokens and the same #973/#938 log causes. */
 
 /* #850: the session-start claim is taken by the SCPI_WifiFindRate wrapper
  * below, which is the only caller of this body. */
-static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
-    /* #973: collect the stop pin the wrapper took at dispatch, BEFORE the
-     * parameter parse and before any of the save-state calls below.
+static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context,
+                                              uint32_t pinnedStopGen,
+                                              bool pinnedStopActive) {
+    /* #1120: the stop pin arrives as REAL PARAMETERS, taken by
+     * SCPI_RunSessionStartClaimed ahead of its claim.
      *
-     * First statement for two reasons. It minimises the wrapper-write ->
-     * body-read window, which is the interval a concurrent finder call's
-     * wrapper can clobber the mailbox in (see gWifiFindPinOwner's
-     * declaration above); and it puts the refusal path ahead of every
-     * save-and-restore pair in this function (benchmark mode, test pattern,
-     * frequency, SD mode), so the refusal returns with nothing to unwind.
+     * This replaces #973's read-and-clear of a file-scope mailbox, and with
+     * it the owner-stamp refusal that used to stand here. That refusal
+     * existed because a mailbox written outside the #850 claim could be
+     * clobbered by a concurrent finder call on the other transport between
+     * the wrapper's write and this read; a stack-resident pin threaded as an
+     * argument has no such window, so the hazard is gone by construction
+     * rather than detected and refused. The finder is now structurally
+     * identical to SCPI_StartStreaming/SCPI_StartStreamingClaimed, which
+     * pinned into locals and passed them down all along.
      *
-     * Read-and-clear: the stamp is consumed here so one pin serves exactly
-     * one sweep. Cleared only when it is OURS -- a foreign stamp is left
-     * alone rather than destroyed, since it is not this call's to discard. */
-    uint32_t pinnedStopGen;
-    bool     pinnedStopActive;
-    bool     pinIsMine;
-    taskENTER_CRITICAL();
-    pinIsMine        = (gWifiFindPinOwner == context);
-    pinnedStopGen    = gWifiFindPinStopGen;
-    pinnedStopActive = gWifiFindPinStopActive;
-    if (pinIsMine) {
-        gWifiFindPinOwner = NULL;
-    }
-    taskEXIT_CRITICAL();
-    if (!pinIsMine) {
-        /* A finder call on the other SCPI transport overwrote our pin
-         * between the wrapper's write and this read. Its snapshot is
-         * strictly newer than ours, so using it would hide any stop issued
-         * in between -- refuse instead, the same remedy #850 already gives
-         * the losing side of this exact race. 99 characters, against
-         * Logger.c's usable 125. */
-        LOG_E("SYST:STR:WIFI:FIND refused (#973): its stop pin was "
-              "overwritten by a concurrent finder call. Retry.");
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-        return SCPI_RES_ERR;
-    }
+     * Behaviour for every input that is not that race is unchanged: same
+     * refusal tokens, same #973/#938 log causes, same basis comparison
+     * below. The one path that disappears is the refusal OF the race the
+     * mailbox itself introduced. */
 
     // Optional params: startHz, maxHz (0/absent => defaults).
     int32_t startArg = 0, maxArg = 0;
-    SCPI_ParamInt32(context, &startArg, FALSE);
-    SCPI_ParamInt32(context, &maxArg, FALSE);
+    // #876: a present-but-unparseable rate (`FIND? 1000.5`) rejects instead of
+    // silently running at the default -- contract at SCPI_OptionalParamInt32.
+    if (SCPI_OptionalParamInt32(context, &startArg) == SCPI_OPT_BAD ||
+        SCPI_OptionalParamInt32(context, &maxArg) == SCPI_OPT_BAD) {
+        return SCPI_RES_ERR;
+    }
 
     StreamingRuntimeConfig* cfg = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
@@ -3661,16 +4042,16 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
         .pBoardConfig     = pBoardConfig,
         .pRuntimeChannels = (const AInRuntimeArray*)pRtAin,
         .mappingSelAtBuild = 0,
-        /* #973: taken at DISPATCH (SCPI_WifiFindRate, via the gWifiFindPin*
-         * mailbox above) and collected at this function's first statement,
-         * not re-read here. The #938 pin that used to sit at this line was
-         * inside the claim and after the parse and the power/interface/
-         * channel-count gates, so a stop that raced the arm had already been
-         * folded into the baseline by the time it ran -- moving the pin
-         * ahead of Streaming_BeginSessionStart (in the wrapper) is the fix.
+        /* #973/#1120: taken at DISPATCH by SCPI_RunSessionStartClaimed and
+         * received here as this function's parameters, not re-read. The #938
+         * pin that used to sit at this line was inside the claim and after
+         * the parse and the power/interface/channel-count gates, so a stop
+         * that raced the arm had already been folded into the baseline by the
+         * time it ran -- taking the pin ahead of
+         * Streaming_BeginSessionStart is the fix.
          * The pair still describes one instant: they were read together in
-         * one critical section, just an earlier one (this function's
-         * first-statement read of the mailbox). */
+         * one critical section, just an earlier one (the runner's, ahead of
+         * its claim). */
         .stopGenAtBuild    = pinnedStopGen,
         .stopActiveAtBuild = pinnedStopActive,
     };
@@ -3688,7 +4069,8 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
         uint8_t ec = (chMap != NULL && chMap->count > 0) ? chMap->count : 1;
         MemoryConfig* mcfg = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
         if (!PrepareStreamingBuffers(mcfg->samplePoolCount,
-                                     AInSampleList_ElementSize(ec))) {
+                                     AInSampleList_ElementSize(ec),
+                                     false)) {
             Streaming_SetBenchmarkMode(savedBenchmark);
             Streaming_SetTestPattern(savedPattern);
             RestoreSdMode(savedSdMode);
@@ -3984,7 +4366,10 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
     }
 
     // Output: recommendedHz,recommendedKBps,reason,ceilingHz,ceilingKBps
-    //   recommendedHz/KBps = soak-confirmed clean rate + its wire rate (0 if none)
+    //   recommendedHz      = soak-confirmed clean rate, bench-clamped (0 if none)
+    //   recommendedKBps    = recommendedHz > 0: its wire rate (clamp-scaled). Else the
+    //                        last clean-but-unconfirmed iteration, NOT zeroed on a
+    //                        streak reset -- read it only when recommendedHz > 0 (#1239)
     //   ceilingHz/KBps      = raw arc/refine ceiling (the pre-soak overestimate,
     //                         kept for diagnostics so the soak correction is visible)
     scpi_printf(context, "%u,%u,%s,%u,%u\r\n",
@@ -3994,33 +4379,11 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
 }
 
 static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
-    /* #973: the FIRST statement of the callback, ahead of the #850
-     * session-start claim -- the same placement, and for the same reason,
-     * as SCPI_StartStreaming's #861 pin (SCPIInterface.c:5917 onward).
-     * Where the pin sits IS the definition of "before this sweep", so it
-     * belongs before anything this command does, and in particular before
-     * Streaming_BeginSessionStart, which can REFUSE: once that claim is
-     * held, a finder call on the other transport already answers -200, so
-     * the claim is itself an observable effect of this command.
-     *
-     * One critical section, because the pair has to describe a single
-     * instant rather than two (the same reason the previous pin site gave),
-     * and because the owner stamp must become visible atomically with the
-     * values it authenticates -- see gWifiFindPinOwner's declaration ahead
-     * of SCPI_WifiFindRateClaimed for why the mailbox needs one at all,
-     * which SCPI_StartStreaming's plain-local pin does not.
-     *
-     * What remains ahead of this line is the gap between the callback's
-     * entry and this statement, and that is not a window to be closed: a
-     * preemption there orders the stop before this sweep did anything at
-     * all, which is what "before" means. Same non-window SCPI_StartStreaming
-     * documents at its own pin. */
-    taskENTER_CRITICAL();
-    gWifiFindPinStopGen    = gStreamStopGen;
-    gWifiFindPinStopActive = (gStreamStopsActive != 0u);
-    gWifiFindPinOwner      = context;
-    taskEXIT_CRITICAL();
-
+    /* #1120: no pin is taken here any more. SCPI_RunSessionStartClaimed
+     * takes it as its own first action, ahead of its claim, and passes it
+     * down -- so this wrapper is now the three-line shape every other
+     * wrapper in this file has, and a future command routed through the
+     * runner inherits the guard instead of having to remember it. */
     return SCPI_RunSessionStartClaimed(context, SCPI_WifiFindRateClaimed,
                                        "SYSTem:STReam:WIFI:FINd?");
 }
@@ -4055,7 +4418,10 @@ static bool Iperf2_RefuseIfStreaming(scpi_t * context) {
 // Optional [port=5001] arg
 static scpi_result_t SCPI_Iperf2_TcpServer(scpi_t * context) {
     int32_t port = IPERF2_DEFAULT_PORT;
-    if (!SCPI_ParamInt32(context, &port, FALSE)) port = IPERF2_DEFAULT_PORT;
+    // #876: an unparseable port rejects; absent keeps the default.
+    if (SCPI_OptionalParamInt32(context, &port) == SCPI_OPT_BAD) {
+        return SCPI_RES_ERR;
+    }
     if (port <= 0 || port > 65535) {
         SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
         return SCPI_RES_ERR;
@@ -4070,7 +4436,10 @@ static scpi_result_t SCPI_Iperf2_TcpServer(scpi_t * context) {
 
 static scpi_result_t SCPI_Iperf2_UdpServer(scpi_t * context) {
     int32_t port = IPERF2_DEFAULT_PORT;
-    if (!SCPI_ParamInt32(context, &port, FALSE)) port = IPERF2_DEFAULT_PORT;
+    // #876: an unparseable port rejects; absent keeps the default.
+    if (SCPI_OptionalParamInt32(context, &port) == SCPI_OPT_BAD) {
+        return SCPI_RES_ERR;
+    }
     if (port <= 0 || port > 65535) {
         SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
         return SCPI_RES_ERR;
@@ -4108,8 +4477,12 @@ static bool Iperf2_ParseClientArgs(scpi_t * context, char* ipBuf,
     if (!SCPI_ParamCopyText(context, ipBuf, ipBufLen, &ipLen, TRUE)) {
         return false;
     }
-    if (!SCPI_ParamInt32(context, port, FALSE)) *port = IPERF2_DEFAULT_PORT;
-    if (!SCPI_ParamInt32(context, duration_sec, FALSE)) *duration_sec = 10;
+    // #876: unparseable port/duration rejects instead of arming on a default
+    // the client never chose; absent keeps the default.
+    if (SCPI_OptionalParamInt32(context, port) == SCPI_OPT_BAD ||
+        SCPI_OptionalParamInt32(context, duration_sec) == SCPI_OPT_BAD) {
+        return false;
+    }
     if (*port <= 0 || *port > 65535 || *duration_sec < 1 ||
         *duration_sec > 3600) {
         SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
@@ -4256,13 +4629,35 @@ static scpi_result_t SCPI_ClearStreamStats(scpi_t * context) {
         pTcp->client.wifiTcpSendErrors = 0;
         pTcp->client.wifiTcpPartialSends = 0;
         pTcp->client.wifiPartialBytesMissing = 0;
+        pTcp->client.wifiTcpOverBytesExtra = 0;     // #956: same epoch as the line above
+        pTcp->client.wifiTcpInflightOverflow = 0;   // #956
         pTcp->client.wifiWriteBufferRejectedCalls = 0;
         pTcp->client.wifiWriteBufferRejectedBytes = 0;
-        for (uint8_t i = 0; i < WIFI_TCP_MAX_IN_FLIGHT; i++) {
-            pTcp->client.inflightSizes[i] = 0;
-        }
-        pTcp->client.inflightHead = 0;
-        pTcp->client.inflightTail = 0;
+        // #956: this site DELIBERATELY DOES NOT TOUCH THE IN-FLIGHT RING.
+        //
+        // It used to hand-roll a ring-ONLY reset (zeroing inflightHead/Tail and
+        // inflightSizes while leaving tcpInFlight at its outstanding-send
+        // count) -- the half-reset that ResetInflightRing()'s contract comment
+        // warns desyncs head/tail for the session.  The first fix for that
+        // zeroed BOTH halves.  That is worse, and a pre-merge review caught it:
+        // the ring is LIVE TRANSPORT STATE owned by the send/completion pair,
+        // not a statistic.  Zeroing tcpInFlight while the WINC still owes
+        // completions admits sends past the physical cap, and a later old
+        // completion pops a NEW send's slot or accrues false over-byte stats
+        // against a zero size -- a fresh instance of the very mis-pairing #956
+        // exists to remove.
+        //
+        // Resetting NEITHER half is correct and removes the original defect by
+        // construction: there is no partial reset if there is no reset.  The
+        // ring is reset only where a reset is safe -- the three socket-teardown
+        // sites, after which no completion can arrive for a stale slot.
+        //
+        // Residual, pre-existing and NOT fixed by this change: clearing
+        // wifiTcpBytesSent while a send is outstanding still lets that send's
+        // completion add to Confirmed with its Sent contribution erased, a
+        // permanent per-session offset docs/STREAMING_AND_ADC.md already
+        // documents.  Draining
+        // before clearing is the only real answer and is out of scope here.
         // #560/#475 Opt 0 — listener-health counters. Reset only on this
         // operator-initiated clear (NOT at stream start) so the slow PATH-1
         // listen-slot leak stays visible across streaming sessions.
@@ -4275,6 +4670,7 @@ static scpi_result_t SCPI_ClearStreamStats(scpi_t * context) {
         pTcp->listenHardResets = 0;
         pTcp->client.idleClosed = 0;  // #676: idle-timeout closes (sibling listener-health counter)
         taskEXIT_CRITICAL();
+        wifi_manager_ClearIpConflicts();  // #1324
     }
     // Reset SD write metrics
     sd_card_manager_ResetWriteMetrics();
@@ -4560,6 +4956,7 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
     {
         uint64_t bytesSent = 0, bytesConfirmed = 0;
         uint32_t sendErrors = 0, partialSends = 0, partialMissing = 0;
+        uint32_t overBytesExtra = 0, inflightOverflow = 0;  // #956
         uint32_t rejectedCalls = 0, rejectedBytes = 0;
         uint32_t cirbufProduced = 0, cirbufConsumed = 0, cirbufBufSize = 0;
         // #560/#475 Opt 0 — listener-health observability
@@ -4575,6 +4972,8 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
             sendErrors = pTcp->client.wifiTcpSendErrors;
             partialSends = pTcp->client.wifiTcpPartialSends;
             partialMissing = pTcp->client.wifiPartialBytesMissing;
+            overBytesExtra = pTcp->client.wifiTcpOverBytesExtra;      // #956
+            inflightOverflow = pTcp->client.wifiTcpInflightOverflow;  // #956
             rejectedCalls = pTcp->client.wifiWriteBufferRejectedCalls;
             rejectedBytes = pTcp->client.wifiWriteBufferRejectedBytes;
             cirbufProduced = pTcp->client.wCirbuf.producedBytes;
@@ -4600,6 +4999,26 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
         scpi_printf(context, "WifiTcpPartialSends=%u\r\n", (unsigned)partialSends);
         // #367 diag: cumulative byte shortfall across all partial sends
         scpi_printf(context, "WifiPartialBytesMissing=%u\r\n", (unsigned)partialMissing);
+        // #956 diag: the opposite direction of the line above (completion
+        // confirmed MORE than the popped slot claimed).  Non-zero = ring
+        // mis-pairing, not stream damage.  With both directions counted,
+        // WifiTcpBytesSent - WifiTcpBytesConfirmed ==
+        // WifiPartialBytesMissing - WifiTcpOverBytesExtra, bounded in-flight
+        // residual aside -- but ONLY when WifiTcpSendErrors (printed above, from
+        // the same snapshot) is 0 and no client teardown fell inside the epoch.
+        // An errored completion leaves its whole send, at most WIFI_WBUFFER_SIZE,
+        // on the left with nothing on the right, and a teardown strands every
+        // outstanding send the same way.  An earlier revision stated the identity
+        // unconditionally, which was false.  The full statement, and the bound
+        // that holds with errors: wifiTcpOverBytesExtra in wifi_tcp_server.h.
+        scpi_printf(context, "WifiTcpOverBytesExtra=%u\r\n", (unsigned)overBytesExtra);
+        // #956 diag: flush attempts refused by TcpServerFlush's authoritative
+        // in-flight cap check — a count of ring overruns PREVENTED, each one an
+        // attempt the pre-fix unlocked cap check would have let through.  The
+        // bytes are retried, so this is not loss.  Non-zero under WiFi streaming
+        // load is expected (producer contention at the cap); 0 on an idle or
+        // control-only channel.
+        scpi_printf(context, "WifiTcpInflightOverflow=%u\r\n", (unsigned)inflightOverflow);
         // #371 diag: WriteBuffer-side rejection counters (should match wifiDroppedBytes)
         scpi_printf(context, "WifiWriteBufferRejectedCalls=%u\r\n", (unsigned)rejectedCalls);
         scpi_printf(context, "WifiWriteBufferRejectedBytes=%u\r\n", (unsigned)rejectedBytes);
@@ -4630,6 +5049,7 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
         scpi_printf(context, "WifiListenReopens=%u\r\n", (unsigned)listenReopens);
         scpi_printf(context, "WifiListenHardResets=%u\r\n", (unsigned)listenHardResets);
         scpi_printf(context, "WifiIdleClosed=%u\r\n", (unsigned)idleClosed);  // #663/#676
+        scpi_printf(context, "WifiIpConflicts=%u\r\n", (unsigned)wifi_manager_GetIpConflicts());  // #1324
     }
     scpi_printf(context, "UsbBytesSent=%llu\r\n", (unsigned long long)UsbCdc_GetWireBytesSent());
     scpi_printf(context, "SdDroppedBytes=%u\r\n", (unsigned)s.sdDroppedBytes);
@@ -4663,6 +5083,10 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
     // still streamed, just with frozen data; same exclusion as EosOverruns).
     // ~0 with the scan cap in place; non-zero flags over-rate / NOCAP scan-busy.
     scpi_printf(context, "ScanStaleDropped=%u\r\n", (unsigned)s.scanStaleDropped);
+    // #1018: post-grace subset -- the term the session-end LOG_E summary
+    // actually uses for its "(all post-grace)" total. Raw ScanStaleDropped
+    // above is unchanged (still the lifetime counter).
+    scpi_printf(context, "ScanStaleDroppedSteady=%u\r\n", (unsigned)s.scanStaleDroppedSteady);
     /* #814: NOT loss -- a clipped sample is delivered, it is just untrustworthy
      * as a measurement, so it is absent from every loss percentage below. The
      * mask is over sample-list SLOTS (bit j = the j-th enabled channel in this
@@ -4743,6 +5167,16 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
         ? (uint32_t)((s.queueDroppedSamples * 100ULL) / totalSampleAttempts) : 0;
     scpi_printf(context, "SampleLossPercent=%u\r\n", (unsigned)sampleLoss);
 
+    // #1249: SampleLossPercent floors to 0 below 1%, which hides up to
+    // ~5,700 dropped samples on a 120 s run. SampleLossPPM is the same ratio
+    // in parts per million (dropped * 1e6 / attempts), so a 0.44% loss reads
+    // ~4400. SampleLossPercent is unchanged: shipped clients parse it. The
+    // 64-bit product cannot overflow: queueDroppedSamples is uint32, so
+    // the product is < 2^52.
+    uint32_t sampleLossPpm = totalSampleAttempts > 0
+        ? (uint32_t)((s.queueDroppedSamples * 1000000ULL) / totalSampleAttempts) : 0;
+    scpi_printf(context, "SampleLossPPM=%u\r\n", (unsigned)sampleLossPpm);
+
     // Compute byte loss percentage (combined across all outputs).
     // Can exceed 100% when multiple outputs drop simultaneously.
     uint64_t totalDroppedBytes = s.usbDroppedBytes + s.wifiDroppedBytes + s.sdDroppedBytes;
@@ -4758,12 +5192,14 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
 }
 
 /**
- * Quiesce all DMA consumers and reset the coherent pool.
- * Closes SD file (filesystem safety), waits for WiFi SPI idle.
- * USB is assumed already waited by caller.
+ * Quiesce the SD card before its DMA write buffer is replaced.
+ * Closes the SD write file (filesystem safety) and waits for SD idle.
+ * USB is assumed already waited by caller. The WINC SPI is NOT handled here:
+ * "idle" is only true at the instant it is read, so SCPI_SwapCoherentDmaBuffers
+ * checks it and swaps in one step (#1279 r3).
  * @return true if successful, false if a timeout occurred
  */
-static bool SCPI_QuiesceAndResetCoherentPool(void) {
+static bool SCPI_QuiesceSdForDmaResize(void) {
     // SD: close write file so f_write can't be mid-DMA during reset.
     // Only interrupt WRITE mode (DMA consumer). Leave READ/LIST/DELETE alone.
     {
@@ -4782,12 +5218,87 @@ static bool SCPI_QuiesceAndResetCoherentPool(void) {
             return false;
         }
     }
-    // WiFi: wait for any in-flight SPI DMA to complete.
-    if (!WDRV_WINC_SPI_WaitIdle(1000)) {
-        LOG_E("WiFi SPI idle timeout before DMA resize");
+    return true;
+}
+
+_Static_assert(SD_CARD_MANAGER_MIN_WBUFFER_SIZE + USBCDC_DMA_WBUFFER_MIN + WIFI_DMA_MIN
+               + 3u * COHERENT_POOL_ALIGNMENT <= COHERENT_POOL_DEFAULT_SIZE,
+               "the minimum DMA layout must fit the coherent pool");
+
+/* #1279 r3/r4: reset the coherent pool, carve the three DMA buffers and install
+ * ALL THREE with NO task able to run in between, and only if EVERY owner of
+ * coherent-pool memory is proven idle INSIDE that same suspended span.
+ *
+ * Why inside the span: each owner is idle only at the instant it is read.
+ * r3 re-checked the WINC SPI there and left USB outside; during the retry
+ * yield DTR rose, CDC went WAIT->PROCESS and UsbCdc_BeginWrite submitted queued
+ * bytes from the OLD USB staging region, which the reset then handed to the SD
+ * buffer (codex r4). The owners, from every CoherentPool_Alloc caller:
+ *   USB_write  UsbCdc_DmaSwapAcquire          (transfer, mid-BeginWrite, ring)
+ *   SD_write   sd_card_manager_DmaSwapAcquire (state IDLE/INIT, mode NONE,
+ *                                              no task mid-copy)
+ *   WiFi_SPI   WDRV_WINC_SPI_IdleForSwap      (busy flags, r3)
+ * Each Acquire's header comment carries its proof that nothing can START a
+ * transfer from the old region once the scheduler is suspended.
+ *
+ * NOTHING in the span may block, yield or log. The Acquires take the owners'
+ * mutexes with a ZERO wait (legal suspended) and hold them to Commit/Release,
+ * which is how the SD buffer install moved inside the span.
+ *
+ * keepQueuedOutput: an idle restore must not lose reply bytes queued on the
+ * USB ring; Acquire refuses (this loop retries and pumps the writer) while a
+ * deliverable ring is non-empty, and discards bytes that cannot be delivered
+ * (CDC not in PROCESS) at commit, atomically with the swap, so DTR rising
+ * later cannot deliver a ring the re-carve is about to reset. Refuses (false)
+ * with NOTHING changed if an owner stays busy for 1 s or the layout does not
+ * fit. */
+static bool SCPI_SwapCoherentDmaBuffers(uint32_t sdDmaSize, uint32_t usbDmaSize,
+                                        uint32_t wifiDmaSize, bool keepQueuedOutput) {
+    enum { BUSY_USB = 1u, BUSY_SD = 2u, BUSY_WINC = 4u };
+    if ((uint64_t)sdDmaSize + usbDmaSize + wifiDmaSize + 3u * COHERENT_POOL_ALIGNMENT
+            > CoherentPool_TotalSize()) {
         return false;
     }
-    CoherentPool_Reset();
+    uint32_t discarded = 0u;
+    bool swapped = false;
+    TickType_t start = xTaskGetTickCount();
+    for (;;) {
+        vTaskSuspendAll();
+        bool usbHeld = UsbCdc_DmaSwapAcquire(keepQueuedOutput, &discarded);
+        bool sdHeld  = usbHeld && sd_card_manager_DmaSwapAcquire();
+        uint32_t busy = !usbHeld ? BUSY_USB : !sdHeld ? BUSY_SD
+             : !WDRV_WINC_SPI_IdleForSwap() ? BUSY_WINC : 0u;
+        if (busy == 0u) {
+            CoherentPool_Reset();
+            uint8_t *sdDmaBuf   = CoherentPool_Alloc("SD_write", sdDmaSize);
+            uint8_t *usbDmaBuf  = CoherentPool_Alloc("USB_write", usbDmaSize);
+            uint8_t *wifiDmaBuf = CoherentPool_Alloc("WiFi_SPI", wifiDmaSize);
+            sd_card_manager_DmaSwapCommitAndRelease(sdDmaBuf, sdDmaSize);
+            UsbCdc_DmaSwapCommitAndRelease(usbDmaBuf, usbDmaSize);
+            WDRV_WINC_SPI_SetBuffer(wifiDmaBuf, wifiDmaSize);
+            swapped = true;
+        } else {
+            if (sdHeld)  sd_card_manager_DmaSwapRelease();
+            if (usbHeld) UsbCdc_DmaSwapRelease();
+        }
+        (void)xTaskResumeAll();
+        if (swapped) {
+            break;
+        }
+        if ((xTaskGetTickCount() - start) > pdMS_TO_TICKS(1000)) {
+            LOG_E("DMA buffers not resized: owner busy 0x%x for 1 s (#1279)",
+                  (unsigned)busy);
+            return false;
+        }
+        if (busy == BUSY_USB) {
+            UsbCdc_PumpWrite();   /* drain the ring / finish a transfer */
+        }
+        vTaskDelay(1);
+    }
+    if (discarded != 0u) {
+        LOG_I("idle restore: discarded %u B queued with no USB host (#1279)",
+              (unsigned)discarded);
+    }
     return true;
 }
 
@@ -4878,9 +5389,12 @@ static volatile StreamingInterface gStreamIfaceLastSet = StreamingInterface_USB;
  * because a START that bumped this would refuse itself, every time.
  *
  * #938: the WiFi rate finder (FindMeasureStep, defined earlier in this file --
- * see its own pin and the tentative forward declarations at its definition,
- * needed because it is textually ahead of this initializer) now pins and
- * observes this the same way SCPI_StartStreamingClaimed does, once per step.
+ * see its own pin there) now pins and observes this the same way
+ * SCPI_StartStreamingClaimed does, once per step. (#1201: this used to also
+ * point at "the tentative forward declarations at its definition". Those are
+ * gone -- that function reads neither global now, it asks
+ * StopRequestedSince(), so there is nothing there to forward-declare and the
+ * pointer would have sent a reader looking for deleted code.)
  * A stop landing in a step's PRE-ARM window is refused as itself, with a
  * cause, instead of being lost the way it was here before -- lost silently,
  * note, not as a `!Running`: pre-arm the publish happens AFTER the stop, so
@@ -4898,12 +5412,24 @@ static volatile StreamingInterface gStreamIfaceLastSet = StreamingInterface_USB;
  * cause. It still reports one; it now says so in the log. Both halves are
  * #938, and only one of them is a guard.
  *
- * SYSTem:STReam:THRoughput (SCPI_RunThroughputBenchClaimed) still does NOT
- * pin or observe it, so a stop racing ITS pre-arm window is still lost. It is
- * a bench/diagnostic path and lands on the same WINC-delicate territory that
- * wants its own bench run; tracked as its own gap rather than folded in here
- * (#938's scope is the finder only) so it is a recorded line rather than
- * something to rediscover. */
+ * #1201: SYSTem:STReam:THRoughput (SCPI_RunThroughputBenchClaimed) NOW pins
+ * and observes it too, at its arm, through the shared StopRequestedSince()
+ * predicate. This paragraph used to record the opposite -- that the command
+ * did not observe it and a stop racing its pre-arm window was "still lost",
+ * tracked as its own gap so it would be a recorded line rather than something
+ * to rediscover. That gap is the one #1201 closed, and the record is updated
+ * here rather than left asserting a hazard that is now guarded. A stop racing
+ * that command's pre-arm window refuses the arm, logs its cause, and answers
+ * -200, exactly as it does for a START.
+ *
+ * What is still NOT guarded there, so it is not rediscovered as a finding: a
+ * stop arriving during the bench's DWELL. The stop itself ends the session, so
+ * the device does not keep acquiring -- the operator's instruction is carried
+ * out -- but the command still prints the counts of a truncated run, and its
+ * per-second figures divide those counts by the full requested duration. That
+ * is a reply-shape question (this command has no refusal token to report it
+ * with, which is the #895 argument two screens up), deliberately left to its
+ * own ticket rather than folded in here. */
 static volatile uint32_t gStreamStopGen = 0;
 
 /* #861 (Qodo, importance 9): stops CURRENTLY IN FLIGHT, not stops completed.
@@ -5088,6 +5614,45 @@ static void SCPI_UnpublishStartInterface(StreamingRuntimeConfig *cfg,
  * because some other transport is mid-start (pre-merge audit). `freqProvided`
  * false means no argument was given and the stored Frequency is reused, which
  * is resolved further down exactly as before. */
+/* ⛔ #1055 r4: THE ONE EXIT FOR "we already stopped the previous session,
+ * then this start failed".
+ *
+ * SCPI_StartStreamingClaimed tears the previous session down early (the
+ * IsEnabled=false + Streaming_UpdateState above its body's midpoint), which
+ * snapshots that session's counters into the pending record. It then has
+ * THIRTEEN error returns after that point. r3 added an emit to exactly ONE of
+ * them -- the PrepareStreamingBuffers failure the audit named -- and left the
+ * other twelve, including the SD free-space refusal, silently owing a summary
+ * that nothing would emit until some later start that may never come.
+ *
+ * Fixing the named site and not its twelve siblings is the mistake this row
+ * has now made twice (r2 finding 3 was the same shape), so this is a single
+ * named exit every post-stop return goes through, and a host-side pin fails
+ * the build if a bare `return SCPI_RES_ERR;` reappears after the teardown.
+ *
+ * Safe at every one of them: the emit is a bool read under a short critical
+ * section and a return when nothing is owed, so a start that failed WITHOUT a
+ * previous session to tear down pays nothing. */
+static scpi_result_t SCPI_StartFailedAfterStop(void) {
+    /* ⛔ #1055 r6: UN-FORCED now, and that was r5's second finding. r4 forced
+     * this on the criterion "no bounded SD-idle wait AND no guaranteed later
+     * flush" -- true at the time, because Streaming_Start()'s backstop only
+     * runs on a SUCCESSFUL start, so a run of failing starts would withhold
+     * the summary indefinitely. The cost was invisible and worse: forcing
+     * consumes the record MID-DRAIN, so a teardown still reporting its
+     * discards wrote them into a record nobody was waiting on, and the loss
+     * was never printed or flagged.
+     *
+     * The criterion itself is now obsolete, not merely outweighed:
+     * app_SDCardTask polls the unforced emitter every iteration and the hold
+     * is bounded, so "no guaranteed later flush" is false on every path. The
+     * call stays rather than being deleted -- un-forced it is a cheap read and
+     * an immediate emit in the common case (a start that failed with no SD
+     * session has no hold to wait on) and a correct deferral otherwise. */
+    Streaming_EmitSessionSummary();
+    return SCPI_RES_ERR;
+}
+
 static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                                                 int32_t freq,
                                                 bool freqProvided,
@@ -5134,10 +5699,9 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
 
     uint16_t activeType1ChannelCount = 0;
     uint16_t totalEnabledPublicChannels = 0;
-    bool hasActiveAD7609Channels = false;
     Streaming_CountActiveChannels(&activeType1ChannelCount,
                                   &totalEnabledPublicChannels,
-                                  &hasActiveAD7609Channels);
+                                  NULL);
     bool hasEnabledChannels = (totalEnabledPublicChannels > 0);
 
     // Build channel mapping for compact sample pool (#177).
@@ -5291,12 +5855,14 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
      * publishes it. Zero means "not computed"; the check below enforces it. */
     uint32_t periodCycles = 0;
     {
-        // NQ3 Smart Frequency Management:
-        // When external AD7609 channels are active WITHOUT any Type 1 MC12bADC channels,
-        // force internal monitoring to 1Hz (since only monitoring channels would be streaming)
-        if (hasActiveAD7609Channels && activeType1ChannelCount == 0 && freq > 1) {
-            freq = 1; // Override to 1Hz for internal monitoring when external ADC active
-        }
+        /* #1158: no AD7609 rate override. An earlier "NQ3 Smart Frequency
+         * Management" block forced freq = 1 whenever an AD7609 channel was
+         * enabled with no type-1 MC12b channel. On NQ3 that is EVERY analog
+         * stream (its public analog channels are the AD7609's; its MC12b
+         * channels are non-public type 2), and the same timer triggers the
+         * AD7609 conversions, so it throttled NQ3's acquisition path to 1 Hz
+         * silently. The rate is now bounded only by the cap computation
+         * below, like every other variant. */
 
         // Three-constraint frequency capping (validated via benchmark testing)
         // See https://github.com/daqifi/daqifi-nyquist-firmware/issues/215
@@ -5333,9 +5899,15 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                   * only legal abbreviation SYST:STR:BENCH, so an operator who
                   * followed the printed remedy got -113. The max was also
                   * interpolated twice; once is enough. */
-                LOG_E("STR:START refused (#524): %d Hz > max %u Hz "
-                      "(%u ch, %u T1) - use <= that or SYST:STR:BENCHmark",
-                      (int)freq, (unsigned)maxFreq,
+                /* #1039: was 127 bytes against the 125-byte ceiling, and Logger
+                 * truncates the TAIL -- which is exactly where the REMEDY sat, so
+                 * the one actionable clause was what the operator lost. The remedy
+                 * now leads and the redundant "> max" is gone; 115 bytes. Keep the
+                 * remedy FIRST if this is ever reworded.
+                 */
+                LOG_E("STR:START refused (#524): use <= %u Hz or "
+                      "SYST:STR:BENCHmark (%d Hz, %u ch, %u T1)",
+                      (unsigned)maxFreq, (int)freq,
                       (unsigned)totalEnabledPublicChannels,
                       (unsigned)activeType1ChannelCount);
                 SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
@@ -5517,11 +6089,13 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
             pTcp->client.wifiTcpSendErrors = 0;
             pTcp->client.wifiTcpPartialSends = 0;
             pTcp->client.wifiPartialBytesMissing = 0;
-            for (uint8_t i = 0; i < WIFI_TCP_MAX_IN_FLIGHT; i++) {
-                pTcp->client.inflightSizes[i] = 0;
-            }
-            pTcp->client.inflightHead = 0;
-            pTcp->client.inflightTail = 0;
+            pTcp->client.wifiTcpOverBytesExtra = 0;     // #956: same epoch as the line above
+            pTcp->client.wifiTcpInflightOverflow = 0;   // #956
+            // #956: like SCPI_ClearStreamStats, this site DELIBERATELY leaves
+            // the in-flight ring alone.  The identical hand-rolled ring-only
+            // reset lived here too; see that function for why resetting BOTH
+            // halves is worse than resetting neither, and why only the
+            // socket-teardown sites may reset a live ring.
             taskEXIT_CRITICAL();
         }
     }
@@ -5694,7 +6268,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
         }
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         SCPI_ClearStreamingOperBits(pRunTimeStreamConfig);
-        return SCPI_RES_ERR;
+        return SCPI_StartFailedAfterStop();
     }
 
     // Partition the streaming buffer pool (auto or static per MemoryConfig) +
@@ -5707,7 +6281,8 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
         uint8_t enabledChannels = (chMapping->count > 0) ? chMapping->count : 1;
         MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
         if (!PrepareStreamingBuffers(mc->samplePoolCount,
-                                     AInSampleList_ElementSize(enabledChannels))) {
+                                     AInSampleList_ElementSize(enabledChannels),
+                                     false)) {
             /* An SD file can still be open here -- PrepareStreamingBuffers can
              * fail BEFORE the quiesce that tears it down (its USB-DMA wait
              * times out first). Every sibling abort releases it; this one did
@@ -5727,7 +6302,9 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                                      ifaceSetsPinned);
             SCPI_ExecutionError(context, "STR:START: buffer partition failed (USB DMA / tasks not quiescent, or pool error)");
             SCPI_ClearStreamingOperBits(pRunTimeStreamConfig);
-            return SCPI_RES_ERR;
+            /* #1055 r2 finding 3's emit moved into
+             * SCPI_StartFailedAfterStop() at r4, with its twelve siblings. */
+            return SCPI_StartFailedAfterStop();
         }
 
         /* #851: THE SD arm. Singular now -- START used to arm once before the
@@ -5788,7 +6365,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                       "during start setup - the buffers were carved for an SD "
                       "session. Retry.");
                 SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-                return SCPI_RES_ERR;
+                return SCPI_StartFailedAfterStop();
             }
             /* #690 (adversarial audit): this arm passes through the #689
              * dir-file-cap guard. If there is no writable location the guard
@@ -5812,7 +6389,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                 LOG_E("Cannot start SD logging - SD suspended: %s\r\n",
                       why ? why : "SPI4 is owned elsewhere");
                 SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-                return SCPI_RES_ERR;
+                return SCPI_StartFailedAfterStop();
             }
             /* #836: CLAIM rather than check-then-set. USB SCPI (pri 7) preempts
              * WiFi SCPI (pri 2) with no shared dispatch mutex, so an SCPI
@@ -5834,7 +6411,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                                      ifaceSetsPinned);
                 LOG_E("Cannot start SD logging - SD card busy with another operation");
                 SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-                return SCPI_RES_ERR;
+                return SCPI_StartFailedAfterStop();
             }
             /* #498 / #503: the disk-full gate lives INSIDE the SD task's WRITE
              * init -- one UpdateSettings(WRITE) does mount + (optional)
@@ -5914,7 +6491,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                 LOG_E("SD log arm refused (#942): %s\r\n",
                       why ? why : "the SD task is not accepting work");
                 SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-                return SCPI_RES_ERR;
+                return SCPI_StartFailedAfterStop();
             }
             /* #836: armed -- ownership has handed over from the claim flag to
              * `mode`, which is MODE_WRITE and keeps IsBusy() true, so there is
@@ -6073,7 +6650,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                                      ifaceSetsPinned);
                 SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
                 SCPI_ClearStreamingOperBits(pRunTimeStreamConfig);
-                return SCPI_RES_ERR;
+                return SCPI_StartFailedAfterStop();
             }
         }
     }
@@ -6162,8 +6739,8 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
      *                     IsEnabled after we publish it.
      *   gStreamStopGen    a stop began and ended entirely inside this start's
      *                     window: the original #861 case. */
-    stopInFlight = stopActivePinned || (gStreamStopsActive != 0u);
-    stopRequested = stopInFlight || (gStreamStopGen != stopGenPinned);
+    stopRequested = StopRequestedSince(stopGenPinned, stopActivePinned,
+                                       &stopInFlight);
     /* The interface must still be the one everything above was set up for.
      * The rate check alone does not catch this, because the new interface's
      * cap can be perfectly happy with the requested rate: a WiFi START whose
@@ -6320,7 +6897,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
               stopInFlight ? "a stop is still in flight on the other transport"
                            : "a stop was issued during start setup");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-        return SCPI_RES_ERR;
+        return SCPI_StartFailedAfterStop();
     }
 
     if (cfgChanging) {
@@ -6341,7 +6918,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
         LOG_E("STR:START refused (#847): a config change is in flight on the "
               "other SCPI transport. Retry.");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-        return SCPI_RES_ERR;
+        return SCPI_StartFailedAfterStop();
     }
 
     if (inputsGone) {
@@ -6355,7 +6932,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
         LOG_E("STR:START refused (#844): every ADC and DIO input was disabled "
               "during start - nothing left to stream");
         SCPI_ErrorPush(context, SCPI_ERROR_SETTINGS_CONFLICT);
-        return SCPI_RES_ERR;
+        return SCPI_StartFailedAfterStop();
     }
 
     if (ifaceMoved) {
@@ -6372,7 +6949,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
               (int)ifaceForStart, (int)ifaceObserved);
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         SCPI_ClearStreamingOperBits(pRunTimeStreamConfig);
-        return SCPI_RES_ERR;
+        return SCPI_StartFailedAfterStop();
     }
 
     if (mappingMoved) {
@@ -6403,7 +6980,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
         LOG_E("STR:START refused (#846): the enabled-channel set changed during "
               "start; the mapping and sample pool are stale. Retry.");
         SCPI_ErrorPush(context, SCPI_ERROR_SETTINGS_CONFLICT);
-        return SCPI_RES_ERR;
+        return SCPI_StartFailedAfterStop();
     }
 
     if (capRevoked) {
@@ -6422,7 +6999,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
               "max %u Hz. Re-read CONF:CAP:JSON?",
               (int)freq, (unsigned)revalidatedMax);
         SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
-        return SCPI_RES_ERR;
+        return SCPI_StartFailedAfterStop();
     }
 
     Streaming_UpdateState();
@@ -6511,20 +7088,52 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
      * the arm is reached, is covered by gStreamStopsActive rather than by the
      * pin's position.
      *
-     * A bare 32-bit load, not a critical section: unlike the interface pins
-     * inside the body it has no partner field it must describe one instant
-     * with, and docs/MCU_REFERENCE.md's atomicity rule is explicit that wrapping a plain
-     * aligned 32-bit load only costs interrupt latency.
+     * BOTH READS UNDER ONE CRITICAL SECTION, mirroring the WRITER rather than
+     * the other reader. The WIFI:FINd? finder's own pin has the same defect
+     * and the same fix is PROPOSED for it -- see #938 and PR #965, which was
+     * open and unmerged when this was written, with main's finder carrying no
+     * stop pin at all. Do not read this line as the finder being fixed; check
+     * that site before relying on it. (Stated in a form that stays true
+     * whichever of the two merges first: an earlier draft said the finder fix
+     * was "already applied", which was false and would have become a comment
+     * on main asserting a race was closed where it was open.) Each load is
+     * individually atomic (aligned 32-bit on PIC32MZ; docs/MCU_REFERENCE.md,
+     * "Atomicity & Concurrency Rules", first bullet), so the section is not
+     * there to make a load atomic -- it is there to make the PAIR describe
+     * one instant.
+     *
+     * As two separate loads several lines apart they did NOT, and that was a
+     * WIDER window than the one #965 PROPOSES to close at the finder site
+     * (still open and unmerged, per the paragraph above -- this file does not
+     * get to call that race closed until #965 lands) -- this fix (#969) is
+     * that residual, filed against this site rather than folded into #965's
+     * PR. A stop bumps gen and active together at its START,
+     * under one critical section
+     * (below), and finishes by decrementing active LAST. Let that stop's bump
+     * land BEFORE the first load and its completion land BETWEEN the two
+     * loads: stopGenPinned then already holds the bumped generation, so the
+     * later re-read sees no delta, and stopActivePinned reads the
+     * post-decrement zero, so the later re-read sees nothing active. Both
+     * signals miss a stop that was RUNNING when this start began, and the arm
+     * publishes IsEnabled over it -- silently, which is the exact shape #861
+     * exists to eliminate.
+     *
+     * The tempting refutation (made and overturned on PR #965's own audit,
+     * for its twin at the finder site) is that "generation new, active zero"
+     * means the stop finished before this start began. It does not: the
+     * start's zero point is the FIRST load, and in this interleaving the stop
+     * was still active then. The release-last invariant proves only that the
+     * stop had finished by the SECOND load, which is a weaker and different
+     * claim.
      *
      * Unused on the SYSTem:STReam:START 0 disable path, which returns before
      * the claim -- that path is a stop, and a stop never observes this. */
-    const uint32_t stopGenPinned = gStreamStopGen;
-    /* Was a stop ALREADY in flight when this command arrived? Pinned here
-     * rather than only sampled at the arm, because a stop that finishes in
-     * between is invisible to both of the other terms -- see the arm-time
-     * comment for the three-way split. A plain 32-bit load, like the
-     * generation beside it. */
-    const bool stopActivePinned = (gStreamStopsActive != 0u);
+    uint32_t stopGenPinned;
+    bool stopActivePinned;
+    taskENTER_CRITICAL();
+    stopGenPinned = gStreamStopGen;
+    stopActivePinned = (gStreamStopsActive != 0u);
+    taskEXIT_CRITICAL();
     int32_t freq = 0;
     scpi_parameter_t freqParam;
     bool freqProvided = SCPI_Parameter(context, &freqParam, FALSE);
@@ -6840,8 +7449,73 @@ static void SCPI_PerformStreamingStop(void) {
     const bool ownedSdLoggingSession =
             SCPI_SdWriteIsStreamingLog(pSDCardRuntimeConfig);
 
+    /* ⛔ #1055 r2 ADDED AN OWNERSHIP TOKEN HERE AND r2's AUDIT REFUTED IT.
+     *
+     * The token was "the stop that observed IsEnabled true owns the summary".
+     * That is not the same thing as owning the SD TEARDOWN: WiFi can take the
+     * IsEnabled token while USB claims the teardown, so WiFi emitted early and
+     * USB -- the one actually waiting for the drain -- owned nothing. Ownership
+     * was the wrong axis, so it is gone rather than refined.
+     *
+     * r3 makes it unnecessary: the counters are snapshot into gSessionRecord
+     * at stop and whoever emits consumes that record exactly once, so any
+     * terminating caller may emit and none of them can report wiped or
+     * half-cleared data. The clear stays a read-modify-write under the lock
+     * because two transports can stop concurrently.
+     *
+     * ⚠ THE r3 RESIDUAL IS NOW CLOSED FOR THE UNFORCED PATHS (#1055 r4+r5).
+     * It read: a concurrent stop reaching the emit before this one finishes
+     * its SD-idle wait consumes the record first, so discards reported after
+     * that point are missing from the printed summary -- and closing it "needs
+     * the teardown to signal completion, which is a larger change than this
+     * round". r4 added that signal in the form the teardown already offers:
+     * the unforced emitter declines while the SD hold is up and
+     * sd_card_manager_IsIdle() is false, so no unforced caller -- racing or
+     * not -- can consume the record before the drain is done. r5 supplied the
+     * missing half, a poll in app_SDCardTask's loop, so the record is still
+     * consumed exactly once when the drain finishes after every stop caller
+     * has returned.
+     *
+     * ⚠ r6 CLOSED THE REST, AND THE PARAGRAPH THAT WAS HERE WAS ALREADY STALE
+     * WHEN WRITTEN. It said the residual stayed open for
+     * Streaming_FlushOwedSessionSummary() on "the paths with no bounded wait
+     * and no later poll (the #397 auto-stop, and Streaming_Start()'s
+     * backstop)" -- a count of two that was wrong in both directions: the
+     * failed-START exit SCPI_StartFailedAfterStop() was a third forcing path,
+     * and "no later poll" had stopped being true in the same round, since r5
+     * added the poll that reaches all of them.
+     *
+     * r6 removed that function. The forced paths are gone, except
+     * Streaming_Start()'s backstop, which must not wait because it is about to
+     * wipe the record -- and it no longer hides that: an early consume prints
+     * "SD teardown incomplete". So the ordering is now either correct or
+     * LABELLED, on every path, and the undercount is no longer silent
+     * anywhere. The bound (STREAMING_SD_HOLD_MAX_MS) is what makes that safe:
+     * a manager parked off-idle delays the summary, it cannot withhold it. */
     if (pRunTimeStreamConfig) {
+        taskENTER_CRITICAL();
         pRunTimeStreamConfig->IsEnabled = false;
+        taskEXIT_CRITICAL();
+    }
+
+    /* #1227: let the encoder finish the iteration it is in before the
+     * teardown below. Streaming_UpdateState() -> Streaming_Start() zeroes the
+     * shared encoder buffer, and a stop running above the Stream task's
+     * priority could do that between the encoder building a packet and
+     * writing it, which sent the final packet as zeros. The encoder re-checks
+     * IsEnabled after raising its in-critical flag, so once it is quiescent it
+     * will not start another packet. Bounded, like the START path's identical
+     * wait: on timeout the teardown proceeds as it always did, and says so. */
+    {
+        const TickType_t qStart = xTaskGetTickCount();
+        while (!Streaming_TasksAreQuiescent()) {
+            if ((xTaskGetTickCount() - qStart) > pdMS_TO_TICKS(200)) {
+                LOG_E("Streaming stop: encoder not quiescent after 200 ms - "
+                      "tearing down anyway (#1227)");
+                break;
+            }
+            vTaskDelay(1);
+        }
     }
 
     Streaming_UpdateState();
@@ -6986,6 +7660,38 @@ static void SCPI_PerformStreamingStop(void) {
         }
     }
 
+    /* #982: emit the deferred session-end loss summary HERE -- after the
+     * SD-idle wait above, so it covers whatever the stop-time SD teardown
+     * (UNMOUNT_DISK) reported via Streaming_ReportSdDiscard() while this
+     * function was waiting. Streaming_UpdateState() above only SNAPSHOTS the
+     * session's counters into the pending record (Streaming_Stop() sets
+     * gSessionRecordPending -- an earlier revision of this comment named
+     * gSessionSummaryPending, which has never existed since r3 replaced the
+     * flag with the record); this is what actually computes and, if
+     * warranted, prints it. On a non-SD session the block above is skipped
+     * entirely and this is reached immediately -- same effective behaviour as
+     * before this fix, one call later.
+     *
+     * #1055 r5: the timed-out case (sdStillBusy) is NO LONGER an undercount
+     * on this path. This call is the UNFORCED emitter, which declines while
+     * the SD hold is up and sd_card_manager_IsIdle() is false, and
+     * app_SDCardTask's loop polls the same emitter every iteration -- so a
+     * teardown that outlives the wait above gets its summary from there,
+     * after the drain, instead of a short one from here. Exactly-once is the
+     * record's test-and-clear, so the two cannot both print. The
+     * "[SD] Streaming stop: SD still finalising" LOG_E and OPER bit 11 above
+     * still record that the WAIT timed out, which is a separate fact from
+     * whether the summary was complete.
+     *
+     * #1055 r6: there is no longer a forcing exception to name here. The only
+     * caller that does not wait is Streaming_Start()'s backstop, which is
+     * about to wipe the record, and it labels an incomplete teardown rather
+     * than passing a short summary off as a whole one. */
+    /* #1055 r3: unconditional again. The record makes this exactly-once and
+     * data-correct whoever calls it, so there is no ownership test left to
+     * make -- see the refuted token above. */
+    Streaming_EmitSessionSummary();
+
     /* #870: the encoder resets that used to be here have MOVED to
      * Streaming_Start()'s enabled-session block, next to the test-pattern
      * counter reset.
@@ -7035,6 +7741,72 @@ static void SCPI_PerformStreamingStop(void) {
  * here, so this comment does not put a non-canonical form into new lines.
  * The disable form SYSTem:STReam:START 0 calls the same body from
  * SCPI_StartStreaming. */
+/* Upper bound on how long a power-off waits for the SD log to finalise, on top
+ * of the stop's own 5 s wait. Long enough for an ordinary close/unmount, short
+ * enough that a wedged card cannot hold a battery shutdown hostage. */
+#define POWER_DOWN_SD_WAIT_MS 10000u
+
+bool SCPI_StopStreamingForPowerDown(void) {
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+    /* Without this the stream kept running in STANDBY with the analog rails
+     * off, and the SD log was never closed: its tail was lost on USB power,
+     * and on battery the card lost power mid-write. */
+    /* Advance the stop generation FIRST, then look at IsEnabled (#1226 audit
+     * r2/r3). A START that has not published IsEnabled yet re-checks the
+     * generation in the critical section that publishes it and refuses; one
+     * that already published is seen below and goes through the ordinary
+     * SYST:STReam:STOP teardown. Reading IsEnabled first left a gap between the
+     * read and the bump for a START to publish through. A START that pins the
+     * generation after this bump sees powerState == STANDBY at its own entry
+     * check: every caller publishes STANDBY before calling here.
+     *
+     * The throughput benchmark's arm checks the generation too (#1226; it
+     * used to ignore its pin), and the shared teardown waits for the encoder
+     * to finish its iteration before clearing its buffer (#1227).
+     *
+     * KNOWN RESIDUAL, narrow and shared with SYST:STReam:STOP, not introduced
+     * here (#1226 audit r4): the ordinary teardown inherits the
+     * Streaming_Start/Streaming_Stop race -- a Streaming_Start preempted
+     * between its IsEnabled check and setting Running is skipped by
+     * Streaming_Stop (which sees Running == false) and then sets Running with
+     * IsEnabled already false. */
+    taskENTER_CRITICAL();
+    gStreamStopGen++;
+    taskEXIT_CRITICAL();
+    /* Stop on SD-log ownership too, not just IsEnabled (#1226 audit r6): a
+     * transport-loss auto-stop clears IsEnabled and stops sampling but leaves
+     * the streaming log's SD session in WRITE with its file open, and the
+     * sub-sector tail is only written by the close this teardown requests. */
+    const sd_card_manager_settings_t* pSdCfg = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_SD_CARD_SETTINGS);
+    const bool streamingLogOpen = (pSdCfg != NULL) &&
+            SCPI_SdWriteIsStreamingLog(pSdCfg);
+    if ((pRunTimeStreamConfig != NULL && pRunTimeStreamConfig->IsEnabled) ||
+        streamingLogOpen) {
+        LOG_I("[POWER] stopping stream and closing SD log before power-down");
+        SCPI_PerformStreamingStop();
+    }
+    /* IsEnabled == false proves sampling stopped, not that the log is closed:
+     * a stop on another transport clears it first and THEN waits for the SD
+     * manager, and a stop whose own wait timed out leaves the close pending.
+     * So wait for both, whoever started them (#1226 audit). */
+    const TickType_t start = xTaskGetTickCount();
+    for (;;) {
+        bool stopInFlight;
+        taskENTER_CRITICAL();
+        stopInFlight = (gStreamStopsActive != 0u);
+        taskEXIT_CRITICAL();
+        if (!stopInFlight && sd_card_manager_IsIdle()) {
+            return true;
+        }
+        if ((xTaskGetTickCount() - start) >= pdMS_TO_TICKS(POWER_DOWN_SD_WAIT_MS)) {
+            return false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
 static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
     (void)context;
     SCPI_PerformStreamingStop();
@@ -7212,16 +7984,26 @@ static scpi_result_t SCPI_GetDataPrecision(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+/* #1153: daqifi_settings_Update() callback shared by SCPI_SaveDataPrecision
+ * and SCPI_SaveDeviceName below -- both have the identical shape (fall
+ * back to factory defaults on a failed load, then always save; the field
+ * each actually persists is auto-captured by SaveToNvm itself, not set
+ * here). */
+static DaqifiSettingsUpdateDecision LoadOrDefaultTopLevelThenSaveFn(
+        DaqifiSettings* settings, bool loaded, void* context) {
+    (void)context;
+    if (!loaded) {
+        daqifi_settings_LoadFactoryDeafult(DaqifiSettings_TopLevelSettings, settings);
+    }
+    return DAQIFI_SETTINGS_UPDATE_SAVE;
+}
+
 static scpi_result_t SCPI_SaveDataPrecision(scpi_t * context) {
     DaqifiSettings settings;
-    memset(&settings, 0, sizeof(DaqifiSettings));
-    // Load existing NVM to preserve other fields (e.g. calVals)
-    if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings, &settings)) {
-        daqifi_settings_LoadFactoryDeafult(DaqifiSettings_TopLevelSettings, &settings);
-    }
-    settings.type = DaqifiSettings_TopLevelSettings;
-    // SaveToNvm captures current precision from runtime config automatically
-    if (!daqifi_settings_SaveToNvm(&settings)) {
+    // SaveToNvm captures current precision from runtime config
+    // automatically. #1153: load + save as one locked sequence.
+    if (!daqifi_settings_Update(DaqifiSettings_TopLevelSettings, &settings,
+            LoadOrDefaultTopLevelThenSaveFn, NULL)) {
         return SCPI_RES_ERR;
     }
     return SCPI_RES_OK;
@@ -7307,17 +8089,11 @@ static scpi_result_t SCPI_GetDeviceName(scpi_t * context) {
 
 static scpi_result_t SCPI_SaveDeviceName(scpi_t * context) {
     DaqifiSettings settings;
-    memset(&settings, 0, sizeof(DaqifiSettings));
-    // Load existing NVM to preserve other TopLevelSettings fields.
-    if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings,
-            &settings)) {
-        daqifi_settings_LoadFactoryDeafult(DaqifiSettings_TopLevelSettings,
-                &settings);
-    }
-    settings.type = DaqifiSettings_TopLevelSettings;
     // SaveToNvm captures the current friendly name from the runtime cache
-    // automatically (same pattern as voltagePrecision).
-    if (!daqifi_settings_SaveToNvm(&settings)) {
+    // automatically (same pattern as voltagePrecision). #1153: load + save
+    // as one locked sequence (LoadOrDefaultTopLevelThenSaveFn, above).
+    if (!daqifi_settings_Update(DaqifiSettings_TopLevelSettings, &settings,
+            LoadOrDefaultTopLevelThenSaveFn, NULL)) {
         return SCPI_RES_ERR;
     }
     return SCPI_RES_OK;
@@ -7502,6 +8278,26 @@ static scpi_result_t SCPI_GetEcho(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+/* SYSTem:IDENtify <0|1>: flash both LEDs (~1 s fast flash, ~1 s off,
+ * repeating) so an operator can see which board a host is talking to. */
+static scpi_result_t SCPI_SetIdentify(scpi_t * context) {
+    int param1;
+    if (!SCPI_ParamInt32(context, &param1, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (param1 < 0 || param1 > 1) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+    UI_SetIdentify(param1 == 1);
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_GetIdentify(scpi_t * context) {
+    SCPI_ResultInt32(context, UI_GetIdentify() ? 1 : 0);
+    return SCPI_RES_OK;
+}
+
 static scpi_result_t SCPI_SetEcho(scpi_t * context) {
     int param1;
     microrl_t* console;
@@ -7650,6 +8446,83 @@ scpi_result_t SCPI_Force5v5PowerStateSet(scpi_t * context) {
 //    return SCPI_RES_OK;
 //}
 
+/* #995: total time SCPI_GetCommandHistory may spend writing while it holds the
+ * shared SCPI response buffer (gScpiRespMutex, #347). Generous on purpose: the
+ * whole reply is at most 19 + SCPI_CMD_HISTORY_SIZE(10) x
+ * (SCPI_CMD_MAX_LENGTH(128) + 6) ~= 1.4 KB against a 16 KB USB / 14 KB WiFi
+ * circular buffer, so on any host that is reading at all this never fires.
+ * It is a backstop for the one case the short-write latch below cannot see. */
+#define SCPI_CMDHISTORY_WRITE_BUDGET_MS  2000U
+
+/* #995: self-gating transport write for SCPI_GetCommandHistory.
+ *
+ * SCPI_GetCommandHistory emits its reply as up to 1 + cmdHistoryCount (<= 11)
+ * separate context->interface->write() calls while holding gScpiRespMutex: it
+ * formats each line into the shared response buffer, so it cannot let go of
+ * the buffer between formatting a line and writing it (a peer callback granted
+ * the mutex in that window would snprintf over the bytes this function is
+ * about to hand to the transport).
+ *
+ * Both transports route write() through SCPI_WriteWithRetry, bounded per call
+ * at SCPI_WRITE_MAX_RETRIES(200) x SCPI_WRITE_RETRY_DELAY_MS(5) ~ 1 s. With
+ * every return value discarded, a host that stopped reading made EVERY one of
+ * those 11 calls burn its own full ~1 s budget -- ~11 s of held mutex, blocking
+ * every other SCPI callback on BOTH transports for the same ~11 s.
+ *
+ * TWO guards, because neither alone bounds the hold:
+ *   (1) short write -> latch. SCPI_WriteWithRetry has no resend path, so a
+ *       short write has already DROPPED those bytes; the reply is truncated at
+ *       that line and the remaining ~10 s buy nothing. Once the transport
+ *       buffer is full it stays full while the host is stalled.
+ *   (2) cumulative deadline. Guard (1) never fires for a transport draining at
+ *       exactly the trickle rate that lets each write finish just inside its
+ *       own ~1 s budget -- all 11 would still run, at ~1 s apiece. Sampling
+ *       one startTick and checking it before each write bounds the hold at
+ *       BUDGET + one write budget (~3 s) regardless of drain pattern.
+ *
+ * Gating lives INSIDE the helper rather than at the call sites so the change is
+ * a mechanical substitution: no early returns, no gotos, and no way to skip the
+ * single SCPI_ResponseBuf_Give() on the way out.
+ *
+ * Deliberately does NOT push a SCPI error itself. SCPI_ErrorPush routes through
+ * SCPI_ErrorEmit -> interface->error -> ANOTHER retry-bounded interface->write
+ * (SCPI_USB_Error / SCPI_TCP_Error), so pushing from here would add ~1 s to the
+ * hold this exists to shrink. The caller returns SCPI_RES_ERR instead and
+ * libscpi's processCommand (parser.c) pushes SCPI_ERROR_EXECUTION_ERROR after
+ * the callback -- and therefore after the Give.
+ *
+ * @param context   libscpi context (supplies the transport write fn)
+ * @param ok        in/out latch; false on entry short-circuits the write, and
+ *                  is cleared here on the first incomplete or over-budget write
+ * @param startTick tick sampled once by the caller right after the take
+ * @param data      bytes to write
+ * @param len       number of bytes
+ */
+static void CmdHistoryWrite(scpi_t * context, bool * ok, TickType_t startTick,
+                            const char * data, size_t len) {
+    if (!*ok) {
+        return;
+    }
+    /* Unsigned tick subtraction: correct across the 32-bit xTaskGetTickCount
+     * wrap (~49.7 days at configTICK_RATE_HZ 1000). Same idiom as SCPI_Reset
+     * and SCPI_SetPowerState above (both use this exact subtraction form). */
+    if ((TickType_t)(xTaskGetTickCount() - startTick) >=
+            pdMS_TO_TICKS(SCPI_CMDHISTORY_WRITE_BUDGET_MS)) {
+        *ok = false;
+        LOG_E("SYST:LOG:CMDH?: transport write budget (%u ms) exhausted "
+              "(host not reading) - reply truncated",
+              (unsigned)SCPI_CMDHISTORY_WRITE_BUDGET_MS);
+        return;
+    }
+    size_t written = context->interface->write(context, data, len);
+    if (written != len) {
+        *ok = false;
+        LOG_E("SYST:LOG:CMDH?: transport write dropped %u of %u bytes "
+              "(host not reading) - reply truncated",
+              (unsigned)(len - written), (unsigned)len);
+    }
+}
+
 static scpi_result_t SCPI_GetCommandHistory(scpi_t * context) {
     UsbCdcData_t* usbSettings = UsbCdc_GetSettings();
 
@@ -7664,6 +8537,14 @@ static scpi_result_t SCPI_GetCommandHistory(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    // #995: every write below goes through CmdHistoryWrite, which latches this
+    // false on the first incomplete or over-budget write and turns the rest
+    // into no-ops. startTick is sampled HERE, after the take, so the budget
+    // covers only the writes -- time spent blocked on the mutex is not this
+    // call's to spend.
+    bool writeOk = true;
+    TickType_t startTick = xTaskGetTickCount();
+
     // Calculate starting position in circular buffer
     int startIdx = (usbSettings->cmdHistoryHead - usbSettings->cmdHistoryCount + SCPI_CMD_HISTORY_SIZE) % SCPI_CMD_HISTORY_SIZE;
 
@@ -7673,7 +8554,7 @@ static scpi_result_t SCPI_GetCommandHistory(scpi_t * context) {
     if (len > 0) {
         size_t wlen = ((size_t)len < SCPI_RESPONSE_BUF_SIZE)
                       ? (size_t)len : (SCPI_RESPONSE_BUF_SIZE - 1);
-        context->interface->write(context, buffer, wlen);
+        CmdHistoryWrite(context, &writeOk, startTick, buffer, wlen);
     }
 
     // Send command history
@@ -7685,12 +8566,12 @@ static scpi_result_t SCPI_GetCommandHistory(scpi_t * context) {
         if (len > 0) {
             size_t wlen = ((size_t)len < SCPI_RESPONSE_BUF_SIZE)
                           ? (size_t)len : (SCPI_RESPONSE_BUF_SIZE - 1);
-            context->interface->write(context, buffer, wlen);
+            CmdHistoryWrite(context, &writeOk, startTick, buffer, wlen);
         }
     }
 
     SCPI_ResponseBuf_Give();
-    return SCPI_RES_OK;
+    return writeOk ? SCPI_RES_OK : SCPI_RES_ERR;
 }
 
 // =============================================================================
@@ -7973,8 +8854,12 @@ static scpi_result_t SCPI_GetMemFree(scpi_t * context) {
      * unless freeHeap >= needed + 1024 -- and on a clamp it keeps the old queue size.
      * SamplePoolCount above is the USABLE depth; without the two fields below the
      * shortfall was announced only in a LOG_E line, so a host saw a depth that
-     * silently disagreed with the partition. Clamped=0 on a device with heap to
-     * spare. Appended, not substituted -- MEM:FREE? is a key=value list and existing
+     * silently disagreed with the partition. Clamped > 0 is NOT by itself a fault
+     * (#1164): in auto mode the partition maximizes to the pool, so a healthy device
+     * whose queue was never asked to grow reports Partitioned > Count with heap to
+     * spare. A refused grow produces the same number, so this field cannot tell the
+     * two apart -- compare SYST:MEM:SAMP:POOL? (the request) with Count instead.
+     * Appended, not substituted -- MEM:FREE? is a key=value list and existing
      * keys keep their meaning.
      *
      * Partitioned == 0 is a FAULT, not a pre-stream state. The pool is partitioned at
@@ -8023,7 +8908,10 @@ static scpi_result_t SCPI_GetMemFree(scpi_t * context) {
 // 16ch default; or the real values after Streaming_BuildChannelMapping.
 // Returns false on partition/quiesce failure (caller pushes the SCPI error).
 // NOTE: duplicates SCPI_MemAutoBalance's body for now — DRY once verified.
-static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
+// idleLayout (#1279): carve the layout the device has when NO stream is being
+// set up -- see SCPI_RestoreIdleSdBuffers. false for every streaming caller.
+static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize,
+                                    bool idleLayout) {
     uint32_t usbSize, wifiSize, sdCircSize;
     uint32_t sdDmaSize, usbDmaSize, wifiDmaSize, encSize;
 
@@ -8060,7 +8948,17 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
                        mc->usbCircularBufSize == 0 &&
                        mc->encoderBufSize == 0 &&
                        mc->samplePoolCount == 0);
-    if (isAutoMode) {
+    /* #1279: auto-balance sizes every region for the stream being set up, so
+     * it starves whatever that stream does not use -- including the SD
+     * circular and SD DMA write buffer when SD is not a consumer. The idle
+     * layout is the fixed-size branch below instead: with an all-zero
+     * MemoryConfig those are the boot SIZES (app_freertos.c's
+     * StreamingBufferPool_Init arguments, and the 64 KB SD, 16 KB USB and
+     * 32 KB WiFi DMA buffers the drivers allocate at init -- the coherent
+     * ORDER differs, the sizes do not), and with a static
+     * SYSTem:MEMory:* config it is the user's sizes, honoured as they are for
+     * a stream. */
+    if (isAutoMode && !idleLayout) {
         Streaming_ComputeAutoBuffers(&usbSize, &wifiSize, &sdCircSize,
                                      &sdDmaSize, &usbDmaSize, &wifiDmaSize, &encSize);
     } else {
@@ -8110,24 +9008,47 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
         return false;
     }
 
-    StreamingBufferPool_Partition(usbSize, wifiSize, encSize,
-                                  sdCircSize, poolCount, sampleElemSize);
-
-    uint8_t *usbBuf, *wifiBuf, *encBuf, *sdCircBuf;
-    uint32_t usbLen, wifiLen, encLen, sdCircLen;
-    StreamingBufferPool_GetUsb(&usbBuf, &usbLen);
-    StreamingBufferPool_GetWifi(&wifiBuf, &wifiLen);
-    StreamingBufferPool_GetEncoder(&encBuf, &encLen);
-    StreamingBufferPool_GetSdCircular(&sdCircBuf, &sdCircLen);
-    if (usbBuf == NULL || wifiBuf == NULL || encBuf == NULL || sdCircBuf == NULL) {
-        LOG_E("PrepareStreamingBuffers: partition failed USB=%u WiFi=%u enc=%u sd=%u",
-              (unsigned)usbLen, (unsigned)wifiLen, (unsigned)encLen, (unsigned)sdCircLen);
-        sd_card_manager_UnlockBuffer();   /* #703: release SD buffer lock on abort */
+    /* #1279: UsbCdc_SetWriteBuffer and wifi_tcp_server_SetWriteBuffer below
+     * reset their rings, discarding any reply still queued in them. An idle
+     * restore runs from inside an SD command, and libscpi writes each reply
+     * into the ring as it is produced and flushes only at the end of the
+     * message, so `*IDN?;:SYST:STOR:SD:GET "x"` (or the command's own echo)
+     * would lose its earlier output. SCPI_RestoreIdleSdBuffers drains both
+     * rings before calling this; this is the authoritative check, at the LAST
+     * point that can still refuse -- after every wait above, immediately
+     * before the re-carve, after which there is no clean way back.
+     *
+     * Producers, once this check passes: the OTHER transport's SCPI task is
+     * gated (SCPI_RestoreIdleSdBuffers raises the SCPICmdGate before its drain
+     * and this check, so no command can start there and none is still
+     * executing -- ScpiCmdGate_OthersIdle); the calling task writes nothing
+     * here; a live stream is excluded by the config claim; SD reply writers by
+     * the buffer lock just taken. The gate is what closes the check-then-act
+     * window across this function's waits (SD idle, the TCP
+     * in-flight wait inside wifi_tcp_server_SetWriteBuffer) -- holding both
+     * wMutexes across them would block the WINC driver's own drain. The guard
+     * fails closed: an idle caller that never raised the gate refuses.
+     * wifi_serial_bridge also writes the USB ring outside any command; it runs
+     * only in the WINC bridge state, where USB is transparent and there is no
+     * TCP client (inferred from its state machine, not driven).
+     *
+     * #1279 r4: for the USB ring this check is FAIL-FAST ONLY. It reads 0 while
+     * the CDC is not in PROCESS, yet DTR rising flips it to PROCESS at any
+     * moment and the USB task then delivers the ring. The authoritative USB
+     * decision is made inside SCPI_SwapCoherentDmaBuffers' suspended span
+     * (UsbCdc_DmaSwapAcquire: refuse a deliverable non-empty ring, discard an
+     * undeliverable one atomically with the swap).
+     *
+     * Idle restores only: the streaming callers re-partition with the same
+     * reset and are left as they were (out of #1279's scope). */
+    if (idleLayout && (!ScpiCmdGate_OthersIdle() ||
+                       UsbCdc_PendingWriteBytes() != 0u ||
+                       wifi_tcp_server_PendingWriteBytes() != 0u)) {
+        LOG_I("PrepareStreamingBuffers: idle restore refused - transport "
+              "output still queued (#1279)");
+        sd_card_manager_UnlockBuffer();
         return false;
     }
-    // NOTE: buffer-pointer Set calls are deferred to the END (after the coherent
-    // DMA allocs also succeed) so a later alloc failure can't leave a partially
-    // applied configuration — all-or-nothing (Qodo #521 transactional setup).
 
     sdDmaSize &= ~(511U);
     if (sdDmaSize < 512) sdDmaSize = 512;
@@ -8146,31 +9067,36 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
         usbDmaSize = USBCDC_DMA_WBUFFER_MIN;
         wifiDmaSize = WIFI_DMA_MIN;
     }
-    if (!SCPI_QuiesceAndResetCoherentPool()) {
+    /* #1279 r3: swap the coherent DMA buffers BEFORE the re-carve, so every
+     * refusal up to and including this one leaves the device as it was. */
+    if (!SCPI_QuiesceSdForDmaResize() ||
+        !SCPI_SwapCoherentDmaBuffers(sdDmaSize, usbDmaSize, wifiDmaSize, idleLayout)) {
+        sd_card_manager_UnlockBuffer();
+        return false;
+    }
+    StreamingBufferPool_Partition(usbSize, wifiSize, encSize,
+                                  sdCircSize, poolCount, sampleElemSize);
+
+    uint8_t *usbBuf, *wifiBuf, *encBuf, *sdCircBuf;
+    uint32_t usbLen, wifiLen, encLen, sdCircLen;
+    StreamingBufferPool_GetUsb(&usbBuf, &usbLen);
+    StreamingBufferPool_GetWifi(&wifiBuf, &wifiLen);
+    StreamingBufferPool_GetEncoder(&encBuf, &encLen);
+    StreamingBufferPool_GetSdCircular(&sdCircBuf, &sdCircLen);
+    if (usbBuf == NULL || wifiBuf == NULL || encBuf == NULL || sdCircBuf == NULL) {
+        LOG_E("PrepareStreamingBuffers: partition failed USB=%u WiFi=%u enc=%u sd=%u",
+              (unsigned)usbLen, (unsigned)wifiLen, (unsigned)encLen, (unsigned)sdCircLen);
         sd_card_manager_UnlockBuffer();   /* #703: release SD buffer lock on abort */
         return false;
     }
-    // Allocate all three coherent DMA buffers; ABORT if any fails rather than
-    // continuing with a stale/unset buffer pointer (Qodo #521).  Unreachable in
-    // normal operation (sizes are clamped to fit the pool above).
-    uint8_t* sdDmaBuf  = CoherentPool_Alloc("SD_write", sdDmaSize);
-    uint8_t* usbDmaBuf = CoherentPool_Alloc("USB_write", usbDmaSize);
-    uint8_t* wifiDmaBuf = CoherentPool_Alloc("WiFi_SPI", wifiDmaSize);
-    if (sdDmaBuf == NULL || usbDmaBuf == NULL || wifiDmaBuf == NULL) {
-        LOG_E("PrepareStreamingBuffers: coherent alloc failed SD=%u USB=%u WIFI=%u",
-              (unsigned)sdDmaSize, (unsigned)usbDmaSize, (unsigned)wifiDmaSize);
-        sd_card_manager_UnlockBuffer();   /* #703: release SD buffer lock on abort */
-        return false;
-    }
-    // All allocations succeeded — now apply every buffer pointer together
-    // (circular pool + coherent DMA) so the config is all-or-nothing.
+    // NOTE: the coherent DMA buffers were swapped above (all-or-nothing, #1279
+    // r3); the circular-pool pointers are applied together here, after the
+    // partition is known good.
+
     UsbCdc_SetWriteBuffer(usbBuf, usbLen);
     wifi_tcp_server_SetWriteBuffer(wifiBuf, wifiLen);
     Streaming_SetEncoderBuffer(encBuf, encLen);
     sd_card_manager_SetCircularBuffer(sdCircBuf, sdCircLen);
-    sd_card_manager_SetWriteBuffer(sdDmaBuf, sdDmaSize);
-    UsbCdc_SetDmaWriteBuffer(usbDmaBuf, usbDmaSize);
-    WDRV_WINC_SPI_SetBuffer(wifiDmaBuf, wifiDmaSize);
     /* #703: swap complete — release the SD buffer lock. Any SD op that armed
      * during the swap was blocked at its read_operation take and now proceeds
      * against the new buffer size. */
@@ -8229,6 +9155,163 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
     return true;
 }
 
+/* #1279: are the SD buffers smaller than the idle layout gives them?
+ *
+ * Pure, on purpose: tests/host splices it out of this file and drives it with
+ * the sizes the real Streaming_ComputeAutoBuffers produces for each interface.
+ *
+ * TWO buffers, because both collapse when a stream does not use SD and either
+ * one alone throttles SD:BENCHmark. The SD circular falls to
+ * STREAMING_SD_CIRCULAR_MIN (4 KB), and the SD DMA write buffer to
+ * SD_CARD_MANAGER_MIN_WBUFFER_SIZE (512 B) -- and the drain extracts at most
+ * one write buffer per card write (sd_card_manager.c, the #738 `wbufCap`
+ * bound), so after a WiFi or USB stream every card write was ONE sector.
+ *
+ * `sdCircConfigured` is MemoryConfig.sdCircularBufSize: 0 in auto mode, else
+ * the user's SYSTem:MEMory:SD:BUFfer, which is then the idle size -- a user who
+ * asked for 4096 gets 4096, and is not re-partitioned for having asked. The
+ * DMA bound is the same in both modes because PrepareStreamingBuffers' fixed
+ * branch always installs SD_CARD_MANAGER_CONF_WBUFFER_SIZE, and every
+ * auto-balanced layout with SD as a consumer installs more than that.
+ *
+ * `<`, never `!=`: a buffer LARGER than idle (an SD session's partition) is
+ * not a defect, and re-carving it would only cost time. */
+static bool SdIdleRestoreDue(uint32_t sdCircNow, uint32_t sdWriteBufNow,
+                             uint32_t sdCircConfigured) {
+    uint32_t sdCircIdle = (sdCircConfigured != 0u)
+            ? sdCircConfigured : SD_CARD_MANAGER_DEFAULT_CIRCULAR_SIZE;
+    return (sdCircNow < sdCircIdle) ||
+           (sdWriteBufNow < SD_CARD_MANAGER_CONF_WBUFFER_SIZE);
+}
+
+/* #1279: give an SD operation the idle-size SD buffers before it arms.
+ *
+ * Auto-balance shrinks the SD buffers for any stream SD does not consume, and
+ * nothing grew them back when that stream stopped, so SD:BENCHmark measured
+ * the leftover partition (~4.5x slow) until the next SD stream or a reboot.
+ *
+ * WHY HERE AND NOT AT STREAM STOP. A stream ends on at least six paths
+ * (SYSTem:STReam:STOP, START 0, the #397 transport-dead auto-stop in the
+ * streaming task, the THRoughput and WiFi-finder teardowns, a failed START),
+ * one of them on the streaming task, which cannot run this: the re-partition
+ * waits for that very task to go quiescent. Restoring at stop would also take
+ * the config claim at the end of EVERY session, so a START sent right after a
+ * STOP on the other transport would be refused -200 by the #977 interlock,
+ * and it would re-carve the pool under an SD session's still-draining
+ * teardown. Asking at the point of use asks about the STATE, which no stop path
+ * can skip, and costs nothing unless the buffers are actually small.
+ *
+ * Under the config-change claim, like SYSTem:MEMory:AUTO -- this is that
+ * re-partition with the idle layout -- so it cannot overlap a session start or
+ * another SYSTem:MEMory:* change on the other transport, and it refuses while a
+ * stream is live. The predicate is asked again under the claim so a restore
+ * that the other transport just finished is not repeated.
+ *
+ * Also refuses while the SD manager has any mode armed: the re-partition's
+ * coherent-pool quiesce forces a WRITE to NONE and waits for the manager to
+ * go idle, which would cancel an armed write or time out behind a FORMAT.
+ *
+ * SEND QUEUED OUTPUT FIRST. The re-partition resets the USB and TCP output
+ * rings (UsbCdc_SetWriteBuffer, wifi_tcp_server_SetWriteBuffer). libscpi
+ * writes every reply into the ring as it is produced and flushes only at the
+ * end of the message, and neither transport task drains its ring while it is
+ * inside a SCPI callback, so at this point the ring can hold an earlier reply
+ * of the same message (`*IDN?;:SYST:STOR:SD:BENCH 1024,0`), this command's own
+ * echo (on by default for both consoles), or a reply of the other transport.
+ * They are pumped out here, bounded, before the re-partition; if any are still
+ * queued at the deadline (a host that is not reading, a stuck WINC) the
+ * restore is refused instead, and PrepareStreamingBuffers re-checks
+ * immediately before its re-carve.
+ *
+ * COMMAND GATE (audit r2). The checks above are check-then-act: the waits
+ * before the reset yield, and the other transport's task could queue a reply
+ * meanwhile. So the restore raises SCPICmdGate for its own transport first; the
+ * other transport defers (not drops) new commands until it is lowered, and a
+ * command already executing is waited out, bounded by the same 500 ms.
+ *
+ * The USB ring is pumped from either task (UsbCdc_PumpWrite is documented safe
+ * cross-task). The TCP ring is pumped only off the USB task: on WifiTask --
+ * the TCP command's own task -- nothing else would send it; on the USB task,
+ * WifiTask's loop sends it while this waits, and pumping it here would make
+ * the USB task block in the WINC driver's send().
+ *
+ * Returns true when the buffers are at idle size (already, or now), false when
+ * they are small and could not be restored. SD:BENCHmark refuses on false,
+ * because measuring the small buffers is the defect; SD:GET proceeds, because
+ * a read through them is correct, only slower, and that includes a GET during
+ * a live non-SD stream, which must keep working. */
+bool SCPI_RestoreIdleSdBuffers(void) {
+    MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
+    if (!SdIdleRestoreDue(StreamingBufferPool_SdCircularSize(),
+                          sd_card_manager_GetWriteBufferSize(),
+                          mc->sdCircularBufSize)) {
+        return true;
+    }
+    if (Streaming_BeginConfigChange() != STREAM_CFG_CLAIM_OK) {
+        return false;
+    }
+    /* Audit r2: raise the OTHER transport's command gate BEFORE the emptiness
+     * check, so a reply cannot be queued between the check and the ring reset
+     * (the waits in between yield). The other transport defers new commands
+     * (processed after Lower, not dropped) and a command already executing is
+     * waited out below. NO `return` between Raise and the final return: the
+     * gate is lowered on every path. It is lowered AFTER the claim is released
+     * so a deferred STR:START cannot meet a still-held claim (false -200). */
+    ScpiCmdGateTransport self = UsbCdc_CallerIsUsbTask() ? SCPI_CMD_GATE_USB
+                                                         : SCPI_CMD_GATE_TCP;
+    bool raised = ScpiCmdGate_Raise(self);
+    bool ok = raised;
+    if (ok && SdIdleRestoreDue(StreamingBufferPool_SdCircularSize(),
+                               sd_card_manager_GetWriteBufferSize(),
+                               mc->sdCircularBufSize)) {
+        ok = !sd_card_manager_IsBusy();
+        TickType_t drainStart = xTaskGetTickCount();
+        while (ok) {
+            /* Read FIRST: once true, no other-transport command can start, so
+             * the pending counts read next include all of its output. */
+            bool othersIdle = ScpiCmdGate_OthersIdle();
+            bool usbQueued = (UsbCdc_PendingWriteBytes() != 0u);
+            bool wifiQueued = (wifi_tcp_server_PendingWriteBytes() != 0u);
+            if (othersIdle && !usbQueued && !wifiQueued) {
+                break;
+            }
+            if ((xTaskGetTickCount() - drainStart) > pdMS_TO_TICKS(500)) {
+                ok = false;
+                break;
+            }
+            if (usbQueued) {
+                UsbCdc_PumpWrite();
+            }
+            if (wifiQueued && !UsbCdc_CallerIsUsbTask()) {
+                (void)wifi_tcp_server_TransmitBufferedData();
+            }
+            vTaskDelay(1);
+        }
+        /* The command waited out above may have armed an SD op. */
+        ok = ok && !sd_card_manager_IsBusy();
+        ok = ok &&
+             PrepareStreamingBuffers(mc->samplePoolCount
+                                         ? mc->samplePoolCount
+                                         : DEFAULT_AIN_SAMPLE_COUNT,
+                                     0, true);
+        /* A true return from the re-partition means the allocations and
+         * sample slots succeeded, NOT that the SD buffers got their idle
+         * size: an oversubscribed static SYSTem:MEMory:* config (e.g. SD, USB
+         * and WIFI buffers all 65536) makes StreamingBufferPool_Partition log
+         * and fall back to its minimums (StreamingBufferPool.c:236-242),
+         * including a 4 KB SD circular. Ask the predicate again, so that is
+         * reported as "could not restore" and SD:BENCHmark refuses. */
+        ok = ok && !SdIdleRestoreDue(StreamingBufferPool_SdCircularSize(),
+                                     sd_card_manager_GetWriteBufferSize(),
+                                     mc->sdCircularBufSize);
+    }
+    Streaming_EndConfigChange();
+    if (raised) {
+        ScpiCmdGate_Lower(self);
+    }
+    return ok;
+}
+
 static scpi_result_t SCPI_MemAutoBalanceClaimed(scpi_t * context) {
     /* #857: the stream-state rejection lives in this command's
      * SCPI_MemRunClaimed wrapper below, not here. */
@@ -8240,7 +9323,7 @@ static scpi_result_t SCPI_MemAutoBalanceClaimed(scpi_t * context) {
     // StartStreamData stays in auto mode.  poolCount/elemSize 0/0 = generic
     // 16ch default (actual channel count isn't known until StartStreamData).
     memset(mc, 0, sizeof(MemoryConfig));
-    if (!PrepareStreamingBuffers(0, 0)) {
+    if (!PrepareStreamingBuffers(0, 0, false)) {
         SCPI_ExecutionError(context, "SYST:MEM:AUTO: buffer partition failed");
         return SCPI_RES_ERR;
     }
@@ -8695,10 +9778,14 @@ static void EmitAoutChannelJson(scpi_t* context,
         (unsigned)ch->DaqifiDacChannelId,
         (unsigned)ao->resolutionBits);
 
+    /* user_override_supported is false (#1202): since #993/#1002 every
+     * CONF:DAC calibration command (CHANCALM/B, SAVE/LOAD[F]cal, USECal)
+     * is routed to SCPI_NotImplemented and answers -200, so a client that
+     * trusted true would be told it can do something every setter refuses. */
     scpi_printf(context,
         "\"ranges\":[{\"min\":%.3f,\"max\":%.3f}],"
         "\"calibration\":{\"model\":\"linear\","
-        "\"user_override_supported\":true},"
+        "\"user_override_supported\":false},"
         "\"extensions\":{}}",
         ao->moduleMinVoltage, ao->moduleMaxVoltage);
 }
@@ -8722,10 +9809,12 @@ static void EmitDioChannelJson(scpi_t* context,
 
     if (dio->IsPwmCapable) {
         /* PWM freq/res reflect OCMP HAL support
-         * (HAL/DIO.c:DIO_PWMFrequencySet, 16-bit OCMP timer). */
+         * (HAL/DIO.c:DIO_PWMFrequencySet, 16-bit OCMP timer). The floor is
+         * the one DIO:PWM:FREQ enforces (#902), not a literal. */
         scpi_printf(context,
-            "\"pwm\":{\"min_freq_hz\":1,\"max_freq_hz\":50000,"
-            "\"resolution_bits\":16}},\"extensions\":{}}");
+            "\"pwm\":{\"min_freq_hz\":%u,\"max_freq_hz\":50000,"
+            "\"resolution_bits\":16}},\"extensions\":{}}",
+            (unsigned)DIO_PwmMinFrequencyHz());
     }
 }
 
@@ -8839,8 +9928,8 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
      * actually stream on. When ActiveInterface is still the default USB (or already
      * matches the detected connection), START will auto-detect this connection — so
      * advertise the cap for the DETECTED interface, computed WITHOUT mutating the
-     * shared runtime config (#524 Qodo). Skip when no channels are enabled
-     * (st.maxFreqHz == 0). */
+     * shared runtime config (#524 Qodo). Skip when there is no streaming
+     * input (st.maxFreqHz == 0). */
     if (st.maxFreqHz > 0) {
         StreamingRuntimeConfig* scq =
             BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
@@ -8861,8 +9950,10 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
          * other SCPI transport can disable the last channel in between, and the
          * zero-channel branch of the cap deliberately returns ISR_MAX rather
          * than 0. Without this check the blob would advertise a healthy rate,
-         * and non-zero terms, for a device with no inputs. */
-        if (terms.totalChannels > 0) {
+         * and non-zero terms, for a device with no inputs. "Inputs" includes
+         * DIO alone, which START accepts (#1202) -- the same predicate as
+         * Capabilities_GetStreamingSummary, so the two gates cannot disagree. */
+        if (Capabilities_HasStreamingInput(terms.totalChannels)) {
             st.maxFreqHz        = ifaceMaxHz;
             st.capAdcAdditiveHz = terms.adcAdditiveHz;
             st.capTransportHz   = terms.transportHz;
@@ -8924,9 +10015,146 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
         cfg->boardHardwareRev);
 
     scpi_printf(context,
-        "\"usb\":{\"vid\":%u,\"pid\":%u,\"class\":\"CDC\"}},",
+        "\"usb\":{\"vid\":%u,\"pid\":%u,\"class\":\"CDC\"},",
         (unsigned)0x04D8,   /* Microchip VID (matches usb_device_init_data) */
         (unsigned)0xF794);  /* DAQiFi Nyquist PID */
+
+    /* #908: factory-cal provenance. TWO KEYS ANSWERING TWO DIFFERENT
+     * QUESTIONS -- they were both derived from one boolean, which is the
+     * defect Qodo reported as item 3 ("failed saves report identity
+     * defaults").
+     *
+     *   factory_present : is the factory NVM SLOT populated? True from boot's
+     *                     factory-cal load, or as soon as a CONF:ADC:SAVEFcal
+     *                     succeeds (CalSaveCommon clears the flag
+     *                     immediately, so this need not wait for a reboot).
+     *                     Unchanged -- the flag answers this correctly.
+     *
+     *   source          : which coefficients are IN EFFECT. The flag does not
+     *                     answer this, and using it to do so reported NO
+     *                     CALIBRATION after a FAILED SAVEFcal while the
+     *                     unchanged non-identity coefficients were still
+     *                     being applied to every reading.
+     *
+     * ⭐ source is now derived from the live runtime array plus the bank the
+     * last successful load came from, and it has FOUR values. Two cannot
+     * cover the reachable states -- enumerating {slot populated?, bank
+     * selected, live coefficients identity?} gives 8 reachable combinations,
+     * of which the old flag-only scheme misreported 5 and a two-valued
+     * factory|none pair still misreported 2: with USECal 1 and real user
+     * coefficients, "factory" is false and "none" is false, so a two-valued
+     * key has no legal value for the state and must collapse it into a wrong
+     * one. Verified on hardware rather than argued: with the factory bank at
+     * CalM 1.25 and the user bank at 2.5, USECal 0 reports "factory" and
+     * USECal 1 reports "user" -- the row a two-valued key cannot express.
+     *
+     * Operator ruling, 2026-10-25 (item 3), verbatim: "the three values are
+     * fine, but perhaps identity should be \"none\" instead." Hence "none"
+     * rather than "identity" on the wire. The internal helper keeps the name
+     * daqifi_settings_CalIsIdentity: it describes the arithmetic, not the
+     * reported value. The rename costs no compatibility -- origin/main emits
+     * no source key at all, so this PR introduces it, and no client checkout
+     * here reads it.
+     *
+     * Operator ruling, 2026-10-27: a FOURTH value, "unknown", for the
+     * unstable-read path ONLY. The first three are all positive claims about
+     * the coefficients; "unknown" is the absence of a claim, and mixing it in
+     * with them is the one thing a reader of this list must not do.
+     *
+     *   "none"     : live CalM==1/CalB==0 on every channel, whatever the
+     *                selection -- readings are unscaled. Note this is the
+     *                honest answer for a factory bank that loaded fine and
+     *                CONTAINS identity, which is the state of both bench
+     *                boards on this station.
+     *   "user"     : non-identity coefficients from the USER bank (USECal 1).
+     *   "factory"  : non-identity coefficients from the FACTORY bank.
+     *   "unknown"  : the seqlock reader could not obtain a coherent view in 3
+     *                attempts, so NOTHING was established about the
+     *                coefficients. ⛔ NOT a synonym for "none" and NOT an
+     *                error: a client seeing it should re-query, never
+     *                substitute a value. Reachable only while a bank load is
+     *                in flight -- which is exactly when real coefficients are
+     *                being installed, so reporting "none" here (what this did
+     *                before r10) told a client the device was uncalibrated at
+     *                the precise moment it was becoming calibrated.
+     *
+     * ⚠ chanCALM/chanCALB can still overlay individual channels after a load;
+     * source then names the bank the overlay was applied on top of, which is
+     * the closest true statement a single key can make about provenance.
+     * The second closing brace closes identity{}. */
+    /* #1185 r1: factory_present and factory_slot from ONE load, so the pair
+     * is one the device actually had. */
+    bool factoryCalMissing = false;
+    const DaqifiFactorySlotState factorySlotState =
+        daqifi_settings_GetFactoryCal(&factoryCalMissing);
+    /* ONE coherent read, not two. Pairing CalIsIdentity() with
+     * GetActiveCalBank() here let a higher-priority LOADcal/LOADFcal land
+     * between them and produce a source the device never had -- codex-r6
+     * findings 2+3. daqifi_settings_GetCalSource does both coherently. */
+    /* ⚠ EVERY value spelled out, and `default` answers "unknown" -- NOT
+     * "none". Both halves of that matter, and the previous form got both
+     * wrong:
+     *
+     *   switch (...) { case FACTORY: ...; case USER: ...; default: "none"; }
+     *
+     * Adding DAQIFI_CAL_SOURCE_UNKNOWN to the enum would have been absorbed
+     * SILENTLY by that `default` and reported as "none" -- the exact collapse
+     * the new value exists to prevent -- and -Wswitch cannot warn, because a
+     * `default` arm makes the switch exhaustive by definition. A reviewer
+     * reading the enum would see four values and a switch that handles them
+     * all.
+     *
+     * So: all four named, and the unreachable fallthrough reports "unknown"
+     * because that is the fail-safe direction. An enum value this code has
+     * never heard of is a thing we know nothing about, which is what "unknown"
+     * says; "none" would assert the coefficients are identity on the strength
+     * of a value we could not interpret. */
+    const char * calSource;
+    switch (daqifi_settings_GetCalSource(&rt->AInChannels)) {
+        case DAQIFI_CAL_SOURCE_FACTORY: calSource = "factory"; break;
+        case DAQIFI_CAL_SOURCE_USER:    calSource = "user";    break;
+        case DAQIFI_CAL_SOURCE_NONE:    calSource = "none";    break;
+        case DAQIFI_CAL_SOURCE_UNKNOWN: calSource = "unknown"; break;
+        default:                        calSource = "unknown"; break;
+    }
+    /* #1185: factory_slot answers a THIRD question the two keys above
+     * cannot -- WHY the slot is not populated: "blank" (erased, normal on a
+     * new unit) vs "invalid" (holds data that failed validation, needs
+     * attention). Every value spelled out; the fallthrough is "unknown",
+     * never "blank", for the same reason as calSource above. Appended after
+     * factory_present so existing parsers are unaffected. */
+    const char * factorySlot;
+    switch (factorySlotState) {
+        case DAQIFI_FACTORY_SLOT_BLANK:   factorySlot = "blank";   break;
+        case DAQIFI_FACTORY_SLOT_VALID:   factorySlot = "valid";   break;
+        case DAQIFI_FACTORY_SLOT_INVALID: factorySlot = "invalid"; break;
+        case DAQIFI_FACTORY_SLOT_UNKNOWN: factorySlot = "unknown"; break;
+        default:                          factorySlot = "unknown"; break;
+    }
+    scpi_printf(context,
+        "\"cal\":{\"factory_present\":%s,\"factory_slot\":\"%s\","
+        "\"source\":\"%s\","
+        "\"cal_channel_ids\":[",
+        factoryCalMissing ? "false" : "true",
+        factorySlot,
+        calSource);
+
+    /* #1272: every channel ID the calibration commands accept, store and
+     * return -- the public inputs AND the monitoring channels 248..255 that
+     * channels[] below deliberately omits (listing them there would advertise
+     * them as inputs a client can use). A backup/restore client iterates
+     * this list instead of hard-coding a per-variant ID table. The IDs are
+     * the board config's DaqifiAdcChannelId: the same key
+     * ADC_FindChannelIndex resolves for CONF:ADC:CHANCALM?, so the set is
+     * exactly the IDs for which that query answers without error. Board
+     * config is immutable, so no critical section is needed. */
+    uint32_t calIdCount = (cfg->AInChannels.Size < MAX_AIN_CHANNEL)
+        ? cfg->AInChannels.Size : MAX_AIN_CHANNEL;
+    for (uint32_t i = 0; i < calIdCount; i++) {
+        scpi_printf(context, "%s%u", (i == 0) ? "" : ",",
+                    (unsigned)cfg->AInChannels.Data[i].DaqifiAdcChannelId);
+    }
+    scpi_printf(context, "]}},");
 
     /* ---- channels[] array (flat, kind-grouped) ----
      * Order: all analog-input first (sorted by DaqifiAdcChannelId
@@ -9409,6 +10637,7 @@ static scpi_result_t SCPI_DiagSpiBusStatsGet(scpi_t * context)
 {
     extern void DRV_SPI_GetRejectCounters(uint32_t *stale, uint32_t *exclusive,
                                           uint32_t *lockFail, uint32_t *queueFull);
+    extern uint32_t nm_spi_rsp_state_errors(void);   /* nmspi.h; #1262 */
     uint32_t st, ex, lk, qf;
     DRV_SPI_GetRejectCounters(&st, &ex, &lk, &qf);
 
@@ -9426,27 +10655,31 @@ static scpi_result_t SCPI_DiagSpiBusStatsGet(scpi_t * context)
     sdHolds = app_SDCard_HoldsSpiBus();
     recovered = app_SDCard_BusRecoveryCount();
     holdMaxMs = app_SDCard_BusHoldMaxMs();  // #930
+    /* #1262: WiFi command-response state bytes that were not 0x00. The WINC
+     * driver retries them silently; a nonzero count is the shared-bus
+     * corruption #1262 traced to an SD card still driving MISO. */
+    uint32_t rspErr = nm_spi_rsp_state_errors();
 
-    /* 224, not 192: the worst case is 219 characters plus the NUL (220),
-     * which 192 truncates. Field-by-field, with every counter at its
-     * 10-digit maximum -- RejStale 20, RejExclusive 24, RejLock 19,
-     * RejQueueFull 24, ExclusiveHeld 16, ExclusiveDepth 26,
-     * ExclusiveHolder 25, SdHoldsBus 13, SdBusRecoveries 27,
-     * SdBusHoldMaxMs 25 (no trailing comma, it is now last). Recompute
-     * this if a field is added. Stays a stack local rather than the
+    /* 248: the worst case is 241 characters plus the NUL (242).
+     * Field-by-field, with every counter at its 10-digit maximum --
+     * RejStale 20, RejExclusive 24, RejLock 19, RejQueueFull 24,
+     * ExclusiveHeld 16, ExclusiveDepth 26, ExclusiveHolder 25,
+     * SdHoldsBus 13, SdBusRecoveries 27, SdBusHoldMaxMs 26, WincRspErr 21
+     * (no trailing comma, it is last). Recompute this if a field is added. Stays a stack local rather than the
      * shared response buffer because it is under the 256 B threshold
      * that rule applies to. */
-    char out[224];
+    char out[248];
     snprintf(out, sizeof(out),
              "RejStale=%lu,RejExclusive=%lu,RejLock=%lu,RejQueueFull=%lu,"
              "ExclusiveHeld=%u,ExclusiveDepth=%lu,ExclusiveHolder=%08lx,"
-             "SdHoldsBus=%u,SdBusRecoveries=%lu,SdBusHoldMaxMs=%lu",
+             "SdHoldsBus=%u,SdBusRecoveries=%lu,SdBusHoldMaxMs=%lu,"
+             "WincRspErr=%lu",
              (unsigned long)st, (unsigned long)ex, (unsigned long)lk,
              (unsigned long)qf,
              (unsigned)(held ? 1U : 0U), (unsigned long)depth,
              (unsigned long)holder,
              (unsigned)(sdHolds ? 1U : 0U), (unsigned long)recovered,
-             (unsigned long)holdMaxMs);
+             (unsigned long)holdMaxMs, (unsigned long)rspErr);
     SCPI_ResultText(context, out);
     return SCPI_RES_OK;
 }
@@ -9563,6 +10796,8 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:LOG:CMDHistory?", .callback = SCPI_GetCommandHistory,},
     {.pattern = "SYSTem:ECHO", .callback = SCPI_SetEcho,},
     {.pattern = "SYSTem:ECHO?", .callback = SCPI_GetEcho,},
+    {.pattern = "SYSTem:IDENtify", .callback = SCPI_SetIdentify,},
+    {.pattern = "SYSTem:IDENtify?", .callback = SCPI_GetIdentify,},
     //    {.pattern = "SYSTem:NVMRead?", .callback = SCPI_NVMRead, },  
     //    {.pattern = "SYSTem:NVMWrite", .callback = SCPI_NVMWrite, }, 
     //    {.pattern = "SYSTem:NVMErasePage", .callback = SCPI_NVMErasePage, },
@@ -9891,6 +11126,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:MEMory:STACk?", .callback = SCPI_GetStackStats,},
     //
     {.pattern = "SYSTem:STORage:SD:FILE", .callback = SCPI_StorageSDLoggingSet,},
+    {.pattern = "SYSTem:STORage:SD:FILE?", .callback = SCPI_StorageSDLoggingGet,},   /* #1176 */
     {.pattern = "SYSTem:STORage:SD:GET", .callback = SCPI_StorageSDGetData},
     {.pattern = "SYSTem:STORage:SD:CRC", .callback = SCPI_StorageSDCrcStart,},
     {.pattern = "SYSTem:STORage:SD:CRC?", .callback = SCPI_StorageSDCrcGet,},
@@ -9923,6 +11159,8 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:STORage:SD:MINFree?", .callback = SCPI_StorageSDMinFreeGet},  // #498
     {.pattern = "SYSTem:STORage:SD:SPACe?", .callback = SCPI_StorageSDSpaceGet},
     {.pattern = "SYSTem:STORage:SD:ABORt", .callback = SCPI_StorageSDAbort},
+    {.pattern = "SYSTem:STORage:SD:PROTect", .callback = SCPI_StorageSDProtectSet,},   /* #1217 */
+    {.pattern = "SYSTem:STORage:SD:PROTect?", .callback = SCPI_StorageSDProtectGet,},  /* #1217 */
     {.pattern = "SYSTem:STORage:SD:INFO?", .callback = SCPI_StorageSDInfo},
     // DIO debug probe framework
     {.pattern = "SYSTem:DIOProbe:MODE", .callback = SCPI_DioProbeModeSet,},
@@ -9942,8 +11180,8 @@ static const scpi_command_t scpi_commands[] = {
 
 /* #1004: total time SCPI_Help may spend writing while it holds the shared
  * SCPI response buffer (gScpiRespMutex, #347). Same budget and same
- * reasoning as the SCPI_CMDHISTORY_WRITE_BUDGET_MS #995 proposes on the
- * still-open PR #1008 -- that constant is NOT in this tree: generous against a
+ * reasoning as SCPI_CMDHISTORY_WRITE_BUDGET_MS (#995, PR #1008 -- defined
+ * a couple thousand lines above in this same file): generous against a
  * normally-reading host (HELP's whole reply is a few KB against a 16 KB
  * USB / 14 KB WiFi circular buffer), tight enough to bound a stalled one. */
 #define SCPI_HELP_WRITE_BUDGET_MS  2000U
@@ -9962,17 +11200,15 @@ static const scpi_command_t scpi_commands[] = {
  * With every return value discarded (the pre-#1004 shape), a host that
  * stopped reading made EVERY one of those ~5-7 calls burn its own full ~1 s
  * budget -- ~5-7 s of held mutex, blocking every other SCPI callback on BOTH
- * transports for the same span. Two sibling callbacks carried the same defect:
- * SCPI_SysInfoTextGet (#947) and SCPI_GetCommandHistory (#995). #947's fix
- * LANDED (PR #992 merged -- SysInfoText_Write above now carries the same two
- * guards), but #995's PR #1008 IS STILL OPEN as of this commit, so
- * SCPI_GetCommandHistory's ~11 s hold is LIVE in this tree -- do not read this
- * comment as saying the class is closed. #1004 records why each site carries
- * its own small helper instead of one shared generic one.
+ * transports for the same span. Two sibling callbacks carried the same
+ * defect and now carry the same shape of fix, each its own small helper
+ * rather than one shared generic one (why is #1004's to record):
+ * SCPI_SysInfoTextGet's SysInfoText_Write (#947, PR #992, merged) and
+ * SCPI_GetCommandHistory's CmdHistoryWrite (#995, PR #1008, a couple
+ * thousand lines above in this same file).
  *
  * TWO guards, because neither alone bounds the hold (the same two-guard
- * algebra #995 proposes for CmdHistoryWrite on PR #1008; that helper does
- * not exist in this tree yet):
+ * algebra CmdHistoryWrite uses, #995/PR #1008, above in this file):
  *   (1) short write -> latch. SCPI_WriteWithRetry has no resend path, so a
  *       short write has already DROPPED those bytes; the reply is truncated
  *       at that chunk and the remaining budget buys nothing.
@@ -10175,4 +11411,103 @@ scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context,
 
     // Return it to the app
     return daqifiScpiContext;
+}
+
+/* #914: the SD manager's deferred error codes are plain ints (sd_card_manager.h
+ * has no SCPI dependency); pin each against the real libscpi value so the two
+ * headers cannot drift apart silently. */
+_Static_assert(SD_ASYNC_ERR_FILE_NOT_FOUND == SCPI_ERROR_FILE_NAME_NOT_FOUND,
+               "#914: the SD manager's deferred code must match the libscpi one");
+_Static_assert(SD_ASYNC_ERR_FILE_NAME_ERROR == SCPI_ERROR_FILE_NAME_ERROR,
+               "#914: the SD manager's deferred code must match the libscpi one");
+_Static_assert(SD_ASYNC_ERR_MASS_STORAGE == SCPI_ERROR_MASS_STORAGE_ERROR,
+               "#914: the SD manager's deferred code must match the libscpi one");
+
+/* #914: drain the SD task's deferred failure (see sd_card_manager_LatchAsyncError)
+ * into THIS transport's own queue.
+ *
+ * Called at the command boundary, BEFORE SCPI_Input, and that placement is
+ * load-bearing: processCommand() clears context->cmd_error on entry
+ * (libscpi/src/parser.c), so a push made here cannot make the FOLLOWING
+ * command's own SCPI_RES_OK read as a failure. Pushed from inside a callback
+ * instead it would (a set cmd_error turns SCPI_Input's result FALSE even on
+ * SCPI_RES_OK, and that FALSE is what gates USB's immediate-flush path) — so
+ * this must run once per command, ahead of dispatch, never inside one. */
+void SCPI_DrainDeferredSdError(scpi_t *context) {
+    if (context == NULL) {
+        return;
+    }
+    const bool isTcp = wifi_tcp_server_ContextIsTcp(context);
+    const sd_card_manager_reply_target_t target =
+            isTcp ? SD_CARD_REPLY_WIFI_TCP : SD_CARD_REPLY_USB;
+    /* #599's connection generation, asked of the transport at DRAIN time. The
+     * failure was latched against the connection that ARMED the GET; if that
+     * client is gone and this context now serves its successor on the single
+     * TCP slot, the two will not match and TakeAsyncError discards instead of
+     * handing over someone else's error. USB has no such identity, so it
+     * latches 0 and takes 0 and the comparison is a no-op there -- one code
+     * path, no special case. Mirrors the check sd_card_manager_DataReadyCB
+     * already makes on the streamed reply (app_freertos.c). */
+    const uint32_t generation = isTcp ? wifi_tcp_server_GetConnGeneration() : 0u;
+    const int32_t err = sd_card_manager_TakeAsyncError(target, generation);
+    if (err != 0) {
+        /* ⛔ QUEUE-ONLY. A bare SCPI_ErrorPush here CORRUPTED THE NEXT
+         * SUCCESSFUL DOWNLOAD (codex audit on #1106, HIGH, both legs).
+         *
+         * SCPI_ErrorPush is not queue-only in this firmware: SCPI_ErrorPushEx
+         * calls SCPI_ErrorEmit (error.c:193 -> :78-84), which synchronously
+         * calls context->interface->error(context, err) whenever that callback
+         * is non-NULL -- and BOTH transports register one (UsbCdc.c
+         * .error = SCPI_USB_Error, wifi_tcp_server.c .error = SCPI_TCP_Error)
+         * that formats "**ERROR: %d, \"%s\"\r\n" and writes it straight to the
+         * wire. Because this runs at the command boundary, that write lands
+         * immediately BEFORE the next command's response:
+         *
+         *   SYST:STOR:SD:GET "missing.bin"   -> __END_OF_FILE__   (error latched)
+         *   SYST:STOR:SD:GET "good.bin"      -> **ERROR: -256, "File name not
+         *                                       found"\r\nABC__END_OF_FILE__
+         *
+         * A marker-delimited binary receiver then stores the error line as the
+         * leading bytes of good.bin, or rejects a valid download on a size/CRC
+         * mismatch. No pipelining and no race required, and it falsified this
+         * PR's own claim that deferring to a command boundary keeps errors out
+         * of the data stream: it moved the corruption from THIS download to
+         * the NEXT one.
+         *
+         * ⭐ The remedy is this file's own established pattern, not a new one:
+         * #965 hit exactly this (SCPIInterface.c:3927 documents it, naming the
+         * same two callbacks and the same format string) and fixed it by
+         * swapping context->interface for a stack-local copy with .error
+         * nulled. SCPI_ErrorPushEx still updates the error queue, the ESR bits
+         * and cmd_error unconditionally (error.c:179-199) -- none of which
+         * reads context->interface -- so SYSTem:ERR? still reports -256
+         * exactly as before, with no transport write.
+         *
+         * .control is deliberately left pointing at the real callback, for the
+         * reason #965 records: SCPI_ErrorEmit also sets STB_QMA, and
+         * SCPI_RegSet's STB/SRE handling can reach interface->control(...)
+         * (ieee488.c:170-186). Both registered .control callbacks are no-ops
+         * in this firmware -- SCPI_TCP_Control and SCPI_USB_Control each
+         * return SCPI_RES_OK with every write commented out, re-verified here
+         * -- so nulling .error alone covers every transport-writing path we
+         * actually have. ⚠ If either .control is ever made to write, this swap
+         * must null it too, or move to a fully-NULL local interface.
+         *
+         * Bounded under one critical section: info is NULL, so
+         * SCPI_ErrorAddInternal never calls SCPIDEFINE_strndup -- one fifo_add
+         * plus a few register writes, no allocation.
+         *
+         * cmd_error needs no save/restore: processCommand() clears it on entry
+         * (parser.c:137) and this runs BEFORE SCPI_Input, which is the same
+         * placement argument the comment above already rests on. */
+        scpi_interface_t * const realInterface = context->interface;
+        scpi_interface_t queueOnlyInterface;
+        taskENTER_CRITICAL();
+        queueOnlyInterface = *realInterface;
+        queueOnlyInterface.error = NULL;
+        context->interface = &queueOnlyInterface;
+        SCPI_ErrorPush(context, (int16_t)err);
+        context->interface = realInterface;
+        taskEXIT_CRITICAL();
+    }
 }

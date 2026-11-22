@@ -107,13 +107,26 @@ void Capabilities_GetDioSummary(CapabilitiesDioSummary* out) {
     }
 }
 
+bool Capabilities_HasStreamingInput(uint16_t analogCount) {
+    if (analogCount > 0) return true;
+    /* #1202: START accepts DIO alone (SCPI_StartStreamingClaimed's
+     * hasEnabledChannels), and the cap it applies is the cap computation's
+     * zero-analog branch. One aligned bool read, so it cannot tear; the flag
+     * is not an input to the cap computation, so reading it separately
+     * cannot desync published terms from the published composite. */
+    const bool* pDioEnable = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_DIO_GLOBAL_ENABLE);
+    return (pDioEnable != NULL && *pDioEnable);
+}
+
 void Capabilities_GetStreamingSummary(CapabilitiesStreamingSummary* out) {
     if (out == NULL) return;
     memset(out, 0, sizeof(*out));
 
-    /* 0 public channels → no valid streaming rate. Reporting the
-     * ISR ceiling in that state would advertise rates that
-     * StartStreamData would reject. */
+    /* No streaming input → no valid streaming rate. Reporting the ISR
+     * ceiling in that state would advertise rates that StartStreamData
+     * would reject. "Input" is START's own test, not the analog count:
+     * START also accepts DIO alone (BOARDRUNTIMECONFIG_DIO_GLOBAL_ENABLE)
+     * and applies the cap computed below to it (#1202). */
     /* Use ComputeMaxFreqForConfig (#524) so current_max_rate_hz matches the rate
      * StartStreamData actually applies — it now includes the per-interface,
      * per-format TRANSPORT cap, not just the channel-count/ADC terms. Without
@@ -131,15 +144,16 @@ void Capabilities_GetStreamingSummary(CapabilitiesStreamingSummary* out) {
      * callee's zero-channel branch deliberately returns ISR_MAX rather than 0.
      * The published document would then advertise a healthy rate, and non-zero
      * cap terms, for a device with no inputs at all. One count now decides both
-     * WHETHER to publish and WHAT to publish, so the two cannot disagree.
+     * WHETHER to publish (with the DIO flag, via Capabilities_HasStreamingInput)
+     * and WHAT to publish, so the two cannot disagree.
      *
      * memset above already left maxFreqHz and every term 0, which is exactly
-     * the report the no-channel case needs -- no valid rate, so no binding
+     * the report the no-input case needs -- no valid rate, so no binding
      * term. */
     StreamingCapTerms terms;
     memset(&terms, 0, sizeof(terms));
     uint32_t maxFreqHz = Streaming_ComputeMaxFreqTermsForConfig(&terms);
-    if (terms.totalChannels > 0) {
+    if (Capabilities_HasStreamingInput(terms.totalChannels)) {
         out->maxFreqHz        = maxFreqHz;
         out->capAdcAdditiveHz = terms.adcAdditiveHz;
         out->capTransportHz   = terms.transportHz;

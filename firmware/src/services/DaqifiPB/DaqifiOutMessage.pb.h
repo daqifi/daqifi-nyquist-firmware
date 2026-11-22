@@ -64,8 +64,8 @@ typedef struct _DaqifiOutMessage { /* Put repetitive information in first 15 fie
     float analog_in_port_range[16]; /* Analog in port voltage range (volts span:RSE 0 to range, NON-RSE -(range/2) to (range/2)) */
     pb_size_t analog_in_port_range_priv_count;
     float analog_in_port_range_priv[8]; /* Private analog in port voltage range (volts span:RSE 0 to range, NON-RSE -(range/2) to (range/2)) */
-    uint32_t analog_in_res; /* Public analog in (ADC) resolution (bits used to convert from integer value to volts) */
-    uint32_t analog_in_res_priv; /* Private analog in (ADC) resolution (bits used to convert from integer value to volts) */
+    uint32_t analog_in_res; /* Public analog in (ADC) resolution as a CODE COUNT, not a bit width (12-bit -> 4096, 18-bit -> 262144). Scale: raw / analog_in_res * analog_in_port_range */
+    uint32_t analog_in_res_priv; /* Private analog in (ADC) resolution as a CODE COUNT, not a bit width (see analog_in_res) */
     pb_size_t analog_in_int_scale_m_count;
     float analog_in_int_scale_m[16]; /* Analog in port internal scale m value (should be applied to integer value before converting to volts) */
     pb_size_t analog_in_int_scale_m_priv_count;

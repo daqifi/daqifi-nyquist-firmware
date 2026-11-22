@@ -123,8 +123,18 @@ bool DIO_PWMDutyCycleSetSingle(uint8_t dataIndex);
 /*!
  * Set frequency of the PWM timer
  * @param[in] Data channel index
+ * @return false, with TMR3 untouched, when the frequency is outside what
+ *         TMR3 can generate (see DIO_PwmMinFrequencyHz)
  */
 bool DIO_PWMFrequencySet(uint8_t dataIndex);
+
+/*!
+ * Lowest PWM frequency TMR3 can generate (#902): its period register is
+ * 16-bit and its largest prescaler is /256, so below this the period does not
+ * fit. Derived from the real PBCLK3 (TimerApi_PeripheralClockHz), not a
+ * literal, so it stays true if the clock changes.
+ */
+uint32_t DIO_PwmMinFrequencyHz(void);
 
 /* ---------------------------------------------------------------------
  * DIO channel ownership registry (#664 shared foundation)

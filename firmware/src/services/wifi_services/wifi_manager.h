@@ -235,8 +235,8 @@ extern "C" {
          *  That was wrong and an adversarial audit of PR #1044 caught it: a
          *  station that merely ASSOCIATES to our soft-AP raises
          *  WIFI_MANAGER_STATE_FLAG_STA_CONNECTED (ApEventCallback runs only
-         *  in AP mode and its handler sets that flag with no AP/STA
-         *  discrimination), which GetLinkState tests first -- so an
+         *  in AP mode, and the handler for the event it queues sets that
+         *  same flag), which GetLinkState tests first -- so an
          *  associated station reads CONNECTED, not AP_IDLE, with no TCP
          *  session anywhere. The flag behaviour predates #951; the promise
          *  did not, which is why the promise is what changed. */
@@ -251,13 +251,17 @@ extern "C" {
          *  Deliberately NOT "an AP client has opened TCP": see AP_IDLE above.
          *  Identical condition to WIFI_STATUS_CONNECTED.
          *
-         *  CAVEAT, #1060: can read CONNECTED with no peer attached, because
-         *  the association flag behind it is event-latched rather than a live
-         *  measurement -- around an AP stop or restart, or a mode switch, in
-         *  at least one path with no time bound. Pre-existing (the legacy
-         *  status tests the same flag first, verified against main at
-         *  d71147e31); documented here because this enum is what newly
-         *  promises "a peer is attached". */
+         *  CAVEAT, #1060: can still read CONNECTED with no peer attached,
+         *  because the association flag behind it is event-latched rather
+         *  than a live measurement. Closed: the AP->STA APPLY path #1060 was
+         *  filed for (that branch now resets the flag before tearing the AP
+         *  down), and a stale association event queued across a mode switch
+         *  or teardown (dropped when consumed, instead of re-setting the
+         *  flag). Still open, by code reading: an in-place soft-AP restart
+         *  never clears the flag, so a station that was associated before it
+         *  and does not come back leaves CONNECTED standing -- see
+         *  wifi_manager_GetLinkState(). Keep the caveat until no such path is
+         *  left. */
         WIFI_LINK_STATE_CONNECTED
     } wifi_link_state_t;
 
@@ -271,6 +275,48 @@ extern "C" {
      * @return wifi_link_state_t describing the current state
      */
     wifi_link_state_t wifi_manager_GetLinkState(void);
+
+    /** Returned by wifi_manager_GetActiveNetworkMode() when no mode is up.
+     *  Deliberately 0: SCPI_LANNetModeSet accepts only 1 (STA) and 4 (AP) and
+     *  rejects everything else with -224, so 0 cannot collide with a mode a
+     *  client could ever have staged. */
+#define WIFI_MANAGER_NETWORK_MODE_NONE  ((wifi_manager_networkMode_t) 0)
+
+    /**
+     * @brief Get the network mode the radio is ACTUALLY running (#1186).
+     *
+     * SYSTem:COMMunicate:LAN:NETType? reports the STAGED runtime setting --
+     * what APPLY would bring up next -- so it cannot answer "is this board an
+     * AP or a STA right now?". This answers that.
+     *
+     * ⭐ DERIVED LIVE FROM TWO SOURCES, WITH NO CACHED MODE STATE OF OUR OWN:
+     * the board power state, and the vendor driver's own
+     * WDRV_WINC_OperatingModeGet(). Nothing here is maintained by this module,
+     * so there is nothing that can fall out of step with the radio.
+     *
+     * ⛔ That is a deliberate replacement, not the original design. Revisions
+     * r1-r5 derived this from the AP_STARTED/STA_STARTED bring-up flags plus a
+     * latch tracking "a teardown is pending", and FIVE audit rounds found five
+     * different ways for that latch to desynchronise -- the last of them
+     * fatal to the whole approach, because a teardown already dequeued and
+     * running is not IN the queue being tracked. The implementation comment
+     * lists all five. Do not reintroduce a cached mode bit here.
+     *
+     * @return WIFI_MANAGER_NETWORK_MODE_AP, WIFI_MANAGER_NETWORK_MODE_STA, or
+     *         WIFI_MANAGER_NETWORK_MODE_NONE when nothing is up. Callers must
+     *         handle NONE rather than folding it into either mode.
+     *
+     * ⚠ Two readings worth knowing, both documented at the implementation:
+     * a STA that cannot associate reads STA for as long as it retries (which
+     * is true -- it is configured for STA and retrying), and ~100 ms of AP
+     * bring-up reads STA before the driver's own flag flips (the one false
+     * reading, bounded and self-correcting).
+     *
+     * Read-only and strictly non-blocking -- one BoardData read and one
+     * vendor call, no WINC round-trip and no lock, the same contract as
+     * wifi_manager_GetLinkState().
+     */
+    wifi_manager_networkMode_t wifi_manager_GetActiveNetworkMode(void);
 
     /**
      * @brief Initializes the WiFi manager and its state machine.
@@ -387,7 +433,13 @@ extern "C" {
      * reassoc + DHCP) takes ~20 s — poll SYST:COMM:LAN:ADDR? to
      * confirm.
      *
-     * @return True on success, false if WiFi settings not initialized.
+     * Refused while WiFi is off by request -- powered off (LAN:POWer 0)
+     * or disabled with no reset already in flight -- so no caller can
+     * bring WiFi back against an explicit power-off (#881).
+     *
+     * @return True when the reset is armed and queued; false if WiFi
+     *         settings are not initialized, WiFi is off by request, or
+     *         DEINIT could not be queued.
      */
     bool wifi_manager_HardReset(void);
 
@@ -466,6 +518,19 @@ extern "C" {
      * even when other SCPI fields report healthy state.
      */
     uint32_t wifi_manager_GetListenSocketUptimeSec(void);
+
+    /**
+     * @brief #1324: record an M2M_WIFI_RESP_IP_CONFLICT event from the WINC.
+     * Emits one LOG_E and increments the counter.  Called from the WINC event
+     * callback (wdrv_winc.c), i.e. on app_WifiTask.
+     */
+    void wifi_manager_NoteIpConflict(void);
+
+    /** @brief #1324: IP-conflict events since boot or the last STATS:CLEar. */
+    uint32_t wifi_manager_GetIpConflicts(void);
+
+    /** @brief #1324: zero the IP-conflict counter (STATS:CLEar). */
+    void wifi_manager_ClearIpConflicts(void);
 
     /**
      * @brief Formats a UDP announcement packet with the provided WiFi settings.

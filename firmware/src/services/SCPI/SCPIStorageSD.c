@@ -24,6 +24,7 @@
 /* ************************************************************************** */
 /* ************************************************************************** */
 #include "SCPIStorageSD.h"
+#include "SDSuspendReasons.h"  /* #1001: measured reason strings */
 #include "Util/SpiBusHealth.h"
 #include "services/streaming.h"
 #include "SCPIInterface.h"
@@ -31,6 +32,7 @@
 #include "../wifi_services/wifi_tcp_server.h"  /* #598 ContextIsTcp */
 #include "../wifi_services/wifi_manager.h"     /* #589 FW-update owner */
 #include "app_freertos.h"                       /* #589 live SPI-owner test */
+#include "state/data/BoardData.h"                /* #756 round 3: WAIT_POWER_UP gate */
 #include "../../state/runtime/BoardRuntimeConfig.h"
 #include "system/fs/sys_fs_media_manager.h"
 #include "system/fs/sys_fs.h"
@@ -53,6 +55,9 @@ bool __attribute__((weak)) DRV_SDSPI_GetCID(uint8_t* cidBuffer, size_t bufLen) {
 #define SCPI_SD_DELETE_TIMEOUT_MS 5000
 #define SCPI_SD_FORMAT_TIMEOUT_MS 30000
 #define SCPI_SD_SPACE_TIMEOUT_MS 10000
+/* #1217: SD:PROTect waits this long for the driver to drop the card for
+ * re-init (one detect poll on a quiet driver, a few ms). */
+#define SCPI_SD_PROTECT_APPLY_MS 2000U
 
 /* #943: the two numbers that bound SYST:STOR:SD:BENCHmark's per-chunk write
  * loop. STALL_TIMEOUT_MS is now measured as ELAPSED TICKS since the last byte
@@ -72,6 +77,17 @@ bool __attribute__((weak)) DRV_SDSPI_GetCID(uint8_t* cidBuffer, size_t bufLen) {
  * than one. */
 #define SCPI_SD_BENCH_STALL_TIMEOUT_MS 10000U
 #define SCPI_SD_BENCH_STALL_POLL_MS    5U
+
+/* #756 item 4 -> A (operator 2026-10-25): the bounded presence-recheck WAIT and
+ * its USB pump cadence are WITHDRAWN, so SD_PRESENCE_RECHECK_BOUND_MS,
+ * SD_PRESENCE_RECHECK_POLL_MS, SD_PRESENCE_PUMP_MS and the derived
+ * SD_PRESENCE_PUMPS_PER_SAMPLE are gone with them rather than left defined and
+ * unused -- a dead constant reads as a live one, and these four carried a long
+ * justification that would have outlived the mechanism it justified.
+ *
+ * The reasoning they held is not lost: it is on the call site in
+ * SCPI_CheckSDCardPresent(), stated as why the wait went, and the Makefile pins
+ * that the function can no longer block. */
 
 /* ************************************************************************** */
 /* ************************************************************************** */
@@ -201,17 +217,18 @@ const char *SD_SuspendReasonText(void)
          * NOT guarded by a test. Three attempts at one were each defeated in
          * review -- a grep for the reason's own words matched the string it
          * replaced, a hash of the function collapsed whitespace inside the
-         * literals, and a copy in the test can drift from this line. The guard
-         * has to measure the REAL string, which is a design rather than a
-         * patch: #1001. Until then this length is held by review. */
-        return "SD quarantined after a bus jam - reseat the card, "
-               "then SYST:STOR:SD:ENAble 1";
+         * literals, and a copy in the test can drift from this line. #1001:
+         * the strings are now macros in SDSuspendReasons.h and a
+         * _Static_assert there measures each with sizeof against
+         * SD_SUSPEND_REASON_MAX (76), the bound the callers' log_budget
+         * annotations assume. */
+        return SD_SUSPEND_REASON_QUARANTINE;
     }
     if (fwUpdate) {
-        return "a WiFi firmware update owns SPI4 - retry when it completes";
+        return SD_SUSPEND_REASON_FW_UPDATE;
     }
     if (wifiStream) {
-        return "WiFi streaming owns SPI4 - SYST:STR:STOP first";
+        return SD_SUSPEND_REASON_WIFI_STREAM;
     }
     if (suspended) {
         /* #985: suspended, with not one of the three owners set in THIS
@@ -226,10 +243,10 @@ const char *SD_SuspendReasonText(void)
          * flatly does not show, and sending the operator to stop a stream
          * that is not running.
          *
-         * Says only what was observed: the task has not resumed. 46
-         * characters, the same as the WiFi-streaming string above and well
+         * Says only what was observed: the task has not resumed. 47
+         * characters, one more than the WiFi-streaming string above and well
          * inside the 84 the note above derives for this file's callers. */
-        return "the SD task has not resumed yet - retry shortly";
+        return SD_SUSPEND_REASON_NOT_RESUMED;
     }
     return NULL;
 }
@@ -366,15 +383,80 @@ static bool SD_RefuseIfSuspended(scpi_t *context, const char *cmd)
  * @brief Check if SD card media is present
  * @param context SCPI context for error reporting
  * @return true if present, false if not (error already pushed to context)
+ *
+ * #756 Part A: a negative read here can be STALE, not just false. The SDSPI
+ * detect FSM polls at a fast 1 s cadence normally, but backs off to as much as
+ * 5 s after DRV_SDSPI_DETECT_BACKOFF_AFTER_POLLS (10) consecutive no-card
+ * polls, so a card inserted during the backoff can read DETACHED for seconds.
+ *
+ * SO THIS KICKS THE DETECT POLL AND DOES NOT WAIT. The kick
+ * (DRV_SDSPI_DetectPollExpireNow) expires the backoff immediately, so the next
+ * query sees the true state; this call answers from what is known NOW.
+ *
+ * ⛔ A BOUNDED RE-CHECK WAIT WAS TRIED HERE OVER THREE ROUNDS AND WITHDRAWN --
+ * operator ruling 2026-10-25 (item 4 -> A), recorded on PR #1094 and on #756.
+ * It is worth saying why, because "just wait a bit for the card" is the obvious
+ * design and it is wrong:
+ *
+ *   - Over USB this function runs ON the USB task, so every tick waited is a
+ *     tick not spent draining the CDC. With SD enabled, no card, and a USB
+ *     stream running, SD:LISt?/SPACe? parked that task: the ring filled, the
+ *     encoder blocked, and the sample pool overflowed. ACQUIRED SAMPLES LOST.
+ *     Pumping USB inside the wait reduced the window 20x and did not change
+ *     the kind of defect -- a smaller permanent loss is still permanent, which
+ *     is what the round-3 HIGH said.
+ *   - The wait re-entered the SCPI layer, so SD:FILE ownership had to be
+ *     revalidated after it: the wait created the invariant it then had to
+ *     defend (round-4 HIGH).
+ *   - It was gated to exclude TCP, and #756's originally reported symptom came
+ *     in over TCP -- and the issue's own first line records that symptom as not
+ *     reproducible on main. The wait never covered the case that motivated it.
+ *
+ * The client retries both SDKs already perform (SD_LIST_MAX_RETRIES,
+ * SdCardOperations.cs:53) are what cover a slow init, not a longer bound here.
+ *
+ * ⚠ The remaining question -- "is this answer FRESH?" -- is deliberately NOT
+ * answered by this call, and is not meant to be. It belongs to the two tickets
+ * this ruling filed: one for a free-space reading during an SD logging run, one
+ * for a status query that reports the AGE of its presence answer. A caller that
+ * needs freshness should use that, not a call that blocks to manufacture it.
+ *
+ * Pinned in tests/host/Makefile: this function must contain no delay, no USB
+ * pump and no loop, checked on COMMENT-STRIPPED source -- so that explaining
+ * the withdrawal here cannot trip the pin that enforces it.
  */
 static bool SCPI_CheckSDCardPresent(scpi_t *context) {
-    if (!SYS_FS_MEDIA_MANAGER_MediaStatusGet(SD_CARD_MANAGER_DISK_DEV_NAME)) {
-        LOG_E("SD - No SD card detected\r\n");
-        context->interface->write(context, SD_CARD_NOT_PRESENT_ERROR_MSG, strlen(SD_CARD_NOT_PRESENT_ERROR_MSG));
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-        return false;
+    if (SYS_FS_MEDIA_MANAGER_MediaStatusGet(SD_CARD_MANAGER_DISK_DEV_NAME)) {
+        return true;
     }
-    return true;
+
+    /* ⛔ #756 item 4 -> A, OPERATOR RULING 2026-10-25 (recorded on this PR and
+     * on #756): the bounded re-check WAIT is WITHDRAWN. The kick stays; nothing
+     * blocks. A negative answer may therefore be the last-known state, and the
+     * NEXT query sees the kicked result.
+     *
+     * Why the wait went, in the order the evidence arrived:
+     *   - r3 HIGH, both legs: the pump REDUCES the stale window; the finding was
+     *     that the loss is PERMANENT, and a smaller permanent window is still
+     *     permanent. Shrinking it was never the fix.
+     *   - r4 HIGH, both legs: the wait re-entered the SCPI layer, so SD:FILE
+     *     ownership had to be revalidated after it -- the wait created the
+     *     invariant it then had to defend.
+     *   - #756's own first line records the originally reported symptom as NOT
+     *     reproducible on main, and it was reported over WiFi/TCP, which the
+     *     wait had already excluded. So the wait was never covering the case it
+     *     was asked to cover.
+     *
+     * This also makes USB and TCP behave identically, which they did not while
+     * the withdrawn gate excluded only TCP. "Is it fresh?" is a question for
+     * the two follow-up tickets this ruling filed, not a property of this call:
+     * one for a free-space reading during a logging run, one for a status query
+     * that reports the AGE of its presence answer. */
+    DRV_SDSPI_DetectPollExpireNow(0);
+    LOG_E("SD - No SD card detected\r\n");
+    context->interface->write(context, SD_CARD_NOT_PRESENT_ERROR_MSG, strlen(SD_CARD_NOT_PRESENT_ERROR_MSG));
+    SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+    return false;
 }
 
 
@@ -397,8 +479,18 @@ static bool SD_ValidatePathParam(const char *p, size_t len)
     size_t segStart = 0;
     for (size_t i = 0; i <= len; i++) {
         unsigned char c = (i < len) ? (unsigned char)p[i] : (unsigned char)'/';
-        if (i < len && (c < 0x20u || c == 0x7Fu || c == '\\' || c == ':')) {
-            return false;           /* control chars, backslash, drive prefix */
+        if (i < len && (c < 0x20u || c == 0x7Fu || c == '\\' || c == ':'
+                        || c == '"')) {
+            /* control chars, backslash, drive prefix, double quote.
+             * #1175: '"' can never round-trip over SCPI. The getters answer
+             * through SCPI_ResultText, which doubles an embedded quote
+             * (MY"DATA -> "MY""DATA"), but the setters read their argument
+             * with SCPI_ParamCharacters, which strips only the outer
+             * delimiters and does NOT collapse "" -- so writing back exactly
+             * what the getter returned stored MY""DATA. FAT forbids '"' in
+             * file and directory names (long names included), so no real
+             * entry can carry one and refusing it loses nothing. */
+            return false;
         }
         if (c == '/') {
             size_t segLen = i - segStart;
@@ -416,11 +508,22 @@ static bool SD_ValidatePathParam(const char *p, size_t len)
 
 /* #747: SYST:STOR:SD:LISt? prints every entry as "<directory>/<name>", but the
  * operand sites below prepend the configured directory themselves — so handing
- * back the exact string the device just printed builds "DAQiFi/DAQiFi/<name>",
- * the open fails, and for SD:GET the host receives a bare __END_OF_FILE__ with
- * SYST:ERR? still reading "No error". That is indistinguishable from an empty
- * file, which is what made #747 read as a device fault rather than a rejected
- * path.
+ * back the exact string the device just printed builds "DAQiFi/DAQiFi/<name>"
+ * and the open fails. Before #914, ANY open failure on this path answered
+ * SD:GET with a bare __END_OF_FILE__ and left SYST:ERR? reading "No error" —
+ * indistinguishable from an empty file, which is what made #747 read as a
+ * device fault rather than a rejected path. Since #914 the TERMINATOR is
+ * unchanged — still a bare __END_OF_FILE__, the marker every shipped client
+ * recognises, so the reply still ends promptly — but the failure is no longer
+ * silent: the SD task latches -256 "File name not found" and the owning
+ * transport announces it at its next command boundary (also readable via
+ * SYST:ERR?; SYST:LOG? names the underlying filesystem error) — loud, but
+ * still a failure. This function is what makes the double-prefixed case above
+ * actually OPEN instead: it strips the redundant "<directory>/" so the
+ * round-trip succeeds outright. An operand this function does NOT recognize
+ * (e.g. SD:LISt? "OTHER" then SD:GET "OTHER/f.csv", where OTHER is not the
+ * configured directory) still hits the #914 loud-failure path, not this one —
+ * restoring that round-trip is #914 Part B, tracked separately.
  *
  * Accept the round-trip form by dropping ONE leading "<directory>/". Traversal
  * stays impossible: the prefix must match the device's own configured
@@ -478,12 +581,38 @@ scpi_result_t SCPI_StorageSDEnableSet(scpi_t * context){
     if (param1 != 0) {
         // Enable SD card
         LOG_D("SD:ENAble - Enabling SD card manager\r\n");
-        pSDCardRuntimeConfig->enable = true;
         // #589: manual re-enable clears a bus-jam quarantine (user has
-        // presumably reseated or replaced the card).
+        // presumably reseated or replaced the card). First: the SD task does
+        // not run the driver while quarantined, and the #1217 wait below needs
+        // it to.
         if (SpiBusHealth_IsSdQuarantined()) {
             SpiBusHealth_SetSdQuarantine(false);
             Streaming_QuesExternalClear(STREAMING_QUES_SPI_BUS_FAULT);
+        }
+        /* #1217: never mount while an SD:PROTect change is pending, or the
+         * driver's re-init lands under the mounted volume at its next quiet
+         * poll. Checked and set under the same exclusion SD:PROTect uses. */
+        for (uint32_t waited = 0U; ; waited += 10U) {
+            bool enabled = false;
+            taskENTER_CRITICAL();
+            if (!DRV_SDSPI_CrcModePending(0)) {
+                pSDCardRuntimeConfig->enable = true;
+                enabled = true;
+            }
+            taskEXIT_CRITICAL();
+            if (enabled) {
+                break;
+            }
+            if (waited >= SCPI_SD_PROTECT_APPLY_MS) {
+                LOG_E("SD:ENAble - SD:PROTect change not yet applied; power up, stop WiFi stream, retry");
+                SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+                result = SCPI_RES_ERR;
+                goto __exit_point;
+            }
+            if (waited == 0U) {
+                DRV_SDSPI_DetectPollExpireNow(0);
+            }
+            vTaskDelay(pdMS_TO_TICKS(10));
         }
     } else {
         // Disable SD card - check if busy first to prevent data loss
@@ -509,6 +638,84 @@ scpi_result_t SCPI_StorageSDEnableSet(scpi_t * context){
 __exit_point:
     return result;
 }
+/* #1217: SYSTem:STORage:SD:PROTect <0|1>
+ *
+ * 0 (default): CRC off and CMD25 multi-block writes, as before #1217. Fast,
+ * but a stray block is programmed over its target sector.
+ * 1: the card runs with CRC checking on and every block is written as its own
+ * CMD24. A block the card captured from bus traffic fails its CRC and is
+ * refused; an abandoned write is resynced. Costs about two thirds of the SD
+ * write throughput (CMD25 cannot be used: a CRC reject inside it left the
+ * bench card unresponsive until power-cycled), and its per-sector bus lock
+ * starves a WiFi control session during SD logging (#1234), which is why it
+ * is not the default.
+ *
+ * Only while SD is disabled and idle: the driver applies it by
+ * re-initializing the card, which a mounted volume would lose. Runtime only,
+ * like the other SD settings. */
+scpi_result_t SCPI_StorageSDProtectSet(scpi_t * context){
+    int32_t param1;
+    sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+
+    if (!SCPI_ParamInt32(context, &param1, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if ((param1 != 0) && (param1 != 1)) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+    /* Never let the card be mounted with a re-init still queued behind it.
+     * There are two mount paths, and two transports (USB, TCP) can race them:
+     *  - SD:ENAble 1 sets `enable` only inside a critical section and only with
+     *    no request pending; the enable check and the request below share that
+     *    exclusion, so whichever lands first, the other refuses or waits.
+     *  - SD:SPACe? mounts with SD disabled. It holds the manager claim while it
+     *    checks for a pending request and arms; this holds the claim while it
+     *    makes one, so the two cannot interleave. */
+    bool conflict = !sd_card_manager_IsIdle() || !sd_card_manager_TryClaim();
+    if (!conflict) {
+        taskENTER_CRITICAL();
+        if (pSDCardRuntimeConfig->enable) {
+            conflict = true;
+        } else if (pSDCardRuntimeConfig->crcProtect != (param1 == 1)) {
+            pSDCardRuntimeConfig->crcProtect = (param1 == 1);
+            DRV_SDSPI_SetCrcMode(0, pSDCardRuntimeConfig->crcProtect);
+        }
+        taskEXIT_CRITICAL();
+        sd_card_manager_ReleaseClaim();
+    }
+    if (conflict) {
+        LOG_E("SD:PROTect - disable SD first (SD:ENAble 0) and let it go idle");
+        SCPI_ErrorPush(context, SCPI_ERROR_SETTINGS_CONFLICT);
+        return SCPI_RES_ERR;
+    }
+    /* Return only once the driver has dropped the card for re-init: from then
+     * on any mount goes through a media init that applies the new mode. The
+     * driver does that at its first detect poll with no I/O in progress; the
+     * kick makes that the next pass. Checked even when the value did not
+     * change: an earlier request may still be pending. */
+    DRV_SDSPI_DetectPollExpireNow(0);
+    for (uint32_t waited = 0U;
+         DRV_SDSPI_CrcModePending(0) && (waited < SCPI_SD_PROTECT_APPLY_MS);
+         waited += 10U) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    if (DRV_SDSPI_CrcModePending(0)) {
+        /* The SD task is not running the driver: standby, or SPI handed to
+         * WiFi streaming. The setting stands and applies when it next runs. */
+        LOG_E("SD:PROTect - set, not yet applied; power up, stop WiFi stream, retry");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_StorageSDProtectGet(scpi_t * context){
+    sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    SCPI_ResultInt32(context, pSDCardRuntimeConfig->crcProtect ? 1 : 0);
+    return SCPI_RES_OK;
+}
+
 scpi_result_t SCPI_StorageSDEnableGet(scpi_t * context){
     sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
     SCPI_ResultInt32(context, pSDCardRuntimeConfig->enable ? 1 : 0);
@@ -531,7 +738,9 @@ scpi_result_t SCPI_StorageSDEnableGet(scpi_t * context){
  * pre-existing ERROR -> UNMOUNT_DISK -> INIT -> OPEN_FILE(WRITE_PLUS) path
  * then re-opens the SAME base filename with fileCounter reset to 0, which
  * TRUNCATES it -- destroying already-recorded data, not merely ending the
- * session. Letting an SCPI-armable, network-reachable command trigger that on
+ * session. (#1031 since made that remount continue the session in its next
+ * file part instead; the gate is unchanged, and `FAILNext 2` arms the
+ * live-session sites separately -- see gFailNextSessionWrite.) Letting an SCPI-armable, network-reachable command trigger that on
  * a shipped device is the thing the gate exists to prevent. The full argument,
  * the per-call-site table and the coverage this gate gives up (the rotation
  * drains' #825/#838 twins, which stay source-review-only) are in
@@ -613,20 +822,30 @@ scpi_result_t SCPI_StorageSDFailNextSet(scpi_t * context) {
     /* Range-checked rather than the usual "non-zero means true", because a
      * typo in a test script that silently armed a write failure is a worse
      * outcome here than an error the script can see. */
-    if (param1 < 0 || param1 > 1) {
+    if (param1 < 0 || param1 > 2) {
         SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
         return SCPI_RES_ERR;
     }
-    sd_card_manager_SetFailNextWrite(param1 != 0);
+    /* #1031: 2 arms the live-session one-shot instead. Each value leaves
+     * exactly one arm outstanding; 0 disarms both. */
+    sd_card_manager_SetFailNextWrite(param1 == 1);
+    sd_card_manager_SetFailNextSessionWrite(param1 == 2);
     /* Log BOTH edges. Logging only the arm would leave an arm-then-disarm
      * sequence reading, in SYST:LOG?, as a device that is still armed -- which
      * is the scarier half of the truth and the half a support engineer would
      * act on. LOG_E (not LOG_E_ONCE/LOG_E_SESSION) on purpose: this appearing
      * in a field log at all is the signal, and must never be deduplicated. */
-    if (param1 != 0) {
-        LOG_E("[SD] TEST HOOK SYST:STOR:SD:FAILNext ARMED - one SD write "
-              "issued during the next teardown drain will be forced to fail. "
-              "Bench use only.");
+    if (param1 == 2) {
+        LOG_E("[SD] TEST HOOK SYST:STOR:SD:FAILNext 2 ARMED - the next "
+              "session write will be forced to fail. Bench use only.");
+    } else if (param1 != 0) {
+        /* 121 bytes, 4 under Logger's 125-byte ceiling. Was 135 and therefore
+         * truncated with no error and no marker, losing "use only." -- the
+         * bench-only caveat, i.e. the remedy. Kept short per #1025/#1039:
+         * the full SCPI spelling stays (it is the grep token) and so does
+         * "NOT a card fault"'s counterpart "Bench use only". */
+        LOG_E("[SD] TEST HOOK SYST:STOR:SD:FAILNext ARMED - one write in the "
+              "next teardown drain will be forced to fail. Bench use only.");
     } else {
         LOG_E("[SD] TEST HOOK SYST:STOR:SD:FAILNext DISARMED - no write "
               "failure is pending.");
@@ -638,7 +857,9 @@ scpi_result_t SCPI_StorageSDFailNextSet(scpi_t * context) {
  * consumed it (or it was never armed) -- so a test can confirm the injection
  * fired instead of inferring it from downstream counters. */
 scpi_result_t SCPI_StorageSDFailNextGet(scpi_t * context) {
-    SCPI_ResultInt32(context, sd_card_manager_FailNextWriteArmed() ? 1 : 0);
+    /* #1031: reports WHICH arm is outstanding, 2 = live-session write. */
+    SCPI_ResultInt32(context, sd_card_manager_FailNextSessionWriteArmed() ? 2 :
+                              sd_card_manager_FailNextWriteArmed() ? 1 : 0);
     return SCPI_RES_OK;
 }
 
@@ -696,11 +917,16 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
     scpi_result_t result = SCPI_RES_ERR;
     sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
 
-    if (!pSDCardRuntimeConfig->enable) {
-        context->interface->write(context, SD_CARD_NOT_ENABLED_ERROR_MSG, strlen(SD_CARD_NOT_ENABLED_ERROR_MSG));
-        result = SCPI_RES_ERR;
-        goto __exit_point;
-    }
+    /* #1253: NOT gated on SD being enabled or a card being detected. This only
+     * stages the name the next log opens. A refusal here used to leave the
+     * PREVIOUS session's name staged, so the next start reopened that file
+     * with WRITE_PLUS and truncated it: the old recording was destroyed and
+     * the requested file never created. (libscpi did queue -200 for the
+     * refusal, parser.c, but a client that does not poll SYST:ERR? after
+     * SD:FILE never sees it, and nothing stopped the stale name being used.)
+     * Whether a card is really there is decided where it matters, at start:
+     * SCPI_StartStreaming refuses with -200 when the file cannot be opened,
+     * and that refusal leaves the previous file untouched. */
 
     // Check if SD card is busy with another operation
     /* NOT gated on the #589 suspension: this command only STAGES the logging
@@ -736,12 +962,6 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
         goto __exit_point;
     }
 
-    // Check if SD card is present
-    if (!SCPI_CheckSDCardPresent(context)) {
-        result = SCPI_RES_ERR;
-        goto __exit_point;
-    }
-
     SCPI_ParamCharacters(context, &pBuff, &fileLen, false);
     /* #747: accept the "<directory>/<name>" form SD:LISt? prints. Before the
      * length check, so a max-length name is not rejected for the prefix. */
@@ -751,6 +971,9 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
         if (fileLen > SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX) {
             LOG_E("SD:FILE - Filename too long: %zu bytes, max: %zu\r\n",
                   fileLen, (size_t)SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX);
+            /* #1253: the specific code, as the path validation below uses,
+             * rather than libscpi's generic -200 fallback. */
+            SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
@@ -768,8 +991,8 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
          * field; the reader side is SCPI_StorageSDBenchmark's restore. */
         /* Re-validate the benchmark guard HERE, under the same critical
          * section as the write. The check near the top of this function is
-         * only a fast path: SCPI_CheckSDCardPresent, SCPI_ParamCharacters and
-         * SD_ValidatePathParam all run between it and this point, and none of
+         * only a fast path: SCPI_ParamCharacters and SD_ValidatePathParam
+         * both run between it and this point, and neither of
          * them is in a critical section. So WiFi SCPI (pri 2) can pass the
          * early check while no benchmark exists, be preempted by USB SCPI
          * (pri 7) starting one, and then resume PAST the now-stale check and
@@ -811,6 +1034,74 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
     result = SCPI_RES_OK;
 __exit_point:
     return result;
+}
+
+/**
+ * @brief Query the staged SD logging filename (#1176)
+ *
+ * Command: SYST:STOR:SD:FILE?
+ *
+ * SD:FILE is a setter that only STAGES the name the next log opens, and
+ * SD:ENAble preserves it, so a host that changed it had no way to read the
+ * original back and restore it.
+ *
+ * Contract: the reply is the stored name verbatim, UNLESS the setter's
+ * configured-directory strip (SD_StripConfiguredDir) would alter it -- i.e. the
+ * stored name itself begins with "<directory>/" (reachable via
+ * SD:FILE "<dir>/<dir>/x", which stores "<dir>/x"). Then the reply is
+ * "<directory>/<name>" (directory's trailing slashes trimmed), so the setter's
+ * single strip removes exactly what was added. Either way, sending the reply
+ * back to SD:FILE re-stores exactly the current name, while SD:DIRectory is
+ * unchanged. The setter strips BEFORE its length check, so the longer reply is
+ * accepted. Quote characters cannot be stored in the field (#1175), so a name
+ * made only of 7-bit printable characters round-trips through the quoted text
+ * reply. A name containing a byte >= 0x80 is still reported verbatim, but the
+ * quoted form cannot carry it back: libscpi's quoted-string parser
+ * (skipQuoteProgramData, lexer.c) accepts only 7-bit ASCII, while the setter
+ * accepts such bytes when they arrive as an IEEE 488.2 arbitrary block
+ * (SCPI_ParamCharacters returns the block payload; SD_ValidatePathParam only
+ * rejects control characters, backslash, ':' and '"'). Restore such a name with
+ * the block form, #<n><len><bytes>, not the quoted string.
+ *
+ * While a benchmark owns the target this reports its temporary name, which is
+ * what the device is configured to write; the setter refuses until it ends.
+ */
+scpi_result_t SCPI_StorageSDLoggingGet(scpi_t * context) {
+    const sd_card_manager_settings_t* pSDCardRuntimeConfig =
+            BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    char snapshot[sizeof(pSDCardRuntimeConfig->file)];
+    char dirSnap[sizeof(pSDCardRuntimeConfig->directory)];
+
+    /* Same snapshot-under-critical-section as SCPI_StorageSDDirectoryGet: the
+     * setter publishes the name from the other transport's SCPI task. The
+     * directory is snapshotted in the SAME section so the pair is consistent. */
+    taskENTER_CRITICAL();
+    memcpy(snapshot, pSDCardRuntimeConfig->file, sizeof(snapshot));
+    memcpy(dirSnap, pSDCardRuntimeConfig->directory, sizeof(dirSnap));
+    taskEXIT_CRITICAL();
+    snapshot[sizeof(snapshot) - 1u] = '\0';
+    dirSnap[sizeof(dirSnap) - 1u] = '\0';
+
+    /* Ask the setter's own strip whether it would alter this name; if so,
+     * prefix "<dir>/" so the strip undoes exactly that. Using the strip itself
+     * (not a copy of its predicate) keeps getter and setter from drifting. */
+    size_t len = strlen(snapshot);
+    const char *stripped = SD_StripConfiguredDir(snapshot, &len, dirSnap);
+    if (stripped != snapshot) {
+        size_t dirLen = strlen(dirSnap);
+        while (dirLen > 0u && dirSnap[dirLen - 1u] == '/') {
+            dirLen--;
+        }
+        char reply[sizeof(dirSnap) + 1u + sizeof(snapshot)];
+        memcpy(reply, dirSnap, dirLen);
+        reply[dirLen] = '/';
+        memcpy(&reply[dirLen + 1u], snapshot, strlen(snapshot) + 1u);
+        SCPI_ResultText(context, reply);
+        return SCPI_RES_OK;
+    }
+
+    SCPI_ResultText(context, snapshot);
+    return SCPI_RES_OK;
 }
 
 /* #306: start an async CRC32 computation over a stored file. Result via
@@ -905,7 +1196,22 @@ scpi_result_t SCPI_StorageSDCrcStart(scpi_t * context) {
      * reads, so a card inserted during a WiFi stream still reads DETACHED --
      * and answering "No SD Card Detected" sends the user after a card that is
      * sitting in the slot. "SD suspended" is both true and actionable; the
-     * stale probe is neither. */
+     * stale probe is neither.
+     *
+     * #756: this USED to hold the #829 claim across
+     * SCPI_CheckSDCardPresent's bounded re-check, so every other SD command
+     * from either transport saw a spurious "SD card busy" for up to 500 ms.
+     *
+     * The re-check was WITHDRAWN (operator ruling 2026-10-25, item 4 -> A),
+     * so the presence check no longer blocks and the claim is now held only
+     * for the work itself. The hazard this paragraph described is retired.
+     *
+     * The ordering it was accepted under is UNCHANGED and still deliberate:
+     * the #829 claim-before-operand ordering this file depends on makes
+     * checking presence before the claim its own hazard (a malformed request
+     * would then also disturb a cached CRC, which is exactly what the comment
+     * above this block exists to avoid). That stands on its own merits, not
+     * because a blocking window forced it. */
     if (!SCPI_CheckSDCardPresent(context)) {
         sd_card_manager_ReleaseClaim();  /* #829 release */
         return SCPI_RES_ERR;
@@ -975,6 +1281,18 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
+
+    /* #1279: read through the idle-size SD buffer, not the 4 KB one a WiFi or
+     * USB stream left behind -- the read chunk is min(SD circular, 16 KB), so
+     * that buffer cut every read to a quarter of its idle size. Best effort:
+     * on false (a stream is live, the other transport holds a claim, a reply
+     * could not be sent out of a transport ring before the re-partition reset
+     * it, or the re-partition failed) the GET proceeds through the buffers it
+     * has, which
+     * is correct and only slower; refusing would break a GET during a live
+     * non-SD stream. Before the ReadBufferReady() check below, which a restore
+     * can only help. */
+    (void)SCPI_RestoreIdleSdBuffers();
 
     /* #703: SD:GET reads into the streaming pool's SD circular buffer, which the
      * auto-balancer shrinks after a non-SD stream. If it collapsed below the read
@@ -1371,8 +1689,13 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     }
     
     // Get optional pattern parameter
-    if (!SCPI_ParamInt32(context, &pattern, FALSE)) {
-        pattern = 0; // Default to zeros
+    // #876: an unparseable pattern (`BENCH 64,BANANA`) rejects instead of
+    // running pattern 0 and attributing the result to it. Same exit as the
+    // range check below, i.e. BEFORE the atomic claim.
+    pattern = 0; // Default to zeros
+    if (SCPI_OptionalParamInt32(context, &pattern) == SCPI_OPT_BAD) {
+        result = SCPI_RES_ERR;
+        goto __exit_point;
     }
     
     // Validate pattern
@@ -1440,6 +1763,28 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
         goto __exit_point;
     }
     ownsBenchFlag = true;
+
+    /* #1279: measure the CARD, not the previous stream's partition. A WiFi or
+     * USB stream leaves the SD circular at 4 KB and the SD DMA write buffer at
+     * 512 B, and this benchmark drains through both, so without this it
+     * reported ~4.5x below the card's speed until the next SD stream or a
+     * reboot. A no-op unless they are small.
+     *
+     * After the testInProgress claim, so a second BENCHmark has already been
+     * refused and cannot re-partition under this one; before the SD claim and
+     * the arm, because the re-partition refuses while the SD manager has a
+     * mode armed. Refusing on failure is the point: a result taken through the
+     * small buffers is the wrong answer this ticket exists to stop. That
+     * includes refusing rather than discarding a reply still queued for the
+     * host (an earlier reply in the same message, or this command's echo) that
+     * the restore could not send first -- see SCPI_RestoreIdleSdBuffers. */
+    if (!SCPI_RestoreIdleSdBuffers()) {
+        SCPI_ExecutionError(context,
+                            "SYST:STOR:SD:BENCH: rejected, could not restore "
+                            "the idle SD buffers after a non-SD stream - retry");
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
 
     /* Snapshot the logging target HERE, after the claim — not at function
      * entry. SCPI_StorageSDLoggingSet rejects SD:FILE only once testInProgress
@@ -2271,8 +2616,13 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
              * differ. This one means a peer SCPI callback held the shared
              * response buffer, NOT that the card is slow -- so it must not
              * point at the SD-card-compatibility page. */
-            LOG_E("SD:BENCH - shared SCPI response buffer not free within %u ms "
-                  "at %u/%u bytes (a concurrent SCPI command held it)\r\n",
+            /* #1039: was 137 bytes against the 125-byte ceiling. The CAUSE --
+             * that another SCPI command held the buffer, which is what stops
+             * this being read as a slow card -- sat in the truncated tail, so
+             * it leads now. 120 bytes.
+             */
+            LOG_E("SD:BENCH - a concurrent SCPI command held the response "
+                  "buffer; not free in %u ms at %u/%u bytes\r\n",
                   (unsigned int)SCPI_SD_BENCH_STALL_TIMEOUT_MS,
                   bytesWritten, bytesToWrite);
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
@@ -3077,6 +3427,16 @@ scpi_result_t SCPI_StorageSDSpaceGet(scpi_t * context) {
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
+    /* #1217: this mounts even with SD disabled, so it must not run while an
+     * SD:PROTect change is pending: the re-init would land under the mount.
+     * Checked under the claim, which SD:PROTect also takes to make a request. */
+    if (DRV_SDSPI_CrcModePending(0)) {
+        sd_card_manager_ReleaseClaim();
+        LOG_E("SD:SPACe - SD:PROTect change not yet applied; retry");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_GET_SPACE;  /* #829: LAST write */
     if (!SD_ArmOrRefuse(context, "SPACe", pSDCardRuntimeConfig)) {
         /* #955: `mode` is cleared inside SD_ArmOrRefuse, under the claim. */
@@ -3143,8 +3503,35 @@ scpi_result_t SCPI_StorageSDFormatQuery(scpi_t * context) {
  */
 scpi_result_t SCPI_StorageSDInfo(scpi_t * context) {
     uint8_t cid[16];
-    if (!DRV_SDSPI_GetCID(cid, sizeof(cid))) {
-        LOG_E("[SD] Card info not available (driver CID support missing or no card)");
+
+    /* #1271: DRV_SDSPI_GetCID() below only copies the driver's static CID
+     * buffer (zeros before any card was read, otherwise the LAST card read,
+     * which may since have been removed), so its false return can never mean
+     * "no card". Ask the media layer first, exactly as SD:SPACe? / SD:LISt?
+     * do, so an absent card is an error and not a plausible-looking reply.
+     *
+     * While SPI4 belongs to WiFi (SD task suspended) nothing refreshes the
+     * attach cache, so that presence check is skipped: a negative there could
+     * be stale. What the bypass guarantees is narrower than "a card is
+     * present": the reply is built only from a buffer that holds a genuine CID
+     * read, never from the never-populated all-zero buffer. During the bypass
+     * it may still describe the last card read, which can have been removed
+     * since. Both early returns come before the response-buffer take below, so
+     * no Give is owed on those paths. */
+    if (!app_SDCard_SpiOwnedByWifi() && !SpiBusHealth_IsSdSuspended()
+            && !SCPI_CheckSDCardPresent(context)) {
+        return SCPI_RES_ERR;
+    }
+
+    /* A CID that was ever read has bit 0 of its last byte set: the CID
+     * register ends CRC7[7:1] then "not used, always 1" [0:0] (SD Physical
+     * Layer Simplified Spec v9.10, section 5.2, Table 5-2). The driver stores
+     * the data-block token at gDrvSDSPICidData[0] and the 16 CID bytes, MSB
+     * first, from [1], so cid[15] is that CRC7|1 byte (the driver does not
+     * strip it). An all-zero buffer, i.e. no CID ever read since boot, has
+     * bit 0 clear and so cannot be a real CID. */
+    if (!DRV_SDSPI_GetCID(cid, sizeof(cid)) || (cid[15] & 0x01U) == 0U) {
+        LOG_E("[SD] Card info not available (no CID read or driver support missing)");
         SCPI_ErrorPush(context, SCPI_ERROR_HARDWARE_MISSING);
         return SCPI_RES_ERR;
     }
@@ -3208,12 +3595,19 @@ scpi_result_t SCPI_StorageSDInfo(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    /* #1217: two trailing fields -- whether the card is running with CRC
+     * checking on (1/0), and how many abandoned writes the driver has
+     * resynced since boot. Appended, so existing fields keep their places. */
+    bool crcOn = false;
+    uint32_t resyncs = 0U;
+    DRV_SDSPI_GetCrcStats(0, &crcOn, &resyncs);
     int len = snprintf(result, SCPI_RESPONSE_BUF_SIZE,
-                       "%u,\"%s\",\"%s\",%u.%u,%lu,%u-%02u",
+                       "%u,\"%s\",\"%s\",%u.%u,%lu,%u-%02u,%u,%lu",
                        mid, oid, pnm,
                        prv_major, prv_minor,
                        (unsigned long)psn,
-                       mdt_year, mdt_month);
+                       mdt_year, mdt_month,
+                       crcOn ? 1u : 0u, (unsigned long)resyncs);
 
     if (len < 0 || (size_t)len >= SCPI_RESPONSE_BUF_SIZE) {
         /* Released before the log/push: nothing below reads `result`, and

@@ -6,6 +6,7 @@
 #include "wdrv_winc_client_api.h"
 #include "Util/Logger.h"
 #include "wifi_tcp_server.h"
+#include "services/SCPI/SCPICmdGate.h"
 #include "state/data/BoardData.h"
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "wifi_serial_bridge.h"
@@ -18,6 +19,7 @@
 #include "wdrv_winc_gpio.h"  // WDRV_WINC_GPIOChipEnable*/Reset* (#334 deep power-down)
 #include "semphr.h"
 #include "driver/winc/include/drv/driver/m2m_wifi.h"
+#include "driver/winc/include/drv/driver/m2m_hif.h"  // hif_rx_reset_requests (#881)
 
 #define UNUSED(x) (void)(x)
 /* WIFI_MANAGER_UDP_LISTEN_PORT moved to wifi_manager.h so the
@@ -40,6 +42,12 @@ typedef enum {
     WIFI_MANAGER_EVENT_STA_DISCONNECTED,
     WIFI_MANAGER_EVENT_UDP_SOCKET_CONNECTED,
     WIFI_MANAGER_EVENT_ERROR,
+    // #1060: a station associated to OUR soft-AP, queued by ApEventCallback.
+    // Handled by the STA_CONNECTED code and sets the same flag; a separate
+    // event only so that handler knows which mode flag its producer checked.
+    // Appended, not inserted, so the numbers SendEvent's "event=%u" log lines
+    // print for the existing events do not change.
+    WIFI_MANAGER_EVENT_AP_CLIENT_CONNECTED,
 } wifi_manager_event_t;
 
 typedef struct {
@@ -55,6 +63,29 @@ typedef struct {
         WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_CONNECTED = 1 << 7,
         WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_REQUESTED = 1 << 8,  // WiFi firmware update requested but not yet initialized
         WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_READY = 1 << 9,      // WiFi firmware update initialized and active
+        /* ⛔ #1060 r3: THE CHIP MAY STILL HOLD AN ASSOCIATION, because a
+         * disconnect this driver issued never reached it.
+         *
+         * A DEDICATED flag, and the dedication is the point. r2 restored the
+         * lost recovery by BOUNDING a retry, and the audit was right that
+         * bounding is not enough: before this PR the stale STA_CONNECTED
+         * routed every ERROR -> REINIT through STA reconfiguration, which
+         * retried the disconnect INDEFINITELY and so self-healed whenever the
+         * transport eventually did. The subtraction removed an UNBOUNDED
+         * retry; a bounded one still turns a transient fault into a permanent
+         * one, only later.
+         *
+         * Re-setting STA_CONNECTED would restore the retry AND restore the
+         * wrong link-state report this PR exists to fix -- one flag answering
+         * two questions, which is how the original defect worked. This flag
+         * answers only "is a teardown outstanding?", so GetLinkState() is
+         * untouched and the retry is driven by the fact that governs it.
+         *
+         * Set on exhaustion, cleared the moment a disconnect reaches the chip,
+         * re-attempted on EVERY REINIT pass while set -- the unbounded
+         * behaviour restored without a deinit, so the AP->STA branch's "don't
+         * deinitialize" constraint still holds. */
+        WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING = 1 << 10,
     } flag;
     uint16_t value;
 } wifi_manager_stateFlag_t;
@@ -89,6 +120,15 @@ struct stateMachineInst {
 static void __attribute__((unused)) SetEventFlag(wifi_manager_stateFlag_t *pEventFlagState, uint16_t flag);
 static void __attribute__((unused)) ResetEventFlag(wifi_manager_stateFlag_t *pEventFlagState, uint16_t flag);
 static uint8_t __attribute__((unused)) GetEventFlagStatus(wifi_manager_stateFlag_t eventFlagState, uint16_t flag);
+/* ⛔ #1060 r2: the AP->STA settle wait, SLICED so a failed BSSDisconnect can be
+ * re-attempted WITHIN it rather than after it. The product is the 500 ms this
+ * branch has always spent letting the AP stop -- expressed as a product so a
+ * change to either factor cannot silently alter the settle time that the
+ * "Let AP fully stop" comment depends on. 5 x 100 ms gives the transport five
+ * further chances to recover at no added cost. */
+#define WIFI_MANAGER_APSTA_SETTLE_SLICES   5u
+#define WIFI_MANAGER_APSTA_SETTLE_SLICE_MS 100u
+
 static bool SendEvent(wifi_manager_event_t event);
 static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * const pInstance, uint16_t event);
 static void ApplyPowerSavePolicy(stateMachineInst_t * const pInstance);
@@ -216,6 +256,24 @@ static volatile TickType_t gConsoleIdleDeadlineTicks =
 // reads/writes are atomic on PIC32MZ; volatile because it is written from a
 // SCPI task and read from app_WifiTask.
 static volatile bool gWincDeepPowerOff = false;
+
+// #881: the last WINC reset request from the HIF layer (hif_rx_reset_requests())
+// that is served or superseded. A request is superseded by any teardown the
+// user asked for (wifi_manager_Deinit, which PowerOff also runs): the next
+// bring-up re-initialises the WINC anyway, and serving the request after a
+// teardown would power the WINC back up against an explicit LAN:POWer 0.
+// Read and written only inside critical sections.
+static uint32_t gRxResetHandled = 0;
+
+// #881: outcome of arming a hard reset; see HardResetImpl().
+typedef enum {
+    HARD_RESET_QUEUED,       // armed, DEINIT queued
+    HARD_RESET_REFUSED,      // WiFi is off by request: nothing armed
+    HARD_RESET_QUEUE_FAILED, // armed, but DEINIT could not be queued
+} hard_reset_result_t;
+static hard_reset_result_t HardResetImpl(void);
+
+
 
 // Recursive mutex serializing wifi_manager_ProcessState across callers.
 // Today app_WifiTask is the primary owner; SCPI_Reset's active pump
@@ -541,7 +599,9 @@ static void ApEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHandl
 
     if (WDRV_WINC_CONN_STATE_CONNECTED == currentState) {
         LOG_D("AP mode: Station connected\r\n");
-        SendEvent(WIFI_MANAGER_EVENT_STA_CONNECTED);
+        // Its own event type, not STA_CONNECTED: the handler re-checks
+        // AP_STARTED -- the flag tested above -- when it consumes this (#1060).
+        SendEvent(WIFI_MANAGER_EVENT_AP_CLIENT_CONNECTED);
     } else if (WDRV_WINC_CONN_STATE_DISCONNECTED == currentState) {
         LOG_D("AP mode: Station disconnected\r\n");
         SendEvent(WIFI_MANAGER_EVENT_STA_DISCONNECTED);
@@ -798,7 +858,19 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
         }
         case SOCKET_MSG_SEND:
         {
-            if (gStateMachineContext.pTcpServerContext != NULL && pMessage != NULL) {
+            // #956 hardening (defense in depth — NOT a proven live bug): only
+            // the streaming client's own socket may move the in-flight ring or
+            // the send counters.  Today nothing else can reach here — iperf2 and
+            // the mDNS responder claim their sockets at the top of this callback
+            // and UDP discovery arrives as SOCKET_MSG_SENDTO, a different message
+            // type — so this has never been observed to fire.  But nothing
+            // structurally prevents a future socket from aliasing the handler,
+            // and if one did it would pop a ring slot it never pushed, which is
+            // precisely the mis-pairing #956 exists to eliminate.  Note this also
+            // skips for clientSocket == -1 (no client), where a completion cannot
+            // belong to us by definition.
+            if (gStateMachineContext.pTcpServerContext != NULL && pMessage != NULL &&
+                socket == gStateMachineContext.pTcpServerContext->client.clientSocket) {
                 int16_t sentBytes = *(int16_t*)pMessage;
                 wifi_tcp_server_clientContext_t* client = &gStateMachineContext.pTcpServerContext->client;
 
@@ -839,8 +911,35 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                         client->wifiPartialBytesMissing +=
                             (uint32_t)(sendSize - (uint16_t)sentBytes);
                         isPartial = true;
+                    } else if ((uint16_t)sentBytes > sendSize) {
+                        // #956: the arithmetically-impossible direction.  A
+                        // completion cannot confirm more bytes than its own send
+                        // offered, so any accrual here means this completion was
+                        // paired with the wrong ring slot (or, at sendSize == 0,
+                        // with no slot at all — either the ring was reset out from
+                        // under an outstanding send, or tcpInFlight was 0 so
+                        // nothing was popped).
+                        //
+                        // Deliberately NOT guarded on sendSize > 0, unlike the
+                        // partial arm above.  That guard is a no-op there anyway
+                        // (an unsigned `sentBytes < 0` can never hold), while here
+                        // it would discard exactly the not-in-flight case — and
+                        // discarding it would break the identity this counter
+                        // exists to restore:
+                        //     BytesSent - BytesConfirmed
+                        //         == PartialBytesMissing - OverBytesExtra
+                        // which needs every confirmed byte to be matched against
+                        // whatever sendSize was popped, zero included.
+                        client->wifiTcpOverBytesExtra +=
+                            (uint32_t)((uint16_t)sentBytes - sendSize);
                     }
                 } else {
+                    // The popped sendSize is deliberately charged to NOTHING
+                    // here, so it stays in wifiTcpBytesSent with nothing on the
+                    // other side.  That is why the identity above holds only
+                    // when wifiTcpSendErrors == 0.  See wifiTcpOverBytesExtra in
+                    // wifi_tcp_server.h for the full statement and for why it
+                    // is not charged to wifiPartialBytesMissing.
                     client->wifiTcpSendErrors++;
                     isError = true;
                 }
@@ -1058,6 +1157,27 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             // Preserve WiFi firmware update mode request flag across state reset
             bool wifiFwUpdateRequested = GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_REQUESTED);
 
+            /* ⛔ #1060 r4: THE TEARDOWN MARKER MUST SURVIVE THIS RESET, and r3
+             * did not make it so -- which falsified r3's own central claim.
+             *
+             * r3 said the disconnect is "re-attempted on every REINIT pass
+             * while set". It is not: if the REINIT-side attempt ALSO fails,
+             * REINIT falls through to the fresh-init arm, which re-enters
+             * MainState, and this ENTRY runs ResetAllEventFlags() -- a memset
+             * of the whole flag word. The marker is erased, the driver is
+             * reused with isConnected still true, and nothing ever retries.
+             * One failed retry and the unbounded retry was gone again.
+             *
+             * This flag is not session state like the others in that word. It
+             * records a fact about the CHIP -- "a disconnect we issued never
+             * reached it" -- and no state transition on our side makes that
+             * false. It may be cleared ONLY by a disconnect that reached the
+             * chip. So it is preserved here exactly as the firmware-update
+             * request above is, which is this file's existing idiom for a flag
+             * that outlives a state reset; I added a third writer to that word
+             * without looking for the pattern that already handled the second. */
+            bool teardownPending = GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING);
+
             ResetAllEventFlags(&pInstance->eventFlags);
             // #475 step 3 — bulk-clear includes TCP_SOCKET_OPEN flag, so
             // pair it with the matching tick clear to keep observable in
@@ -1073,6 +1193,17 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             // stale deadline would unnecessarily delay the next REINIT
             // attempt by up to 30 s.  Qodo round-3 finding (medium).
             pInstance->retryAfterTick = 0;
+
+            /* #1060 r4: restore the chip-truth marker the memset above cleared.
+             * Unconditional and independent of the branches below -- an
+             * outstanding teardown is outstanding whatever this state machine
+             * does next. Critical section per the RMW rule below. */
+            if (teardownPending) {
+                taskENTER_CRITICAL();
+                SetEventFlag(&pInstance->eventFlags,
+                             WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING);
+                taskEXIT_CRITICAL();
+            }
 
             if (wifiFwUpdateRequested) {
                 SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_REQUESTED);
@@ -1454,8 +1585,39 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 }
             }
             break;
+        case WIFI_MANAGER_EVENT_AP_CLIENT_CONNECTED:
         case WIFI_MANAGER_EVENT_STA_CONNECTED:
             returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_HANDLED;
+            // #1060: re-check, when the event is CONSUMED, the flag its
+            // producer checked when it was QUEUED. ApEventCallback queues
+            // AP_CLIENT_CONNECTED only while AP_STARTED is set, and
+            // StaEventCallback queues STA_CONNECTED only while STA_STARTED is
+            // set, but the event runs later, on this task. A mode switch,
+            // disable or teardown handled in between clears that flag, and
+            // the association the event reports went with it: setting
+            // STA_CONNECTED from it would report a peer that is not there
+            // (#1060's failure, reached through the queue instead of through
+            // an uncleared flag), and the rest of this handler would release
+            // the APPLY gate before the new mode is up and open sockets for a
+            // mode that is gone. So drop it.
+            //
+            // Keyed on the producer's OWN flag rather than on "either mode is
+            // up": an AP-client event consumed after an AP->STA switch's INIT
+            // has set STA_STARTED would pass the looser test. A same-mode
+            // restart, which clears and re-sets the flag inside ONE handler,
+            // is invisible to any flag test -- see
+            // wifi_manager_GetLinkState() for the path that leaves open.
+            {
+                const uint16_t producerFlag =
+                    (WIFI_MANAGER_EVENT_AP_CLIENT_CONNECTED == event)
+                        ? WIFI_MANAGER_STATE_FLAG_AP_STARTED
+                        : WIFI_MANAGER_STATE_FLAG_STA_STARTED;
+                if (!GetEventFlagStatus(pInstance->eventFlags, producerFlag)) {
+                    LOG_I("WiFi: dropped stale association event %u, its mode is no longer up (#1060)",
+                          (unsigned)event);
+                    break;
+                }
+            }
             SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
             // Reached steady state — release APPLY gate (#425).  Reverse
             // store order (deadline first, flag second) — see AP_STARTED
@@ -1511,15 +1673,16 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     break;
                 }
                 // #475 step 3: anchor open-time ONLY when we actually open
-                // the socket.  This event fires both for STA-mode connect
-                // and for AP-mode client station connect (ApEventCallback);
-                // unconditional anchoring outside the if-block would reset
-                // the uptime every time an AP client associated.
+                // the socket.  This handler runs both for STA-mode connect
+                // and for AP-mode client station connect (ApEventCallback's
+                // AP_CLIENT_CONNECTED); unconditional anchoring outside the
+                // if-block would reset the uptime every time an AP client
+                // associated.
                 ANCHOR_LISTEN_SOCKET_OPEN_TICK();
             }
             SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN);
             SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN);
-            /* #345: advertise via mDNS in STA mode only (this event also fires
+            /* #345: advertise via mDNS in STA mode only (this handler also runs
              * for AP-client associations — never advertise there). The DHCP
              * lease arrives later (DhcpEventCallback -> mdns_responder_UpdateIp),
              * so the A record stays silent until the station IP is known. */
@@ -1624,6 +1787,45 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 break;
             }
 
+            /* ⛔ #1060 r3: FINISH AN OUTSTANDING TEARDOWN BEFORE RE-INITIALISING.
+             *
+             * This is the unbounded retry the stale STA_CONNECTED used to
+             * provide by accident, now driven by a flag that means exactly
+             * that and nothing else. While it is set the chip may still hold
+             * an association, and the fresh-init arm below cannot clear it:
+             * WDRV_WINC_Initialize and WDRV_WINC_Open both return early for an
+             * instance that is still initialised and open, so
+             * wincResetCtrlDcpt never runs and every IPUseDHCPSet is refused.
+             *
+             * Placed AFTER the BUSY check so the driver is quiescent, and
+             * BEFORE any re-init work so a success here is visible to it. On
+             * the passes where nothing is outstanding this costs one flag
+             * test, not a call.
+             *
+             * No deinit, deliberately: the AP->STA branch's "the driver gets
+             * into a bad state (-1) after deinit" observation still stands, so
+             * recovery is one more attempt at the thing that failed rather
+             * than a heavier reset. */
+            if (GetEventFlagStatus(pInstance->eventFlags,
+                                   WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING)) {
+                const WDRV_WINC_STATUS retryStatus =
+                        WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
+                if ((WDRV_WINC_STATUS_OK == retryStatus) ||
+                    (WDRV_WINC_STATUS_REQUEST_ERROR == retryStatus)) {
+                    /* #1060 r4: same RMW rule as the AP->STA site. The LOG_I
+                     * stays OUTSIDE the lock -- logging from a critical
+                     * section is its own hazard. */
+                    taskENTER_CRITICAL();
+                    ResetEventFlag(&pInstance->eventFlags,
+                            WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING);
+                    taskEXIT_CRITICAL();
+                    LOG_I("WiFi: outstanding teardown completed (#1060)");
+                }
+                /* Still failing: the flag stays set and the next REINIT tries
+                 * again. No log on failure -- a REINIT loop would spam it, and
+                 * the exhaustion that set the flag already reported once. */
+            }
+
             // IMPORTANT: Do NOT use WDRV_WINC_Deinitialize for runtime reconfiguration!
             // The Microchip driver has a bug where it asserts reset but never deasserts it,
             // leaving the WINC1500 in a permanent reset state. Instead, we perform a soft
@@ -1682,9 +1884,44 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     // "isConnected already false" case; OK is success.
                     // Anything else (INVALID_ARG, NOT_OPEN, DISCONNECT_FAIL)
                     // indicates a deeper driver/chip issue worth recording.
+                    /* ⛔⛔ #1060 r8: THIS SITE GETS THE RECOVERY ARM TOO, AND MY
+                     * r7 SCOPE CALL WAS WRONG.
+                     *
+                     * I classified this site and the STA->AP one as
+                     * PRE-EXISTING and left them alone, on the grounds that
+                     * their log-only handling is older than this PR -- which is
+                     * true of the CODE and is the wrong test. r7's own audit
+                     * then showed what the right one is: on origin/main a failed
+                     * disconnect here was recovered because the queued
+                     * STA_CONNECTED re-set the flag and the next enable+APPLY
+                     * retried, and THIS PR's stale-event drop removes that
+                     * route. So main recovers in this scenario and r7 did not.
+                     * The regression is INTRODUCED even though the line is old.
+                     *
+                     * ⭐ The lesson, recorded because I already had it written
+                     * down and still got it backwards: introduced-vs-pre-existing
+                     * is keyed on whether THIS CHANGE MADE THE OUTCOME WORSE,
+                     * not on the age of the lines involved. Line ancestry is not
+                     * defect ancestry.
+                     *
+                     * Same arm as the AP->STA and STA-reconfigure sites, for the
+                     * same reason and in the same shape -- see the
+                     * TEARDOWN_PENDING consumer for why the fresh-init arm
+                     * cannot clear a stuck isConnected by itself. */
                     const WDRV_WINC_STATUS discStatus = WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
-                    if ((WDRV_WINC_STATUS_OK != discStatus) &&
-                        (WDRV_WINC_STATUS_REQUEST_ERROR != discStatus)) {
+                    const bool reachedChip =
+                        ((WDRV_WINC_STATUS_OK == discStatus) ||
+                         (WDRV_WINC_STATUS_REQUEST_ERROR == discStatus));
+                    taskENTER_CRITICAL();
+                    if (reachedChip) {
+                        ResetEventFlag(&pInstance->eventFlags,
+                                       WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING);
+                    } else {
+                        SetEventFlag(&pInstance->eventFlags,
+                                     WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING);
+                    }
+                    taskEXIT_CRITICAL();
+                    if (!reachedChip) {
                         LOG_E("WiFi: BSS disconnect failed on disable (status=%d)", (int)discStatus);
                     }
                 }
@@ -1743,9 +1980,28 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
                     ArmApplyTeardownDeadline();  // #423
                     {
+                        /* ⛔ #1060 r8: the recovery arm, for the reason spelled
+                         * out at the DISABLE site above -- r7's blind audit
+                         * showed main recovers a failed teardown here via the
+                         * queued STA_CONNECTED and this PR's drop removes that,
+                         * so the regression is introduced here too. Fourth and
+                         * last site; after this no BSSDisconnect in this file
+                         * fails without recording that the chip may still hold
+                         * an association. */
                         const WDRV_WINC_STATUS discStatus = WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
-                        if ((WDRV_WINC_STATUS_OK != discStatus) &&
-                            (WDRV_WINC_STATUS_REQUEST_ERROR != discStatus)) {
+                        const bool reachedChip =
+                            ((WDRV_WINC_STATUS_OK == discStatus) ||
+                             (WDRV_WINC_STATUS_REQUEST_ERROR == discStatus));
+                        taskENTER_CRITICAL();
+                        if (reachedChip) {
+                            ResetEventFlag(&pInstance->eventFlags,
+                                           WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING);
+                        } else {
+                            SetEventFlag(&pInstance->eventFlags,
+                                         WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING);
+                        }
+                        taskEXIT_CRITICAL();
+                        if (!reachedChip) {
                             LOG_E("WiFi: BSS disconnect failed on STA->AP (status=%d)", (int)discStatus);
                         }
                     }
@@ -1770,13 +2026,198 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     wifi_tcp_server_CloseSocket();
                     RESET_TCP_SOCKET_OPEN(pInstance);
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN);
-                    
+
+                    // #1060: clear the STA flags too, mirroring the STA->AP
+                    // branch above, and BEFORE APStop below -- not after --
+                    // so nothing in this branch can observe them set once
+                    // teardown has started. STA_CONNECTED is not STA-only: a
+                    // station associating to OUR soft-AP makes
+                    // ApEventCallback queue AP_CLIENT_CONNECTED, whose
+                    // handler (shared with STA_CONNECTED) sets this same
+                    // flag. Nothing else clears it here -- the client's own
+                    // disconnect callback arrives after AP_STARTED goes clear
+                    // below and ApEventCallback drops it -- so GetLinkState(),
+                    // which tests this flag before AP_STARTED, would report
+                    // CONNECTED through the 500 ms settle and the STA
+                    // bring-up that follows, with no link. An association
+                    // event already QUEUED when this runs is consumed only
+                    // after this handler returns, when AP_STARTED is clear,
+                    // so that handler's producer-flag check drops it rather
+                    // than setting the flag again.
+                    // STA_STARTED should already be clear here in the common
+                    // case (only the STA INIT and STA-reconfigure paths set
+                    // it, and AP mode is neither), so clearing it is
+                    // defensive rather than a behavior change: it keeps
+                    // MaybeReconcileStaConnected()'s Phase-1 repair, which is
+                    // gated on STA_STARTED but not on the APPLY-in-progress
+                    // gate, from re-setting STA_CONNECTED out from under this
+                    // switch. INIT below sets STA_STARTED again once it
+                    // reaches BSSConnect.
+                    //
+                    // Critical section: ResetEventFlag is a plain
+                    // read-modify-write of eventFlags.value, and not every
+                    // writer of that word runs on this task:
+                    // wifi_manager_RequestWifiFirmwareUpdate() sets
+                    // WIFI_FW_UPDATE_REQUESTED from whichever SCPI task took
+                    // SYST:COMM:LAN:FWUpdate -- USB SCPI, priority 7,
+                    // included -- which could preempt between this task's
+                    // load and store and lose its bit to the stale store.
+                    // Same wrap as MaybeReconcileStaConnected()'s
+                    // SetEventFlag. Limited to the two writes this change
+                    // added; the AP_STARTED clear below and the file's other
+                    // unwrapped writers are as they were.
+                    taskENTER_CRITICAL();
+                    ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
+                    ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
+                    taskEXIT_CRITICAL();
+
                     WDRV_WINC_APStop(pInstance->wdrvHandle);
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED);
-                    
-                    // Don't deinitialize - the driver gets into a bad state (-1) after deinit
-                    // Instead, just wait for AP to stop and then configure for STA mode
-                    vTaskDelay(pdMS_TO_TICKS(500));  // Let AP fully stop
+
+                    // #1060: disconnect unconditionally, mirroring what the
+                    // STA->AP branch above and the WiFi-disable path both
+                    // already do after their own APStop/APStop-equivalent.
+                    // A soft-AP client association also sets the WINC
+                    // driver's own internal isConnected, which APStop does
+                    // not clear; before this fix, the (buggy) still-set
+                    // STA_CONNECTED flag routed a subsequent DHCP failure's
+                    // ERROR/REINIT retry into the STA-reconfigure path,
+                    // whose own BSSDisconnect happened to clear isConnected
+                    // and let the #467 DHCP-wedge retry recover. With the
+                    // flag now correctly clear, that retry would instead
+                    // take the fresh-init path, which does not touch
+                    // isConnected -- so without this disconnect, fixing the
+                    // status-reporting defect could reopen the #467 wedge
+                    // for exactly the client-was-attached case this ticket
+                    // is about. BSSDisconnect returns REQUEST_ERROR
+                    // harmlessly when isConnected is already false (the
+                    // common case), matching the STA->AP branch's own
+                    // comment on the identical call.
+                    //
+                    // Any OTHER status is only logged, as at the STA->AP,
+                    // disable and STA-reconfigure sites. DISCONNECT_FAIL (the
+                    // m2m_wifi_disconnect request failing) leaves isConnected
+                    // set, and the retry path does not clear it: with every
+                    // mode flag clear, ERROR -> REINIT takes the fresh-init
+                    // path, where WDRV_WINC_Initialize and WDRV_WINC_Open both
+                    // return early for an instance that is still initialised
+                    // and open (wdrv_winc.c), so wincResetCtrlDcpt never runs
+                    // and each INIT's IPUseDHCPSet is refused again. The three
+                    // older sites already had this log-only handling; closing
+                    // it for all four needs a recovery path (a DEINIT, whose
+                    // WDRV_WINC_Close clears isConnected, is one), not a
+                    // per-site patch.
+                    /* ⛔ #1060 r2: RE-ATTEMPT A FAILED DISCONNECT ACROSS THE
+                     * SETTLE DELAY THIS BRANCH ALREADY SPENDS.
+                     *
+                     * The r1 audit's scenario is a TRANSPORT failure that then
+                     * RECOVERS: hif_send returns M2M_ERR_BUS_FAIL for both the
+                     * AP-disable and the disconnect, so neither request reaches
+                     * the chip and the driver's isConnected stays true. One
+                     * attempt that is only logged therefore loses the single
+                     * thing that would have cleared it -- and because this
+                     * branch has (correctly) cleared every mode flag by now,
+                     * ERROR -> REINIT takes the fresh-init arm, where
+                     * WDRV_WINC_Initialize and WDRV_WINC_Open both return the
+                     * existing instance without running wincResetCtrlDcpt, so
+                     * isConnected is never cleared and every later
+                     * WDRV_WINC_IPUseDHCPSet is refused -- for ever, after the
+                     * transport is healthy again.
+                     *
+                     * ⭐ THE DEFECT IS NEW BY SUBTRACTION, which is what makes a
+                     * retry the right instance fix. Nothing added here
+                     * misbehaves; the stale STA_CONNECTED this PR removes was
+                     * ACCIDENTALLY routing ERROR -> REINIT into the arm that
+                     * retried the disconnect. That protection was real while
+                     * the flag was wrong. Re-setting the flag to get it back
+                     * would reinstate the wrong link-state report this PR
+                     * exists to fix, so the recovery is restored where it
+                     * belongs instead: by making this call succeed.
+                     *
+                     * ⚠ NOT a copy of the three older log-only sites (:1695 and
+                     * the disable / STA-reconfigure paths). Those are the
+                     * PRE-EXISTING instances of this class, and copying their
+                     * shape is what produced this one.
+                     *
+                     * COSTS NO WALL CLOCK. The branch already waits 500 ms for
+                     * the AP to stop; the attempts are spread across that same
+                     * wait rather than added to it, so the common case (the
+                     * first attempt succeeds, or returns the harmless
+                     * REQUEST_ERROR for an already-disconnected chip) is
+                     * unchanged in both behaviour and timing.
+                     *
+                     * RESIDUAL, stated rather than implied: if EVERY attempt
+                     * fails the wedge remains. That is the pre-existing class
+                     * shared with the three older sites; it needs a recovery
+                     * path (a DEINIT, whose WDRV_WINC_Close clears
+                     * isConnected) rather than a per-site patch, and it is
+                     * ticketed as the #1060 design item. This closes the
+                     * instance this PR introduced, which is the scope ruled. */
+                    {
+                        WDRV_WINC_STATUS discStatus =
+                                WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
+                        unsigned attempt = 0u;
+                        /* Don't deinitialize - the driver gets into a bad state
+                         * (-1) after deinit. Instead wait for the AP to stop,
+                         * re-attempting the disconnect while we wait. */
+                        while (attempt < WIFI_MANAGER_APSTA_SETTLE_SLICES) {
+                            vTaskDelay(pdMS_TO_TICKS(
+                                    WIFI_MANAGER_APSTA_SETTLE_SLICE_MS));
+                            attempt++;
+                            if ((WDRV_WINC_STATUS_OK == discStatus) ||
+                                (WDRV_WINC_STATUS_REQUEST_ERROR == discStatus)) {
+                                continue;   /* done; just finish settling */
+                            }
+                            discStatus = WDRV_WINC_BSSDisconnect(
+                                    pInstance->wdrvHandle);
+                        }
+                        /* ⛔ #1060 r4: CRITICAL SECTION, because
+                         * Set/ResetEventFlag are plain read-modify-writes on
+                         * one shared 16-bit word (:948 and :952). A
+                         * higher-priority USB-task SYST:COMM:LAN:FWUpdate
+                         * setting WIFI_FW_UPDATE_REQUESTED between this load
+                         * and its store would be ERASED. The two STA flag
+                         * clears a few lines up already take this lock and say
+                         * exactly this -- I added writers to the same word
+                         * without extending it to them. */
+                        taskENTER_CRITICAL();
+                        if ((WDRV_WINC_STATUS_OK == discStatus) ||
+                            (WDRV_WINC_STATUS_REQUEST_ERROR == discStatus)) {
+                            /* Reached the chip: nothing is outstanding. */
+                            ResetEventFlag(&pInstance->eventFlags,
+                                    WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING);
+                        } else {
+                            /* #1060 r3: the retry is EXHAUSTED, not finished.
+                             * Mark the teardown outstanding so every later
+                             * REINIT pass re-attempts it until it lands. */
+                            SetEventFlag(&pInstance->eventFlags,
+                                    WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING);
+                        }
+                        taskEXIT_CRITICAL();
+                        if ((WDRV_WINC_STATUS_OK != discStatus) &&
+                            (WDRV_WINC_STATUS_REQUEST_ERROR != discStatus)) {
+                            /* ⛔ SHORTENED TWICE, AND THE SECOND TIME BY THE
+                             * GATE RATHER THAN BY ME. log_budget computes the
+                             * worst case from each specifier's MAXIMUM WIDTH
+                             * (10 for %u, 11 for %d), not from the values
+                             * actually passed -- which is correct, and is why
+                             * my own arithmetic said 111 while the real worst
+                             * case was 127. Dropping the attempt count removed
+                             * a 10-byte specifier whose value is a
+                             * compile-time constant anyway; it is in the
+                             * source, in this comment and in the pin, so the
+                             * log is the one place it adds nothing.
+                             *
+                             * The remedy is written LAST, so the remedy is
+                             * what a 125-byte clamp eats -- which is the whole
+                             * reason this message is kept short rather than
+                             * waived. */
+                            LOG_E("WiFi: AP->STA disconnect failed (status=%d)"
+                                  " - DHCP refused until a reinit clears "
+                                  "isConnected (#1060)",
+                                  (int)discStatus);
+                        }
+                    }
                     
                     // Now configure for STA mode using the existing driver handle
                     // The INIT event will reconfigure for STA without reinitializing
@@ -1952,15 +2393,51 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                         // Clear socket + STA state flags so callers that
                         // check status during the chip-reset window (~2 s)
                         // don't observe stale "connected" state.  No
-                        // critical section: every writer of
-                        // pInstance->eventFlags in this codebase is on
-                        // WifiTask (StaEventCallback / SocketEventCallback
-                        // only call SendEvent — no flag mutations) so the
-                        // RMW is single-threaded.  Per docs/MCU_REFERENCE.md
-                        // ("do not add unnecessary critical sections"), the
-                        // earlier speculative wrap was inappropriate.  Also
-                        // clear UDP_SOCKET_CONNECTED so it doesn't outlast
-                        // UDP_SOCKET_OPEN.
+                        // critical section here, but NOT because every
+                        // writer is on WifiTask — it isn't:
+                        // wifi_manager_RequestWifiFirmwareUpdate() sets
+                        // WIFI_FW_UPDATE_REQUESTED from whichever SCPI task
+                        // ran SYST:COMM:LAN:FWUpdate (USB SCPI, priority 7,
+                        // included), so pInstance->eventFlags does have a
+                        // cross-task writer (see the #1060 AP->STA branch's
+                        // critical-section comment, which cites this same
+                        // site).
+                        //
+                        // ⛔ CORRECTED (#1060 r5). This comment used to say the
+                        // exposure was "a torn read against that one unrelated
+                        // bit" and was "judged benign here". BOTH HALVES WERE
+                        // WRONG, and the disposition was the dangerous half.
+                        //
+                        // Not a torn read: docs/MCU_REFERENCE.md says an
+                        // aligned 16/32-bit load or store on PIC32MZ IS
+                        // atomic, so tearing cannot happen here. What is NOT
+                        // atomic is the read-modify-write — ResetEventFlag is
+                        // `value &= ~flag`, which that same doc lists as
+                        // exactly the form requiring taskENTER_CRITICAL().
+                        //
+                        // Not benign: the failure is a LOST WRITE, not a
+                        // corrupted read. USB SCPI (priority 7) running
+                        // SYST:COMM:LAN:FWUpdate between this load and its
+                        // store has its WIFI_FW_UPDATE_REQUESTED set ERASED.
+                        // The user asked for firmware-update mode, the request
+                        // is silently dropped, and the device carries on in
+                        // the wrong mode with nothing logged. "One unrelated
+                        // bit" understated it: that bit is a mode request.
+                        //
+                        // The race is PRE-EXISTING — this sequence and its
+                        // unprotected RMW are both present on origin/main — so
+                        // it is NOT wrapped here, which would be out of scope
+                        // for this PR. It is tracked at #1182, together with
+                        // the ~44 other unprotected flag writes in this file
+                        // and the suggestion that the right fix is to make
+                        // Set/ResetEventFlag themselves atomic rather than to
+                        // wrap forty call sites.
+                        //
+                        // Don't cite "single-threaded" as the reason if this is
+                        // copied elsewhere — and don't cite "benign" either.
+                        //
+                        // Also clear UDP_SOCKET_CONNECTED so it doesn't
+                        // outlast UDP_SOCKET_OPEN.
                         RESET_TCP_SOCKET_OPEN(pInstance);
                         ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN);
                         ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_CONNECTED);
@@ -1977,7 +2454,10 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                         // an ERROR event so the manager retries instead of
                         // silently leaving the chip in a half-reset state.
                         ArmApplyTeardownDeadline();  // #423: HardReset triggers an async disconnect callback during deinit
-                        if (!wifi_manager_HardReset()) {
+                        // #881: REFUSED means a LAN:POWer 0 / disable got in
+                        // first; that teardown is already queued, so there
+                        // is nothing to retry.
+                        if (HardResetImpl() == HARD_RESET_QUEUE_FAILED) {
                             LOG_E("HardReset divert failed to queue DEINIT");
                             // Try ERROR fallback so the manager retries; if
                             // *that* enqueue also fails, the queue is wedged
@@ -2010,10 +2490,56 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
                     ArmApplyTeardownDeadline();  // #423
+                    /* ⛔⛔ #1060 r7: RECORD AN OUTSTANDING TEARDOWN HERE TOO.
+                     *
+                     * This site used to be log-only, and that was survivable
+                     * for one reason that THIS PR removed: a failed disconnect
+                     * left the chip associated, the association event queued
+                     * behind our REINIT re-set STA_CONNECTED, and the next
+                     * APPLY therefore came back through STA reconfiguration
+                     * and tried again. r6's blind audit found that the new
+                     * stale-event drop (see the producerFlag check in the
+                     * association handler) removes that accidental route
+                     * WITHOUT transferring it here -- so a bus fault on this
+                     * BSSDisconnect left isConnected true, every later
+                     * IPUseDHCPSet refused, and a bare APPLY unable to
+                     * recover, where main could.
+                     *
+                     * ⭐ The replacement mechanism already exists in this PR
+                     * and this site simply did not call it: TEARDOWN_PENDING
+                     * means "a disconnect we issued never reached the chip",
+                     * and the MainState re-init path retries it until it lands
+                     * (see its consumer, which explains why the fresh-init arm
+                     * cannot clear isConnected by itself). Mirrors the AP->STA
+                     * exhaustion arm exactly rather than inventing a second
+                     * shape for the same fact.
+                     *
+                     * RMW under a critical section for the same reason the two
+                     * flag clears above take it: a higher-priority USB-task
+                     * write to the same flags word would otherwise erase this
+                     * store.
+                     *
+                     * ⚠ Still log-only in the DIAGNOSTIC sense -- the LOG_E
+                     * stays, outside the lock, because logging from a critical
+                     * section is its own hazard. */
                     {
                         const WDRV_WINC_STATUS discStatus = WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
-                        if ((WDRV_WINC_STATUS_OK != discStatus) &&
-                            (WDRV_WINC_STATUS_REQUEST_ERROR != discStatus)) {
+                        const bool reachedChip =
+                            ((WDRV_WINC_STATUS_OK == discStatus) ||
+                             (WDRV_WINC_STATUS_REQUEST_ERROR == discStatus));
+                        taskENTER_CRITICAL();
+                        if (reachedChip) {
+                            /* Reached the chip: nothing is outstanding. */
+                            ResetEventFlag(&pInstance->eventFlags,
+                                           WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING);
+                        } else {
+                            /* Never reached it: mark the teardown outstanding
+                             * so every later REINIT pass re-attempts it. */
+                            SetEventFlag(&pInstance->eventFlags,
+                                         WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING);
+                        }
+                        taskEXIT_CRITICAL();
+                        if (!reachedChip) {
                             LOG_E("WiFi: BSS disconnect failed on STA reconfigure (status=%d)", (int)discStatus);
                         }
                     }
@@ -2401,6 +2927,116 @@ bool wifi_manager_GetChipInfo(wifi_manager_chipInfo_t *pChipInfo) {
     return true;
 }
 
+wifi_manager_networkMode_t wifi_manager_GetActiveNetworkMode(void) {
+    /* ⛔⛔⛔ #1186 r6: DERIVED LIVE. THERE IS NO CACHED MODE STATE, BY DESIGN.
+     *
+     * r1-r5 answered this from the AP_STARTED/STA_STARTED flags plus a
+     * gWincDeinitQueued latch tracking "a teardown is pending". FIVE audit
+     * rounds found FIVE ways for that latch to desynchronise:
+     *   r3  a bring-up cleared it, erasing a teardown NEWER than itself
+     *   r4  SendEvent could fail, leaving it set with no teardown coming
+     *   r5a the full-queue fallback DISCARDED an already-queued DEINIT, so a
+     *       SUCCESSFUL send's event never arrived
+     *   r5b a teardown already DEQUEUED and running is not IN the queue, so
+     *       "queue empty" cleared it mid-nm_reset
+     * r5b is why no amount of queue-tracking could work: the fact being
+     * cached is not a property of the queue. Patching instance n produced
+     * instance n+1 four times, so the mechanism is replaced, not fixed again.
+     *
+     * TWO LIVE SOURCES, NEITHER OF THEM OURS TO KEEP IN SYNC:
+     *
+     * 1. The board power state, read the way this file already reads it for
+     *    the APPLY gate. This closes the window the latch was originally
+     *    added for: a long-press power-down cuts the rail while a queued
+     *    teardown may never be processed, so the DRIVER's own view goes
+     *    stale. Power is the fact that is true regardless.
+     *
+     * 2. WDRV_WINC_OperatingModeGet(), the vendor's own query. UNKNOWN covers
+     *    an invalid handle, which also covers every reset window: the DEINIT
+     *    handler invalidates wdrvHandle BEFORE calling
+     *    wifi_manager_FixWincResetState(), and that function has exactly one
+     *    caller, so no reset path runs with a valid handle. isAP is written
+     *    only by the vendor driver (APStart / APStop / its control-descriptor
+     *    reset) and never by us -- we cannot desynchronise what we do not
+     *    write, which is the whole point.
+     *
+     * ⚠ TWO READINGS TO KNOW ABOUT, both verified by reading the paths:
+     *
+     * (a) A STA that cannot associate reports 1 for as long as it retries
+     *     (ERROR -> backoff -> REINIT re-queues itself without closing the
+     *     handle; the backoff escalates 1 s -> 30 s over up to 200 attempts).
+     *     That is CORRECT, not a defect: the radio is configured for STA and
+     *     actively retrying, so "STA, not associated" is a true description.
+     *     Requiring association instead would report 0 for a STA that is up,
+     *     the worse answer, AND would need a cached bit to produce.
+     *
+     * ⛔ r7 CORRECTION: an earlier revision of this comment said there was no
+     *    state with the driver open and neither mode intended, "ruled out by
+     *    predicate". Two exist; see the STA case below. The enumeration that
+     *    produced that claim covered INIT and ERROR and skipped REINIT.
+     *
+     * (b) The one genuinely false reading is ~100 ms of AP bring-up: between
+     *     WDRV_WINC_Open and WDRV_WINC_APStart the driver's isAP is still
+     *     false, so this says 1 while an AP comes up. Bounded by the
+     *     BSSCtx/AuthCtx setup plus the 100 ms vTaskDelay before APStart,
+     *     self-correcting, and it cannot stick. Accepted deliberately: every
+     *     defect the latch produced was a STUCK wrong value, which this shape
+     *     cannot produce at all.
+     *
+     * Non-blocking: one BoardData read and one pointer-dereferencing vendor
+     * call -- no WINC round-trip, no lock. Same contract as
+     * wifi_manager_GetLinkState(). */
+    const tPowerData *pPowerState = (tPowerData *) BoardData_Get(BOARDDATA_POWER_DATA, 0);
+    if (pPowerState == NULL ||
+        (pPowerState->powerState != POWERED_UP &&
+         pPowerState->powerState != POWERED_UP_EXT_DOWN)) {
+        return WIFI_MANAGER_NETWORK_MODE_NONE;
+    }
+
+    switch (WDRV_WINC_OperatingModeGet(gStateMachineContext.wdrvHandle)) {
+        case WDRV_WINC_OP_MODE_AP:
+        case WDRV_WINC_OP_MODE_PROV_AP:
+            return WIFI_MANAGER_NETWORK_MODE_AP;
+        case WDRV_WINC_OP_MODE_STA:
+            /* ⛔⛔ #1186 r7: STA IS THE VENDOR'S *DEFAULT*, NOT A SIGNAL, so it
+             * needs positive corroboration. OperatingModeGet returns STA
+             * whenever isAP is false -- including with the driver open and
+             * NOTHING running.
+             *
+             * r6's comment claimed no such steady state existed, "ruled out by
+             * predicate". That was WRONG: I enumerated INIT's post-Open breaks
+             * and the ERROR handler and never looked at REINIT's own branches.
+             * Two steady states exist, both found by the r6 audit:
+             *   (a) REINIT's `!isEnabled` branch (APPLY;ENAbled 0;APPLY) calls
+             *       WDRV_WINC_APStop and clears the flags but KEEPS wdrvHandle
+             *       -- APStop sets the driver's isAP false, so this read STA
+             *       indefinitely with WiFi stopped;
+             *   (b) a failed AP start (e.g. a 1-character WPA key that
+             *       m2m_validate_ap_parameters rejects) leaves a valid handle
+             *       with isAP false, reading STA through repeated AP attempts.
+             *
+             * STA_STARTED is the corroboration, and it is ONE bit on ONE axis
+             * rather than a return to the cache that was just deleted: it is
+             * SET only after a successful WDRV_WINC_BSSConnect (two sites) and
+             * CLEARED only on REINIT's teardown paths (five, including (a)'s
+             * at the APStop above), so it tracks the work that actually
+             * happened. It is consulted ONLY as a conjunct, after the power
+             * check and after the vendor call -- never as the answer.
+             *
+             * Reading it here: a STA that came up and is now retrying reads 1
+             * (true -- it is configured for STA and retrying); a STA that has
+             * never come up reads 0. Under-reporting is the safe direction. */
+            if (GetEventFlagStatus(gStateMachineContext.eventFlags,
+                                   WIFI_MANAGER_STATE_FLAG_STA_STARTED)) {
+                return WIFI_MANAGER_NETWORK_MODE_STA;
+            }
+            return WIFI_MANAGER_NETWORK_MODE_NONE;
+        default:
+            /* UNKNOWN: invalid handle / no control block -- nothing is up. */
+            return WIFI_MANAGER_NETWORK_MODE_NONE;
+    }
+}
+
 wifi_link_state_t wifi_manager_GetLinkState(void) {
     // #951. Single decision point for "what is the WiFi link actually doing".
     // wifi_manager_GetWiFiStatus() below is a pure projection of this result,
@@ -2432,10 +3068,11 @@ wifi_link_state_t wifi_manager_GetLinkState(void) {
             // A peer is attached. Despite the flag's name this is NOT
             // STA-only: ApEventCallback runs only in AP mode and, on a plain
             // station ASSOCIATION to our soft-AP, queues
-            // WIFI_MANAGER_EVENT_STA_CONNECTED, whose handler sets this flag
-            // with no AP/STA discrimination. So in AP mode an associated
-            // station reaches CONNECTED here, before the AP branch below, and
-            // AP_IDLE is unreachable while any station is associated.
+            // WIFI_MANAGER_EVENT_AP_CLIENT_CONNECTED, whose handler (shared
+            // with STA_CONNECTED) sets this same flag. So in AP mode an
+            // associated station reaches CONNECTED here, before the AP branch
+            // below, and AP_IDLE is unreachable while any station is
+            // associated.
             //
             // That is the CONTRACT, not an accident to be reordered around.
             // An adversarial audit of PR #1044 proposed testing AP_STARTED
@@ -2452,22 +3089,33 @@ wifi_link_state_t wifi_manager_GetLinkState(void) {
             // what these flags can support instead. Changing the flag itself
             // is a separate state-machine change with its own blast radius.
             //
-            // KNOWN RESIDUAL, #1060: this flag is EVENT-LATCHED, not a live
-            // measurement. The STA_CONNECTED handler sets it unconditionally,
-            // and that event is queued both for a STA link and for a soft-AP
-            // client association. The WINC callbacks queue events that this
-            // task consumes later, and ApEventCallback drops them while
-            // AP_STARTED is clear, so the flag can describe a state that has
-            // already ended. Nothing re-derives it from the chip in AP mode:
-            // the periodic reconciler only ever SETS it, and only while
-            // STA_STARTED is set. So around an AP stop or restart, or a mode
-            // switch, it can stay set with no peer attached -- in at least one
-            // path with no time bound. #1060 records the paths found so far.
+            // RESIDUAL, #1060: this flag is EVENT-LATCHED, not a live
+            // measurement. The WINC callbacks queue association events that
+            // this task consumes later, and ApEventCallback drops a client's
+            // DISCONNECT while AP_STARTED is clear, so the flag can describe
+            // a state that has already ended. Nothing re-derives it from the
+            // chip in AP mode: the periodic reconciler only ever SETS it, and
+            // only while STA_STARTED is set.
             //
-            // NOT fixed here because it is PRE-EXISTING: the legacy
-            // wifi_manager_GetWiFiStatus() on main at d71147e31 tests this flag
-            // first in exactly this order. This PR made the existing wrongness
-            // visible by publishing a contract about it; #1060 carries the fix.
+            // Two paths are closed. The AP->STA APPLY branch (#1060's repro)
+            // resets the flag before it stops the AP, mirroring the STA->AP
+            // branch. And an association event still queued from before a
+            // mode switch, a disable or a teardown no longer re-sets it: the
+            // handler drops an event whose producer's mode flag (AP_STARTED
+            // for a soft-AP client, STA_STARTED for a STA link) is clear by
+            // the time it is consumed.
+            //
+            // One path is still open, found by reading the code and not
+            // reproduced: a REINIT that restarts the soft-AP in place (an
+            // AP-mode APPLY, or the AP-mode ERROR retry) stops and restarts
+            // the AP inside ONE handler and never clears this flag. A station
+            // associated before the restart can have its disconnect dropped
+            // while AP_STARTED is clear -- the mechanism #1060 describes --
+            // so if it does not re-associate (for example because the APPLY
+            // changed the SSID) CONNECTED stays up with nobody attached, with
+            // no time bound. The consume-time check cannot see it, because
+            // AP_STARTED is set again before anything is consumed. This is
+            // the set found so far, not a proof that there are no others.
             if (0u != (flags & WIFI_MANAGER_STATE_FLAG_STA_CONNECTED)) {
                 return WIFI_LINK_STATE_CONNECTED;
             }
@@ -2691,6 +3339,8 @@ bool wifi_manager_Deinit() {
     taskENTER_CRITICAL();
     gWifiReinitDeadlineTick = 0;
     gStateMachineContext.pWifiSettings->isEnabled = 0;
+    // #881: a pending HIF reset request must not re-power the WINC after this.
+    gRxResetHandled = hif_rx_reset_requests();
     // Explicit teardown — release APPLY gate so a follow-up APPLY isn't
     // blocked by the 30 s safety timeout.  Reverse store order (#425).
     gApplyInProgressDeadlineTick = 0;
@@ -2789,23 +3439,66 @@ bool wifi_manager_IsEnabled(void) {
 // CDC).  Full recovery (DEINIT settle + STA reassoc + DHCP)
 // typically takes ~20 s; poll SYST:COMM:LAN:ADDR? to confirm.
 bool wifi_manager_HardReset(void) {
-    if (gStateMachineContext.pWifiSettings == NULL) return false;
-    // Tear down iperf2 sockets before the WINC GPIO toggle (same reason
-    // as wifi_manager_Deinit).
-    Iperf2_Stop();
-    LOG_I("WiFi: hard reset (DEINIT -> REINIT in 2 s)");
-    // Set isEnabled=0 + arm deadline atomically so a concurrent Deinit
-    // can't race the (deadline, isEnabled) pair into an inconsistent
-    // state.
-    taskENTER_CRITICAL();
+    return HardResetImpl() == HARD_RESET_QUEUED;
+}
+
+// #881: arm a hard reset, inside the caller's critical section. EVERY path
+// that arms the deferred INIT comes through here -- wifi_manager_HardReset()
+// (SCPI LAN:HRESet, the APPLY divert in ProcessState, iperf2's auto-reset on
+// every session end) and MaybeResetWincForRxDone() -- so the power-off rule
+// lives in one place and no caller can bypass it.
+//
+// Refuses while WiFi is off by request: the deep-power-down latch is set
+// (LAN:POWer 0), or WiFi is disabled with no reset in flight (Deinit: user
+// disable, standby). Arming then would bring WiFi back 2 s later against the
+// user's explicit request -- e.g. iperf2's auto-reset firing after a LAN:POWer
+// 0 that preempted Iperf2_Stop() (codex r5 on #1259). A disabled WiFi WITH a
+// deadline pending is a reset in flight; re-arming it only restarts its 2 s.
+//
+// The deadline is never stored as 0, the "unarmed" sentinel: a tick count
+// that wraps to exactly 0 would otherwise leave the deferred INIT unscheduled
+// and WiFi off for good. Same rule as the APPLY gate's deadline. Expiry is
+// tested with the wrap-safe signed difference in ProcessState, so a deadline
+// of 1 instead of 0 is one tick late, nothing more.
+static bool ArmHardResetLocked(void) {
+    TickType_t deadline;
+    if (gWincDeepPowerOff) {
+        return false;
+    }
+    if (!gStateMachineContext.pWifiSettings->isEnabled && gWifiReinitDeadlineTick == 0) {
+        return false;
+    }
+    deadline = xTaskGetTickCount() + pdMS_TO_TICKS(2000);
+    if (deadline == 0) {
+        deadline = 1;
+    }
     gStateMachineContext.pWifiSettings->isEnabled = 0;
-    gWifiReinitDeadlineTick = xTaskGetTickCount() + pdMS_TO_TICKS(2000);
+    gWifiReinitDeadlineTick = deadline;
     // Explicit teardown — release APPLY gate (#425).  Reverse store order.
     gApplyInProgressDeadlineTick = 0;
     gApplyInProgress = false;
+    return true;
+}
+
+static hard_reset_result_t HardResetImpl(void) {
+    bool armed;
+    if (gStateMachineContext.pWifiSettings == NULL) return HARD_RESET_QUEUE_FAILED;
+    // Tear down iperf2 sockets before the WINC GPIO toggle (same reason
+    // as wifi_manager_Deinit). Its auto-reset re-enters here; the guard
+    // below is what keeps that nested call from undoing a power-off.
+    Iperf2_Stop();
+    // Check and arm atomically so a concurrent Deinit lands wholly before
+    // (refused) or wholly after (it cancels the deadline), never between.
+    taskENTER_CRITICAL();
+    armed = ArmHardResetLocked();
     taskEXIT_CRITICAL();
+    if (!armed) {
+        LOG_I("WiFi: hard reset refused - WiFi is off by request");
+        return HARD_RESET_REFUSED;
+    }
+    LOG_I("WiFi: hard reset (DEINIT -> REINIT in 2 s)");
     InvalidateStaLinkState();  // #517: same rationale as wifi_manager_Deinit
-    return SendEvent(WIFI_MANAGER_EVENT_DEINIT);
+    return SendEvent(WIFI_MANAGER_EVENT_DEINIT) ? HARD_RESET_QUEUED : HARD_RESET_QUEUE_FAILED;
 }
 
 bool wifi_manager_UpdateNetworkSettings(wifi_manager_settings_t * pSettings) {
@@ -2923,6 +3616,47 @@ size_t wifi_manager_WriteToBuffer(const char* pData, size_t len) {
 // disconnected.  The RssiEventCallback repairs the flag on a successful
 // response (chip confirms it knows about this assocHandle).  No-op when
 // the flag is in sync (the common case) — zero cost on a healthy link.
+// #881: the WINC HIF layer asks for a WINC reset when it drops a message it
+// could not read (the layers above may be waiting for it), or cannot confirm
+// that an RX done reached the WINC after a bus error and must not write it
+// twice (m2m_hif.c). Perform it here, on the WifiTask, outside an APPLY.
+// Requests that arrive before one is served are served by one reset.
+//
+// Only while WiFi is enabled: a request is consumed, not served, when the
+// user has turned WiFi off (ArmHardResetLocked refuses; wifi_manager_Deinit
+// also consumes it) or a reset is already in flight (its deferred INIT
+// re-initialises the WINC). Consuming and arming share one critical section.
+// A LAN:POWer 0 that lands after it cancels the deferred INIT, and any
+// nested reset after that -- iperf2's auto-reset inside Iperf2_Stop() below
+// -- is refused by ArmHardResetLocked().
+static void MaybeResetWincForRxDone(void) {
+    bool doReset = false;
+    if (hif_rx_reset_requests() == gRxResetHandled) {
+        return;
+    }
+    if (gApplyInProgress || IsWithinApplyTeardownWindow()) {
+        return;  // APPLY's own teardown resets the WINC; retry after it
+    }
+    if (gStateMachineContext.pWifiSettings == NULL) {
+        return;
+    }
+    taskENTER_CRITICAL();
+    gRxResetHandled = hif_rx_reset_requests();
+    if (gStateMachineContext.pWifiSettings->isEnabled) {
+        doReset = ArmHardResetLocked();
+    }
+    taskEXIT_CRITICAL();
+    if (!doReset) {
+        return;
+    }
+    Iperf2_Stop();
+    LOG_I("WiFi: hard reset for the WINC HIF layer (DEINIT -> REINIT in 2 s)");
+    InvalidateStaLinkState();
+    if (!SendEvent(WIFI_MANAGER_EVENT_DEINIT)) {
+        LOG_E("WiFi: WINC reset for the HIF layer failed to queue");
+    }
+}
+
 static void MaybeReconcileStaConnected(void) {
     // Phase 1: apply any pending repair signaled by RssiEventCallback.
     // Snapshot+clear pending state + handle atomically under a critical
@@ -3245,6 +3979,7 @@ static void wifi_manager_ProcessStateImpl(bool drainTcpRx) {
     // #382 sub-bug 1 — repair STA_CONNECTED flag if it drifted from chip
     // reality.  Runs at most every WIFI_STA_RECONCILE_PERIOD_TICKS.
     MaybeReconcileStaConnected();
+    MaybeResetWincForRxDone();
 
     wifi_tcp_server_TransmitBufferedData();
 
@@ -3268,7 +4003,9 @@ static void wifi_manager_ProcessStateImpl(bool drainTcpRx) {
     // Always clear the flag under the socket-valid guard, so a RECV that
     // arrived just before the client disconnected doesn't leave stale data
     // queued for the next client.
-    if (drainTcpRx && gTcpRxPending) {
+    // #1279: deferred (gTcpRxPending stays set, recv not re-armed) while an idle
+    // SD-buffer restore on the USB task holds the SCPI command gate.
+    if (drainTcpRx && gTcpRxPending && ScpiCmdGate_TryEnter(SCPI_CMD_GATE_TCP)) {
         gTcpRxPending = false;
         if (gStateMachineContext.pTcpServerContext != NULL &&
             gStateMachineContext.pTcpServerContext->client.clientSocket >= 0) {
@@ -3277,6 +4014,7 @@ static void wifi_manager_ProcessStateImpl(bool drainTcpRx) {
                  gStateMachineContext.pTcpServerContext->client.readBuffer,
                  WIFI_RBUFFER_SIZE, 0);
         }
+        ScpiCmdGate_Exit(SCPI_CMD_GATE_TCP);
     }
 
     if (xQueueReceive(gEventQH, &event, 1) == pdPASS) {
@@ -3317,6 +4055,29 @@ void wifi_manager_ProcessStateNoTcpRx(void) {
 
 wifi_tcp_server_context_t* wifi_manager_GetTcpServerContext() {
     return gStateMachineContext.pTcpServerContext;
+}
+
+// #1324: count of M2M_WIFI_RESP_IP_CONFLICT events.  Two writers: the WINC
+// event callback (WINC driver task, via m2m_wifi_handle_events) increments it,
+// and SYST:STR:STATS:CLEar (USB or WiFi SCPI task, both higher priority) zeroes
+// it.  ++ is a read-modify-write, so it runs in a critical section; otherwise a
+// clear landing between its load and store is undone.  The 32-bit read and the
+// clear's plain store are each atomic on PIC32MZ.
+static volatile uint32_t gWifiIpConflicts = 0;
+
+void wifi_manager_NoteIpConflict(void) {
+    taskENTER_CRITICAL();
+    gWifiIpConflicts++;
+    taskEXIT_CRITICAL();
+    LOG_E("WiFi: IP address conflict reported by WINC\r\n");
+}
+
+uint32_t wifi_manager_GetIpConflicts(void) {
+    return gWifiIpConflicts;
+}
+
+void wifi_manager_ClearIpConflicts(void) {
+    gWifiIpConflicts = 0;
 }
 
 uint32_t wifi_manager_GetListenSocketUptimeSec(void) {

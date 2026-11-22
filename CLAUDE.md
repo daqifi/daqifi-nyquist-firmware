@@ -86,39 +86,79 @@ When the gate fails:
   regenerate the baseline (`bash tools/lint/cppcheck.sh`) and commit
   the updated `cppcheck-baseline.txt`.
 
-The current baseline is **empty** — `tools/lint/cppcheck-baseline.txt`
-is a 0-line file, so any new finding fails the gate. (An earlier
-revision of this file said "2 style findings, both in
-`firmware/src/services/wifi_services/wifi_serial_bridge.c`"; those were
-fixed and the baseline regenerated. Verified 2026-08-21 against
-cppcheck 2.13.0, the CI version.) The suppression file documents the
-DioProbe.c array-bounds false positive and the FreeRTOS portmacro
-FPU-guard `#error` (chip-specific macro that cppcheck doesn't see).
+The baseline is **NOT empty**: it records the 231 pre-existing findings
+accepted at #1309 Phase 1 (226 style, 4 warning, 0 error, 1 portability;
+triage tracked in a follow-up issue). Until #1309 the gate silently skipped
+every FreeRTOS-including file (portmacro.h's FPU `#error` fired without
+`-D__mips_hard_float=1`, and the error was suppressed), so the old empty
+baseline was not evidence of cleanliness. `cppcheck.sh` now passes the define
+in every pass. The comparison is **line-insensitive**
+(`tools/lint/cppcheck_compare.py`: strips `:line:col`, compares the multiset),
+so a line shift does not fail it but a new or duplicated finding does.
+Residual: within one file, removing one finding and adding another with the
+identical message and id nets to zero and passes. The portmacro.h
+`preprocessorErrorDirective` suppression still exists, so a future missing
+define would again be silent (narrowing it is #1309 Phase 2).
+
+### LOG_E budget (log_budget)
+
+`Util/Logger.c` truncates a formatted message at **125 bytes**
+(`LOG_MESSAGE_SIZE` 128 minus `LogMessageFormatImpl`'s vsnprintf and
+clamp reservations) with no error and no marker — and since a remedy
+is written last, the remedy is what is lost. `tools/lint/log_budget.py`
+measures every `LOG_E` / `LOG_E_ONCE` / `LOG_E_SESSION` format string
+in `firmware/src/` (same third-party exclusions as cppcheck) against
+that ceiling, reading the ceiling **from Logger.h/Logger.c** rather
+than hardcoding it. A site is a finding when its worst case is over,
+**or when the worst case cannot be bounded** — an unannotated `%s`, a
+`*` width, a specifier with no safe width (`%p`, `%f`), or a
+non-literal format argument. Bound a `%s` with `/* log_budget: max=N */`
+on or above the call, or with a precision (`%.40s`).
+
+⚠️ **Scope is `.c` only — a `LOG_E` in a HEADER is not measured** (`SCANNED_SUFFIXES` in the checker, and the gate prints this on every run), so a format string that lives in a `.h` is outside this gate and has to be bounded by hand.
+
+```bash
+python3 tools/lint/log_budget.py --self-test      # prove the checker works
+python3 tools/lint/log_budget.py                  # the gate
+python3 tools/lint/log_budget.py --list           # every current finding
+python3 tools/lint/log_budget.py --write-baseline # after fixing one
+```
+
+Same baseline/suppress pattern as cppcheck, **including that drift fails
+in both directions**: `tools/lint/log_budget-baseline.txt` is generated,
+and CI fails on findings **not** in it *and* on entries in it that are
+no longer reported. A record is matched by text, so one left behind
+after its finding was fixed silently re-blesses that exact message if it
+comes back — fixing a site and regenerating the baseline are one commit,
+not two. `tools/lint/log_budget-suppress.txt` holds permanent waivers
+and **requires a reason comment above each entry**, enforced per entry
+(one comment authorizes exactly one waiver). Unlike the cppcheck
+baseline, records are keyed on file + reason + message text, **not line
+number**, so editing anything above a `LOG_E` does not turn the gate
+red. CI gate: `.github/workflows/log-budget.yml` (job **LOG_E message
+budget**), same trigger scoping as cppcheck. Baseline at introduction:
+105 findings, 96 of them unannotated `%s`.
 
 ### Programming with PICkit 4 (ipecmd)
 
-Preferred wrapper on this dev station: `bash ~/.claude/skills/flash/flash.sh [--build]` (user-local helper, not repo-tracked) — builds (optional), flashes, reattaches usbipd, verifies a `/dev/ttyACM*` node appears (node presence only — board *identity* still needs the device verification protocol below). Without the wrapper, use the direct invocation, which works anywhere:
+Preferred wrapper on this dev station: `bash ~/.claude/skills/flash/flash.sh [--build]` (user-local helper, not repo-tracked) — builds (optional), flashes, reattaches usbipd, verifies a `/dev/ttyACM*` node appears (node presence only — board *identity* still needs the device verification protocol below). ⚠ **A flash counts only when the firmware CRC read back from the board matches the CRC of the hex you meant to program** — not when a log looks normal. On 2026-10-29 `flash.sh` (no `--build`) twice stopped right after `[1/3] Skip build`, with no `[2/3]`, no "Program Succeeded" and no error (exit 141, SIGPIPE in its staleness check), and left the board on its OLD image; only the CRC read-back caught it. If `flash.sh` stops after `[1/3]`, treat the board as NOT flashed and use the direct invocation below, which worked first time in the same session. Without the wrapper, use the direct invocation, which works anywhere:
 ```bash
 "/mnt/c/Program Files/Microchip/MPLABX/v6.30/mplab_platform/mplab_ipe/ipecmd.exe" \
   -TPPK4 -P32MZ2048EFM144 -M \
   -F"C:\\Users\\User\\Documents\\GitHub\\daqifi-nyquist-firmware\\firmware\\daqifi.X\\dist\\default\\production\\daqifi.X.production.hex" -OL
 ```
 (Station path shown — works pasted into Windows PowerShell/CMD too. From WSL on another checkout, derive it: `-F"$(wslpath -w firmware/daqifi.X/dist/default/production/daqifi.X.production.hex)"`.)
-Watch for "Program Succeeded". Flags: `-M` = program mode, `-OL` = use loaded memories only. Gotchas: `-P` takes the device **without** the `PIC` prefix (with it: exit 36 / "Unable to locate DFP"); `-F` needs a Windows-style path (`/mnt/c/...` fails silently); `-TS<serial>` selects a specific programmer when several are attached; **`-TP` selects the programmer FAMILY and does not fall back** — `-TPPK4` for a PICkit 4 (USB `PID_9012`), `-TPPK5` for a PICkit 5 (`PID_9036`); point it at the wrong family and ipecmd simply fails to find the tool, so `flash.sh` derives it from the programmer's PID and callers pass only `--ts`; **every flash wipes NVM** (WiFi/calibration settings — restore manually via the scpi skill's `batch.sh`, using the **WiFi config sequence** in "Talking SCPI to the device" below; **no `sta_setup.batch` recipe file exists on this station** — two lanes checked independently and found nothing, see #1145 — so do not go looking for one before restoring by hand); after flashing, reattach to WSL (`usbipd attach --wsl --busid 2-4`); libscpi context is stale after flash — new SCPI patterns return `-113` until `SYST:REBoot`.
+Watch for "Program Succeeded". Flags: `-M` = program mode, `-OL` = use loaded memories only. Gotchas: `-P` takes the device **without** the `PIC` prefix (with it: exit 36 / "Unable to locate DFP"); `-F` needs a Windows-style path (`/mnt/c/...` fails silently); `-TS<serial>` selects a specific programmer when several are attached; **`-TP` selects the programmer FAMILY and does not fall back** — `-TPPK4` for a PICkit 4 (USB `PID_9012`), `-TPPK5` for a PICkit 5 (`PID_9036`); point it at the wrong family and ipecmd simply fails to find the tool, so `flash.sh` derives it from the programmer's PID and callers pass only `--ts`; **every flash wipes NVM** (WiFi/calibration settings — restore manually via the scpi skill's `batch.sh`, using the **WiFi config sequence** in "Talking SCPI to the device" below; **no `sta_setup.batch` recipe file exists on this station** — two lanes checked independently and found nothing, see #1145 — so do not go looking for one before restoring by hand); after flashing, reattach to WSL (`usbipd attach --wsl --busid <busid>`); libscpi context is stale after flash — new SCPI patterns return `-113` until `SYST:REboot`.
 
 ### Bench tool inventory (this dev station)
-| Item | Identifier | Notes |
-|------|-----------|-------|
-| Lane registry (authoritative) | `~/.claude/bench/devices.conf` | Box-local; one row per lane (COM, firmware serial, PICkit), enforced by the bench device-guard; lane identity = worktree name. Each row below carries its own pairing-proof date; where the two disagree the registry wins, not this table. |
-| Primary PICkit 4 | `BUR184882598` | Lane **nq-a**; pairing PROVEN 2026-09-08 (`flash/pairing-proof.sh nq-a`), re-run after re-cabling. Pass `-TS<serial>` with more than one PICkit attached, or ipecmd silently programs nothing. |
-| PICkit 4 (second unit) | `BUR202272588` | Lane **nq-c** since 2026-09-10; pairing PROVEN (`flash/pairing-proof.sh nq-c`). Two PICkit 4s are now attached, so `-TS<serial>` is **mandatory** here — an unqualified ipecmd can program the other lane's board. (Previously listed as not attached.) |
-| Lane nq-b (added 2026-09-08) | Nyquist **COM8** serial `7E2873046200E891` + **PICkit 5** `020026703RYN079002` (which exposes its own virtual UART **COM9**, also registered to nq-b — not a Nyquist, never answers `*IDN?`) | Pairing PROVEN 2026-09-08; now on v3.8.0, crc32 `9CF57ADD`. **Its `*IDN?` serial read `0` until it was reflashed** — the serial is `DEVSN1:DEVSN0` silicon (`BoardConfig.c:37`), not NVM, so a `0` means *this firmware does not read DEVSN*, never that the board lacks identity. Reflash before concluding anything from a `0`. **Factory cal is identity, i.e. this board is UNCALIBRATED** — do not use it for accuracy work. |
-| MCU device target | `PIC32MZ2048EFM144` | Pass to ipecmd as `-P32MZ2048EFM144` (no `PIC` prefix — see ipecmd gotchas above) |
-| Serial port (USB CDC) | Windows **COM7** = primary (was COM3). No usbipd here, so no `/dev/ttyACMn`: use Windows `python.exe` or `bench serial` (asserts DTR). | The board has no USB iSerial: **verify by the `*IDN?` serial**, never by port number. |
-| Bench primary device serial | `7E2898F46200E8A7` | Lane nq-a, COM7, PICkit `BUR184882598`; demo unit, its lane may flash it. **Factory cal is identity (measured 2026-09-21, all 24 channels) — this board is UNCALIBRATED; do not use it for accuracy work.** Fine for functional, protocol and regression work. |
-| Lane nq-c (added 2026-09-10) | Nyquist **COM11** serial `7E2837886201026A` + PICkit 4 `BUR202272588` | Pairing PROVEN 2026-09-10 (crc32 unreadable -> `9CF57ADD`, identity unchanged; the before-read was unavailable because the board shipped with firmware predating `CONF:CAP:JSON?`). **NVM was blank after the proof flash** — restore WiFi and calibration and read them back before relying on either. |
-| Bench secondary device serial | `7E28A4206200EAD1` | Not attached (nor `7E28517F62010292`). `7E2837886201026A` was in this absent list and is now lane nq-c, see the row above; the next free lane name is `nq-d`. |
-| Bench WiFi AP | SSID `Tesla` | Credentials in `~/.daqifi.env` (chmod 600) — never commit |
+| Item | Where to find it | Notes |
+|------|------------------|-------|
+| Lane registry (authoritative) | `~/.claude/bench/devices.conf` | Box-local, **not published here**: one row per lane with its COM port, firmware serial and PICkit serial, enforced by the bench device-guard; lane identity = worktree name. `bench whoami` prints what you own. This public repo deliberately carries no board serials, programmer serials, COM ports or SSIDs; they live only in the registry. |
+| PICkits | serials in the registry | Lanes nq-a and nq-c each have a PICkit 4 (pairing PROVEN 2026-09-08 and 2026-09-10, `flash/pairing-proof.sh <lane>`); lane nq-b has a PICkit 5 (2026-09-08). Several programmers are attached, so `-TS<serial>` is **mandatory**: an unqualified ipecmd can program another lane's board, or silently program nothing. `flash.sh` derives `-TP` from the programmer's USB PID; callers pass only `--ts`. Re-run the pairing proof after re-cabling. |
+| Lane boards | serial and COM port in the registry | **nq-a**: demo unit; factory cal is identity (measured 2026-09-21, all 24 channels), so it is UNCALIBRATED and not for accuracy work; fine for functional, protocol and regression work. **nq-b**: also UNCALIBRATED. Its PICkit 5 exposes its own virtual UART, also registered to nq-b, which is not a Nyquist and never answers `*IDN?`. Its `*IDN?` serial read `0` until it was reflashed: the serial is `DEVSN1:DEVSN0` silicon (`BoardConfig.c:37`), not NVM, so a `0` means *this firmware does not read DEVSN*, never that the board lacks identity. **nq-c**: NVM was blank after its proof flash, so restore WiFi and calibration and read them back before relying on either. Two further boards exist but are not attached; the next free lane name is `nq-d`. |
+| MCU device target | `PIC32MZ2048EFM144` | Pass to ipecmd as `-P32MZ2048EFM144` (no `PIC` prefix; see the ipecmd gotchas above) |
+| Serial port (USB CDC) | your lane's COM port, from the registry | No usbipd on this station, so no `/dev/ttyACMn`: use Windows `python.exe` or `bench serial` (asserts DTR). The board has no USB iSerial: **verify by the `*IDN?` serial**, never by port number. |
+| Bench WiFi AP | SSID and credentials in `~/.daqifi.env` (chmod 600) | Never commit either. |
 | Bench PC iperf2 | `C:\Users\User\Downloads\iperf-2.2.1-win64.exe` | Run `-s -p 5002 -i 1`; redirect stdout to `C:\temp\iperf2.log` for log-side correlation |
 
 #### ⚠️ Device verification protocol — ALWAYS run before SCPI tests
@@ -140,7 +180,7 @@ Watch for "Program Succeeded". Flags: `-M` = program mode, `-OL` = use loaded me
    powershell.exe -Command "usbipd list" | grep "04d8:f794"
    ls -la /dev/ttyACM* 2>/dev/null || echo "no ttyACM nodes — attach may still be in progress"
    ```
-2. Query each port's serial and match it to the inventory table above:
+2. Query each port's serial and match it to the lane registry (`~/.claude/bench/devices.conf`):
    ```bash
    for dev in /dev/ttyACM*; do
      [ -e "$dev" ] || { echo "No /dev/ttyACM* ports found."; break; }
@@ -205,13 +245,13 @@ Services Layer
    - Modules: SCPIADC, SCPIDIO, SCPILAN, SCPIStorageSD
    - Used for device configuration and control
    - **SCPI Abbreviation Rule**: each node has exactly **two** legal spellings — the **full** node, or the node **truncated at its first lowercase letter**. Nothing in between. Per node, `UPPERCASElowercase` accepts `UPPERCASElowercase` and `UPPERCASE` only:
-     - `SYST:COMM:LAN:NETMode` → `SYST:COMM:LAN:NETM` ✅ (short form)
+     - `SYST:COMM:LAN:NETType` → `SYST:COMM:LAN:NETT` ✅ (short form)
      - `SYSTem:STReam:STOP` → `SYST:STR:STOP` ✅ (`STOP` is all-caps, so it has only ONE spelling — itself)
      - ⚠️ **A node with NO lowercase has exactly one legal spelling.** `SYSTem:COMMunicate:LAN:APPLY` is registered all-caps (`SCPIInterface.c`), so `APPL` is **`-113`**, not a short form. An earlier revision of this file used `APPLy → APPL` as the worked example here, which does not match what the firmware registers — verified on the device 2026-08-21. Check the pattern before abbreviating.
      - `CONFigure:ADC:OBDiag` → `CONF:ADC:OBD`, `CONF:ADC:OBDiag`, `CONFigure:ADC:OBD` … ✅ (each node independently full or short)
      - `CONFigure:ADC:OBDiag` → `CONFig:ADC:OBDiag` ❌ **`-113 Undefined header`** — `CONFig` is neither `CONFigure` nor `CONF`
      This is **stricter than "must contain all the CAPS"**, which a previous revision of this file stated: that phrasing also permits `NETMod` and `CONFig`, which the device rejects. The authority is `matchPattern` in `firmware/src/libraries/scpi/libscpi/src/utils.c:478` — `compareStr(full) || compareStr(short)`, where `compareStr` (`utils.c:347`) requires the lengths to be **equal**, so a partial prefix matches neither arm. `tools/lint/scpi_wiki_sync.py` implements this rule and pins it in `--self-test`.
-     - **House rule, CI-gated (#907):** a node must yield a short form of **at least two characters**, and no two registered patterns may accept the same spelling. `tools/lint/scpi_wiki_sync.py` enforces both over the whole live table — `--style-only` runs them without a wiki clone — and CI runs it on every `SCPIInterface.c` change. A node that **starts lowercase has an empty short form** — and an empty short form does NOT mean "only the full spelling is ever legal, silently"; it means the node ALSO matches the EMPTY string (`matchPattern`'s short arm, `compareStr(pattern, 0, ...)` — `compareStr` returns true whenever both lengths are equal, including 0==0). That was `CONFigure:ADC:chanCALM`: before this fix the DEGENERATE header `CONF:ADC:` — a trailing colon with nothing after it, not even one character — matched `chanCALM`'s empty short form and silently dispatched to `SCPI_ADCChanCalmSet`, the first lowercase-start `ADC` pattern in table order (`CONF:DAC:` reached `SCPI_NotImplemented` the same way). Respelled all-caps to `CONFigure:ADC:CHANCALM`: the FULL old spelling still works (same eight letters, `compareStr` is case-insensitive), but the degenerate empty-node spelling stops matching anything and now answers `-113` — a deliberate, wire-visible narrowing (closing a latent hazard: `CONF:ADC: 1,2` used to silently write a channel's calibration slope), not the zero-wire-behaviour-change an earlier revision of this note claimed. A **one-character** short form is typeable but identifies nothing, and already collides here — `SYSTem:StartStreamData` and `SYSTem:StopStreamData` both answer `SYST:S`, and `findCommandHeader` (`parser.c:177`) takes the **first** match in table order, so `SYST:S` **starts** a stream — hardware-reproduced 2026-09-11 on NQ1 `7E2898F46200E8A7`, tracked as its own defect at [#1035](https://github.com/daqifi/daqifi-nyquist-firmware/issues/1035) rather than fixed by this gate. The only allowlisted exceptions are the four #324 legacy camelCase aliases in the stream-control migration table below; they cannot be respelled without a cross-client deprecation cycle. The gate does **not** check cross-command consistency of the same word — `ENAble` ×17, `ENABle` ×4, `ENable` ×2 and bare `EN` ×2 all ship, as do `CHannel`/`CHANnel`, `INFo`/`INFO`, `LISt`/`LIST`, `STATs`/`STATS`, plus `REboot` and `PSave`. That is #907 Part 2, deliberately untracked until this gate is in place; the gate is what stops the population growing while the compatibility question is open.
+     - **House rule, CI-gated (#907):** a node must yield a short form of **at least two characters**, and no two registered patterns may accept the same spelling. `tools/lint/scpi_wiki_sync.py` enforces both over the whole live table — `--style-only` runs them without a wiki clone — and CI runs it on every `SCPIInterface.c` change. A node that **starts lowercase has an empty short form** — and an empty short form does NOT mean "only the full spelling is ever legal, silently"; it means the node ALSO matches the EMPTY string (`matchPattern`'s short arm, `compareStr(pattern, 0, ...)` — `compareStr` returns true whenever both lengths are equal, including 0==0). That was `CONFigure:ADC:chanCALM`: before this fix the DEGENERATE header `CONF:ADC:` — a trailing colon with nothing after it, not even one character — matched `chanCALM`'s empty short form and silently dispatched to `SCPI_ADCChanCalmSet`, the first lowercase-start `ADC` pattern in table order (`CONF:DAC:` reached `SCPI_NotImplemented` the same way). Respelled all-caps to `CONFigure:ADC:CHANCALM`: the FULL old spelling still works (same eight letters, `compareStr` is case-insensitive), but the degenerate empty-node spelling stops matching anything and now answers `-113` — a deliberate, wire-visible narrowing (closing a latent hazard: `CONF:ADC: 1,2` used to silently write a channel's calibration slope), not the zero-wire-behaviour-change an earlier revision of this note claimed. A **one-character** short form is typeable but identifies nothing, and already collides here — `SYSTem:StartStreamData` and `SYSTem:StopStreamData` both answer `SYST:S`, and `findCommandHeader` (`parser.c:177`) takes the **first** match in table order, so `SYST:S` **starts** a stream — hardware-reproduced 2026-09-11 on an NQ1 bench board, tracked as its own defect at [#1035](https://github.com/daqifi/daqifi-nyquist-firmware/issues/1035) rather than fixed by this gate. The only allowlisted exceptions are the four #324 legacy camelCase aliases in the stream-control migration table below; they cannot be respelled without a cross-client deprecation cycle. The gate does **not** check cross-command consistency of the same word — `ENAble` ×17, `ENABle` ×4, `ENable` ×2 and bare `EN` ×2 all ship, as do `CHannel`/`CHANnel`, `INFo`/`INFO`, `LISt`/`LIST`, `STATs`/`STATS`, plus `REboot` and `PSave`. That is #907 Part 2, deliberately untracked until this gate is in place; the gate is what stops the population growing while the compatibility question is open.
 
 2. **USB CDC** - Virtual COM port communication
    - Implementation: `services/UsbCdc/UsbCdc.c`
@@ -424,8 +464,8 @@ Build/flash mechanics live in **Build Instructions** at the top of this file —
 ### USB access from WSL (usbipd)
 
 ```bash
-powershell.exe -Command "usbipd list"                      # find busid (2-4 = COM3 primary)
-powershell.exe -Command "usbipd attach --wsl --busid 2-4"  # first attach needs admin PowerShell; --force if USBPcap is installed
+powershell.exe -Command "usbipd list"                      # find the busid of 04d8:f794 (your lane's board)
+powershell.exe -Command "usbipd attach --wsl --busid <busid>"  # first attach needs admin PowerShell; --force if USBPcap is installed
 sleep 2 && ls -la /dev/ttyACM*                              # verify; lsusb shows 04d8:f794 "Nyquist"
 ```
 Re-run the attach after every flash, PC sleep, or device reboot — then run the **device verification protocol** (above) before any SCPI. Useful Windows-side checks: `netsh wlan show networks` / `show interfaces` via `powershell.exe`.
@@ -534,21 +574,21 @@ documented not to care about. Both are outside this repo and tracked separately.
 (Older `/tmp/temp.sh` entries remain in `.claude/settings.local.json` for compatibility; nothing
 needs to be added there for the scratchpad.)
 
-**Device state basics:** power states `0`=STANDBY, `1`=POWERED_UP (full power — required for WiFi and the DAC's 10 V rail), `2`=POWERED_UP_EXT_DOWN (low-battery). Before tests: known state (`SYST:POW:STAT 0/1` cycle if needed), drain the error queue (`SYST:ERR?` until `0,"No error"`), `ABOR` any pending operation. Don't guess SCPI syntax — see the verification protocol above (e.g. it's `SSIDSTR?`, `NETTYPE?`, `ADDR?` — not `SSID:STR`/`MODE`/`IP`).
+**Device state basics:** power states `0`=STANDBY, `1`=POWERED_UP (full power — required for WiFi and the DAC's 10 V rail), `2`=POWERED_UP_EXT_DOWN (low-battery). Before tests: known state (`SYST:POW:STAT 0/1` cycle if needed), drain the error queue (`SYST:ERR?` until `0,"No error"`), `ABOR` any pending operation. Don't guess SCPI syntax — see the verification protocol above (e.g. the network name is `SYST:COMM:LAN:SSID?`, the mode `NETType?`, the address `ADDRess?` — not `SSID:STR`/`MODE`/`IP`; note `SSIDStr?` is the **signal strength** (RSSI, `SCPI_LANSsidStrengthGet`), not the SSID — an earlier revision of this line cited it as the SSID getter).
 
-**WiFi config sequence** (`NETType`: **1 = STA, 4 = AP** — `wifi_manager.h`; 0 is invalid and the setter rejects it, silently leaving the previous mode. `SECurity`: 0 = open, **3 = WPA with passphrase**)**:** `ENAbled 0` → set `NETType`/`SECurity`/`SSID`/`PASs` → `ENAbled 1` → `APPLY` (all-caps; `APPL` is `-113`) → wait ~20 s → verify `ADDR?` → `SAVE` (persists to NVM — without it a reboot reverts; **every flash wipes NVM regardless**). The WiFi module itself takes ~2–3 s to initialize after power-up. AP-mode defaults: open AP `DAQiFi-XXXX` (MAC suffix auto-applied to the bare default name; user names preserved), hostname = SSID (used for DHCP Option 12 network discovery), needs POWERED_UP.
+**WiFi config sequence** (`NETType`: **1 = STA, 4 = AP** — `wifi_manager.h`; 0 is invalid and the setter rejects it, silently leaving the previous mode. `SECurity`: 0 = open, **3 = WPA with passphrase**)**:** **`SYST:POW:STAT 1` first, and confirm `SYST:POW:STAT?` → `1`** — after a flash the board boots to STANDBY (`0`) with the WiFi module unpowered, and every later step then answers `-200`; after a flash or a bootloader update the power state is **not** restored even though the WiFi config is (only `SYST:POW:AUTOOn 1` then `SYST:POW:AUTOOn:SAVE` would change that, which is a boot-policy decision, not part of a restore — measured on lane nq-c's board 2026-10-25). A `SYST:REboot`, by contrast, **keeps** whatever power state was set, `0` or `1` (with `AUTOOn` 0: 4 trials, nq-c's board, 2026-11-19, [#1273](https://github.com/daqifi/daqifi-nyquist-firmware/issues/1273)), so never read `POW:STAT?` as evidence that a reboot happened — the serial port dropping and coming back is the witness. A USB power cycle is untested → `ENAbled 0` → set `NETType`/`SECurity`/`SSID`/`PASs` → `ENAbled 1` → `APPLY` (all-caps; `APPL` is `-113`) → wait ~20 s → verify `ADDR?` → `SAVE` (persists to NVM — without it a reboot reverts; **every flash wipes NVM regardless**). The WiFi module itself takes ~2–3 s to initialize after power-up. AP-mode defaults: open AP `DAQiFi-XXXX` (MAC suffix auto-applied to the bare default name; user names preserved), hostname = SSID (used for DHCP Option 12 network discovery), needs POWERED_UP.
 
 ### USB CDC behavior every test must respect
 
 - **Host must read fast.** ≥1 ms read cadence = zero loss; a 500 ms poller dropped 1 MB in the same 16ch@3kHz A/B that a 1 ms reader survived clean. The firmware pipeline is leak-free — host-side reading is almost always the culprit in "USB drop" reports. Use `FastReader` (background drain) for anything streaming.
 - **Delivery is bursty by design** (ZLP boundaries + one DMA transfer in flight + circular→DMA copy): `in_waiting` can read 0 while data sits in the usbipd pipeline; don't tight-poll it; allow 3+ s settle between sessions in naive scripts. Any SCPI command mid-stream "flushes" a short packet.
 - **Rate measurements:** ONLY via `StreamingMeasurement` (`test_harness.py`) — PC-controlled window opened at first data byte, closed before STOP; wall-clock around SCPI start/stop adds ~10 % error, and the older first-byte-time SPS calculation caused ~10–15 % run-to-run variance (fixed by blocking FastReader + sleep-duration denominator — variance now near zero). `is_csv=True` counts rows; WiFi/SD pass `wait_for_serial=False`. Reference points: USB CSV 16ch@3kHz = 795 KB/s, 0 drops.
-- **A CDC "wedge" from rapid serial open/close is almost always a HOST/method artifact, not firmware — verify before chasing it.** Realistic churn (DTR asserted, as pyserial / any real client does) runs clean (bench-verified 2026-07-19: 15 cycles, 0 errors, device healthy before+after). The apparent "wedge" (Write → *"semaphore timeout"*) shows up when opening *without* asserting DTR (`.NET SerialPort` defaults `DtrEnable=false`) or through the WSL/usbipd reconnect handshake — a fresh reflash + one careful DTR-asserted probe recovers it, no firmware change. The one genuine firmware heap-leak wedge (**#684**: WINC HIF semaphore leaked ~88 B per `SYST:COMM:LAN:POWer` toggle → `vApplicationMallocFailedHook` at `freertos_hooks.c:137`, ~round 87) is **fixed in #685** — hardware-verified 2026-07-19: `HeapFree` dead-flat across 24 `LAN:POWer` toggles (a leak would decline ~88 B/toggle). **Before investigating any CDC-wedge report, `gh pr list --state all --search` the symptom first** — this exact wedge was re-derived from scratch for hours in one session because that check was skipped. mdb can read the crash state on a *DEBUG_RUN* build on your lane's board (`-p 0`; take the port from the inventory table above or `bench whoami`, never a remembered number), but the debug image no longer fits RAM without a ~4 KB `STATIC_POOL_SIZE` trim.
+- **A CDC "wedge" from rapid serial open/close is almost always a HOST/method artifact, not firmware — verify before chasing it.** Realistic churn (DTR asserted, as pyserial / any real client does) runs clean (bench-verified 2026-07-19: 15 cycles, 0 errors, device healthy before+after). The apparent "wedge" (Write → *"semaphore timeout"*) shows up when opening *without* asserting DTR (`.NET SerialPort` defaults `DtrEnable=false`) or through the WSL/usbipd reconnect handshake — a fresh reflash + one careful DTR-asserted probe recovers it, no firmware change. The one genuine firmware heap-leak wedge (**#684**: WINC HIF semaphore leaked ~88 B per `SYST:COMM:LAN:POWer` toggle → `vApplicationMallocFailedHook` at `freertos_hooks.c:137`, ~round 87) is **fixed in #685** — hardware-verified 2026-07-19: `HeapFree` dead-flat across 24 `LAN:POWer` toggles (a leak would decline ~88 B/toggle). **Before investigating any CDC-wedge report, `gh pr list --state all --search` the symptom first** — this exact wedge was re-derived from scratch for hours in one session because that check was skipped. mdb can read the crash state on a *DEBUG_RUN* build on your lane's board (`-p 0`; take the port from the lane registry or `bench whoami`, never a remembered number), but the debug image no longer fits RAM without a ~4 KB `STATIC_POOL_SIZE` trim.
 
 ### Long-running bench runs
 
 - **Always `python3 -u`** (or `PYTHONUNBUFFERED=1`) for background runs — block-buffered stdout looks empty and is lost on kill. Never wrap a real run in a tight `timeout` — per-trial SCPI overhead alone is ~15–20 s, so runs outlast naive estimates; reserve `timeout` for genuinely-bounded one-shot probes and size it generously. Watch the PID or the per-row-fsynced CSV instead (the CSV is the reliable progress signal).
-- **Sustained high-rate USB → run Windows-native** (`python.exe` against your lane's COM port — take it from the inventory table above or `bench whoami`, never a remembered number — with the repo cloned under `C:\`): the cumulative ISR=-1/unreadable-STATS wedge under back-to-back high-rate trials is a WSL/usbipd artifact. On a box that HAS usbipd, WSL `/dev/ttyACMn` is fine for low-rate/control-plane SCPI; on a box without it there is no such node and the native path is the only path. (Separately: WSL-launched python silently drops inbound UDP — use PowerShell-native tooling for UDP tests.)
+- **Sustained high-rate USB → run Windows-native** (`python.exe` against your lane's COM port — take it from the lane registry or `bench whoami`, never a remembered number — with the repo cloned under `C:\`): the cumulative ISR=-1/unreadable-STATS wedge under back-to-back high-rate trials is a WSL/usbipd artifact. On a box that HAS usbipd, WSL `/dev/ttyACMn` is fine for low-rate/control-plane SCPI; on a box without it there is no such node and the native path is the only path. (Separately: WSL-launched python silently drops inbound UDP — use PowerShell-native tooling for UDP tests.)
 - Don't echo test results to the console for their own sake — observe, then report a summary.
 
 ### Git Configuration
@@ -654,3 +694,4 @@ Companion repos at https://github.com/daqifi:
 - Don't generate analysis docs or the like unless asked.
 - All errors go through the error logging function and are never sent out in the stream. On error, the SCPI command returns the error through its own handling; the user calls `SYSTem:LOG?` to learn what the error was.
 - SCPI data visibility principle: prevent users from operating with improper settings (return SCPI errors for config problems like reading disabled channels), but maximize visibility into device health. When data is stale (e.g., monitoring channels frozen during OBDiag=0 streaming), show last-known values with age indicators rather than hiding them. Error on config problems, inform on stale data.
+- **Boot never writes the factory ADC-calibration slot (#908).** When the factory-cal load in `app_SystemInit` (`app_freertos.c:945`) fails — a blank page (every flash wipes NVM) or a bad checksum — the runtime keeps its identity defaults (`CalM = 1`, `CalB = 0`), boot emits one `LOG_E`, and `CONF:CAP:JSON?` reports `identity.cal.factory_present: false`, `source: "identity"` (`SCPI_CapabilitiesJsonGet`). Boot used to save those identity values into the factory slot, after which every boot loaded them as a genuine calibration and "never calibrated" could no longer be told apart from "calibrated". The flag is not persisted but re-derived from a real NVM operation -- boot's load result, or a successful `CONF:ADC:SAVEFcal`, which clears it immediately (`SCPIADC.c`'s `CalSaveCommon`) rather than waiting for the next reboot to catch up.

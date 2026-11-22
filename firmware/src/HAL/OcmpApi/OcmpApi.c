@@ -67,6 +67,10 @@ void OcmpApi_Initialize(OcmpApi_id_t id) {
     }
 }
 
+/* #902: every branch of OcmpApi_Enable/_Disable clears IOLOCK before its RPnR
+ * write. Only OC1 did; the other five units' remap was dropped whenever IOLOCK
+ * happened to be set (latent since #762 removed the lock-set sites, live
+ * before it). Each branch also re-locks SYSKEY, which OC1 had commented out. */
 void OcmpApi_Enable(OcmpApi_id_t id, uint16_t portRemapPin) {
 
     switch (id) {
@@ -74,35 +78,40 @@ void OcmpApi_Enable(OcmpApi_id_t id, uint16_t portRemapPin) {
             SystemUnlock();
             DeviceRegistersUnlock();
             PORTS_RemapOutput(OUTPUT_FUNC_OC1,portRemapPin);
-            //SystemLock();
+            SystemLock();
             OCMP1_Enable();
             break;
         case OCMPAPI_ID_3:
             SystemUnlock();
+            DeviceRegistersUnlock();
             PORTS_RemapOutput(OUTPUT_FUNC_OC3,portRemapPin);
             SystemLock();
             OCMP3_Enable();
             break;
         case OCMPAPI_ID_4:
             SystemUnlock();
+            DeviceRegistersUnlock();
             PORTS_RemapOutput(OUTPUT_FUNC_OC4,portRemapPin);
             SystemLock();
             OCMP4_Enable();
             break;
         case OCMPAPI_ID_6:
             SystemUnlock();
+            DeviceRegistersUnlock();
             PORTS_RemapOutput(OUTPUT_FUNC_OC6,portRemapPin);
             SystemLock();
             OCMP6_Enable();
             break;
         case OCMPAPI_ID_7:
             SystemUnlock();
+            DeviceRegistersUnlock();
             PORTS_RemapOutput(OUTPUT_FUNC_OC7,portRemapPin);
             SystemLock();
             OCMP7_Enable();
             break;
         case OCMPAPI_ID_8:
             SystemUnlock();
+            DeviceRegistersUnlock();
             PORTS_RemapOutput(OUTPUT_FUNC_OC8,portRemapPin);
             SystemLock();
             OCMP8_Enable();
@@ -118,35 +127,40 @@ void OcmpApi_Disable(OcmpApi_id_t id, uint16_t portRemapPin) {
             SystemUnlock();
             DeviceRegistersUnlock();
             PORTS_RemapOutput(OUTPUT_FUNC_NO_CONNECT,portRemapPin);
-            //SystemLock();
+            SystemLock();
             OCMP1_Disable();
             break;
         case OCMPAPI_ID_3:
             SystemUnlock();
+            DeviceRegistersUnlock();
             PORTS_RemapOutput(OUTPUT_FUNC_NO_CONNECT,portRemapPin);
             SystemLock();
             OCMP3_Disable();
             break;
         case OCMPAPI_ID_4:
             SystemUnlock();
+            DeviceRegistersUnlock();
             PORTS_RemapOutput(OUTPUT_FUNC_NO_CONNECT,portRemapPin);
             SystemLock();
             OCMP4_Disable();
             break;
         case OCMPAPI_ID_6:
             SystemUnlock();
+            DeviceRegistersUnlock();
             PORTS_RemapOutput(OUTPUT_FUNC_NO_CONNECT,portRemapPin);
             SystemLock();
             OCMP6_Disable();
             break;
         case OCMPAPI_ID_7:
             SystemUnlock();
+            DeviceRegistersUnlock();
             PORTS_RemapOutput(OUTPUT_FUNC_NO_CONNECT,portRemapPin);
             SystemLock();
             OCMP7_Disable();
             break;
         case OCMPAPI_ID_8:
             SystemUnlock();
+            DeviceRegistersUnlock();
             PORTS_RemapOutput(OUTPUT_FUNC_NO_CONNECT,portRemapPin);
             SystemLock();
             OCMP8_Disable();

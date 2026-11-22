@@ -291,6 +291,19 @@ static int8_t spi_cmd(uint8_t cmd, uint32_t adr, uint32_t u32data, uint32_t sz, 
     return N_OK;
 }
 
+/* #1262: count command-response state bytes that are not 0x00. The loop below
+ * retries them silently, so without a count a corrupted response is invisible
+ * unless it escalates into a dropped message. Read by
+ * SYSTem:DIAGnostic:SPIBus:STATs? (WincRspErr). Increments are serialised
+ * by s_spiLock, which every nm_spi_* read/write entry point takes; the reader
+ * needs no lock because an aligned 32-bit read is atomic on this core. */
+static volatile uint32_t s_rspStateErrors;
+
+uint32_t nm_spi_rsp_state_errors(void)
+{
+    return s_rspStateErrors;
+}
+
 static int8_t spi_cmd_rsp(uint8_t cmd, uint8_t clockless)
 {
     uint8_t rsp;
@@ -342,6 +355,10 @@ static int8_t spi_cmd_rsp(uint8_t cmd, uint8_t clockless)
         {
             M2M_ERR("[spi_cmd_rsp]: Failed cmd response read, bus error...\r\n");
             return N_FAIL;
+        }
+        if ((rsp != 0x00) && (!clockless))
+        {
+            s_rspStateErrors++;
         }
     }
     while((rsp != 0x00) && (!clockless) && (s8RetryCnt-- > 0));
@@ -927,6 +944,39 @@ int8_t nm_spi_write_reg(uint32_t u32Addr, uint32_t u32Val)
     (void)OSAL_MUTEX_Unlock(&s_spiLock);
 
     return M2M_ERR_BUS_FAIL;
+}
+
+/* #881 (DAQiFi): write a register in ONE attempt. nm_spi_write_reg() retries
+ * a failed write up to SPI_RETRY_COUNT times with the same value, and a write
+ * reported as failed may have landed with only its response lost. For a
+ * read-modify-write of a register the WINC also writes (RX done in
+ * WIFI_HOST_RCV_CTRL_0, m2m_hif.c), a resend after the WINC has posted its next
+ * message acknowledges that message unread -- and, because the resend then
+ * succeeds, the caller never learns the first attempt was in doubt. Any
+ * failure here is returned to the caller, which owns the ambiguity. The bus is
+ * still resynchronised (spi_reset) after a failure, as the retry loop does. */
+int8_t nm_spi_write_reg_once(uint32_t u32Addr, uint32_t u32Val)
+{
+    int8_t ret = M2M_ERR_BUS_FAIL;
+
+    if (OSAL_RESULT_TRUE != OSAL_MUTEX_Lock(&s_spiLock, OSAL_WAIT_FOREVER))
+    {
+        return M2M_ERR_BUS_FAIL;
+    }
+
+    if (spi_write_reg(u32Addr, u32Val) == N_OK)
+    {
+        ret = M2M_SUCCESS;
+    }
+    else
+    {
+        M2M_ERR("Single write failed, no retry %" PRIx32 " %" PRIx32 "\r\n", u32Addr, u32Val);
+        spi_reset();
+    }
+
+    (void)OSAL_MUTEX_Unlock(&s_spiLock);
+
+    return ret;
 }
 
 /*

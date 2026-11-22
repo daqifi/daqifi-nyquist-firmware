@@ -1,0 +1,99 @@
+name: hexcrc-selftest
+
+# #1127: tools/hexcrc.py reproduces SCPI_FirmwareImageCrc32() offline, so a
+# `firmware_crc32` read back from a board can be checked against the HEX that
+# was flashed WITHOUT a second flash. Every bench claim of the form "the flash
+# landed, the crc32 changed" leans on it.
+#
+# ⛔ WHY THIS WORKFLOW EXISTS AT ALL: before it, NO gate ran on this file.
+# Measured on PR #1130 -- zero checks reported on the branch. cppcheck watches
+# `firmware/src/**` and `tools/lint/**`; host-tests names individual
+# `tools/lint/*.py` files; release-hex watches `tools/release/**`. `hexcrc.py`
+# sits under `tools/` but in none of those, so 1112 lines of Python shipped
+# with no automated verification of any kind, and the only evidence it could
+# ever carry was an adversarial audit of one head.
+#
+# An audit protects the head it ran on and nothing after it. A path filter
+# naming this file means the NEXT person to edit it cannot avoid running its
+# checks -- which is the property the audit cannot provide, and the reason this
+# is wired rather than re-audited.
+#
+# The evidence was already written and merely unconnected: the tool ships a
+# 58-check `--self-test` that needs no hardware, no build and no fixture
+# files. Verified before wiring that it fails LOUDLY rather than tallying
+# quietly -- `self_test()` ends `return 1 if bad else 0`, reached through
+# `main()` under `sys.exit(main())`, and a deliberately inverted expectation
+# produces a named FAIL line and exit 1. A self-test that reported a pass
+# regardless would have made this gate a no-op.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tools/hexcrc.py'
+      - '.github/workflows/hexcrc-selftest.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tools/hexcrc.py'
+      - '.github/workflows/hexcrc-selftest.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  hexcrc:
+    name: hexcrc.py's own checks pass, and it parses a real Intel HEX
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Runs first and separately, same rationale as
+      # force-bootloader-cacheline.yml: the tool's own logic is what decides
+      # whether anything below means anything, and a tool that examines
+      # nothing reports a pass.
+      - name: Self-test the tool
+        run: python3 tools/hexcrc.py --self-test
+
+      # always(): a failed self-test already fails the job on its own step.
+      # Running this one too means a maintainer reading a red run sees BOTH
+      # "the tool's own checks are broken" AND "here is what it does to a real
+      # file today", instead of the second question going unanswered.
+      #
+      # WHY A REAL FILE IS WORTH A SECOND STEP: the self-test is synthetic by
+      # design -- its own comment says "a small synthetic region ... tiny
+      # compared to the real 0x1E0000-byte audited image, so the self-test runs
+      # in milliseconds with no external fixture". That is the right trade for
+      # the arithmetic, and it means the record-parsing path is never exercised
+      # against real Intel HEX output. The committed bootloader image is 3320
+      # records / 134688 bytes and is the only HEX tracked in this repo.
+      #
+      # ⚠ DELIBERATELY NOT PINNING THE CRC VALUE. The default region is the
+      # APPLICATION's (0x1D000000 + 0x1E0000), so this number is the app-region
+      # window over a BOOTLOADER image -- deterministic, but not a meaningful
+      # firmware CRC, and a constant a future reader could not justify. Pinning
+      # it would also fail the gate whenever the bootloader is legitimately
+      # rebuilt. So this asserts only what it can honestly assert: the tool
+      # consumes a real multi-thousand-record HEX without crashing and emits a
+      # well-formed CRC. Shape, not value.
+      - name: Parse a real Intel HEX file (shape, not a pinned value)
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          hex='bootloader/firmware/usb_bootloader.X/dist/usbdevice_pic32mz_ef_sk/production/usb_bootloader.X.production.hex'
+          test -f "$hex" || {
+            echo "::error::$hex is missing -- if the committed bootloader HEX" \
+                 "moved or was removed, update this path or drop this step." \
+                 "A silently skipped step is the failure this exists to avoid."
+            exit 1
+          }
+          out="$(python3 tools/hexcrc.py "$hex")"
+          echo "$out"
+          crc="${out%% *}"
+          printf '%s' "$crc" | grep -Eq '^[0-9A-F]{8}$' || {
+            echo "::error::expected an 8-hex-digit CRC from a real HEX file," \
+                 "got '$crc'"
+            exit 1
+          }
+          echo "parsed $(grep -c '' "$hex") records and emitted $crc"

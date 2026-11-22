@@ -99,6 +99,11 @@ extern "C" {
          * target DELIBERATELY (the #689 pre-walk reopens a split part in
          * place). Default false. */
         bool uniqueTarget;
+        /* #1217: SD:PROTect. true = CRC checking on and every block written
+         * as its own CMD24 (a stray block is refused, ~1/3 the throughput);
+         * false = CRC off, CMD25 multi-block (fast, a stray block is
+         * programmed). Applied by the driver at media init. Default false (#1234). */
+        bool crcProtect;
     } sd_card_manager_settings_t;
 
 
@@ -214,6 +219,16 @@ extern "C" {
      * @param size  Buffer size in bytes
      */
     void sd_card_manager_SetWriteBuffer(uint8_t* buf, uint32_t size);
+
+    /**
+     * #1279 r4: SD side of the coherent-DMA swap (see UsbCdc_DmaSwapAcquire).
+     * Scheduler suspended only; never blocks. Acquire returns true with wMutex
+     * held only if the SD write DMA region is idle; then exactly one of
+     * Commit (installs the new region) or Release.
+     */
+    bool sd_card_manager_DmaSwapAcquire(void);
+    void sd_card_manager_DmaSwapCommitAndRelease(uint8_t* buf, uint32_t size);
+    void sd_card_manager_DmaSwapRelease(void);
 
     /**
      * @brief Checks if the SD card manager is currently idle (not processing any operation).
@@ -383,7 +398,8 @@ extern "C" {
      * write had data to issue this time -- the arm is intact; retry rather
      * than treat it as failed.
      *
-     * SCPI: SYSTem:STORage:SD:FAILNext <0|1>
+     * SCPI: SYSTem:STORage:SD:FAILNext <0|1>  (2 arms the separate
+     * live-session one-shot, sd_card_manager_SetFailNextSessionWrite)
      *
      * @param arm true to arm the one-shot, false to disarm without consuming.
      */
@@ -393,6 +409,16 @@ extern "C" {
      *         false once a write has consumed it (or it was never armed).
      *         Bench/test diagnostic only -- see above. */
     bool sd_card_manager_FailNextWriteArmed(void);
+
+    /** @brief #1031: arm/disarm the one-shot that fails the next write of a
+     *         LIVE session (SYST:STOR:SD:FAILNext 2). Bench/test only; same
+     *         rails as SetFailNextWrite, without its teardown-only gate --
+     *         safe since a failed session write continues the session in its
+     *         next file part instead of truncating the current one. */
+    void sd_card_manager_SetFailNextSessionWrite(bool arm);
+
+    /** @brief #1031: true while a SetFailNextSessionWrite arm is outstanding. */
+    bool sd_card_manager_FailNextSessionWriteArmed(void);
 
     /**
      * @brief Checks if the SD card manager is busy with an active operation.
@@ -480,6 +506,17 @@ bool sd_card_manager_WriteIsStreamingLog(void);
      * @return true if SD:GET can proceed, false if the buffer is too small
      */
     bool sd_card_manager_ReadBufferReady(void);
+
+    /**
+     * @brief Runtime size of the SD DMA write buffer, in bytes (#1279).
+     *
+     * The size the last partition installed (sd_card_manager_SetWriteBuffer),
+     * not the compile-time ceiling SD_CARD_MANAGER_CONF_WBUFFER_SIZE. It
+     * bounds every card write the logging drain issues, and auto-balance drops
+     * it to SD_CARD_MANAGER_MIN_WBUFFER_SIZE whenever SD is not a streaming
+     * consumer, so it is half of what SCPI_RestoreIdleSdBuffers() tests.
+     */
+    uint32_t sd_card_manager_GetWriteBufferSize(void);
 
     /**
      * @brief #703: is an SD op actively streaming into the shared SD buffer?
@@ -656,6 +693,47 @@ bool sd_card_manager_WriteIsStreamingLog(void);
      * @brief Reset SD write metrics (for session start / ClearStats).
      */
     void sd_card_manager_ResetWriteMetrics(void);
+
+    /* #914: libscpi error codes, kept as plain ints here so this header needs
+     * no SCPI dependency. SCPIInterface.c static-asserts each against the real
+     * libscpi value. Three, not one: an open failure that is really a storage
+     * outage must not be reported to the host as a missing file NAME -- that
+     * is not coarse, it is a specific wrong answer, and it undercuts the point
+     * of #914 (be MORE specific than the -200 every other SD refusal uses, not
+     * differently wrong). The mapping is SdAsyncErrorForFsError() in
+     * sd_card_manager.c. */
+    #define SD_ASYNC_ERR_FILE_NOT_FOUND   (-256)  /* SCPI_ERROR_FILE_NAME_NOT_FOUND */
+    #define SD_ASYNC_ERR_FILE_NAME_ERROR  (-257)  /* SCPI_ERROR_FILE_NAME_ERROR */
+    #define SD_ASYNC_ERR_MASS_STORAGE     (-250)  /* SCPI_ERROR_MASS_STORAGE_ERROR */
+
+    /**
+     * @brief Record a SCPI error code for a failure this task detected AFTER
+     *        the SCPI handler that armed the operation already returned OK
+     *        (e.g. a GET whose file will not open). ONE SLOT PER REPLY TARGET,
+     *        one-deep and newest-wins within a slot — see the definition in
+     *        sd_card_manager.c for why the SD task cannot push into a scpi_t's
+     *        error queue directly, and why the slots are per-transport.
+     * @param scpiError   A negative libscpi error code (SD_ASYNC_ERR_*).
+     * @param target      Which transport's reply this failure belongs to.
+     * @param generation  The TCP connection generation the operation was armed
+     *                    for (settings->replyGeneration, #599); 0 for USB.
+     */
+    void sd_card_manager_LatchAsyncError(int32_t scpiError,
+                                         sd_card_manager_reply_target_t target,
+                                         uint32_t generation);
+
+    /**
+     * @brief Take and clear the pending deferred error for `target`, if any.
+     *        Called once per command boundary by SCPI_DrainDeferredSdError.
+     * @param target      The caller's transport.
+     * @param generation  The caller's CURRENT connection generation
+     *                    (wifi_tcp_server_GetConnGeneration()); 0 for USB.
+     * @return The latched code, or 0 if nothing is pending for `target` or the
+     *         pending one belongs to a previous connection — in which case it
+     *         is DISCARDED, not held, since it can never match again.
+     */
+    int32_t sd_card_manager_TakeAsyncError(sd_card_manager_reply_target_t target,
+                                           uint32_t generation);
 
     /* Provide C++ Compatibility */
 #ifdef __cplusplus

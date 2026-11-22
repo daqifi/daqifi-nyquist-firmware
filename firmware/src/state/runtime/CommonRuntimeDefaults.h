@@ -163,6 +163,7 @@ _Static_assert(sizeof(DEFAULT_NETWORK_HOST_NAME) <= WIFI_MANAGER_DNS_CLIENT_MAX_
         .maxFileSizeBytes = SD_CARD_MANAGER_FAT32_SAFE_MAX_FILE_SIZE, \
         .minFreeBytes = 0,  /* #498: 0 = pre-start disk-full gate disabled */ \
         .uniqueTarget = false,  /* #958: only SD:BENCHmark's scratch name sets this */ \
+        .crcProtect = false,  /* #1217: SD:PROTect, fast by default (#1234); must match DRV_SDSPI_Initialize's crcRequested */ \
     }
 
 /**

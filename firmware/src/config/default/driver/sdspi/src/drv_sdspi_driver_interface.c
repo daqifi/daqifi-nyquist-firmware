@@ -49,6 +49,9 @@
 #include <string.h>
 #include "driver/spi/drv_spi.h"
 #include "drv_sdspi_driver_interface.h"
+#include <xc.h>               /* #1255: _CP0_GET_COUNT */
+#include "configuration.h"    /* #1255: SYS_TIME_CPU_CLOCK_FREQUENCY */
+#include "Util/Logger.h"
 
 // *****************************************************************************
 /* Timer Event Handler
@@ -84,29 +87,66 @@ static void DRV_SDSPI_TimerCallback( uintptr_t context )
 
 
 /* #567 rework (Qodo #590): remember a watchdog-aborted transfer so its late
- * completion — DRV_SPI has no cancel API — is ignored exactly once. */
+ * completion -- DRV_SPI has no cancel API -- is ignored exactly once.
+ *
+ * #1217: record the handle ONLY while DRV_SPI still holds the transfer, i.e.
+ * only while a late completion can still arrive. Recording it unconditionally
+ * planted an entry whose completion had ALREADY been delivered, so nothing ever
+ * consumed it. DRV_SDSPI_ReleaseBus records on every STANDBY trip, almost always
+ * after the last transfer finished, and the xfer-timeout path records the very
+ * handle whose completion this ring had just swallowed. DRV_SPI hands out the
+ * same handle value again after one token-and-index cycle (measured 759.2 s
+ * under SD logging), and the stale entry then swallowed that new transfer's
+ * real completion. 500 ms later the #567 watchdog aborted it as `xfer-timeout`
+ * and recorded it again, so each event re-armed the next. On the bench, 6
+ * STANDBY cycles produced 4 abandoned writes in 30 min, each one the swallowed
+ * handle, with the SPI queue empty and both DMA channels idle; with no STANDBY
+ * cycle first, the same 30 min produced none.
+ *
+ * The check and the store share one critical section, which masks the DMA
+ * completion interrupt (IPL 2, below configMAX_SYSCALL_INTERRUPT_PRIORITY), so
+ * the transfer cannot complete between "still pending" and "recorded". */
 void DRV_SDSPI_AbortedXferRecord(DRV_SDSPI_OBJ* const dObj)
 {
+    OSAL_CRITSECT_DATA_TYPE critState;
+
     if (dObj->expectedXferHandle == DRV_SPI_TRANSFER_HANDLE_INVALID)
     {
         return;
     }
-    dObj->abortedXferHandles[dObj->abortedXferIdx] = dObj->expectedXferHandle;
-    dObj->abortedXferIdx = (uint8_t)((dObj->abortedXferIdx + 1U) % DRV_SDSPI_ABORTED_XFER_SLOTS);
+    critState = OSAL_CRIT_Enter(OSAL_CRIT_TYPE_HIGH);
+    if (DRV_SPI_TransferIsPending(dObj->spiDrvHandle, dObj->expectedXferHandle))
+    {
+        dObj->abortedXferHandles[dObj->abortedXferIdx] = dObj->expectedXferHandle;
+        dObj->abortedXferIdx = (uint8_t)((dObj->abortedXferIdx + 1U) % DRV_SDSPI_ABORTED_XFER_SLOTS);
+    }
+    OSAL_CRIT_Leave(OSAL_CRIT_TYPE_HIGH, critState);
 }
 
-/* #567 rework (Qodo #590): DRV_SPI handle tokens wrap, so a fresh submit can
- * receive the same handle VALUE as a stale aborted entry. Reuse means the old
- * transfer object was freed and its completion can no longer arrive — forget
- * the entry so the new transfer's valid completion isn't dropped. */
-static void lDRV_SDSPI_AbortedXferForget(DRV_SDSPI_OBJ* const dObj, DRV_SPI_TRANSFER_HANDLE handle)
+/* #1217: drop every entry whose transfer DRV_SPI no longer holds, BEFORE a new
+ * submit. Such an entry can never be consumed (its completion was delivered or
+ * will never come), and once DRV_SPI reuses its handle value it would swallow
+ * the new transfer's completion. This replaces a forget that ran AFTER the
+ * submit (Qodo #590): a short transfer completes from the DMA ISR before
+ * DRV_SPI_*TransferAdd returns, so the event handler met the stale entry first
+ * and the forget came too late. While an entry's transfer is still pending, its
+ * pool slot is in use, so no new transfer can receive that handle value. */
+static void lDRV_SDSPI_AbortedXferPrune(DRV_SDSPI_OBJ* const dObj)
 {
+    OSAL_CRITSECT_DATA_TYPE critState;
+
     for (uint8_t slot = 0; slot < DRV_SDSPI_ABORTED_XFER_SLOTS; slot++)
     {
-        if (dObj->abortedXferHandles[slot] == handle)
+        if (dObj->abortedXferHandles[slot] == DRV_SPI_TRANSFER_HANDLE_INVALID)
+        {
+            continue;
+        }
+        critState = OSAL_CRIT_Enter(OSAL_CRIT_TYPE_HIGH);
+        if (!DRV_SPI_TransferIsPending(dObj->spiDrvHandle, dObj->abortedXferHandles[slot]))
         {
             dObj->abortedXferHandles[slot] = DRV_SPI_TRANSFER_HANDLE_INVALID;
         }
+        OSAL_CRIT_Leave(OSAL_CRIT_TYPE_HIGH, critState);
     }
 }
 
@@ -117,6 +157,22 @@ void DRV_SDSPI_SPIDriverEventHandler(
 )
 {
     DRV_SDSPI_OBJ* dObj = (DRV_SDSPI_OBJ *)context;
+
+    /* #1217: raised first, so a late completion of an aborted transfer (the
+     * early return below) cannot leave the card selected for whoever is next on
+     * the bus. DRV_SPI raises CS itself only if the client's setup still names
+     * the pin, and DRV_SDSPI_SPIWriteWithChipSelectDisabled clears that.
+     *
+     * Unconditional, and not gated on "no newer SD transfer in progress", because
+     * this cannot pull CS from under one: DRV_SPI's queue is FIFO and it asserts
+     * the next transfer's CS only after this handler returns (drv_spi.c, the
+     * lDRV_SPI_RX_DMA_CallbackHandler tail). A gate would be actively wrong: with
+     * a newer SD transfer queued behind a WINC one, it would leave CS low across
+     * the WINC transfer. */
+    if (!dObj->csHeld)   /* #1255: a held CS is raised at bus release instead */
+    {
+        SYS_PORT_PinSet(dObj->chipSelectPin);
+    }
 
     /* #567 rework (SD-detect regression fix): the original guard ignored any
      * completion whose handle didn't match expectedXferHandle — but that
@@ -146,8 +202,6 @@ void DRV_SDSPI_SPIDriverEventHandler(
     {
         dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_ERROR;
     }
-
-    SYS_PORT_PinSet(dObj->chipSelectPin);
 }
 
 // *****************************************************************************
@@ -171,10 +225,10 @@ bool DRV_SDSPI_SPIWrite(
     bool isSuccess = false;
     DRV_SPI_TRANSFER_HANDLE wrTransferHandle;
 
+    lDRV_SDSPI_AbortedXferPrune(dObj);   /* #1217: before the submit, not after */
     dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_IN_PROGRESS;
 
     DRV_SPI_WriteTransferAdd (dObj->spiDrvHandle, pWriteBuffer, nBytes, &wrTransferHandle);
-    lDRV_SDSPI_AbortedXferForget(dObj, wrTransferHandle);   /* Qodo #590: handle-value reuse */
     dObj->expectedXferHandle = wrTransferHandle;   /* #567: correlate completion */
 
     if (wrTransferHandle != DRV_SPI_TRANSFER_HANDLE_INVALID)
@@ -211,10 +265,10 @@ bool DRV_SDSPI_SPIRead(
     bool isSuccess = false;
     DRV_SPI_TRANSFER_HANDLE rdTransferHandle;
 
+    lDRV_SDSPI_AbortedXferPrune(dObj);   /* #1217: before the submit, not after */
     dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_IN_PROGRESS;
 
     DRV_SPI_ReadTransferAdd (dObj->spiDrvHandle, pReadBuffer, nBytes, &rdTransferHandle);
-    lDRV_SDSPI_AbortedXferForget(dObj, rdTransferHandle);   /* Qodo #590: handle-value reuse */
     dObj->expectedXferHandle = rdTransferHandle;   /* #567: correlate completion */
 
     if (rdTransferHandle != DRV_SPI_TRANSFER_HANDLE_INVALID)
@@ -241,10 +295,10 @@ bool DRV_SDSPI_SPIWriteWithChipSelectDisabled(
     /* Disable Chip Select */
     (void) DRV_SDSPI_SPISpeedSetup(dObj, DRV_SDSPI_SPI_INITIAL_SPEED, SYS_PORT_PIN_NONE);
 
+    lDRV_SDSPI_AbortedXferPrune(dObj);   /* #1217: before the submit, not after */
     dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_IN_PROGRESS;
 
     DRV_SPI_WriteTransferAdd (dObj->spiDrvHandle, pWriteBuffer, nBytes, &wrTransferHandle);
-    lDRV_SDSPI_AbortedXferForget(dObj, wrTransferHandle);   /* Qodo #590: handle-value reuse */
     dObj->expectedXferHandle = wrTransferHandle;   /* #567: correlate completion */
 
     if (wrTransferHandle != DRV_SPI_TRANSFER_HANDLE_INVALID)
@@ -315,9 +369,121 @@ bool DRV_SDSPI_SPISpeedSetup(
     None
 */
 
+/* #1255, #1262: end an exclusive phase (and any held-CS request in it). Raise
+ * SD CS, then clock one 0xFF that does not
+ * touch CS: the card releases DataOut only on the clock after CS goes high
+ * (SanDisk SD Card Product Manual v2.2, section 5.23.4), and without that clock
+ * it can still be driving MISO into the next transfer on the shared bus, which
+ * is a WINC transfer. Runs while this driver still holds the exclusive lock, so
+ * the byte is queued ahead of any other client's transfer.
+ *
+ * The byte is a no-CS transfer (DRV_SPI_WriteTransferAddNoCs), not a change to
+ * the client setup: DRV_SPI applies a setup when a transfer STARTS, so a byte
+ * still queued behind a watchdog-abandoned transfer would start under whatever
+ * setup was current by then and assert CS. A no-CS transfer never changes CS,
+ * however late it runs; that it runs with CS high relies on no hold being in
+ * force then, which is why a request does not take the hold while an earlier
+ * one's transfers are still queued (drv_sdspi.c).
+ *
+ * The wait is for completion bookkeeping: the byte's completion must arrive as
+ * this request's, not the next one's. One byte takes well under 1 us at the
+ * card clock; the wait is capped at 1 ms, and on expiry the handle goes to the
+ * abort ring so its late completion is ignored.
+ *
+ * Skipped when an SD transfer is still in progress (a lost completion being
+ * unwound, e.g. DRV_SDSPI_ReleaseBus): that handle must stay in
+ * expectedXferHandle for the abort ring, and the caller raises CS itself. */
+static void lDRV_SDSPI_ReleaseHeldCs(DRV_SDSPI_OBJ* const dObj)
+{
+    DRV_SPI_TRANSFER_HANDLE h;
+    uint32_t t0;
+    const uint32_t limit = (SYS_TIME_CPU_CLOCK_FREQUENCY / 2U) / 1000U;   /* 1 ms */
+
+    dObj->csHeld = false;
+    DRV_SPI_ChipSelectHold(dObj->spiDrvHandle, false);
+    SYS_PORT_PinSet(dObj->chipSelectPin);
+    if (dObj->spiTransferStatus == DRV_SDSPI_SPI_TRANSFER_STATUS_IN_PROGRESS)
+    {
+        return;
+    }
+    lDRV_SDSPI_AbortedXferPrune(dObj);
+    dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_IN_PROGRESS;
+    DRV_SPI_WriteTransferAddNoCs(dObj->spiDrvHandle, dObj->pClkPulseData, 1U, &h);
+    dObj->expectedXferHandle = h;
+    if (h == DRV_SPI_TRANSFER_HANDLE_INVALID)
+    {
+        dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_ERROR;
+    }
+    else
+    {
+        t0 = _CP0_GET_COUNT();
+        while ((dObj->spiTransferStatus == DRV_SDSPI_SPI_TRANSFER_STATUS_IN_PROGRESS) &&
+               ((_CP0_GET_COUNT() - t0) < limit))
+        {
+            /* the DMA completion ISR updates spiTransferStatus */
+        }
+        if (dObj->spiTransferStatus == DRV_SDSPI_SPI_TRANSFER_STATUS_IN_PROGRESS)
+        {
+            DRV_SDSPI_AbortedXferRecord(dObj);
+            dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_ERROR;
+            dObj->csTrailTimeouts++;
+            if (dObj->csTrailTimeouts <= 4U)
+            {
+                LOG_E("SD: MISO-release clock timed out (n=%lu)", (unsigned long)dObj->csTrailTimeouts);
+            }
+        }
+    }
+}
+
 bool DRV_SDSPI_SPIExclusiveAccess(DRV_SDSPI_OBJ* const dObj, bool isExclusive)
 {
-    return DRV_SPI_Lock(dObj->spiDrvHandle, isExclusive);
+    bool ok;
+
+    if (isExclusive)
+    {
+        ok = DRV_SPI_Lock(dObj->spiDrvHandle, true);
+        if (ok && (dObj->csLockDepth < 255U))
+        {
+            dObj->csLockDepth++;
+        }
+        return ok;
+    }
+    bool wasHeld = (dObj->csLockDepth > 0U);
+    if (dObj->csLockDepth > 0U)
+    {
+        dObj->csLockDepth--;
+    }
+    /* #1262: clock the release byte at the end of EVERY exclusive phase, not
+     * only after a held-CS request. A transfer whose CS the SPI driver manages
+     * also raises CS with no trailing clock, and the card keeps driving
+     * DataOut until it sees one (SanDisk SD Card Product Manual v2.2, section
+     * 5.23.4). The next transfer on the shared bus is usually the WiFi
+     * module's, and its first byte then reads with bit 7 set: a corrupted
+     * command-response state byte, or a HIF header whose group ID reads 0x82
+     * for 0x02. The upstream Harmony driver has the same gap
+     * (Microchip-MPLAB-Harmony/core#53).
+     *
+     * wasHeld: only when THIS call drops a lock it holds to depth 0. Some
+     * paths release with nothing held (DRV_SDSPI_INIT_ERROR,
+     * DRV_SDSPI_ReleaseBus), and the byte must not go out without the bus.
+     *
+     * Not while this client still has a transfer queued in DRV_SPI (a
+     * watchdog-abandoned transfer and whatever queued behind it), the same
+     * test the CS hold uses in DRV_SDSPI_Tasks: the byte would queue behind
+     * the stuck transfer, time out, and take a slot of the aborted-transfer
+     * ring. Overflowing that ring loses the stuck transfer's entry, and its
+     * late completion is then taken as the completion of the transfer in
+     * progress. Such a phase keeps the behaviour from before this change.
+     *
+     * csHeld keeps the earlier trigger (#1255) exactly as it was. Only this
+     * task submits SD transfers, so none can be added after the check. */
+    if ((dObj->csLockDepth == 0U) &&
+            (dObj->csHeld ||
+             (wasHeld && !DRV_SPI_ClientHasPending(dObj->spiDrvHandle))))
+    {
+        lDRV_SDSPI_ReleaseHeldCs(dObj);
+    }
+    return DRV_SPI_Lock(dObj->spiDrvHandle, false);
 }
 
 // *****************************************************************************

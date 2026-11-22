@@ -10,6 +10,7 @@
 #include "state/board/BoardConfig.h"
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "Util/StringFormatters.h"
+#include "Util/SampleEmit.h"   /* #1199 non-finite guard */
 #include "Util/Logger.h"
 #include "encoder.h"
 #include "JSON_Encoder.h"
@@ -537,7 +538,7 @@ size_t Json_Encode(tBoardData* state,
                 int written = snprintf(charBuffer + startIndex,
                         buffSize - startIndex,
                         "\"sec\":%u,\n",
-                        wifiSettings->securityMode);
+                        (unsigned int)wifiSettings->securityMode);
                 if (written < 0 || written >= (int)(buffSize - startIndex)) {
                     // Optional field - skip on buffer full, continue processing
                     break;
@@ -716,9 +717,43 @@ size_t Json_Encode(tBoardData* state,
                 break;  // Keep sample for next attempt
             }
 
-            // Write succeeded - commit by removing sample from queue
+            /* #970: COMMIT ONLY ON A SUCCESSFUL POP, mirroring the ADC loop
+             * below. The return was discarded here, so startIndex advanced past
+             * bytes whose source element this call had not consumed -- the twin
+             * of the site #164 fixed in the ADC loop, left behind.
+             *
+             * Reachable, not theoretical: Streaming_DrainSessionSampleQueues()
+             * (streaming.c) empties BOTH sample queues, and it runs from
+             * Streaming_Stop/Start on the SCPI task -- app_USBDeviceTask at
+             * priority 7, above streaming_Task's 6 -- so a SYST:STR:STOP
+             * landing between the snprintf above and this pop drains the
+             * element we just wrote. That is the same #484 shutdown race
+             * streaming.c's encoded == 0 arm names.
+             *
+             * What a false return means TODAY: DIOSampleList_PopFront is a
+             * 0-tick xQueueReceive with no NULL-handle guard (DIOSample.c), so
+             * false == "queue empty" == the element is gone and will NOT be
+             * re-encoded. Shipping its bytes anyway is therefore not a
+             * double-transmit yet -- it is a commit of output the call did not
+             * consume. It BECOMES a double-transmit the moment that function
+             * grows the NULL-handle guard AInSampleList_PopFront already has,
+             * where false means "torn-down queue, element still owned by it".
+             * Either way the invariant is the one #164 gave the ADC loop:
+             * output bytes commit only for elements this call actually took.
+             *
+             * Rollback is free here -- unlike the ADC loop there is no separate
+             * staging offset to restore, because not advancing startIndex IS
+             * the rollback; the bytes stay unreferenced past startIndex and are
+             * overwritten or NUL-terminated by the close-out. If this was the
+             * first element, the `startIndex == diElementsStart` test below
+             * then rolls back the "di":[ opener, exactly as it does for a
+             * buffer-full break. `data` is reused as the pop destination: it is
+             * dead after the snprintf, and the pop rewrites it with the element
+             * actually removed, so nothing stale is used. */
+            if (!DIOSampleList_PopFront(&state->DIOSamples, &data)) {
+                break;
+            }
             startIndex += elemWritten;
-            DIOSampleList_PopFront(&state->DIOSamples, &data);
         }
 
         if (startIndex == diElementsStart) {
@@ -859,24 +894,42 @@ size_t Json_Encode(tBoardData* state,
                     // Integer millivolts (backwards compatible)
                     double voltage_mv = ADC_ConvertToVoltageByIndex(
                         mapConfigIdx[j], rawValue) * 1000.0;
+                    // #1199: the clamp this replaces let NaN through to the
+                    // cast (every comparison with NaN is false), which is UB.
+                    // sample_emit_to_int32 tests finiteness FIRST.
                     int32_t mv;
-                    if (voltage_mv > (double)INT32_MAX) mv = INT32_MAX;
-                    else if (voltage_mv < (double)INT32_MIN) mv = INT32_MIN;
-                    else mv = (int32_t)(voltage_mv >= 0.0 ? voltage_mv + 0.5 : voltage_mv - 0.5);
-                    written = snprintf(charBuffer + startIndex,
-                            buffSize - startIndex,
-                            "{\"ch\":%u, \"val\":%d},\n",
-                            channelId,
-                            (int)mv);
+                    if (sample_emit_to_int32(voltage_mv, &mv)) {
+                        written = snprintf(charBuffer + startIndex,
+                                buffSize - startIndex,
+                                "{\"ch\":%u, \"val\":%d},\n",
+                                channelId,
+                                (int)mv);
+                    } else {
+                        written = snprintf(charBuffer + startIndex,
+                                buffSize - startIndex,
+                                "{\"ch\":%u, \"val\":null},\n",
+                                channelId);
+                    }
                 } else {
                     // Volts with N decimal places
                     double voltage = ADC_ConvertToVoltageByIndex(
                         mapConfigIdx[j], rawValue);
-                    written = snprintf(charBuffer + startIndex,
-                            buffSize - startIndex,
-                            "{\"ch\":%u, \"val\":%.*f},\n",
-                            channelId,
-                            (int)precision, voltage);
+                    // #1199: "%.*f" of inf/nan emits `inf`/`nan`, which are
+                    // not JSON literals -- one bad sample made the whole
+                    // message unparseable for every client, not just this
+                    // channel. `null` is the only valid stand-in.
+                    if (sample_emit_is_numeric(voltage)) {
+                        written = snprintf(charBuffer + startIndex,
+                                buffSize - startIndex,
+                                "{\"ch\":%u, \"val\":%.*f},\n",
+                                channelId,
+                                (int)precision, voltage);
+                    } else {
+                        written = snprintf(charBuffer + startIndex,
+                                buffSize - startIndex,
+                                "{\"ch\":%u, \"val\":null},\n",
+                                channelId);
+                    }
                 }
                 if (written < 0 || written >= (int)(buffSize - startIndex)) {
                     sampleOk = false;
@@ -1058,19 +1111,22 @@ size_t Json_Encode(tBoardData* state,
          * committed -- routes to the deferral arm below, which re-runs this
          * test one call later at buffSize - 2.
          *
-         * Action: consume the sample so the queue head advances, and say so
-         * once per session. Nothing here books the loss, deliberately:
-         * objHasPayload is false, so the guard below rolls the object back to
-         * objStart and returns 0, and streaming.c's existing `encoded == 0`
-         * arm books exactly one encoder failure and one dropped sample. That
-         * count is now TRUE -- one sample really was lost -- where before this
-         * fix the same arm re-counted a still-queued sample on every retry. A
-         * dedicated Streaming_Report* entry point (the Streaming_ReportSdDiscard
-         * shape) was considered and rejected for exactly that reason: it would
-         * double-count against the `encoded == 0` arm this path unavoidably
-         * takes. PopFront's return is honoured rather than assumed -- it
-         * rewrites pPublicSampleList with the real head, so nothing stale is
-         * ever freed.
+         * Action: consume the sample so the queue head advances, BOOK the loss,
+         * and say so once per session. #970: the loss is booked HERE, via
+         * Streaming_ReportEncoderSampleLoss(). This comment previously said the
+         * opposite -- that nothing books it here, because streaming.c's
+         * `encoded == 0` arm books exactly one dropped sample and a dedicated
+         * Streaming_Report* entry point would double-count against it. That was
+         * true of THIS path in isolation and false of the arm: the same zero
+         * return is also produced with 0 pops (buffer merely full -- nothing
+         * lost, retried next call) and with N (all-invalid validMask --
+         * consumed, carrying no channel data), so the arm's "one" was a guess
+         * that happened to be right only on this path and wrong on the common
+         * ones. #970 removed the guess; the double-count objection went with
+         * its premise, and the entry point it argued against is now the only
+         * booking this loss has. PopFront's return is honoured rather than
+         * assumed -- it rewrites pPublicSampleList with the real head, so
+         * nothing stale is ever freed, and the booking sits inside that branch.
          *
          * LOG_E_SESSION, not LOG_E: one line per streaming session (the bit is
          * cleared by Streaming_ClearStats() at start), on a path that runs at
@@ -1081,6 +1137,11 @@ size_t Json_Encode(tBoardData* state,
             if (!objHasPayload) {
                 if (AInSampleList_PopFront(&pPublicSampleList)) {
                     AInSampleList_FreeToPool(pPublicSampleList);
+                    /* #970: this arm is the one place an encoder knowingly
+                     * destroys a sample, so it books it -- inside the
+                     * successful-pop branch, because a failed pop consumed
+                     * nothing. See the rewritten paragraph above. */
+                    Streaming_ReportEncoderSampleLoss(1);
                 }
                 LOG_E_SESSION(LOG_SESSION_JSON_SAMPLE_TOO_LARGE,
                         "JSON: sample (%u ch) does not fit a %u B encoder "
@@ -1178,10 +1239,14 @@ size_t Json_Encode(tBoardData* state,
      * No sample is lost by returning here. A sample that did not fit is still
      * queued (nothing was popped), and a sample whose validMask selected no
      * channel was consumed deliberately, having nothing to emit either way.
-     * Returning 0 makes streaming.c book one encoder failure and one dropped
-     * sample, which is the shape that path already has for a tick that
-     * produced nothing -- see its own #707/#745 note, "the encoder emits
-     * nothing, and it was booked as a lost sample and an encoder failure". */
+     * Returning 0 makes streaming.c book one encoder FAILURE and no sample
+     * count at all (#970): nothing is lost on this path -- a sample that did
+     * not fit is still queued, and an all-invalid-validMask sample was consumed
+     * deliberately having nothing to emit -- so there is nothing for it to
+     * book. The #707/#745 note at streaming.c's dry-tick gate records what the
+     * old behaviour cost: "why every clean session reported one phantom drop".
+     * The drop arm above (the oversize-sample case) is the one path here that
+     * IS a loss, and it books itself via Streaming_ReportEncoderSampleLoss(). */
     if ((encodeADC || encodeDIO) && !objHasPayload) {
         startIndex = objStart;
         if (buffSize > 0) {

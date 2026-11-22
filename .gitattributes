@@ -54,3 +54,5 @@ makefile text eol=lf
 .github/workflows/*.yml text eol=lf
 tools/lint/cppcheck-baseline.txt text eol=lf
 tools/lint/cppcheck-suppress.txt text eol=lf
+tools/lint/log_budget-baseline.txt text eol=lf
+tools/lint/log_budget-suppress.txt text eol=lf

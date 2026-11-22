@@ -105,6 +105,26 @@ extern "C" {
                              ScpiContextStorage* storage);
 
     /**
+     * @brief #914: drain a deferred SD-task failure into THIS transport's
+     *        own error queue, if one is pending for it. Call once per command
+     *        boundary, BEFORE SCPI_Input -- see the definition for why that
+     *        ordering (relative to libscpi's cmd_error reset) is required.
+     * @param context This transport's own SCPI context (never another
+     *        transport's -- #999 keeps these deliberately separate).
+     */
+    void SCPI_DrainDeferredSdError(scpi_t *context);
+
+    /**
+     * @brief #1279: re-partition to the idle layout if a stream that SD did
+     *        not consume left the SD circular / DMA write buffer small.
+     *        Takes the streaming config-change claim; call from SCPI task
+     *        context only, before arming an SD operation.
+     * @return true if the SD buffers are at idle size (already or now),
+     *         false if they are small and could not be restored.
+     */
+    bool SCPI_RestoreIdleSdBuffers(void);
+
+    /**
      * Size of the shared SCPI response scratch buffer. Sized to hold the
      * largest known SCPI response (DaqifiOutMessage protobuf, currently
      * 2008 bytes). All callers that need ≥256 B of scratch should use this
@@ -180,6 +200,20 @@ extern "C" {
      * SCPI_ResponseBuf_TakeTimeout.
      */
     void SCPI_ResponseBuf_Give(void);
+
+    /**
+     * Stop a live stream and finalise its SD log before the rails drop.
+     * Called by the power task before every power-off: Power_Down() (button,
+     * SYST:POW:STAT 0) and the critical-battery shutdown. Runs the same
+     * teardown as SYST:STReam:STOP when streaming, then -- streaming or not --
+     * waits for any stop already in flight and for the SD manager to go idle,
+     * bounded by POWER_DOWN_SD_WAIT_MS.
+     *
+     * @return true when the SD log is finalised (or there was none); false if
+     *         the bound expired first. The caller still powers down -- on
+     *         battery it cannot wait indefinitely -- but must say so loudly.
+     */
+    bool SCPI_StopStreamingForPowerDown(void);
 
     /*! Function pointer type for transport-level write (no SCPI context) */
     typedef size_t (*ScpiTransportWriteFn)(const char* data, size_t len);
