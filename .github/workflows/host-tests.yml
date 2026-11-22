@@ -435,7 +435,9 @@ on:
       - 'firmware/src/HAL/UI/UI.c'
       - 'firmware/src/HAL/BQ24297/BQ24297.c'
       # #1153: run_1153_tests greps nvm.c for the recursive mutex and its
-      # three write/erase entry points' lock/unlock bracket.
+      # three write/erase entry points' lock/unlock bracket. #1206:
+      # run_1206_tests COMPILES nvm.c (with nvm.h and config/default's
+      # clock_config.h, both matched by the globs above).
       - 'firmware/src/HAL/NVM/nvm.c'
       - 'firmware/src/services/sd_card_services/sd_card_manager.h'
       - 'firmware/src/config/default/FreeRTOSConfig.h'
@@ -615,7 +617,9 @@ on:
       - 'firmware/src/HAL/UI/UI.c'
       - 'firmware/src/HAL/BQ24297/BQ24297.c'
       # #1153: run_1153_tests greps nvm.c for the recursive mutex and its
-      # three write/erase entry points' lock/unlock bracket.
+      # three write/erase entry points' lock/unlock bracket. #1206:
+      # run_1206_tests COMPILES nvm.c (with nvm.h and config/default's
+      # clock_config.h, both matched by the globs above).
       - 'firmware/src/HAL/NVM/nvm.c'
       - 'firmware/src/services/sd_card_services/sd_card_manager.h'
       - 'firmware/src/config/default/FreeRTOSConfig.h'
