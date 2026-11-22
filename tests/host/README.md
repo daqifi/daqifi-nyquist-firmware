@@ -964,6 +964,40 @@ matches what the model assumes, and that `system_config.h` still defines
 `APP_FLASH_PFM_END_ADDRESS` as `(APP_FLASH_END_ADDRESS +
 APP_FLASH_UPPER_PANEL_SIZE)`.
 
+`test_1198_bootloader_drop_rejected_frame.c` is the second bootloader test,
+and unlike `test_1141` it compiles and **runs the real code**:
+`Bootloader_ProcessBuffer` and `Bootloader_BufferEventHandler` from
+`bootloader/.../framework/bootloader/src/datastream/datastream.c` (issue
+#1198). Before #1198, a `PROGRAM_FLASH` frame whose `APP_ProgramHexRecord`
+result was not `HEX_REC_NORMAL` (a bare `break`), and any unknown command
+(`default:`), left `currentState` at `PROCESS_COMMAND`. `Bootloader_Tasks`'
+`PROCESS_COMMAND` case is one call to `Bootloader_ProcessBuffer`, so the same
+frame was dispatched on every pass: the frame's earlier records were
+re-programmed each time with no erase, and the device never read the host's
+retry, until a USB reset. The fix sets `BOOTLOADER_GET_COMMAND` in both arms,
+so the frame is dropped with no ACK and the reader re-arms.
+
+`datastream.c`'s vendored Harmony headers are host-compilable except two
+(`<sys/kmem.h>` and `system/reset/sys_reset.h`), which `stubs/btl_1198/`
+replaces. As with `test_1217`, the vendored code is its own translation unit
+built with warnings off (`test_1198_datastream_uut.c`), which also holds the
+stubs (`APP_ProgramHexRecord`'s result is injected) and mirrors of the
+`Bootloader_Tasks` transitions around the dispatch, because `bootloader.c`
+itself is not host-compilable. Covers: every non-`NORMAL` result and unknown
+commands go to `GET_COMMAND` with no response queued and are dispatched once;
+an accepted `PROGRAM_FLASH` still ACKs; the other commands keep their
+transitions; no command byte (all 256, accepted and rejected) is dispatched
+twice; and, end to end through the real framing parser, the host's retry after
+a dropped frame is read cleanly and processed.
+
+The Makefile adds two build-time guards. It pins that `bootloader.c`'s
+`PROCESS_COMMAND` case is still the single call that sets no state of its own,
+since the replay model depends on it. It also builds the same test against a
+copy of `datastream.c` with #1198's two `GET_COMMAND` lines deleted, which is
+exactly the pre-fix behaviour, and **requires that build to fail**. The copy
+must differ by exactly those two lines, so a refactor that moves them breaks
+the build loudly instead of quietly testing an unmutated copy.
+
 `test_981_sd_failnext_hook.c` covers the one-shot arm/consume contract behind
 `SYSTem:STORage:SD:FAILNext` (issue #981) — a bench/test-only hook that forces
 ONE real SD write, issued during the next teardown drain, to fail once, so the

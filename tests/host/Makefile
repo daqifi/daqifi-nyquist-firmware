@@ -4066,6 +4066,80 @@ $(HEXWIN_BIN): test_1141_hex_record_upper_panel_error.c test_framework.h \
 	$(CC) $(CFLAGS) -I$(BTL_SYSCFG_DIR) -I$(BTL_SYSCFG_DIR)/framework/bootloader/src \
 	      -o $(HEXWIN_BIN) test_1141_hex_record_upper_panel_error.c
 
+# #1198: a PROGRAM_FLASH frame APP_ProgramHexRecord rejected (and any unknown
+# command) left Bootloader_ProcessBuffer's state at PROCESS_COMMAND, so
+# Bootloader_Tasks replayed the frame on every pass -- re-programming its
+# earlier records with no erase, and never reading the host's retry -- until a
+# USB reset. The fix drops the frame (GET_COMMAND, no ACK).
+#
+# Unlike $(HEXWIN_BIN), this compiles and RUNS the REAL datastream.c: its
+# vendored Harmony headers are host-compilable except two, which
+# stubs/btl_1198/ replaces (it goes first on the include path). Same technique
+# as $(SDWRITE_BIN): the vendored code is its own TU built with warnings off
+# (test_1198_datastream_uut.c, which also holds the stubs and the mirrors of
+# Bootloader_Tasks' transitions -- bootloader.c itself is not host-compilable).
+#
+# Two guards, both build errors:
+#  1. The replay the test models exists only because bootloader.c's
+#     PROCESS_COMMAND case is a bare call that sets no state of its own. If
+#     that case ever changes, t1198_DispatchPasses is modelling a dispatcher
+#     that no longer exists -- re-derive it before touching this pin.
+#  2. A MUTANT: the same test built against a copy of datastream.c with
+#     #1198's two `handle->currentState = BOOTLOADER_GET_COMMAND;` lines
+#     deleted (exactly the pre-fix behaviour) must FAIL. So every build shows
+#     the test can still fail, not just the one run by hand when it was written.
+#     The copy must differ by exactly those two lines; if a refactor renames or
+#     moves them, the build says so rather than silently testing an unmutated
+#     copy.
+BTL1198_BIN := run_1198_tests
+BTL1198_UUT_OBJ := run_1198_datastream_uut.o
+BTL1198_MUT_DIR := run_1198_mutant
+BTL1198_MUT_BIN := run_1198_mutant_tests
+BTL1198_MUT_OBJ := run_1198_mutant_uut.o
+BTL_SRC_DIR := $(BTL_SYSCFG_DIR)/framework/bootloader/src
+BTL_DATASTREAM_SRC := $(BTL_SRC_DIR)/datastream/datastream.c
+BTL_BOOTLOADER_SRC := $(BTL_SRC_DIR)/bootloader.c
+BTL1198_INCLUDES := -Istubs/btl_1198 -I$(BTL_SYSCFG_DIR) -I$(BTL_SYSCFG_DIR)/framework -I$(BTL_SRC_DIR)
+BTL1198_STUBS := stubs/btl_1198/sys/kmem.h stubs/btl_1198/system/reset/sys_reset.h
+
+$(BTL1198_BIN): test_1198_bootloader_drop_rejected_frame.c test_1198_datastream_uut.c test_1198_uut.h \
+                test_framework.h $(BTL1198_STUBS) $(BTL_DATASTREAM_SRC) $(BTL_BOOTLOADER_SRC) \
+                $(BTL_SRC_DIR)/bootloader.h $(BTL_SRC_DIR)/datastream.h $(BTL_NVM_H) $(BTL_SYSCFG_H) $(RECIPES)
+	@n=`grep -c 'case BOOTLOADER_PROCESS_COMMAND:' $(BTL_BOOTLOADER_SRC)`; \
+	 blk=`awk '/case BOOTLOADER_PROCESS_COMMAND:/ { p = 1 } p { print } p && /break;/ { exit }' $(BTL_BOOTLOADER_SRC)`; \
+	 test "$$n" = "1" \
+	  && echo "$$blk" | grep -qF 'Bootloader_ProcessBuffer(&bootloaderData);' \
+	  && ! echo "$$blk" | grep -q 'currentState' \
+	  || { echo "ERROR: $(BTL_BOOTLOADER_SRC)'s PROCESS_COMMAND case is no longer exactly"; \
+	       echo "       one Bootloader_ProcessBuffer(&bootloaderData) call with no state change"; \
+	       echo "       (cases found: $$n). test_1198's t1198_DispatchPasses mirrors that case;"; \
+	       echo "       re-derive it against the new dispatcher before changing this pin."; \
+	       exit 1; }
+	@rm -rf $(BTL1198_MUT_DIR) && mkdir -p $(BTL1198_MUT_DIR)/datastream
+	@sed '/^[[:space:]]*handle->currentState = BOOTLOADER_GET_COMMAND;/d' $(BTL_DATASTREAM_SRC) \
+	     > $(BTL1198_MUT_DIR)/datastream/datastream.c
+	@d=`diff $(BTL_DATASTREAM_SRC) $(BTL1198_MUT_DIR)/datastream/datastream.c | grep -c '^<'`; \
+	 test "$$d" = "2" \
+	  || { echo "ERROR: the #1198 mutant should delete exactly the two"; \
+	       echo "       'handle->currentState = BOOTLOADER_GET_COMMAND;' lines from"; \
+	       echo "       $(BTL_DATASTREAM_SRC), and deleted $$d. 0 means the fix is"; \
+	       echo "       gone (the replay is back) or was restructured: re-derive the mutant"; \
+	       echo "       (it must reproduce the pre-#1198 replay) before changing this."; \
+	       exit 1; }
+	@# The mutant dir goes first, so test_1198_datastream_uut.c's
+	@# #include "datastream/datastream.c" resolves to the copy; the extra
+	@# -I.../datastream lets the copy's own "../datastream.h" reach the real one.
+	$(CC) -std=c11 -w -O0 -g -I$(BTL1198_MUT_DIR) $(BTL1198_INCLUDES) -I$(BTL_SRC_DIR)/datastream \
+	      -c test_1198_datastream_uut.c -o $(BTL1198_MUT_OBJ)
+	$(CC) $(CFLAGS) -o $(BTL1198_MUT_BIN) test_1198_bootloader_drop_rejected_frame.c $(BTL1198_MUT_OBJ)
+	@if ./$(BTL1198_MUT_BIN) >/dev/null; then \
+	   echo "ERROR: test_1198 PASSED against the pre-#1198 mutant of $(BTL_DATASTREAM_SRC)."; \
+	   echo "       A test that cannot fail on the defect it guards guards nothing."; \
+	   exit 1; \
+	 fi
+	$(CC) -std=c11 -w -O0 -g $(BTL1198_INCLUDES) -c test_1198_datastream_uut.c -o $(BTL1198_UUT_OBJ)
+	$(CC) $(CFLAGS) -o $(BTL1198_BIN) test_1198_bootloader_drop_rejected_frame.c $(BTL1198_UUT_OBJ)
+
 # Every suite, and every one of the binaries named in `run` below. Additive
 # collisions in this block as a LINEAGE rather than an ordinal -- main replaced the
 # ordinal deliberately, because each branch numbered its own collisions, the ordinals
@@ -5504,7 +5578,7 @@ $(WIFI881_BIN): test_881_wifi_reset.c test_framework.h $(WIFI_MGR_SRC) $(IPERF2_
 
 run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) \
      $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) \
-     $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(CAP1202_BIN) $(ISRLOG1197_BIN) $(STOP1201_BIN) $(CLAMP1231_BIN) \
+     $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(BTL1198_BIN) $(LOGONCE_BIN) $(CAP1202_BIN) $(ISRLOG1197_BIN) $(STOP1201_BIN) $(CLAMP1231_BIN) \
      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(USECALTYPE_BIN) $(ARM_BIN) $(NAME_BIN) \
      $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) check-1200-parity check-885-savecal-claim \
      $(NVM1153_BIN) $(ARMREFUSE_BIN) $(SDCRC_BIN) $(SDWRITE_BIN) $(LOGRING1248_BIN) $(HIF881_BIN) \
@@ -5550,6 +5624,7 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
 	./$(START_BIN)
 	./$(REPLYBUF_BIN)
 	./$(HEXWIN_BIN)
+	./$(BTL1198_BIN)
 	./$(LOGONCE_BIN)
 	./$(STOP1201_BIN)
 	./$(CLAMP1231_BIN)
@@ -6098,6 +6173,8 @@ clean:
 	rm -f $(LOGRING1248_BIN) $(LOGRING1248_GEN)
 	rm -f $(SDCRC_BIN) $(SDWRITE_BIN) $(SDWRITE_UUT_OBJ)
 	rm -f $(NVM1153_BIN)
+	rm -f $(BTL1198_BIN) $(BTL1198_UUT_OBJ) $(BTL1198_MUT_BIN) $(BTL1198_MUT_OBJ)
+	rm -rf $(BTL1198_MUT_DIR)
 	rm -f $(SEQ908_BIN) \
 	      $(CMDHIST_BIN)
 	rm -f $(TEAR904_BIN)
