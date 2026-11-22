@@ -1053,8 +1053,15 @@ __exit_point:
  * single strip removes exactly what was added. Either way, sending the reply
  * back to SD:FILE re-stores exactly the current name, while SD:DIRectory is
  * unchanged. The setter strips BEFORE its length check, so the longer reply is
- * accepted. Quote characters cannot be stored in the field (#1175), so the
- * quoted text reply round-trips.
+ * accepted. Quote characters cannot be stored in the field (#1175), so a name
+ * made only of 7-bit printable characters round-trips through the quoted text
+ * reply. A name containing a byte >= 0x80 is still reported verbatim, but the
+ * quoted form cannot carry it back: libscpi's quoted-string parser
+ * (skipQuoteProgramData, lexer.c) accepts only 7-bit ASCII, while the setter
+ * accepts such bytes when they arrive as an IEEE 488.2 arbitrary block
+ * (SCPI_ParamCharacters returns the block payload; SD_ValidatePathParam only
+ * rejects control characters, backslash, ':' and '"'). Restore such a name with
+ * the block form, #<n><len><bytes>, not the quoted string.
  *
  * While a benchmark owns the target this reports its temporary name, which is
  * what the device is configured to write; the setter refuses until it ends.
