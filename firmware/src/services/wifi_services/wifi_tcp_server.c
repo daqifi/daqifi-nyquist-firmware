@@ -424,7 +424,10 @@ void wifi_tcp_server_Initialize(wifi_tcp_server_context_t *pServerData) {
             gpServerData->client.inflightSizes[i] = 0;
         }
         microrl_init(&gpServerData->client.console, microrl_echo);
-        microrl_set_echo(&gpServerData->client.console, false);
+        // 0 = echo ON for microrl (only -1 disables; gates test echoOn > -1, microrl.c:290/:624/:766).
+        // Kept at 0, not removed: SYSTem:ECHO? reports echoOn verbatim and TCP hosts read 0.
+        // Passing -1 would disable echo, a wire change for every TCP host (#1268).
+        microrl_set_echo(&gpServerData->client.console, 0);
         microrl_set_execute_callback(&gpServerData->client.console, microrl_commandComplete);
         gpServerData->client.scpiContext = CreateSCPIContext(&scpi_interface,
                                                              &gpServerData->client,
