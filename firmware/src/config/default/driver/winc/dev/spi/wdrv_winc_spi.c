@@ -64,7 +64,7 @@ typedef struct
 // DAQiFi MODIFICATION SENTINEL — if this line causes a build error after an
 // MCC/Harmony update, the file was overwritten. Re-apply patches from:
 // https://github.com/daqifi/daqifi-nyquist-firmware/wiki/Harmony-Driver-Patches
-// Changes: static alignedBuffer[] → CoherentPool pointer, added SetBuffer/WaitIdle
+// Changes: static alignedBuffer[] → CoherentPool pointer, added SetBuffer/IdleForSwap + per-direction busy flags (#1279)
 #define DAQIFI_WINC_SPI_PATCHED 1
 // *****************************************************************************
 // *****************************************************************************
@@ -78,6 +78,20 @@ static WDRV_WINC_SPIDCPT spiDcpt;
 // share coherent memory with SD/USB DMA buffers.
 static uint8_t* alignedBuffer = NULL;
 static uint32_t alignedBufferSize = 0;
+/* #1279 (DAQiFi): true from before the FIRST read of alignedBuffer in
+ * SPISend/SPIReceive until after the LAST use of it (the post-DMA memcpy).
+ * The transfer handles cannot stand in for this: they are INVALID while
+ * SPISend's memcpy into alignedBuffer runs and across the TransferAdd retry
+ * delay. One flag per direction, so neither relies on nmspi.c's s_spiLock
+ * serialising Send and Receive. Plain aligned stores (atomic on PIC32MZ),
+ * written only by the transferring task; read by WDRV_WINC_SPI_IdleForSwap
+ * with the scheduler suspended. */
+static volatile bool gWincSpiTxBusy = false;
+static volatile bool gWincSpiRxBusy = false;
+/* alignedBuffer is not volatile: without this the compiler may hoist a load
+ * of it above busy=true or sink a use below busy=false. Single core, so a
+ * compiler barrier is sufficient. */
+#define WINC_SPI_BUSY_BARRIER() __asm__ __volatile__("" ::: "memory")
 // Capped fail-path logging — a rejected transfer here cascades into
 // M2M_ERR_BUS_FAIL wedges that used to be completely silent (#WINC-recovery).
 static uint8_t gWincSpiFailLogs = 0;
@@ -102,17 +116,13 @@ void WDRV_WINC_SPI_SetBuffer(uint8_t* buf, uint32_t size) {
     alignedBufferSize = size;
 }
 
-bool WDRV_WINC_SPI_WaitIdle(uint32_t timeout_ms) {
-    TickType_t start = xTaskGetTickCount();
-    TickType_t timeoutTicks = pdMS_TO_TICKS(timeout_ms);
-    while ((xTaskGetTickCount() - start) < timeoutTicks) {
-        if (spiDcpt.transferTxHandle == DRV_SPI_TRANSFER_HANDLE_INVALID &&
-            spiDcpt.transferRxHandle == DRV_SPI_TRANSFER_HANDLE_INVALID) {
-            return true;
-        }
-        vTaskDelay(1);
-    }
-    return false;
+/* #1279: may alignedBuffer be swapped now? Meaningful ONLY with the scheduler
+ * suspended (or in a critical section) AND only if WDRV_WINC_SPI_SetBuffer runs
+ * before it resumes. Every transfer starts in task context (nmspi.c
+ * spi_read/spi_write, the only callers, run under an OSAL mutex), never from
+ * an ISR; spiTransferEventHandler only posts semaphores. */
+bool WDRV_WINC_SPI_IdleForSwap(void) {
+    return !gWincSpiTxBusy && !gWincSpiRxBusy;
 }
 
 // *****************************************************************************
@@ -177,13 +187,16 @@ static void spiTransferEventHandler(DRV_SPI_TRANSFER_EVENT event,
 
 bool WDRV_WINC_SPISend(void* pTransmitData, size_t txSize)
 {
+    bool ok = false;
+    gWincSpiTxBusy = true;
+    WINC_SPI_BUSY_BARRIER();
     if (alignedBuffer == NULL || txSize > alignedBufferSize) {
         if (gWincSpiFailLogs < 8) {
             gWincSpiFailLogs++;
             LOG_E("WSPI tx guard: buf=%p sz=%u cap=%u", alignedBuffer,
                   (unsigned)txSize, (unsigned)alignedBufferSize);
         }
-        return false;
+        goto done;
     }
     memcpy(alignedBuffer, pTransmitData, txSize);
 
@@ -200,7 +213,7 @@ bool WDRV_WINC_SPISend(void* pTransmitData, size_t txSize)
             LOG_E("WSPI tx add fail: drvHandle=%08lx sz=%u",
                   (unsigned long)spiDcpt.spiHandle, (unsigned)txSize);
         }
-        return false;
+        goto done;
     }
 
     while (OSAL_RESULT_FALSE == OSAL_SEM_Pend(&spiDcpt.txSyncSem, OSAL_WAIT_FOREVER))
@@ -209,7 +222,11 @@ bool WDRV_WINC_SPISend(void* pTransmitData, size_t txSize)
 
     // DMA complete, buffer no longer in use — mark idle for WaitIdle()
     spiDcpt.transferTxHandle = DRV_SPI_TRANSFER_HANDLE_INVALID;
-    return true;
+    ok = true;
+done:
+    WINC_SPI_BUSY_BARRIER();
+    gWincSpiTxBusy = false;
+    return ok;
 }
 
 //*******************************************************************************
@@ -230,6 +247,9 @@ bool WDRV_WINC_SPISend(void* pTransmitData, size_t txSize)
 bool WDRV_WINC_SPIReceive(void* pReceiveData, size_t rxSize)
 {
     static uint8_t dummy = 0;
+    bool ok = false;
+    gWincSpiRxBusy = true;
+    WINC_SPI_BUSY_BARRIER();
 
     if (alignedBuffer == NULL || rxSize > alignedBufferSize) {
         if (gWincSpiFailLogs < 8) {
@@ -237,7 +257,7 @@ bool WDRV_WINC_SPIReceive(void* pReceiveData, size_t rxSize)
             LOG_E("WSPI rx guard: buf=%p sz=%u cap=%u", alignedBuffer,
                   (unsigned)rxSize, (unsigned)alignedBufferSize);
         }
-        return false;
+        goto done;
     }
     uint32_t attempt = 0;
     do {
@@ -252,7 +272,7 @@ bool WDRV_WINC_SPIReceive(void* pReceiveData, size_t rxSize)
             LOG_E("WSPI rx add fail: drvHandle=%08lx sz=%u",
                   (unsigned long)spiDcpt.spiHandle, (unsigned)rxSize);
         }
-        return false;
+        goto done;
     }
 
     while (OSAL_RESULT_FALSE == OSAL_SEM_Pend(&spiDcpt.rxSyncSem, OSAL_WAIT_FOREVER))
@@ -263,7 +283,11 @@ bool WDRV_WINC_SPIReceive(void* pReceiveData, size_t rxSize)
 
     // Buffer fully consumed — mark idle for WaitIdle()
     spiDcpt.transferRxHandle = DRV_SPI_TRANSFER_HANDLE_INVALID;
-    return true;
+    ok = true;
+done:
+    WINC_SPI_BUSY_BARRIER();
+    gWincSpiRxBusy = false;
+    return ok;
 }
 
 //*******************************************************************************

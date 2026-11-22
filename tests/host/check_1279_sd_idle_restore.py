@@ -235,6 +235,36 @@ def check(sd_src, iface_src, usb_src=None, wifi_src=None):
         raise AssertionError("prepare: the queued-output refusal must follow "
                              "the SD buffer lock and precede the re-carve "
                              "(lock=%d guard=%d carve=%d)" % (lock, guard, carve))
+    # 5b. (codex r3) The WINC staging-buffer swap is ONE scheduler-suspended
+    # step inside SCPI_SwapCoherentDmaBuffers, entered once, after the lock and
+    # before the re-carve. No direct coherent reset/alloc or WINC/DMA install
+    # may remain in PrepareStreamingBuffers: a check-then-act across the
+    # wifi_tcp_server_SetWriteBuffer yield is the defect.
+    swap = once(p, r"\bSCPI_SwapCoherentDmaBuffers\(sdDmaSize,usbDmaSize,"
+                   r"wifiDmaSize\)", "prepare: the one-step DMA swap")
+    if not lock < swap < carve:
+        raise AssertionError("prepare: the DMA swap must follow the SD buffer "
+                             "lock and precede the re-carve")
+    for bad in ("CoherentPool_Reset(", "CoherentPool_Alloc(",
+                "WDRV_WINC_SPI_SetBuffer(", "UsbCdc_SetDmaWriteBuffer(",
+                "sd_card_manager_SetWriteBuffer(", "WDRV_WINC_SPI_WaitIdle("):
+        if bad in p:
+            raise AssertionError("prepare: %s must only run inside "
+                                 "SCPI_SwapCoherentDmaBuffers" % bad)
+    if "WDRV_WINC_SPI_WaitIdle(" in strip(iface_src):
+        raise AssertionError("WDRV_WINC_SPI_WaitIdle is unsound (handles are "
+                             "set after the staging copy) and has been removed")
+    sw = ws(body(iface, "SCPI_SwapCoherentDmaBuffers"))
+    s_susp = once(sw, r"\bvTaskSuspendAll\(\);", "swap: suspends the scheduler")
+    s_idle = once(sw, r"\bWDRV_WINC_SPI_IdleForSwap\(\)", "swap: idle check")
+    s_set = once(sw, r"\bWDRV_WINC_SPI_SetBuffer\(", "swap: WINC install")
+    s_res = once(sw, r"\bxTaskResumeAll\(\)", "swap: resumes")
+    s_sd = once(sw, r"\bsd_card_manager_SetWriteBuffer\(", "swap: SD install")
+    if not (s_susp < s_idle < s_set < s_res < s_sd):
+        raise AssertionError("swap: order must be suspend, idle check, WINC "
+                             "install, resume, then the SD install (its "
+                             "setter takes a mutex)")
+
     gblock = p[guard:]
     gblock = gblock[:gblock.index("}") + 1]
     if ("sd_card_manager_UnlockBuffer();" not in gblock
@@ -344,6 +374,18 @@ def self_test():
             "        ok = ok && !SdIdleRestoreDue(StreamingBufferPool_SdCircularSize(),\n"
             "                                     sd_card_manager_GetWriteBufferSize(),\n"
             "                                     mc->sdCircularBufSize);\n", "", 1)),
+        "prepare installs the DMA buffers itself": (sd, iface.replace(
+            "!SCPI_SwapCoherentDmaBuffers(sdDmaSize, usbDmaSize, wifiDmaSize)",
+            "!(CoherentPool_Reset(), SCPI_SwapCoherentDmaBuffers(sdDmaSize, "
+            "usbDmaSize, wifiDmaSize))", 1)),
+        "swap never checks the WINC idle predicate": (sd, iface.replace(
+            "        if (WDRV_WINC_SPI_IdleForSwap()) {",
+            "        if (1) {", 1)),
+        "swap resumes before the WINC install": (sd, iface.replace(
+            "            WDRV_WINC_SPI_SetBuffer(wifiDmaBuf, wifiDmaSize);\n"
+            "            swapped = true;\n        }\n        (void)xTaskResumeAll();",
+            "            swapped = true;\n        }\n        (void)xTaskResumeAll();\n"
+            "        WDRV_WINC_SPI_SetBuffer(wifiDmaBuf, wifiDmaSize);", 1)),
         "helper pumps TCP from the USB task": (sd, iface.replace(
             "if (wifiQueued && !UsbCdc_CallerIsUsbTask()) {",
             "if (wifiQueued) {", 1)),

@@ -63,7 +63,7 @@
 #include "state/data/AInSample.h"  // For AInSampleList_PoolCapacity
 #include "services/wifi_services/wifi_tcp_server.h"  // For WIFI_CIRCULAR_BUFF_SIZE
 #include "services/wifi_services/iperf2/iperf2.h"   // #377 iperf2 control
-#include "config/default/driver/winc/include/dev/wdrv_winc_spi.h"  // For WDRV_WINC_SPI_SetBuffer/WaitIdle
+#include "config/default/driver/winc/include/dev/wdrv_winc_spi.h"  // For WDRV_WINC_SPI_SetBuffer/IdleForSwap
 #include "config/default/WincIdleGate.h"  // For SYST:WINC:GATE? debug accessor
 #ifndef DAQIFI_WINC_SPI_PATCHED
 #error "wdrv_winc_spi.h was overwritten by Harmony/MCC! Re-apply DAQiFi patches. See wiki: Harmony-Driver-Patches"
@@ -5130,12 +5130,14 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
 }
 
 /**
- * Quiesce all DMA consumers and reset the coherent pool.
- * Closes SD file (filesystem safety), waits for WiFi SPI idle.
- * USB is assumed already waited by caller.
+ * Quiesce the SD card before its DMA write buffer is replaced.
+ * Closes the SD write file (filesystem safety) and waits for SD idle.
+ * USB is assumed already waited by caller. The WINC SPI is NOT handled here:
+ * "idle" is only true at the instant it is read, so SCPI_SwapCoherentDmaBuffers
+ * checks it and swaps in one step (#1279 r3).
  * @return true if successful, false if a timeout occurred
  */
-static bool SCPI_QuiesceAndResetCoherentPool(void) {
+static bool SCPI_QuiesceSdForDmaResize(void) {
     // SD: close write file so f_write can't be mid-DMA during reset.
     // Only interrupt WRITE mode (DMA consumer). Leave READ/LIST/DELETE alone.
     {
@@ -5154,12 +5156,56 @@ static bool SCPI_QuiesceAndResetCoherentPool(void) {
             return false;
         }
     }
-    // WiFi: wait for any in-flight SPI DMA to complete.
-    if (!WDRV_WINC_SPI_WaitIdle(1000)) {
-        LOG_E("WiFi SPI idle timeout before DMA resize");
+    return true;
+}
+
+_Static_assert(SD_CARD_MANAGER_MIN_WBUFFER_SIZE + USBCDC_DMA_WBUFFER_MIN + WIFI_DMA_MIN
+               + 3u * COHERENT_POOL_ALIGNMENT <= COHERENT_POOL_DEFAULT_SIZE,
+               "the minimum DMA layout must fit the coherent pool");
+
+/* #1279 r3: reset the coherent pool, carve the three DMA buffers and install
+ * the USB and WINC ones with NO task able to run in between. The WINC driver
+ * starts SPI transfers from several tasks at any time, so "idle" is only true
+ * at the instant it is read; the check and the swap are one step (the old
+ * sequence checked, then yielded in wifi_tcp_server_SetWriteBuffer's
+ * tcpInFlight wait, and swapped later: a receive started in between DMA'd into
+ * the old buffer and was copied out of the new one). NOTHING in the suspended
+ * block may block, yield, log or take a lock. The SD buffer is installed after
+ * resume because its setter takes the SD wMutex; SD is quiesced (mode NONE,
+ * idle) and its buffer lock is held by the caller. Refuses (false) with
+ * NOTHING changed if the WINC is mid-transfer for 1 s or the layout does not
+ * fit. */
+static bool SCPI_SwapCoherentDmaBuffers(uint32_t sdDmaSize, uint32_t usbDmaSize,
+                                        uint32_t wifiDmaSize) {
+    if ((uint64_t)sdDmaSize + usbDmaSize + wifiDmaSize + 3u * COHERENT_POOL_ALIGNMENT
+            > CoherentPool_TotalSize()) {
         return false;
     }
-    CoherentPool_Reset();
+    uint8_t *sdDmaBuf = NULL, *usbDmaBuf = NULL, *wifiDmaBuf = NULL;
+    bool swapped = false;
+    TickType_t start = xTaskGetTickCount();
+    for (;;) {
+        vTaskSuspendAll();
+        if (WDRV_WINC_SPI_IdleForSwap()) {
+            CoherentPool_Reset();
+            sdDmaBuf   = CoherentPool_Alloc("SD_write", sdDmaSize);
+            usbDmaBuf  = CoherentPool_Alloc("USB_write", usbDmaSize);
+            wifiDmaBuf = CoherentPool_Alloc("WiFi_SPI", wifiDmaSize);
+            UsbCdc_SetDmaWriteBuffer(usbDmaBuf, usbDmaSize);
+            WDRV_WINC_SPI_SetBuffer(wifiDmaBuf, wifiDmaSize);
+            swapped = true;
+        }
+        (void)xTaskResumeAll();
+        if (swapped) {
+            break;
+        }
+        if ((xTaskGetTickCount() - start) > pdMS_TO_TICKS(1000)) {
+            LOG_E("WiFi SPI busy 1 s - DMA buffers not resized (#1279)");
+            return false;
+        }
+        vTaskDelay(1);
+    }
+    sd_card_manager_SetWriteBuffer(sdDmaBuf, sdDmaSize);
     return true;
 }
 
@@ -8793,7 +8839,7 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize,
      * executing -- ScpiCmdGate_OthersIdle); the calling task writes nothing
      * here; a live stream is excluded by the config claim; SD reply writers by
      * the buffer lock just taken. The gate is what closes the check-then-act
-     * window across this function's waits (SD idle, WINC SPI idle, the TCP
+     * window across this function's waits (SD idle, the TCP
      * in-flight wait inside wifi_tcp_server_SetWriteBuffer) -- holding both
      * wMutexes across them would block the WINC driver's own drain. The guard
      * fails closed: an idle caller that never raised the gate refuses.
@@ -8812,25 +8858,6 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize,
         return false;
     }
 
-    StreamingBufferPool_Partition(usbSize, wifiSize, encSize,
-                                  sdCircSize, poolCount, sampleElemSize);
-
-    uint8_t *usbBuf, *wifiBuf, *encBuf, *sdCircBuf;
-    uint32_t usbLen, wifiLen, encLen, sdCircLen;
-    StreamingBufferPool_GetUsb(&usbBuf, &usbLen);
-    StreamingBufferPool_GetWifi(&wifiBuf, &wifiLen);
-    StreamingBufferPool_GetEncoder(&encBuf, &encLen);
-    StreamingBufferPool_GetSdCircular(&sdCircBuf, &sdCircLen);
-    if (usbBuf == NULL || wifiBuf == NULL || encBuf == NULL || sdCircBuf == NULL) {
-        LOG_E("PrepareStreamingBuffers: partition failed USB=%u WiFi=%u enc=%u sd=%u",
-              (unsigned)usbLen, (unsigned)wifiLen, (unsigned)encLen, (unsigned)sdCircLen);
-        sd_card_manager_UnlockBuffer();   /* #703: release SD buffer lock on abort */
-        return false;
-    }
-    // NOTE: buffer-pointer Set calls are deferred to the END (after the coherent
-    // DMA allocs also succeed) so a later alloc failure can't leave a partially
-    // applied configuration — all-or-nothing (Qodo #521 transactional setup).
-
     sdDmaSize &= ~(511U);
     if (sdDmaSize < 512) sdDmaSize = 512;
     sdDmaSize &= ~(COHERENT_POOL_ALIGNMENT - 1);
@@ -8848,31 +8875,36 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize,
         usbDmaSize = USBCDC_DMA_WBUFFER_MIN;
         wifiDmaSize = WIFI_DMA_MIN;
     }
-    if (!SCPI_QuiesceAndResetCoherentPool()) {
+    /* #1279 r3: swap the coherent DMA buffers BEFORE the re-carve, so every
+     * refusal up to and including this one leaves the device as it was. */
+    if (!SCPI_QuiesceSdForDmaResize() ||
+        !SCPI_SwapCoherentDmaBuffers(sdDmaSize, usbDmaSize, wifiDmaSize)) {
+        sd_card_manager_UnlockBuffer();
+        return false;
+    }
+    StreamingBufferPool_Partition(usbSize, wifiSize, encSize,
+                                  sdCircSize, poolCount, sampleElemSize);
+
+    uint8_t *usbBuf, *wifiBuf, *encBuf, *sdCircBuf;
+    uint32_t usbLen, wifiLen, encLen, sdCircLen;
+    StreamingBufferPool_GetUsb(&usbBuf, &usbLen);
+    StreamingBufferPool_GetWifi(&wifiBuf, &wifiLen);
+    StreamingBufferPool_GetEncoder(&encBuf, &encLen);
+    StreamingBufferPool_GetSdCircular(&sdCircBuf, &sdCircLen);
+    if (usbBuf == NULL || wifiBuf == NULL || encBuf == NULL || sdCircBuf == NULL) {
+        LOG_E("PrepareStreamingBuffers: partition failed USB=%u WiFi=%u enc=%u sd=%u",
+              (unsigned)usbLen, (unsigned)wifiLen, (unsigned)encLen, (unsigned)sdCircLen);
         sd_card_manager_UnlockBuffer();   /* #703: release SD buffer lock on abort */
         return false;
     }
-    // Allocate all three coherent DMA buffers; ABORT if any fails rather than
-    // continuing with a stale/unset buffer pointer (Qodo #521).  Unreachable in
-    // normal operation (sizes are clamped to fit the pool above).
-    uint8_t* sdDmaBuf  = CoherentPool_Alloc("SD_write", sdDmaSize);
-    uint8_t* usbDmaBuf = CoherentPool_Alloc("USB_write", usbDmaSize);
-    uint8_t* wifiDmaBuf = CoherentPool_Alloc("WiFi_SPI", wifiDmaSize);
-    if (sdDmaBuf == NULL || usbDmaBuf == NULL || wifiDmaBuf == NULL) {
-        LOG_E("PrepareStreamingBuffers: coherent alloc failed SD=%u USB=%u WIFI=%u",
-              (unsigned)sdDmaSize, (unsigned)usbDmaSize, (unsigned)wifiDmaSize);
-        sd_card_manager_UnlockBuffer();   /* #703: release SD buffer lock on abort */
-        return false;
-    }
-    // All allocations succeeded — now apply every buffer pointer together
-    // (circular pool + coherent DMA) so the config is all-or-nothing.
+    // NOTE: the coherent DMA buffers were swapped above (all-or-nothing, #1279
+    // r3); the circular-pool pointers are applied together here, after the
+    // partition is known good.
+
     UsbCdc_SetWriteBuffer(usbBuf, usbLen);
     wifi_tcp_server_SetWriteBuffer(wifiBuf, wifiLen);
     Streaming_SetEncoderBuffer(encBuf, encLen);
     sd_card_manager_SetCircularBuffer(sdCircBuf, sdCircLen);
-    sd_card_manager_SetWriteBuffer(sdDmaBuf, sdDmaSize);
-    UsbCdc_SetDmaWriteBuffer(usbDmaBuf, usbDmaSize);
-    WDRV_WINC_SPI_SetBuffer(wifiDmaBuf, wifiDmaSize);
     /* #703: swap complete — release the SD buffer lock. Any SD op that armed
      * during the swap was blocked at its read_operation take and now proceeds
      * against the new buffer size. */

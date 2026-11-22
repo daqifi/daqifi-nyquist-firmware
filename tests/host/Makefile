@@ -803,6 +803,33 @@ $(OUT1279_BIN): test_1279_restore_keeps_queued_output.c test_framework.h \
 	 fi
 	$(CC) $(CFLAGS) -Istubs/cmdgate_1279 -I$(FW_SVC)/SCPI -o $@ test_1279_restore_keeps_queued_output.c $(OUT1279_GATE_SRC)
 
+# #1279 (codex r3): the coherent-pool reset/alloc and the WINC staging-buffer
+# swap are ONE step with the scheduler suspended, and the WINC driver says
+# whether it is mid-transfer. The REAL wdrv_winc_spi.c and CoherentPool.c are
+# compiled in, and the REAL SCPI_SwapCoherentDmaBuffers is spliced verbatim, so
+# on a tree without the fix the splice finds no function and the build fails.
+# WINC_SPI_SRC / WINC_SWAP_SRC are overridable so a mutation can point the test
+# at a deliberately broken copy (see the PR body for the mutants run).
+WINCSWAP1279_BIN := run_1279_winc_swap_tests
+WINCSWAP1279_GEN := gen_1279_swap.h
+WINC_SPI_SRC ?= ../../firmware/src/config/default/driver/winc/dev/spi/wdrv_winc_spi.c
+WINC_SWAP_SRC ?= ../../firmware/src/services/SCPI/SCPIInterface.c
+$(WINCSWAP1279_BIN): test_1279_winc_swap.c test_framework.h $(WINC_SPI_SRC) $(WINC_SWAP_SRC) \
+                     $(FW_UTIL)/CoherentPool.c $(FW_UTIL)/CoherentPool.h \
+                     stubs/wincspi_1279/osal/osal.h stubs/wincspi_1279/driver/spi/drv_spi.h \
+                     stubs/wincspi_1279/Util/Logger.h stubs/wincspi_1279/wdrv_winc_common.h
+	@sed -n "/^static bool SCPI_SwapCoherentDmaBuffers(/,/^}/p" $(WINC_SWAP_SRC) | tr -d '\r' > $(WINCSWAP1279_GEN); \
+	 lines=`wc -l < $(WINCSWAP1279_GEN) | tr -d ' '`; \
+	 last=`tail -1 $(WINCSWAP1279_GEN) | tr -d '[:space:]'`; \
+	 test "$$lines" -ge 4 && test "$$lines" -le 200 && test "$$last" = "}" \
+	 || { echo "ERROR: #1279 -- could not splice SCPI_SwapCoherentDmaBuffers out of $(WINC_SWAP_SRC):"; \
+	      echo "       got $$lines line(s) ending in '$$last'. On a tree without the"; \
+	      echo "       #1279 r3 fix the function does not exist."; \
+	      rm -f $(WINCSWAP1279_GEN); exit 1; }
+	$(CC) $(CFLAGS) -Wno-attributes -Wno-unused-function -I. -Istubs/wincspi_1279 -I$(FW_UTIL) \
+	    -I../../firmware/src/config/default/driver/winc/include/dev \
+	    -DWINC_SPI_SRC='"$(WINC_SPI_SRC)"' -o $@ test_1279_winc_swap.c $(FW_UTIL)/CoherentPool.c
+
 # #970: encoder consume-accounting. Like BENCH_BIN, streaming.c and
 # JSON_Encoder.c are not host-test candidates (FreeRTOS/libscpi/the whole
 # board graph), so this test re-implements the two relevant loop SHAPES
@@ -5552,7 +5579,7 @@ $(WIFI881_BIN): test_881_wifi_reset.c test_framework.h $(WIFI_MGR_SRC) $(IPERF2_
 
 run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) \
      $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) \
-     $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(CAP1202_BIN) $(ISRLOG1197_BIN) $(STOP1201_BIN) $(CLAMP1231_BIN) $(SDIDLE1279_BIN) $(OUT1279_BIN) \
+     $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(CAP1202_BIN) $(ISRLOG1197_BIN) $(STOP1201_BIN) $(CLAMP1231_BIN) $(SDIDLE1279_BIN) $(OUT1279_BIN) $(WINCSWAP1279_BIN) \
      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(USECALTYPE_BIN) $(ARM_BIN) $(NAME_BIN) \
      $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) check-1200-parity check-885-savecal-claim \
      $(NVM1153_BIN) $(ARMREFUSE_BIN) $(SDCRC_BIN) $(SDWRITE_BIN) $(LOGRING1248_BIN) $(HIF881_BIN) \
@@ -5600,6 +5627,7 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
 	./$(CLAMP1231_BIN)
 	./$(SDIDLE1279_BIN)
 	./$(OUT1279_BIN)
+	./$(WINCSWAP1279_BIN)
 	./$(CAP1202_BIN)
 	./$(ISRLOG1197_BIN)
 	@# #1158: no AD7609 rate override in START (SCPIInterface.c is not
@@ -6152,7 +6180,7 @@ clean:
 	      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(GEN_1125) $(CAP1202_BIN) $(GEN_1202) $(ISRLOG1197_BIN) $(GEN_1197) \
 	      $(STOP1201_BIN) $(STOP1201_GEN) $(CLAMP1231_BIN) $(CLAMP1231_GEN) \
 	      $(SDIDLE1279_BIN) $(SDIDLE1279_AUTOBUF) $(SDIDLE1279_DUE) $(SDIDLE1279_DEFS) \
-	      $(OUT1279_BIN) $(OUT1279_DUE) $(OUT1279_RESTORE) $(OUT1279_DEFS) \
+	      $(WINCSWAP1279_BIN) $(WINCSWAP1279_GEN) $(OUT1279_BIN) $(OUT1279_DUE) $(OUT1279_RESTORE) $(OUT1279_DEFS) \
 	      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(SDLOG1029_GEN).tmp \
 	      $(USECALTYPE_BIN) $(NAME_BIN) $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(ARM_BIN) $(SCPIDAC_RAILGATE_BIN) \
 	      $(FORCEGATE_BIN) $(LOG1039_BIN) $(LOG1039_GEN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) $(ARMREFUSE_BIN)
