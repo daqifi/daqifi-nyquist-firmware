@@ -1893,8 +1893,10 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
      * independent audit legs disproved it:
      *
      *   1. A WRITE-PROTECTED page leaves the OLD record INTACT AND VALID.
-     *      nvm_ErasePage returns true even when the erase is refused, and the
-     *      row write then fails its readback comparison. Nothing is
+     *      nvm_ErasePage returned true even when the erase was refused, and
+     *      the row write then failed its readback comparison. (#1206: the
+     *      erase now reports false and SaveToNvm skips the row write -- the
+     *      old record still survives intact.) Nothing is
      *      CRC-invalid, so USECal? cheerfully reports the OLD selector while
      *      acquisition runs the NEW coefficients. The getter does not expose
      *      the divergence; it conceals it.
@@ -2072,6 +2074,11 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
              * either way". That premise is FALSE, and an adversarial audit
              * demonstrated it without any hardware fault:
              *
+             * [#1206 changed the next sentence's premise: nvm_ErasePage now
+             * returns FALSE for a refused erase and SaveToNvm then skips the
+             * row write. The outcome this paragraph relies on -- the OLD,
+             * checksum-valid record survives a write-protected page -- is
+             * unchanged.]
              * nvm_ErasePage (HAL/NVM/nvm.c ~:14-54) reads the target word
              * back and returns TRUE on BOTH branches -- the erased case and
              * the WRITE-PROTECTED, erase-refused case (whose only other
@@ -2151,8 +2158,9 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
                      * WHY that is reachable at all: daqifi_settings_SaveToNvm
                      * always calls daqifi_settings_ClearNvm (daqifi_settings.c:
                      * 293), which erases the TOP_LEVEL page UNCONDITIONALLY via
-                     * nvm_ErasePage (daqifi_settings.c:334; nvm.c:45-54 returns
-                     * true whether or not the erase actually took) BEFORE the row
+                     * nvm_ErasePage (daqifi_settings.c:334; since #1206 it
+                     * returns false when the erase did not take, and SaveToNvm
+                     * then stops before writing) BEFORE the row
                      * write (daqifi_settings.c:310, nvm_WriteRowtoAddr) whose own
                      * readback comparison (nvm.c:132) is what can then fail -- so
                      * a failed persist can destroy the old record outright, not
@@ -2224,15 +2232,16 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
      *   call returns -200 without it. Ordinary concurrent USB/WiFi
      *   configuration reaches this path; no flash fault is required.
      *
-     * nvm_ErasePage cannot help either: it returns true on BOTH branches
-     * (nvm.c:45-54 -- the failure branch's only action is a commented-out
-     * log), so an unsuccessful erase is not merely unhandled, it is
-     * UNREPORTABLE to this layer.
+     * nvm_ErasePage reports an unsuccessful erase since #1206 (before it,
+     * both branches returned true), but that only stops SaveToNvm from
+     * writing over an un-erased page; it does not make the replacement
+     * failure-safe.
      *
      * The ordering below is therefore NOT a fix for the divergence; it moves
      * which side goes stale. A correct fix is failure-safe replacement in the
      * settings layer -- retain the committed record until its replacement
-     * verifies -- plus an NVM HAL that can report an erase failure, plus a
+     * verifies -- plus (now present, #1206) an NVM HAL that can report an
+     * erase failure, plus a
      * claim discipline covering every settings writer. All three are outside
      * this PR; see the row for the parked transaction question. What this
      * ordering does buy is that the common case -- a bank that fails
