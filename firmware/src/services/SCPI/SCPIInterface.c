@@ -5243,14 +5243,14 @@ static bool SCPI_SwapCoherentDmaBuffers(uint32_t sdDmaSize, uint32_t usbDmaSize,
             > CoherentPool_TotalSize()) {
         return false;
     }
-    uint32_t busy = 0u, discarded = 0u;
+    uint32_t discarded = 0u;
     bool swapped = false;
     TickType_t start = xTaskGetTickCount();
     for (;;) {
         vTaskSuspendAll();
         bool usbHeld = UsbCdc_DmaSwapAcquire(keepQueuedOutput, &discarded);
         bool sdHeld  = usbHeld && sd_card_manager_DmaSwapAcquire();
-        busy = !usbHeld ? BUSY_USB : !sdHeld ? BUSY_SD
+        uint32_t busy = !usbHeld ? BUSY_USB : !sdHeld ? BUSY_SD
              : !WDRV_WINC_SPI_IdleForSwap() ? BUSY_WINC : 0u;
         if (busy == 0u) {
             CoherentPool_Reset();
