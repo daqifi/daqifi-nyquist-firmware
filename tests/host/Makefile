@@ -58,6 +58,11 @@ INCLUDES := -Istubs -I$(FW_UTIL)
 # follows the same rule -- assigned near the top, built wherever.
 NVM_SRC     := ../../firmware/src/HAL/NVM/nvm.c
 NVM1153_BIN := run_1153_tests
+# #1206: the REAL nvm.c compiled against stubs/nvm_1206. `?=` so a review can
+# point it at another revision of the file (e.g. origin/main's, to watch the
+# test go red) without editing this Makefile.
+NVM1206_BIN := run_1206_tests
+NVM1206_SRC ?= $(NVM_SRC)
 
 BIN := run_tests
 UUT := CircularBuffer_uut.c
@@ -5507,7 +5512,7 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(CAP1202_BIN) $(ISRLOG1197_BIN) $(STOP1201_BIN) $(CLAMP1231_BIN) \
      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(USECALTYPE_BIN) $(ARM_BIN) $(NAME_BIN) \
      $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) check-1200-parity check-885-savecal-claim \
-     $(NVM1153_BIN) $(ARMREFUSE_BIN) $(SDCRC_BIN) $(SDWRITE_BIN) $(LOGRING1248_BIN) $(HIF881_BIN) \
+     $(NVM1153_BIN) $(NVM1206_BIN) $(ARMREFUSE_BIN) $(SDCRC_BIN) $(SDWRITE_BIN) $(LOGRING1248_BIN) $(HIF881_BIN) \
      $(HIF881SPI_BIN) $(WIFI881_BIN) $(ARMEXIT_BIN) \
      $(CMDHIST_BIN)
 	./$(HIF881_BIN)
@@ -5519,6 +5524,7 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
 	./$(ARMREFUSE_BIN)
 	./$(ARMEXIT_BIN)
 	./$(NVM1153_BIN)
+	./$(NVM1206_BIN)
 	./$(SEQ908_BIN)
 	./$(CMDHIST_BIN)
 	./$(APSTA1060_BIN)
@@ -6093,11 +6099,58 @@ $(NVM1153_BIN): test_1153_nvm_recursive_lock.c test_framework.h \
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(NVM1153_BIN) test_1153_nvm_recursive_lock.c
 
+# #1206: nvm.c's nine waits are bounded and nvm_ErasePage reports a failed
+# erase. Unlike $(NVM1153_BIN) this is not a model: the test LINKS the real
+# nvm.c (NVM1206_SRC), built against stubs/nvm_1206/, whose register and PLIB
+# accessors are test functions that drive a simulated CP0 clock. Each case runs
+# in a forked child under alarm(), so a wait that never ends shows up as a
+# failed case instead of hanging the suite -- which is what the pre-#1206
+# source does. clock_config.h is forwarded to the real one, so the budget the
+# test exercises is the firmware's.
+#
+# The guard below is the one the #1206 issue thread asked for: #1153's guards
+# pin only that nvm_Lock() precedes nvm_Unlock() in these three functions, not
+# that every exit releases it. #1206 gave each a single exit (set `result`,
+# restore DMA, unlock once, return once), so -- as $(NVM1153_BIN)'s round-2
+# guards already do for SaveToNvm/ClearNvm -- this asserts no `return` sits
+# between the lock and the unlock. The behavioural cases in the test cover the
+# exits that exist today; this covers an early return added tomorrow.
+NVM1206_STUB_HDRS := $(wildcard stubs/nvm_1206/*.h)
+$(NVM1206_BIN): test_1206_nvm_bounded_waits.c test_framework.h $(NVM1206_SRC) \
+                ../../firmware/src/HAL/NVM/nvm.h \
+                ../../firmware/src/config/default/clock_config.h \
+                $(NVM1206_STUB_HDRS) $(RECIPES)
+	@for fn in nvm_ErasePage nvm_WriteWordtoAddr nvm_WriteRowtoAddr; do \
+	  body=`sed -n "/^bool $$fn(/,/^}/p" $(NVM_SRC) | tr -d '\r' | grep -v '^[[:space:]]*[*/]'`; \
+	  test -n "$$body" \
+	    || { echo "ERROR: $$fn() was not found in $(NVM_SRC), or no longer"; \
+	         echo "       opens at column 0."; exit 1; }; \
+	  lk=`printf '%s\n' "$$body" | grep -n 'nvm_Lock();' | head -1 | cut -d: -f1`; \
+	  ul=`printf '%s\n' "$$body" | grep -n 'nvm_Unlock();' | head -1 | cut -d: -f1`; \
+	  nul=`printf '%s\n' "$$body" | grep -c 'nvm_Unlock();'`; \
+	  test -n "$$lk" && test -n "$$ul" && test "$$lk" -lt "$$ul" && test "$$nul" = 1 \
+	    || { echo "ERROR: $$fn() in $(NVM_SRC) no longer has exactly one"; \
+	         echo "       nvm_Lock() ... nvm_Unlock() bracket (lock='$$lk'"; \
+	         echo "       unlock='$$ul' unlocks=$$nul). #1206 gave it ONE exit."; \
+	         exit 1; }; \
+	  nret=`printf '%s\n' "$$body" | awk -v lk="$$lk" -v ul="$$ul" 'NR>lk && NR<ul && /return/'`; \
+	  test -z "$$nret" \
+	    || { echo "ERROR: $$fn() in $(NVM_SRC) has a 'return' between its"; \
+	         echo "       nvm_Lock() and nvm_Unlock(): '$$nret'."; \
+	         echo "       A return there leaves the NVM mutex held (every later"; \
+	         echo "       NVM operation deadlocks) and can leave DMA suspended"; \
+	         echo "       device-wide. Set 'result' and fall through to the"; \
+	         echo "       single nvm_OpEnd() / nvm_Unlock() / return instead."; \
+	         exit 1; }; \
+	done
+	$(CC) $(CFLAGS) -Wno-unused-parameter -Wno-old-style-declaration -Istubs/nvm_1206 -I../../firmware/src/HAL/NVM \
+	  -o $@ test_1206_nvm_bounded_waits.c $(NVM1206_SRC)
+
 clean:
 	rm -f $(HIF881_BIN) $(HIF881SPI_BIN) $(WIFI881_BIN) $(WIFI881_GEN)
 	rm -f $(LOGRING1248_BIN) $(LOGRING1248_GEN)
 	rm -f $(SDCRC_BIN) $(SDWRITE_BIN) $(SDWRITE_UUT_OBJ)
-	rm -f $(NVM1153_BIN)
+	rm -f $(NVM1153_BIN) $(NVM1206_BIN)
 	rm -f $(SEQ908_BIN) \
 	      $(CMDHIST_BIN)
 	rm -f $(TEAR904_BIN)
