@@ -527,6 +527,12 @@ static bool gCsHigh = true;
 static unsigned gLockDepth;
 static unsigned gCsRisesThisLock, gCsRisesMax;
 static unsigned gNoCsClocked, gNoCsWhileSelected;
+/* #1262: whether the card was selected for a transfer with no no-CS clock
+ * since, i.e. it may still be driving DataOut (SanDisk SD Card Product Manual
+ * v2.2, section 5.23.4); and how often the SD lock was dropped in that state
+ * with nothing of the SD client's still queued. */
+static bool gMisoDriven;
+static unsigned gUnlockMisoDriven;
 static unsigned gHoldWithPending;   /* holds taken with transfers still queued */
 
 void SYS_PORT_PinSet(SYS_PORT_PIN pin)
@@ -732,6 +738,10 @@ bool DRV_SPI_Lock(DRV_HANDLE h, bool lock)
         return false;
     }
     gLockDepth--;
+    if ((gLockDepth == 0U) && gMisoDriven && (gQueueCount == 0U))
+    {
+        gUnlockMisoDriven++;
+    }
     if ((gLockDepth == 0U) && (gCsRisesThisLock > gCsRisesMax))
     {
         gCsRisesMax = gCsRisesThisLock;
@@ -890,8 +900,13 @@ static void spiClock(Xfer* x)
 
 static void spiComplete(Xfer* x)
 {
+    if (!x->noCs && !gCsHigh)
+    {
+        gMisoDriven = true;
+    }
     if (x->noCs)
     {
+        gMisoDriven = false;
         gNoCsClocked++;
         if (!gCsHigh)
         {
@@ -1061,6 +1076,8 @@ static void resetAll(void)
     gHoldCs = false;
     gCsRisesThisLock = gCsRisesMax = 0U;
     gNoCsClocked = gNoCsWhileSelected = 0U;
+    gMisoDriven = false;
+    gUnlockMisoDriven = 0U;
     gHoldWithPending = 0U;
     gLastEvent = -1;
     gEventsSeen = 0U;
@@ -1563,6 +1580,56 @@ TEST(cs_is_held_for_a_whole_request_then_clocked_once_deselected)
     ASSERT_EQ(gNoCsWhileSelected, 0);
     ASSERT_TRUE(gCsHigh);
     assertCardHealthy(45U);
+}
+
+/* #1262: the card keeps driving DataOut after CS rises until one more clock,
+ * and the next transfer on the bus is usually the WINC's, whose first byte
+ * then reads with bit 7 set. #1255 clocked that byte only after a request
+ * that held CS; card init, the write resync and every phase without a hold
+ * dropped the lock with the card still driving. Every unlock must now come
+ * after a no-CS clock, except while an abandoned transfer is still queued
+ * (then the byte would only queue behind it; see
+ * DRV_SDSPI_SPIExclusiveAccess). Fails on the #1255-only trigger. */
+TEST(every_sd_unlock_follows_a_miso_release_clock)
+{
+    uint8_t data[BLOCK * 4U];
+
+    resetAll();
+    startDriver();
+    ASSERT_TRUE(runUntilAttached(20000U));
+    ASSERT_EQ(gUnlockMisoDriven, 0);         /* card init */
+    fill(data, sizeof(data), 0x62U);
+    ASSERT_EQ(writeBlocks(50U, data, 1U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+    ASSERT_EQ(writeBlocks(51U, data, 4U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+    passes(200U);
+    ASSERT_EQ(gUnlockMisoDriven, 0);
+    ASSERT_EQ(gNoCsWhileSelected, 0);
+    assertCardHealthy(56U);
+}
+
+/* #1262 audit: INIT_INCR_CLK_SPD now takes the bus before its dummy read.
+ * If that read fails, init goes to INIT_ERROR and the attach FSM leaves for
+ * the polling timer at once, so INIT_ERROR's own release waits for the next
+ * init attempt; with the card gone there may be none, and WiFi stays locked
+ * out. The lock must be back at depth 0 as soon as init has failed. */
+TEST(failed_init_dummy_read_gives_the_bus_back)
+{
+    resetAll();
+    gFault.action = FAULT_REJECT;   /* the 10-byte dummy read is init's only one */
+    gFault.isRead = 1;
+    gFault.len = 10;
+    startDriver();
+    unsigned i;
+    for (i = 0U; (i < 20000U) && (gFault.action != FAULT_NONE); i++)
+    {
+        pass();
+    }
+    ASSERT_TRUE(gFault.action == FAULT_NONE);   /* the premise: it was rejected */
+    passes(3U);
+    ASSERT_FALSE(DRV_SDSPI_IsAttached(gHandle));
+    ASSERT_EQ(gLockDepth, 0);
+    ASSERT_TRUE(runUntilAttached(20000U));       /* and the retry still attaches */
+    assertCardHealthy(60U);
 }
 
 /* #1255 audit: after a watchdog abandon the MISO-release byte queues behind
@@ -2820,6 +2887,8 @@ int main(void)
     RUN(stale_ring_entry_is_pruned_before_the_submit_that_reuses_its_handle);
     RUN(aborted_transfer_still_pending_survives_the_prune_until_it_completes);
     RUN(cs_is_held_for_a_whole_request_then_clocked_once_deselected);
+    RUN(every_sd_unlock_follows_a_miso_release_clock);
+    RUN(failed_init_dummy_read_gives_the_bus_back);
     RUN(miso_release_byte_behind_an_abandoned_transfer_never_selects_the_card);
     RUN(no_hold_while_an_abandoned_requests_transfers_are_queued);
     return TEST_SUMMARY();

@@ -369,7 +369,8 @@ bool DRV_SDSPI_SPISpeedSetup(
     None
 */
 
-/* #1255: end a held-CS request. Raise SD CS, then clock one 0xFF that does not
+/* #1255, #1262: end an exclusive phase (and any held-CS request in it). Raise
+ * SD CS, then clock one 0xFF that does not
  * touch CS: the card releases DataOut only on the clock after CS goes high
  * (SanDisk SD Card Product Manual v2.2, section 5.23.4), and without that clock
  * it can still be driving MISO into the next transfer on the shared bus, which
@@ -447,11 +448,38 @@ bool DRV_SDSPI_SPIExclusiveAccess(DRV_SDSPI_OBJ* const dObj, bool isExclusive)
         }
         return ok;
     }
+    bool wasHeld = (dObj->csLockDepth > 0U);
     if (dObj->csLockDepth > 0U)
     {
         dObj->csLockDepth--;
     }
-    if ((dObj->csLockDepth == 0U) && dObj->csHeld)
+    /* #1262: clock the release byte at the end of EVERY exclusive phase, not
+     * only after a held-CS request. A transfer whose CS the SPI driver manages
+     * also raises CS with no trailing clock, and the card keeps driving
+     * DataOut until it sees one (SanDisk SD Card Product Manual v2.2, section
+     * 5.23.4). The next transfer on the shared bus is usually the WiFi
+     * module's, and its first byte then reads with bit 7 set: a corrupted
+     * command-response state byte, or a HIF header whose group ID reads 0x82
+     * for 0x02. The upstream Harmony driver has the same gap
+     * (Microchip-MPLAB-Harmony/core#53).
+     *
+     * wasHeld: only when THIS call drops a lock it holds to depth 0. Some
+     * paths release with nothing held (DRV_SDSPI_INIT_ERROR,
+     * DRV_SDSPI_ReleaseBus), and the byte must not go out without the bus.
+     *
+     * Not while this client still has a transfer queued in DRV_SPI (a
+     * watchdog-abandoned transfer and whatever queued behind it), the same
+     * test the CS hold uses in DRV_SDSPI_Tasks: the byte would queue behind
+     * the stuck transfer, time out, and take a slot of the aborted-transfer
+     * ring. Overflowing that ring loses the stuck transfer's entry, and its
+     * late completion is then taken as the completion of the transfer in
+     * progress. Such a phase keeps the behaviour from before this change.
+     *
+     * csHeld keeps the earlier trigger (#1255) exactly as it was. Only this
+     * task submits SD transfers, so none can be added after the check. */
+    if ((dObj->csLockDepth == 0U) &&
+            (dObj->csHeld ||
+             (wasHeld && !DRV_SPI_ClientHasPending(dObj->spiDrvHandle))))
     {
         lDRV_SDSPI_ReleaseHeldCs(dObj);
     }

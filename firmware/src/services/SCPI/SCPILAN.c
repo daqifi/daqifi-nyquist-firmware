@@ -826,8 +826,17 @@ scpi_result_t SCPI_LANSettingsApply(scpi_t * context) {
     // LOG_D("SCPI_LANSettingsApply called - WiFi enabled=%d, mode=%d\r\n", 
     //       pRunTimeWifiSettings->isEnabled, pRunTimeWifiSettings->networkMode);
 
-    if (SCPI_ParamInt32(context, &param1, FALSE)) {
-        saveSettings = (bool) param1;
+    /* #876: a present-but-unparseable argument (`APPLY BANANA`) must reject
+     * BEFORE anything is applied -- contract at SCPI_OptionalParamInt32. */
+    switch (SCPI_OptionalParamInt32(context, &param1)) {
+        case SCPI_OPT_BAD:
+            return SCPI_RES_ERR;
+        case SCPI_OPT_PRESENT:
+            saveSettings = (bool) param1;
+            break;
+        case SCPI_OPT_ABSENT:
+        default:
+            break;
     }
 
     // Concurrent WiFi and SD card operations now supported with enhanced SPI coordination
@@ -1609,8 +1618,17 @@ scpi_result_t SCPI_LANSettingsLoad(scpi_t * context) {
     int param1;
     wifi_manager_settings_t * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
             BOARDRUNTIME_WIFI_SETTINGS);
-    if (SCPI_ParamInt32(context, &param1, FALSE)) {
-        applySettings = (bool) param1;
+    /* #876: reject an unparseable argument before any NVM read or apply --
+     * contract at SCPI_OptionalParamInt32. */
+    switch (SCPI_OptionalParamInt32(context, &param1)) {
+        case SCPI_OPT_BAD:
+            return SCPI_RES_ERR;
+        case SCPI_OPT_PRESENT:
+            applySettings = (bool) param1;
+            break;
+        case SCPI_OPT_ABSENT:
+        default:
+            break;
     }
 
     DaqifiSettings daqifiSettings;
@@ -1645,8 +1663,17 @@ scpi_result_t SCPI_LANSettingsFactoryLoad(scpi_t * context) {
     int param1;
     wifi_manager_settings_t * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
             BOARDRUNTIME_WIFI_SETTINGS);
-    if (SCPI_ParamInt32(context, &param1, FALSE)) {
-        applySettings = (bool) param1;
+    /* #876: reject an unparseable argument before any NVM read or apply --
+     * contract at SCPI_OptionalParamInt32. */
+    switch (SCPI_OptionalParamInt32(context, &param1)) {
+        case SCPI_OPT_BAD:
+            return SCPI_RES_ERR;
+        case SCPI_OPT_PRESENT:
+            applySettings = (bool) param1;
+            break;
+        case SCPI_OPT_ABSENT:
+        default:
+            break;
     }
 
     DaqifiSettings daqifiSettings;

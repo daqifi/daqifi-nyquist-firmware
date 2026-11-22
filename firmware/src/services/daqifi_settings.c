@@ -33,11 +33,23 @@ static char gFriendlyDeviceName[FRIENDLY_DEVICE_NAME_SIZE] = {0};
  * load/save outcome, never from NVM. Written only from task context (boot,
  * or the SCPI task handling SAVEFcal), before the SCPI transport tasks
  * that read it are created on the boot path. */
-static bool gFactoryCalMissing = false;
+/* #1185 r1: the missing flag and the slot state share ONE aligned 32-bit
+ * word, so CONF:CAP:JSON? reads factory_present and factory_slot from a single
+ * load and a save publishes both with a single store. Two separate variables
+ * let a query interleave with RefreshFactoryCalPresence and report a pair the
+ * device never had (present=true with slot="blank"). Bit 0 = missing; bits
+ * 8..15 = DaqifiFactorySlotState. Writers are task context and serialised
+ * (boot, or the SCPI task holding the config claim), so a read-modify-write
+ * by one writer cannot race another writer. */
+#define FCAL_MISSING_BIT  0x1u
+#define FCAL_SLOT_SHIFT   8u
+#define FCAL_SLOT_MASK    (0xFFu << FCAL_SLOT_SHIFT)
+static volatile uint32_t gFactoryCalWord =
+    ((uint32_t) DAQIFI_FACTORY_SLOT_UNKNOWN << FCAL_SLOT_SHIFT);
 
 /* #908 (Qodo item 3): WHICH BANK the live coefficients were last loaded from.
  *
- * gFactoryCalMissing answers "is the factory NVM SLOT populated?". It was also
+ * The factory-cal missing flag (gFactoryCalWord) answers "is the factory NVM SLOT populated?". It was also
  * being used to answer "which coefficients are IN EFFECT?", and those are two
  * different questions -- the defect Qodo reported as "failed saves report
  * identity defaults": a failed SAVEFcal sets the missing flag, the emitter
@@ -52,7 +64,7 @@ static bool gFactoryCalMissing = false;
  *
  * Defaults to the factory bank because that is what boot attempts first. Never
  * persisted -- it is re-derived from a real load outcome on every boot, like
- * gFactoryCalMissing, and written only from task context. */
+ * the factory-cal missing flag, and written only from task context. */
 static DaqifiSettingsType gActiveCalBank = DaqifiSettings_FactAInCalParams;
 
 /* #908 (codex-r7): generation counter over the (coefficients, bank) pair.
@@ -165,15 +177,65 @@ void daqifi_settings_SeedFriendlyName(const char* name) {
 }
 
 void daqifi_settings_MarkFactoryCalMissing(void) {
-    gFactoryCalMissing = true;
+    gFactoryCalWord = gFactoryCalWord | FCAL_MISSING_BIT;
 }
 
 void daqifi_settings_ClearFactoryCalMissing(void) {
-    gFactoryCalMissing = false;
+    gFactoryCalWord = gFactoryCalWord & ~FCAL_MISSING_BIT;
 }
 
 bool daqifi_settings_FactoryCalIsMissing(void) {
-    return gFactoryCalMissing;
+    return (gFactoryCalWord & FCAL_MISSING_BIT) != 0u;
+}
+
+void daqifi_settings_PublishFactoryCal(bool missing, DaqifiFactorySlotState slot) {
+    gFactoryCalWord = (missing ? FCAL_MISSING_BIT : 0u)
+                    | (((uint32_t) slot << FCAL_SLOT_SHIFT) & FCAL_SLOT_MASK);
+}
+
+DaqifiFactorySlotState daqifi_settings_GetFactoryCal(bool* missing) {
+    const uint32_t w = gFactoryCalWord;          /* ONE load */
+    if (missing != NULL) {
+        *missing = (w & FCAL_MISSING_BIT) != 0u;
+    }
+    return (DaqifiFactorySlotState) ((w & FCAL_SLOT_MASK) >> FCAL_SLOT_SHIFT);
+}
+
+DaqifiFactorySlotState daqifi_settings_ProbeFactoryCalSlot(void) {
+    const DaqifiFactorySlotState state = daqifi_settings_ClassifyFactoryCalSlot();
+    const uint32_t w = gFactoryCalWord;
+    gFactoryCalWord = (w & ~FCAL_SLOT_MASK)
+                    | (((uint32_t) state << FCAL_SLOT_SHIFT) & FCAL_SLOT_MASK);
+    return state;
+}
+
+DaqifiFactorySlotState daqifi_settings_ClassifyFactoryCalSlot(void) {
+    /* BLANK is "every byte erased", read straight off the page with no copy.
+     * The span is the whole stored record (settings + checksum), the same
+     * bytes LoadFromNvm reads. A page with ANY programmed byte that then
+     * fails validation is INVALID, not blank: a failed SAVEFcal erases and
+     * then writes, so it can leave a partly written page. */
+    const uint8_t* page = (const uint8_t*) PA_TO_KVA1(FAINCAL_SETTINGS_ADDR);
+    bool blank = true;
+    for (size_t i = 0; i < sizeof(DaqifiSettings); i++) {
+        if (page[i] != 0xFFu) {
+            blank = false;
+            break;
+        }
+    }
+    DaqifiFactorySlotState state;
+    if (blank) {
+        state = DAQIFI_FACTORY_SLOT_BLANK;
+    } else if (daqifi_settings_ValidateADCCalBank(DaqifiSettings_FactAInCalParams)) {
+        state = DAQIFI_FACTORY_SLOT_VALID;
+    } else {
+        state = DAQIFI_FACTORY_SLOT_INVALID;
+    }
+    return state;
+}
+
+DaqifiFactorySlotState daqifi_settings_GetFactoryCalSlot(void) {
+    return daqifi_settings_GetFactoryCal(NULL);
 }
 
 DaqifiSettingsType daqifi_settings_GetActiveCalBank(void) {
