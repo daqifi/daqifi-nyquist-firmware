@@ -1262,6 +1262,18 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
         goto __exit_point;
     }
 
+    /* #1279: read through the idle-size SD buffer, not the 4 KB one a WiFi or
+     * USB stream left behind -- the read chunk is min(SD circular, 16 KB), so
+     * that buffer cut every read to a quarter of its idle size. Best effort:
+     * on false (a stream is live, the other transport holds a claim, a reply
+     * could not be sent out of a transport ring before the re-partition reset
+     * it, or the re-partition failed) the GET proceeds through the buffers it
+     * has, which
+     * is correct and only slower; refusing would break a GET during a live
+     * non-SD stream. Before the ReadBufferReady() check below, which a restore
+     * can only help. */
+    (void)SCPI_RestoreIdleSdBuffers();
+
     /* #703: SD:GET reads into the streaming pool's SD circular buffer, which the
      * auto-balancer shrinks after a non-SD stream. If it collapsed below the read
      * minimum, fail loudly and synchronously here (SCPI -200 + LOG_E) rather than
@@ -1718,6 +1730,28 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
         goto __exit_point;
     }
     ownsBenchFlag = true;
+
+    /* #1279: measure the CARD, not the previous stream's partition. A WiFi or
+     * USB stream leaves the SD circular at 4 KB and the SD DMA write buffer at
+     * 512 B, and this benchmark drains through both, so without this it
+     * reported ~4.5x below the card's speed until the next SD stream or a
+     * reboot. A no-op unless they are small.
+     *
+     * After the testInProgress claim, so a second BENCHmark has already been
+     * refused and cannot re-partition under this one; before the SD claim and
+     * the arm, because the re-partition refuses while the SD manager has a
+     * mode armed. Refusing on failure is the point: a result taken through the
+     * small buffers is the wrong answer this ticket exists to stop. That
+     * includes refusing rather than discarding a reply still queued for the
+     * host (an earlier reply in the same message, or this command's echo) that
+     * the restore could not send first -- see SCPI_RestoreIdleSdBuffers. */
+    if (!SCPI_RestoreIdleSdBuffers()) {
+        SCPI_ExecutionError(context,
+                            "SYST:STOR:SD:BENCH: rejected, could not restore "
+                            "the idle SD buffers after a non-SD stream - retry");
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
 
     /* Snapshot the logging target HERE, after the claim — not at function
      * entry. SCPI_StorageSDLoggingSet rejects SD:FILE only once testInProgress

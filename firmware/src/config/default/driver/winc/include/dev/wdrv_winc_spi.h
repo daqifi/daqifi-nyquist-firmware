@@ -42,7 +42,7 @@ Microchip or any third party.
 
 // DAQiFi patch sentinel — build fails if Harmony/MCC overwrites this file.
 // Re-apply patches from: https://github.com/daqifi/daqifi-nyquist-firmware/wiki/Harmony-Driver-Patches
-// Changes: static alignedBuffer[] → CoherentPool pointer, added SetBuffer/WaitIdle
+// Changes: static alignedBuffer[] → CoherentPool pointer, added SetBuffer/IdleForSwap + per-direction busy flags (#1279)
 #define DAQIFI_WINC_SPI_PATCHED 1
 
 #include "system/ports/sys_ports.h"
@@ -255,23 +255,20 @@ void WDRV_WINC_SPI_SetBuffer(uint8_t* buf, uint32_t size);
 //*******************************************************************************
 /*
   Function:
-    bool WDRV_WINC_SPI_WaitIdle(uint32_t timeout_ms)
+    bool WDRV_WINC_SPI_IdleForSwap(void)
 
   Summary:
-    Waits until no SPI DMA transfers are in flight.
+    True when no SPISend/SPIReceive is using the DMA staging buffer.
 
   Description:
-    Polls the SPI transfer handles until both TX and RX are idle.
-    Must be called before CoherentPool_Reset() to prevent DMA
-    corruption from in-flight WINC1500 control-plane transfers.
-
-  Parameters:
-    timeout_ms - Maximum time to wait in milliseconds
-
-  Returns:
-    true if idle, false if timeout
+    #1279 (DAQiFi). Meaningful ONLY with the scheduler suspended (or in a
+    critical section), and only if WDRV_WINC_SPI_SetBuffer runs before it
+    resumes: transfers start from several tasks at any time, so "idle" is true
+    only at the instant it is read. Covers the whole use of the buffer,
+    including the copy before the SPI transfer handle is set and the copy
+    after the DMA completes.
  */
 
-bool WDRV_WINC_SPI_WaitIdle(uint32_t timeout_ms);
+bool WDRV_WINC_SPI_IdleForSwap(void);
 
 #endif /* WDRV_WINC_SPI_H */

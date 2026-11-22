@@ -607,6 +607,27 @@ uint32_t wifi_tcp_server_GetCircularBufferAvailable(void) {
     return CircularBuf_NumBytesAvailable(&gpServerData->client.wCirbuf);
 }
 
+// #1279: bytes queued in the write circular buffer that
+// wifi_tcp_server_SetWriteBuffer would discard.  Unlike
+// wifi_tcp_server_GetCircularBufferAvailable this reads under wMutex (so it is
+// never torn against a producer or the drain) and counts only DELIVERABLE
+// bytes: with no client connected, or a disconnect's reset still deferred
+// (pendingBufferReset), the bytes can never be sent -- the close path discards
+// them anyway -- so they count as 0 rather than make an idle re-partition wait
+// on a ring nobody can drain.
+uint32_t wifi_tcp_server_PendingWriteBytes(void) {
+    if (gpServerData == NULL || gpServerData->client.wMutex == NULL ||
+        gpServerData->client.clientSocket < 0) {
+        return 0u;
+    }
+    xSemaphoreTake(gpServerData->client.wMutex, portMAX_DELAY);
+    DrainPendingBufferReset();
+    uint32_t n = (gpServerData->client.clientSocket >= 0)
+            ? CircularBuf_NumBytesAvailable(&gpServerData->client.wCirbuf) : 0u;
+    xSemaphoreGive(gpServerData->client.wMutex);
+    return n;
+}
+
 size_t wifi_tcp_server_GetWriteBuffFreeSize() {
     if (gpServerData->client.clientSocket < 0) {
         return 0;
