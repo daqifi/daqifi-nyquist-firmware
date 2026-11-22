@@ -897,7 +897,7 @@ scpi_result_t SCPI_LANGetChipInfo(scpi_t * context) {
     wifi_manager_chipInfo_t chipInfo;
     if (wifi_manager_GetChipInfo(&chipInfo) == false)
         return SCPI_RES_ERR;
-    snprintf(jsonChar, sizeof(jsonChar), "{\"ChipId\":%d,\"FwVersion\":\"%s\",\"BuildDate\":\"%s\"}\n",
+    snprintf(jsonChar, sizeof(jsonChar), "{\"ChipId\":%u,\"FwVersion\":\"%s\",\"BuildDate\":\"%s\"}\n",
             chipInfo.chipID, chipInfo.frimwareVersion, chipInfo.BuildDate);
     return SCPI_LANStringGetImpl(
             context,
