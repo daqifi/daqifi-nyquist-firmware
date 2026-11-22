@@ -1036,6 +1036,74 @@ __exit_point:
     return result;
 }
 
+/**
+ * @brief Query the staged SD logging filename (#1176)
+ *
+ * Command: SYST:STOR:SD:FILE?
+ *
+ * SD:FILE is a setter that only STAGES the name the next log opens, and
+ * SD:ENAble preserves it, so a host that changed it had no way to read the
+ * original back and restore it.
+ *
+ * Contract: the reply is the stored name verbatim, UNLESS the setter's
+ * configured-directory strip (SD_StripConfiguredDir) would alter it -- i.e. the
+ * stored name itself begins with "<directory>/" (reachable via
+ * SD:FILE "<dir>/<dir>/x", which stores "<dir>/x"). Then the reply is
+ * "<directory>/<name>" (directory's trailing slashes trimmed), so the setter's
+ * single strip removes exactly what was added. Either way, sending the reply
+ * back to SD:FILE re-stores exactly the current name, while SD:DIRectory is
+ * unchanged. The setter strips BEFORE its length check, so the longer reply is
+ * accepted. Quote characters cannot be stored in the field (#1175), so a name
+ * made only of 7-bit printable characters round-trips through the quoted text
+ * reply. A name containing a byte >= 0x80 is still reported verbatim, but the
+ * quoted form cannot carry it back: libscpi's quoted-string parser
+ * (skipQuoteProgramData, lexer.c) accepts only 7-bit ASCII, while the setter
+ * accepts such bytes when they arrive as an IEEE 488.2 arbitrary block
+ * (SCPI_ParamCharacters returns the block payload; SD_ValidatePathParam only
+ * rejects control characters, backslash, ':' and '"'). Restore such a name with
+ * the block form, #<n><len><bytes>, not the quoted string.
+ *
+ * While a benchmark owns the target this reports its temporary name, which is
+ * what the device is configured to write; the setter refuses until it ends.
+ */
+scpi_result_t SCPI_StorageSDLoggingGet(scpi_t * context) {
+    sd_card_manager_settings_t* pSDCardRuntimeConfig =
+            BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    char snapshot[sizeof(pSDCardRuntimeConfig->file)];
+    char dirSnap[sizeof(pSDCardRuntimeConfig->directory)];
+
+    /* Same snapshot-under-critical-section as SCPI_StorageSDDirectoryGet: the
+     * setter publishes the name from the other transport's SCPI task. The
+     * directory is snapshotted in the SAME section so the pair is consistent. */
+    taskENTER_CRITICAL();
+    memcpy(snapshot, pSDCardRuntimeConfig->file, sizeof(snapshot));
+    memcpy(dirSnap, pSDCardRuntimeConfig->directory, sizeof(dirSnap));
+    taskEXIT_CRITICAL();
+    snapshot[sizeof(snapshot) - 1u] = '\0';
+    dirSnap[sizeof(dirSnap) - 1u] = '\0';
+
+    /* Ask the setter's own strip whether it would alter this name; if so,
+     * prefix "<dir>/" so the strip undoes exactly that. Using the strip itself
+     * (not a copy of its predicate) keeps getter and setter from drifting. */
+    size_t len = strlen(snapshot);
+    const char *stripped = SD_StripConfiguredDir(snapshot, &len, dirSnap);
+    if (stripped != snapshot) {
+        size_t dirLen = strlen(dirSnap);
+        while (dirLen > 0u && dirSnap[dirLen - 1u] == '/') {
+            dirLen--;
+        }
+        char reply[sizeof(dirSnap) + 1u + sizeof(snapshot)];
+        memcpy(reply, dirSnap, dirLen);
+        reply[dirLen] = '/';
+        memcpy(&reply[dirLen + 1u], snapshot, strlen(snapshot) + 1u);
+        SCPI_ResultText(context, reply);
+        return SCPI_RES_OK;
+    }
+
+    SCPI_ResultText(context, snapshot);
+    return SCPI_RES_OK;
+}
+
 /* #306: start an async CRC32 computation over a stored file. Result via
  * SYST:STOR:SD:CRC? - mirrors the GET_SPACE request/query split so the SCPI
  * task never blocks on a multi-second file scan. */
