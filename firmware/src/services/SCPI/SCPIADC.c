@@ -1592,11 +1592,14 @@ scpi_result_t SCPI_ADCChanCalbGet(scpi_t * context) {
  * factory record valid right now?" without disturbing the live runtime array
  * and without a scratch buffer on the caller's stack. */
 static void RefreshFactoryCalPresence(void) {
-    if (daqifi_settings_ValidateADCCalBank(DaqifiSettings_FactAInCalParams)) {
-        daqifi_settings_ClearFactoryCalMissing();
-    } else {
-        daqifi_settings_MarkFactoryCalMissing();
-    }
+    const bool valid =
+        daqifi_settings_ValidateADCCalBank(DaqifiSettings_FactAInCalParams);
+    /* #1185: factory_slot follows the page too (blank / valid / invalid).
+     * Both are derived FIRST and published in ONE store (r1), so a
+     * concurrent CONF:CAP:JSON? never sees a new factory_present beside a
+     * stale factory_slot. */
+    const DaqifiFactorySlotState slot = daqifi_settings_ClassifyFactoryCalSlot();
+    daqifi_settings_PublishFactoryCal(!valid, slot);
 }
 
 static scpi_result_t CalSaveCommon(scpi_t * context,
