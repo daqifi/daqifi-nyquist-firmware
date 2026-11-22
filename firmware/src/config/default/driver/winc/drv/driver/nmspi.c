@@ -291,6 +291,19 @@ static int8_t spi_cmd(uint8_t cmd, uint32_t adr, uint32_t u32data, uint32_t sz, 
     return N_OK;
 }
 
+/* #1262: count command-response state bytes that are not 0x00. The loop below
+ * retries them silently, so without a count a corrupted response is invisible
+ * unless it escalates into a dropped message. Read by
+ * SYSTem:DIAGnostic:SPIBus:STATs? (WincRspErr). Increments are serialised
+ * by s_spiLock, which every nm_spi_* read/write entry point takes; the reader
+ * needs no lock because an aligned 32-bit read is atomic on this core. */
+static volatile uint32_t s_rspStateErrors;
+
+uint32_t nm_spi_rsp_state_errors(void)
+{
+    return s_rspStateErrors;
+}
+
 static int8_t spi_cmd_rsp(uint8_t cmd, uint8_t clockless)
 {
     uint8_t rsp;
@@ -342,6 +355,10 @@ static int8_t spi_cmd_rsp(uint8_t cmd, uint8_t clockless)
         {
             M2M_ERR("[spi_cmd_rsp]: Failed cmd response read, bus error...\r\n");
             return N_FAIL;
+        }
+        if ((rsp != 0x00) && (!clockless))
+        {
+            s_rspStateErrors++;
         }
     }
     while((rsp != 0x00) && (!clockless) && (s8RetryCnt-- > 0));
