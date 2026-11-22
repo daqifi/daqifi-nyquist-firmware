@@ -4627,6 +4627,7 @@ static scpi_result_t SCPI_ClearStreamStats(scpi_t * context) {
         pTcp->listenHardResets = 0;
         pTcp->client.idleClosed = 0;  // #676: idle-timeout closes (sibling listener-health counter)
         taskEXIT_CRITICAL();
+        wifi_manager_ClearIpConflicts();  // #1324
     }
     // Reset SD write metrics
     sd_card_manager_ResetWriteMetrics();
@@ -5005,6 +5006,7 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
         scpi_printf(context, "WifiListenReopens=%u\r\n", (unsigned)listenReopens);
         scpi_printf(context, "WifiListenHardResets=%u\r\n", (unsigned)listenHardResets);
         scpi_printf(context, "WifiIdleClosed=%u\r\n", (unsigned)idleClosed);  // #663/#676
+        scpi_printf(context, "WifiIpConflicts=%u\r\n", (unsigned)wifi_manager_GetIpConflicts());  // #1324
     }
     scpi_printf(context, "UsbBytesSent=%llu\r\n", (unsigned long long)UsbCdc_GetWireBytesSent());
     scpi_printf(context, "SdDroppedBytes=%u\r\n", (unsigned)s.sdDroppedBytes);
