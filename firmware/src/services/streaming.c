@@ -3064,20 +3064,28 @@ static void Streaming_EmitSessionSummaryImpl(bool recordDying) {
         // loss total, unlike eosOverruns (task-behind-but-fresh, excluded).
         // #1018: the Steady subset, matching hadDrops above — see that
         // term's comment.
-        uint32_t totalSampleLoss = snap.queueDroppedSamplesSteady +
-                                  snap.encoderDroppedSamplesSteady +
-                                  snap.dioDroppedSamplesSteady +
-                                  snap.scanStaleDroppedSteady;
-        /* #1319: the numerator and totalAttempted must count the same ticks.
-         * totalAttempted is streamed + queueDropped == TimerISRCalls, and a
-         * stale tick is one of THOSE ticks (it either streamed frozen data or
-         * was also queue-dropped), so stale can overlap queueDropped and the
-         * raw sum may exceed the ticks (E: 127444/89494 = 142%). Cap it: no
-         * session loses more than every tick it attempted. A cap rather than a
-         * subtraction because the overlap is not recorded. */
-        if (totalAttempted > 0 && totalSampleLoss > totalAttempted) {
-            totalSampleLoss = (uint32_t)totalAttempted;
+        /* #1319: queueDropped and scanStale are both counted in AIN TICKS,
+         * the unit of totalAttempted (streamed + queueDropped ==
+         * TimerISRCalls), and they can OVERLAP: a stale tick either streamed
+         * frozen data or was also queue-dropped, and which is not recorded.
+         * Their raw sum could therefore exceed the ticks (E: 127444/89494 =
+         * 142%). Cap only that pair at the ticks -- a cap rather than a
+         * subtraction because the overlap is unknown.
+         *
+         * The encoder and DIO terms are NOT in tick units (the encoder counts
+         * one per popped queue entry, so an evicted AIN+DIO row is 2), and
+         * they do not overlap the pair, so they are added after the cap and
+         * never reduced by it: clamping the whole sum would hide real
+         * encoder losses. In that (encoder-dominated) case the percentage can
+         * still exceed 100%, which is a unit mix this fix does not change. */
+        uint64_t tickLoss = (uint64_t)snap.queueDroppedSamplesSteady +
+                            snap.scanStaleDroppedSteady;
+        if (totalAttempted > 0 && tickLoss > totalAttempted) {
+            tickLoss = totalAttempted;
         }
+        uint32_t totalSampleLoss = (uint32_t)tickLoss +
+                                  snap.encoderDroppedSamplesSteady +
+                                  snap.dioDroppedSamplesSteady;
         /* #1301: nothing attempted but stale ticks booked is total loss, not 0%. */
         uint32_t lossPercent = totalAttempted > 0
             ? (uint32_t)((totalSampleLoss * 100ULL) / totalAttempted)
