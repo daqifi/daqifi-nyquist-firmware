@@ -24,6 +24,7 @@
 /* ************************************************************************** */
 /* ************************************************************************** */
 #include "SCPIStorageSD.h"
+#include "SDSuspendReasons.h"  /* #1001: measured reason strings */
 #include "Util/SpiBusHealth.h"
 #include "services/streaming.h"
 #include "SCPIInterface.h"
@@ -216,17 +217,18 @@ const char *SD_SuspendReasonText(void)
          * NOT guarded by a test. Three attempts at one were each defeated in
          * review -- a grep for the reason's own words matched the string it
          * replaced, a hash of the function collapsed whitespace inside the
-         * literals, and a copy in the test can drift from this line. The guard
-         * has to measure the REAL string, which is a design rather than a
-         * patch: #1001. Until then this length is held by review. */
-        return "SD quarantined after a bus jam - reseat the card, "
-               "then SYST:STOR:SD:ENAble 1";
+         * literals, and a copy in the test can drift from this line. #1001:
+         * the strings are now macros in SDSuspendReasons.h and a
+         * _Static_assert there measures each with sizeof against
+         * SD_SUSPEND_REASON_MAX (76), the bound the callers' log_budget
+         * annotations assume. */
+        return SD_SUSPEND_REASON_QUARANTINE;
     }
     if (fwUpdate) {
-        return "a WiFi firmware update owns SPI4 - retry when it completes";
+        return SD_SUSPEND_REASON_FW_UPDATE;
     }
     if (wifiStream) {
-        return "WiFi streaming owns SPI4 - SYST:STR:STOP first";
+        return SD_SUSPEND_REASON_WIFI_STREAM;
     }
     if (suspended) {
         /* #985: suspended, with not one of the three owners set in THIS
@@ -241,10 +243,10 @@ const char *SD_SuspendReasonText(void)
          * flatly does not show, and sending the operator to stop a stream
          * that is not running.
          *
-         * Says only what was observed: the task has not resumed. 46
-         * characters, the same as the WiFi-streaming string above and well
+         * Says only what was observed: the task has not resumed. 47
+         * characters, one more than the WiFi-streaming string above and well
          * inside the 84 the note above derives for this file's callers. */
-        return "the SD task has not resumed yet - retry shortly";
+        return SD_SUSPEND_REASON_NOT_RESUMED;
     }
     return NULL;
 }
@@ -477,8 +479,18 @@ static bool SD_ValidatePathParam(const char *p, size_t len)
     size_t segStart = 0;
     for (size_t i = 0; i <= len; i++) {
         unsigned char c = (i < len) ? (unsigned char)p[i] : (unsigned char)'/';
-        if (i < len && (c < 0x20u || c == 0x7Fu || c == '\\' || c == ':')) {
-            return false;           /* control chars, backslash, drive prefix */
+        if (i < len && (c < 0x20u || c == 0x7Fu || c == '\\' || c == ':'
+                        || c == '"')) {
+            /* control chars, backslash, drive prefix, double quote.
+             * #1175: '"' can never round-trip over SCPI. The getters answer
+             * through SCPI_ResultText, which doubles an embedded quote
+             * (MY"DATA -> "MY""DATA"), but the setters read their argument
+             * with SCPI_ParamCharacters, which strips only the outer
+             * delimiters and does NOT collapse "" -- so writing back exactly
+             * what the getter returned stored MY""DATA. FAT forbids '"' in
+             * file and directory names (long names included), so no real
+             * entry can carry one and refusing it loses nothing. */
+            return false;
         }
         if (c == '/') {
             size_t segLen = i - segStart;
@@ -1576,8 +1588,13 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     }
     
     // Get optional pattern parameter
-    if (!SCPI_ParamInt32(context, &pattern, FALSE)) {
-        pattern = 0; // Default to zeros
+    // #876: an unparseable pattern (`BENCH 64,BANANA`) rejects instead of
+    // running pattern 0 and attributing the result to it. Same exit as the
+    // range check below, i.e. BEFORE the atomic claim.
+    pattern = 0; // Default to zeros
+    if (SCPI_OptionalParamInt32(context, &pattern) == SCPI_OPT_BAD) {
+        result = SCPI_RES_ERR;
+        goto __exit_point;
     }
     
     // Validate pattern

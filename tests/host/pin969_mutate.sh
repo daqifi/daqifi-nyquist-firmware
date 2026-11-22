@@ -11,12 +11,19 @@
 #         (WORKTREE defaults to the git tree containing $PWD)
 set -u
 
+# Every refusal path prints a terminal RESULT line (#1183): a caller that
+# filters for ^RESULT must never read a refused run as a clean one.
+refuse() {      # refuse <exit-code> <reason>
+    echo "RESULT: 0 passed, 0 failed (REFUSED: $2)"
+    exit "$1"
+}
+
 W="${1:-$(git rev-parse --show-toplevel)}"
 S="$W/firmware/src/services/SCPI/SCPIInterface.c"
 M="$W/tests/host/Makefile"
 
 for f in "$S" "$M"; do
-    [ -f "$f" ] || { echo "FATAL: $f missing."; exit 2; }
+    [ -f "$f" ] || { echo "FATAL: $f missing."; refuse 2 "source file missing"; }
 done
 
 echo "################################################################"
@@ -28,7 +35,7 @@ if [ -n "$(git -C "$W" status --porcelain -- "$S" "$M" 2>/dev/null)" ]; then
     echo "FATAL: uncommitted changes in the files this mutates. Commit or set"
     echo "       them aside first -- restore here is a byte copy and will not"
     echo "       arbitrate between your edits and the mutants'."
-    exit 2
+    refuse 2 "uncommitted changes in the mutated files"
 fi
 
 # ⛔ EVERY mktemp AND cp CHECKED **BEFORE** THE TRAP IS INSTALLED, and each
@@ -43,7 +50,7 @@ backup_failed() {
     echo "       Nothing mutated and no trap installed; the worktree is"
     echo "       untouched. Fix the backup location and re-run."
     rm -f "$BS"
-    exit 2
+    refuse 2 "backup failed: $1"
 }
 BS=$(mktemp 2>/dev/null) || backup_failed "mktemp failed"
 [ -n "$BS" ] && [ -f "$BS" ] || backup_failed "mktemp returned no usable path"
@@ -57,11 +64,11 @@ cleanup() { restore; rm -f "$BS"; }
 # the tree is restored and then re-mutated. The EXIT trap -- which `exit`
 # itself fires -- is the single place cleanup happens.
 trap cleanup EXIT
-trap 'printf "\n** INTERRUPTED -- restoring **\n" >&2; exit 130' INT
-trap 'printf "\n** TERMINATED -- restoring **\n" >&2; exit 143' TERM
+trap 'printf "\n** INTERRUPTED -- restoring **\n" >&2; echo "RESULT: ${pass:-0} passed, ${fail:-0} failed (INTERRUPTED)"; exit 130' INT
+trap 'printf "\n** TERMINATED -- restoring **\n" >&2; echo "RESULT: ${pass:-0} passed, ${fail:-0} failed (TERMINATED)"; exit 143' TERM
 
-cd "$W/tests/host" || exit 2
 pass=0; fail=0
+cd "$W/tests/host" || refuse 2 "cannot cd to tests/host"
 
 run_guard() {   # prints the guard's first ERROR line, or <<NO ERROR>>
     out=$(make -s run_998_tests 2>&1)
@@ -125,7 +132,7 @@ echo "== setup: the baseline must be clean, or every result below is noise =="
 expect "baseline" CLEAN
 if [ "$fail" -ne 0 ]; then
     echo "ABORT: baseline is not clean; mutants would be meaningless."
-    exit 1
+    refuse 1 "baseline not clean"
 fi
 
 echo "== M1 REVERT: back to two bare loads, the pre-#969 shape.             =="

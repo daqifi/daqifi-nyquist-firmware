@@ -218,9 +218,9 @@ def line_comment_end(src, start, already_spliced=False):
     brace count, whose span is then digested in the compiler's view: if the
     raw count did not stop at the compiler's own closing `}`, the digested
     code stops short of that brace or carries on past it, so it equals the
-    pin only if the compiler's view of the function does. NOT COVERED:
-    `scpi_wiki_sync._CODE_OR_COMMENT`/`registered_patterns()`, which this
-    change does not touch -- #1066 stays open there. The joined view also
+    pin only if the compiler's view of the function does. ALSO COVERED
+    (#1066): `scpi_wiki_sync.registered_patterns()` splices the table text
+    before `_CODE_OR_COMMENT` recognises comments. The joined view also
     takes GCC's backslash-SPACE-newline (see `_SPLICE`).
 
     A GAP NO LEXICAL SCAN CLOSES: a name that is not in the text. Macro

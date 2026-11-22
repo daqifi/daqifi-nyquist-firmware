@@ -1592,11 +1592,14 @@ scpi_result_t SCPI_ADCChanCalbGet(scpi_t * context) {
  * factory record valid right now?" without disturbing the live runtime array
  * and without a scratch buffer on the caller's stack. */
 static void RefreshFactoryCalPresence(void) {
-    if (daqifi_settings_ValidateADCCalBank(DaqifiSettings_FactAInCalParams)) {
-        daqifi_settings_ClearFactoryCalMissing();
-    } else {
-        daqifi_settings_MarkFactoryCalMissing();
-    }
+    const bool valid =
+        daqifi_settings_ValidateADCCalBank(DaqifiSettings_FactAInCalParams);
+    /* #1185: factory_slot follows the page too (blank / valid / invalid).
+     * Both are derived FIRST and published in ONE store (r1), so a
+     * concurrent CONF:CAP:JSON? never sees a new factory_present beside a
+     * stale factory_slot. */
+    const DaqifiFactorySlotState slot = daqifi_settings_ClassifyFactoryCalSlot();
+    daqifi_settings_PublishFactoryCal(!valid, slot);
 }
 
 static scpi_result_t CalSaveCommon(scpi_t * context,
@@ -2370,14 +2373,17 @@ static scpi_result_t ADCThresholdSetClaimed(scpi_t * context) {
     int32_t ch, mode, lo = 0, hi = 0;
     if (!SCPI_ParamInt32(context, &ch, TRUE))   return SCPI_RES_ERR;
     if (!SCPI_ParamInt32(context, &mode, TRUE)) return SCPI_RES_ERR;
-    bool haveLo = SCPI_ParamInt32(context, &lo, FALSE);
-    bool haveHi = SCPI_ParamInt32(context, &hi, FALSE);
-    // A malformed optional lo/hi (e.g. "...,banana") pushes a data-type error but
-    // still returns FALSE; treat that as a hard reject, not "absent", so a bad
-    // token can't fall through to a mode-0 release or a partially-parsed arm.
-    if (SCPI_ParamErrorOccurred(context)) {
+    // A malformed optional lo/hi (e.g. "...,banana", or ".5", which libscpi
+    // queues NOTHING for) is a hard reject, not "absent", so a bad token can't
+    // fall through to a mode-0 release or a partially-parsed arm (#876:
+    // contract at SCPI_OptionalParamInt32).
+    const SCPI_OptionalParam loState = SCPI_OptionalParamInt32(context, &lo);
+    const SCPI_OptionalParam hiState = SCPI_OptionalParamInt32(context, &hi);
+    if (loState == SCPI_OPT_BAD || hiState == SCPI_OPT_BAD) {
         return SCPI_RES_ERR;
     }
+    const bool haveLo = (loState == SCPI_OPT_PRESENT);
+    const bool haveHi = (hiState == SCPI_OPT_PRESENT);
     // Reject before the (uint8_t) narrowing so a value like 256 can't alias
     // onto a valid channel (#671 truncation-alias lesson).
     if (ch < 0 || ch > 255 || mode < 0 || mode > 4) {
@@ -2454,14 +2460,15 @@ scpi_result_t SCPI_ADCThresholdGet(scpi_t * context) {
 // CONF:ADC:THREshold:CLEar [<ch>] -> clear latch+counter (no arg = all)
 scpi_result_t SCPI_ADCThresholdClear(scpi_t * context) {
     int32_t ch;
-    if (!SCPI_ParamInt32(context, &ch, FALSE)) {
-        /* FALSE means EITHER "no argument" (clear all) OR "argument present but
-         * malformed" (e.g. `CLE ch5`, which pushes a data-type error). Only the
-         * absent case should clear all — a malformed token must not trigger a
-         * destructive clear-all of every unit (incl. an alarm on another ch). */
-        if (SCPI_ParamErrorOccurred(context)) {
-            return SCPI_RES_ERR;
-        }
+    /* Only an ABSENT argument clears all -- a malformed token (`CLE ch5`, or
+     * `.5`, which libscpi queues nothing for) must not trigger a destructive
+     * clear-all of every unit (incl. an alarm on another ch). #876: contract
+     * at SCPI_OptionalParamInt32. */
+    const SCPI_OptionalParam chState = SCPI_OptionalParamInt32(context, &ch);
+    if (chState == SCPI_OPT_BAD) {
+        return SCPI_RES_ERR;
+    }
+    if (chState == SCPI_OPT_ABSENT) {
         AdcThreshold_Clear(ADC_THRESHOLD_ALL_CH);
         return SCPI_RES_OK;
     }

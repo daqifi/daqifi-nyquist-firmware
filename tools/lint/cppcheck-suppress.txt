@@ -18,3 +18,16 @@ arrayIndexOutOfBoundsCond:firmware/src/HAL/DioProbe.c
 # guard #error meant to fire on parts without an FPU. PIC32MZ EFM
 # does have hardware FPU — the build sets the macro correctly.
 preprocessorErrorDirective:firmware/src/third_party/rtos/FreeRTOS/Source/portable/MPLAB/PIC32MZ/portmacro.h
+
+# driver/sdspi (analysed since #1165). Nineteen pre-existing STYLE-class
+# findings (const-correctness, variable scope, one dead store of drvInstance
+# at drv_sdspi.c:150) in Harmony-derived SD driver code. None is a warning or
+# error. Fixing them means editing the SD driver, which cannot be validated
+# without the SD bench, and is behaviour-neutral busywork next to the
+# concurrency logic this pass exists to watch. These four IDs are suppressed
+# for the sub-tree ONLY; every warning/error/portability/performance finding
+# there still fails the gate (mutation-proven in PR for #1165).
+constVariablePointer:firmware/src/config/default/driver/sdspi/*
+constParameterPointer:firmware/src/config/default/driver/sdspi/*
+variableScope:firmware/src/config/default/driver/sdspi/*
+unreadVariable:firmware/src/config/default/driver/sdspi/*
