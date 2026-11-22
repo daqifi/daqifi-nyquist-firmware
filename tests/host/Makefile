@@ -775,11 +775,13 @@ $(SDIDLE1279_BIN): test_1279_sd_idle_buffer_restore.c test_framework.h \
 # PrepareStreamingBuffers is pinned by check_1279_sd_idle_restore.py, which
 # run_1279_tests runs.
 OUT1279_BIN := run_1279_output_tests
+OUT1279_GATE_SRC := ../../firmware/src/services/SCPI/SCPICmdGate.c
 OUT1279_DUE := gen_1279_out_due.h
 OUT1279_RESTORE := gen_1279_out_restore.h
 OUT1279_DEFS := gen_1279_out_defs.h
 
 $(OUT1279_BIN): test_1279_restore_keeps_queued_output.c test_framework.h \
+                $(OUT1279_GATE_SRC) ../../firmware/src/services/SCPI/SCPICmdGate.h \
                 $(SCPISD_START_SRC) $(SDIDLE1279_SD_HDR)
 	@splice() { \
 	   sed -n "/^$$2(/,/^}/p" "$$1" | tr -d '\r' > "$$3"; \
@@ -799,7 +801,7 @@ $(OUT1279_BIN): test_1279_restore_keeps_queued_output.c test_framework.h \
 	   echo "ERROR: #1279 -- expected 2 #defines in $(OUT1279_DEFS), got $$n."; \
 	   rm -f $(OUT1279_DEFS); exit 1; \
 	 fi
-	$(CC) $(CFLAGS) -o $@ test_1279_restore_keeps_queued_output.c
+	$(CC) $(CFLAGS) -Istubs/cmdgate_1279 -I$(FW_SVC)/SCPI -o $@ test_1279_restore_keeps_queued_output.c $(OUT1279_GATE_SRC)
 
 # #970: encoder consume-accounting. Like BENCH_BIN, streaming.c and
 # JSON_Encoder.c are not host-test candidates (FreeRTOS/libscpi/the whole

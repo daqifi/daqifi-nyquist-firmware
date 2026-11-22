@@ -2,6 +2,7 @@
 #define LOG_MODULE LOG_MODULE_SCPI
 
 #include "SCPIInterface.h"
+#include "SCPICmdGate.h"
 #include "ScpiBoundedWrite.h"  /* #1098: pure bounded-write decision, host-tested */
 #include "semphr.h"  // #347: mutex for SysInfoGet static buffer
 
@@ -8786,18 +8787,24 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize,
      * point that can still refuse -- after every wait above, immediately
      * before the re-carve, after which there is no clean way back.
      *
-     * Residual, not closed: each ring is reset under its own wMutex, in a
-     * separate lock section from this read, and the re-carve below still waits
-     * (SD idle, WINC SPI idle, the TCP in-flight wait inside
-     * wifi_tcp_server_SetWriteBuffer). The only producer that can land a reply
-     * in that window is the OTHER transport's SCPI task: the calling task
-     * writes nothing here, a live stream is excluded by the config claim, and
-     * SD ops by the buffer lock just taken. Holding both wMutexes across those
-     * waits would block the WINC driver task's own drain, so it is not done.
+     * Producers, once this check passes: the OTHER transport's SCPI task is
+     * gated (SCPI_RestoreIdleSdBuffers raises the SCPICmdGate before its drain
+     * and this check, so no command can start there and none is still
+     * executing -- ScpiCmdGate_OthersIdle); the calling task writes nothing
+     * here; a live stream is excluded by the config claim; SD reply writers by
+     * the buffer lock just taken. The gate is what closes the check-then-act
+     * window across this function's waits (SD idle, WINC SPI idle, the TCP
+     * in-flight wait inside wifi_tcp_server_SetWriteBuffer) -- holding both
+     * wMutexes across them would block the WINC driver's own drain. The guard
+     * fails closed: an idle caller that never raised the gate refuses.
+     * wifi_serial_bridge also writes the USB ring outside any command; it runs
+     * only in the WINC bridge state, where USB is transparent and there is no
+     * TCP client (inferred from its state machine, not driven).
      *
      * Idle restores only: the streaming callers re-partition with the same
      * reset and are left as they were (out of #1279's scope). */
-    if (idleLayout && (UsbCdc_PendingWriteBytes() != 0u ||
+    if (idleLayout && (!ScpiCmdGate_OthersIdle() ||
+                       UsbCdc_PendingWriteBytes() != 0u ||
                        wifi_tcp_server_PendingWriteBytes() != 0u)) {
         LOG_I("PrepareStreamingBuffers: idle restore refused - transport "
               "output still queued (#1279)");
@@ -8992,6 +8999,12 @@ static bool SdIdleRestoreDue(uint32_t sdCircNow, uint32_t sdWriteBufNow,
  * restore is refused instead, and PrepareStreamingBuffers re-checks
  * immediately before its re-carve.
  *
+ * COMMAND GATE (audit r2). The checks above are check-then-act: the waits
+ * before the reset yield, and the other transport's task could queue a reply
+ * meanwhile. So the restore raises SCPICmdGate for its own transport first; the
+ * other transport defers (not drops) new commands until it is lowered, and a
+ * command already executing is waited out, bounded by the same 500 ms.
+ *
  * The USB ring is pumped from either task (UsbCdc_PumpWrite is documented safe
  * cross-task). The TCP ring is pumped only off the USB task: on WifiTask --
  * the TCP command's own task -- nothing else would send it; on the USB task,
@@ -9013,16 +9026,29 @@ bool SCPI_RestoreIdleSdBuffers(void) {
     if (Streaming_BeginConfigChange() != STREAM_CFG_CLAIM_OK) {
         return false;
     }
-    bool ok = true;
-    if (SdIdleRestoreDue(StreamingBufferPool_SdCircularSize(),
-                         sd_card_manager_GetWriteBufferSize(),
-                         mc->sdCircularBufSize)) {
+    /* Audit r2: raise the OTHER transport's command gate BEFORE the emptiness
+     * check, so a reply cannot be queued between the check and the ring reset
+     * (the waits in between yield). The other transport defers new commands
+     * (processed after Lower, not dropped) and a command already executing is
+     * waited out below. NO `return` between Raise and the final return: the
+     * gate is lowered on every path. It is lowered AFTER the claim is released
+     * so a deferred STR:START cannot meet a still-held claim (false -200). */
+    ScpiCmdGateTransport self = UsbCdc_CallerIsUsbTask() ? SCPI_CMD_GATE_USB
+                                                         : SCPI_CMD_GATE_TCP;
+    bool raised = ScpiCmdGate_Raise(self);
+    bool ok = raised;
+    if (ok && SdIdleRestoreDue(StreamingBufferPool_SdCircularSize(),
+                               sd_card_manager_GetWriteBufferSize(),
+                               mc->sdCircularBufSize)) {
         ok = !sd_card_manager_IsBusy();
         TickType_t drainStart = xTaskGetTickCount();
         while (ok) {
+            /* Read FIRST: once true, no other-transport command can start, so
+             * the pending counts read next include all of its output. */
+            bool othersIdle = ScpiCmdGate_OthersIdle();
             bool usbQueued = (UsbCdc_PendingWriteBytes() != 0u);
             bool wifiQueued = (wifi_tcp_server_PendingWriteBytes() != 0u);
-            if (!usbQueued && !wifiQueued) {
+            if (othersIdle && !usbQueued && !wifiQueued) {
                 break;
             }
             if ((xTaskGetTickCount() - drainStart) > pdMS_TO_TICKS(500)) {
@@ -9037,6 +9063,8 @@ bool SCPI_RestoreIdleSdBuffers(void) {
             }
             vTaskDelay(1);
         }
+        /* The command waited out above may have armed an SD op. */
+        ok = ok && !sd_card_manager_IsBusy();
         ok = ok &&
              PrepareStreamingBuffers(mc->samplePoolCount
                                          ? mc->samplePoolCount
@@ -9054,6 +9082,9 @@ bool SCPI_RestoreIdleSdBuffers(void) {
                                      mc->sdCircularBufSize);
     }
     Streaming_EndConfigChange();
+    if (raised) {
+        ScpiCmdGate_Lower(self);
+    }
     return ok;
 }
 

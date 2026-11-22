@@ -42,6 +42,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SD = ROOT / "firmware/src/services/SCPI/SCPIStorageSD.c"
 IFACE = ROOT / "firmware/src/services/SCPI/SCPIInterface.c"
+USB = ROOT / "firmware/src/services/UsbCdc/UsbCdc.c"
+WIFI = ROOT / "firmware/src/services/wifi_services/wifi_manager.c"
 
 
 def strip(src):
@@ -109,8 +111,10 @@ def first(b, pat, what):
     return m.start()
 
 
-def check(sd_src, iface_src):
+def check(sd_src, iface_src, usb_src=None, wifi_src=None):
     sd, iface = strip(sd_src), strip(iface_src)
+    usb_src = USB.read_text() if usb_src is None else usb_src
+    wifi_src = WIFI.read_text() if wifi_src is None else wifi_src
 
     # 1. SD:BENCHmark
     b = ws(body(sd, "SCPI_StorageSDBenchmark"))
@@ -150,12 +154,33 @@ def check(sd_src, iface_src):
         raise AssertionError("helper: SdIdleRestoreDue must be asked before "
                              "the claim, again under it, and a third time "
                              "after the re-partition")
-    busy = once(h, r"!sd_card_manager_IsBusy\(\)", "helper: busy refusal")
+    busys = [m.start() for m in re.finditer(r"!sd_card_manager_IsBusy\(\)", h)]
+    if len(busys) != 2:
+        raise AssertionError("helper: busy refusal expected twice (before the "
+                             "drain, and again after the command the drain "
+                             "waited out), found %d" % len(busys))
+    busy = busys[0]
     prep = once(h, r"\bPrepareStreamingBuffers\(", "helper: re-partition")
     if not re.search(r"\bPrepareStreamingBuffers\([^;]*,true\);", h):
         raise AssertionError("helper: re-partition must request the idle "
                              "layout (last argument `true`)")
     end = once(h, r"\bStreaming_EndConfigChange\(\);", "helper: release")
+    raise_ = once(h, r"\bScpiCmdGate_Raise\(", "helper: gate raise")
+    lower = once(h, r"\bScpiCmdGate_Lower\(", "helper: gate lower")
+    if not begin < raise_ < dues[1]:
+        raise AssertionError("helper: the gate must be raised after the claim "
+                             "verdict and before the emptiness check")
+    if not end < lower:
+        raise AssertionError("helper: the gate must be lowered AFTER the "
+                             "config claim is released")
+    if re.search(r"\breturn\b", h[raise_:lower]):
+        raise AssertionError("helper: a `return` between Raise and Lower "
+                             "would leak the gate")
+    if not h.endswith("return ok;}"):
+        raise AssertionError("helper: single exit `return ok;` expected")
+    if not (busy < busys[1] < prep):
+        raise AssertionError("helper: second busy check must sit between the "
+                             "drain and the re-partition")
     if not begin < dues[1] < busy < prep < dues[2] < end:
         raise AssertionError("helper: order must be claim -> re-ask -> busy "
                              "-> re-partition -> verify -> release")
@@ -182,6 +207,7 @@ def check(sd_src, iface_src):
                              "`true` (the helper), got %r" % lasts)
 
     # 5. Queued output is sent, or the idle re-partition refuses
+    idle = once(h, r"\bScpiCmdGate_OthersIdle\(\)", "helper: others idle?")
     usbq = once(h, r"\bUsbCdc_PendingWriteBytes\(\)", "helper: USB queued?")
     wifiq = once(h, r"\bwifi_tcp_server_PendingWriteBytes\(\)",
                  "helper: TCP queued?")
@@ -190,13 +216,17 @@ def check(sd_src, iface_src):
             r"wifi_tcp_server_TransmitBufferedData\(\);",
          "helper: TCP pump, off the USB task only")
     once(h, r"ok=false;break;", "helper: drain deadline refuses")
+    if not (idle < usbq and idle < wifiq):
+        raise AssertionError("helper: OthersIdle must be read BEFORE the "
+                             "pending counts")
     if not (busy < usbq < prep and busy < wifiq < prep):
         raise AssertionError("helper: the drain must sit between the busy "
                              "refusal and the re-partition")
     if not re.search(r"ok=ok&&PrepareStreamingBuffers\(", h):
         raise AssertionError("helper: a failed drain must skip the "
                              "re-partition (`ok = ok && Prepare...`)")
-    guard = once(p, r"if\(idleLayout&&\(UsbCdc_PendingWriteBytes\(\)!=0u\|\|"
+    guard = once(p, r"if\(idleLayout&&\(!ScpiCmdGate_OthersIdle\(\)\|\|"
+                    r"UsbCdc_PendingWriteBytes\(\)!=0u\|\|"
                     r"wifi_tcp_server_PendingWriteBytes\(\)!=0u\)\)\{",
                  "prepare: idle re-partition refuses queued output")
     lock = first(p, r"\bsd_card_manager_TryLockBuffer\(\)", "prepare: lock")
@@ -212,11 +242,38 @@ def check(sd_src, iface_src):
         raise AssertionError("prepare: the queued-output refusal must release "
                              "the SD buffer lock and return false")
 
+    # 6. Both command-entry points are gated, and DEFER rather than drop
+    u = ws(strip(usb_src))
+    once(u, r"if\(ScpiCmdGate_TryEnter\(SCPI_CMD_GATE_USB\)\)\{"
+            r"UsbCdc_FinalizeRead\(&gRunTimeUsbSttings\);"
+            r"ScpiCmdGate_Exit\(SCPI_CMD_GATE_USB\);\}",
+         "USB: the only command entry is gated")
+    if len(re.findall(r"\bUsbCdc_FinalizeRead\(&", u)) != 1:
+        raise AssertionError("USB: exactly one UsbCdc_FinalizeRead call")
+    w = ws(strip(wifi_src))
+    once(w, r"if\(drainTcpRx&&gTcpRxPending&&ScpiCmdGate_TryEnter"
+            r"\(SCPI_CMD_GATE_TCP\)\)\{gTcpRxPending=false;",
+         "TCP: the RX drain is gated and clears the flag only once entered")
+    if len(re.findall(r"\bwifi_tcp_server_ProcessReceivedBuff\(\);", w)) != 2:
+        raise AssertionError("TCP: exactly one ProcessReceivedBuff call (plus its extern declaration)")
+    at = w.index("ScpiCmdGate_TryEnter(SCPI_CMD_GATE_TCP)")
+    depth, k = 0, w.index("{", at)
+    k2 = k
+    for k2 in range(k, len(w)):
+        depth += (w[k2] == "{") - (w[k2] == "}")
+        if depth == 0:
+            break
+    blk = w[k:k2]
+    if "wifi_tcp_server_ProcessReceivedBuff()" not in blk or \
+            not blk.endswith("ScpiCmdGate_Exit(SCPI_CMD_GATE_TCP);"):
+        raise AssertionError("TCP: ProcessReceivedBuff must sit inside the "
+                             "gate, with Exit as the block's last statement")
+
 
 def _move_guard_after_carve(iface):
     """Mutant: the queued-output refusal moved past the re-carve, where a
     refusal could no longer leave the old partition intact."""
-    start = iface.find("    if (idleLayout && (UsbCdc_PendingWriteBytes()")
+    start = iface.find("    if (idleLayout && (!ScpiCmdGate_OthersIdle()")
     if start < 0:
         return iface
     end = iface.index("\n    }\n", start) + len("\n    }\n")
@@ -247,9 +304,31 @@ def self_test():
             "if (isAutoMode && !idleLayout) {", "if (isAutoMode) {", 1)),
         "helper drops the busy refusal": (sd, iface.replace(
             "ok = !sd_card_manager_IsBusy();", "ok = true;", 1)),
+        "helper drops the second busy check": (sd, iface.replace(
+            "ok = ok && !sd_card_manager_IsBusy();", "", 1)),
+        "helper never raises the gate": (sd, iface.replace(
+            "bool raised = ScpiCmdGate_Raise(self);",
+            "bool raised = true;", 1)),
+        "helper lowers the gate before the claim release": (sd, iface.replace(
+            "    Streaming_EndConfigChange();\n    if (raised) {\n"
+            "        ScpiCmdGate_Lower(self);\n    }\n",
+            "    if (raised) {\n        ScpiCmdGate_Lower(self);\n    }\n"
+            "    Streaming_EndConfigChange();\n", 1)),
+        "helper returns early between Raise and Lower": (sd, iface.replace(
+            "        ok = !sd_card_manager_IsBusy();\n        TickType_t",
+            "        ok = !sd_card_manager_IsBusy();\n"
+            "        if (!ok) return false;\n        TickType_t", 1)),
+        "helper reads pending before OthersIdle": (sd, iface.replace(
+            "bool othersIdle = ScpiCmdGate_OthersIdle();\n"
+            "            bool usbQueued = (UsbCdc_PendingWriteBytes() != 0u);",
+            "bool usbQueued = (UsbCdc_PendingWriteBytes() != 0u);\n"
+            "            bool othersIdle = ScpiCmdGate_OthersIdle();", 1)),
         "prepare guard deleted": (sd, iface.replace(
-            "if (idleLayout && (UsbCdc_PendingWriteBytes() != 0u ||",
-            "if (0 && (UsbCdc_PendingWriteBytes() != 0u ||", 1)),
+            "if (idleLayout && (!ScpiCmdGate_OthersIdle() ||",
+            "if (0 && (!ScpiCmdGate_OthersIdle() ||", 1)),
+        "prepare guard drops OthersIdle": (sd, iface.replace(
+            "if (idleLayout && (!ScpiCmdGate_OthersIdle() ||",
+            "if (idleLayout && (0 ||", 1)),
         "prepare guard keeps the SD buffer lock": (sd, iface.replace(
             "output still queued (#1279)\");\n        "
             "sd_card_manager_UnlockBuffer();\n", "output still queued "
@@ -269,7 +348,34 @@ def self_test():
             "if (wifiQueued && !UsbCdc_CallerIsUsbTask()) {",
             "if (wifiQueued) {", 1)),
     }
+    usb, wifi = USB.read_text(), WIFI.read_text()
+    check(sd, iface, usb, wifi)
+    extra = {
+        "USB entry ungated": (usb.replace(
+            "if (ScpiCmdGate_TryEnter(SCPI_CMD_GATE_USB)) {", "if (1) {", 1), wifi),
+        "TCP entry ungated": (usb, wifi.replace(
+            " && ScpiCmdGate_TryEnter(SCPI_CMD_GATE_TCP)", "", 1)),
+        "TCP flag cleared before entry": (usb, wifi.replace(
+            "if (drainTcpRx && gTcpRxPending && ScpiCmdGate_TryEnter(SCPI_CMD_GATE_TCP)) {\n"
+            "        gTcpRxPending = false;",
+            "gTcpRxPending = false;\n"
+            "    if (drainTcpRx && ScpiCmdGate_TryEnter(SCPI_CMD_GATE_TCP)) {", 1)),
+        "TCP gate never exited": (usb, wifi.replace(
+            "        ScpiCmdGate_Exit(SCPI_CMD_GATE_TCP);\n", "", 1)),
+    }
     failed = 0
+    for name, (u_, w_) in extra.items():
+        if (u_, w_) == (usb, wifi):
+            print("SELF-TEST FAIL: mutant %r did not apply" % name)
+            failed += 1
+            continue
+        try:
+            check(sd, iface, u_, w_)
+        except AssertionError:
+            continue
+        print("SELF-TEST FAIL: mutant %r passed the check" % name)
+        failed += 1
+    mutants_n = len(mutants) + len(extra)
     for name, (s, i) in mutants.items():
         if (s, i) == (sd, iface):
             print("SELF-TEST FAIL: mutant %r did not apply" % name)
@@ -283,7 +389,7 @@ def self_test():
         failed += 1
     if failed:
         return 1
-    print("check_1279 self-test: %d mutants all caught" % len(mutants))
+    print("check_1279 self-test: %d mutants all caught" % mutants_n)
     return 0
 
 

@@ -47,6 +47,7 @@
 #include <string.h>
 #include "test_framework.h"
 
+#include "SCPICmdGate.h"   /* the REAL gate, compiled in by the Makefile */
 #include "gen_1279_out_defs.h"   /* SD_CARD_MANAGER_* out of sd_card_manager.h */
 
 /* ---- FreeRTOS stand-ins: a 1 kHz tick, advanced only by vTaskDelay ---- */
@@ -68,6 +69,14 @@ static struct {
     bool claimOk, sdBusy, prepareOk;
     bool prepareFallsBack;   /* oversubscribed config: Partition uses minimums */
     /* observations */
+    /* the OTHER transport's SCPI task (audit r2): one command, queued by a
+     * test, processed when the scheduler lets that task run AND its entry
+     * point's gate admits it, exactly as UsbCdc_ProcessState / WifiTask do. */
+    bool otherCmdPending;    /* a command is waiting at its entry point */
+    int  otherCmdAt;         /* 0 any yield, 1 prepare entry, 2 prepare wait */
+    int  otherInFlight;      /* steps until an already-executing cmd ends */
+    bool otherEndSetsSdBusy; /* the ending command arms an SD op */
+    int  otherProcessed;
     TickType_t tick;
     int delays, prepareCalls, usbPumps, wifiPumps, claims, releases;
 } w;
@@ -108,11 +117,42 @@ bool wifi_tcp_server_TransmitBufferedData(void) {
     return true;
 }
 
+#define OTHER_REPLY_BYTES 20u
+int g_crit_depth_1279;
+static ScpiCmdGateTransport other_transport(void) {
+    return w.callerIsUsbTask ? SCPI_CMD_GATE_TCP : SCPI_CMD_GATE_USB;
+}
+static void other_queue_reply(void) {
+    if (w.callerIsUsbTask) w.wifiQueued += OTHER_REPLY_BYTES;
+    else w.usbQueued += OTHER_REPLY_BYTES;
+}
+/* One scheduling slice for the other transport's task. `where` tags the yield
+ * the caller is in; a NEW command is only picked up at its own `otherCmdAt`
+ * (0 = any), but one already executing finishes at any slice. */
+static void other_task_step(int where) {
+    ScpiCmdGateTransport o = other_transport();
+    if (w.otherInFlight > 0) {
+        if (--w.otherInFlight == 0) {
+            other_queue_reply();
+            if (w.otherEndSetsSdBusy) w.sdBusy = true;
+            ScpiCmdGate_Exit(o);
+        }
+    } else if (w.otherCmdPending &&
+               (w.otherCmdAt == 0 || w.otherCmdAt == where) &&
+               ScpiCmdGate_TryEnter(o)) {
+        w.otherCmdPending = false;
+        other_queue_reply();
+        w.otherProcessed++;
+        ScpiCmdGate_Exit(o);
+    }
+}
+
 /* The other SCPI task gets the CPU while this one sleeps, and drains its own
  * ring the way its loop does. */
 void vTaskDelay(TickType_t t) {
     w.delays++;
     w.tick += t;
+    other_task_step(0);
     if (w.callerIsUsbTask) {
         if (w.wincSending) { w.delivered += w.wifiQueued; w.wifiQueued = 0; }
     } else {
@@ -126,6 +166,16 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t elemSize,
     (void)poolCount; (void)elemSize;
     w.prepareCalls++;
     if (!idleLayout || !w.prepareOk) return false;
+    /* The waits at the top of the real function (USB DMA, task quiescence,
+     * SD buffer lock) yield; then the guard refuses on a
+     * queued reply (the gate term of the real guard is pinned by
+     * check_1279_sd_idle_restore.py). */
+    other_task_step(1);
+    if (w.usbQueued != 0u || w.wifiQueued != 0u)
+        return false;
+    /* Then the WINC SPI / tcpInFlight / SD-idle waits, after the guard: the
+     * window the audit found. */
+    other_task_step(2);
     w.lost += w.usbQueued + w.wifiQueued;
     w.usbQueued = w.wifiQueued = 0;
     if (w.prepareFallsBack) {
@@ -155,6 +205,15 @@ static void after_non_sd_stream(void) {
     w.wincSending = true;
     w.claimOk = true;
     w.prepareOk = true;
+}
+
+/* Every outcome leaves both gates open and no critical section held. */
+static void assert_gate_lowered(void) {
+    ASSERT_TRUE(ScpiCmdGate_TryEnter(SCPI_CMD_GATE_USB));
+    ASSERT_TRUE(ScpiCmdGate_TryEnter(SCPI_CMD_GATE_TCP));
+    ScpiCmdGate_Exit(SCPI_CMD_GATE_USB);
+    ScpiCmdGate_Exit(SCPI_CMD_GATE_TCP);
+    ASSERT_EQ(g_crit_depth_1279, 0);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -267,6 +326,104 @@ TEST(refused_claim_refuses_before_draining) {
     ASSERT_EQ(w.releases, 0);
 }
 
+/* ---- Audit r2: the OTHER transport's command during the restore's yields ----
+ * Each case runs for both callers: the USB task restoring (TCP is the other
+ * task) and WifiTask restoring (USB is the other task). */
+
+static void gate_case(bool callerUsb) {
+    after_non_sd_stream();
+    w.callerIsUsbTask = callerUsb;
+}
+
+static void other_command_at(int where, bool callerUsb) {
+    /* The command reaches its entry point during yield `where`, with both
+     * rings empty so the restore's emptiness check has already passed. */
+    gate_case(callerUsb);
+    w.otherCmdPending = true;
+    w.otherCmdAt = where;
+    ASSERT_TRUE(SCPI_RestoreIdleSdBuffers());
+    ASSERT_EQ(w.lost, 0u);                  /* nothing deleted by the reset */
+    ASSERT_EQ(w.sdDma, SD_CARD_MANAGER_CONF_WBUFFER_SIZE);
+    assert_gate_lowered();
+    /* Deferred, not dropped: processed once the gate is down. */
+    ASSERT_EQ(w.otherProcessed, 0);
+    ASSERT_TRUE(w.otherCmdPending);
+    w.otherCmdAt = 0;           /* its task runs again after the restore */
+    other_task_step(0);
+    ASSERT_EQ(w.otherProcessed, 1);
+}
+
+TEST(other_command_during_the_wait_is_deferred_not_deleted_usb_caller) {
+    other_command_at(2, true);
+}
+TEST(other_command_during_the_wait_is_deferred_not_deleted_tcp_caller) {
+    other_command_at(2, false);
+}
+TEST(other_command_at_prepare_entry_is_deferred_not_refused_usb_caller) {
+    other_command_at(1, true);
+}
+TEST(other_command_at_prepare_entry_is_deferred_not_refused_tcp_caller) {
+    other_command_at(1, false);
+}
+
+static void in_flight_command(bool callerUsb) {
+    /* A command is ALREADY executing on the other transport when the restore
+     * starts; it queues its reply at its end, which lands in the window. */
+    gate_case(callerUsb);
+    ASSERT_TRUE(ScpiCmdGate_TryEnter(other_transport()));
+    w.otherInFlight = 2;
+    ASSERT_TRUE(SCPI_RestoreIdleSdBuffers());
+    ASSERT_EQ(w.lost, 0u);
+    ASSERT_EQ(w.delivered, OTHER_REPLY_BYTES);  /* its reply was sent */
+    assert_gate_lowered();
+}
+TEST(in_flight_other_command_is_waited_out_usb_caller) { in_flight_command(true); }
+TEST(in_flight_other_command_is_waited_out_tcp_caller) { in_flight_command(false); }
+
+static void in_flight_never_ends(bool callerUsb) {
+    gate_case(callerUsb);
+    ASSERT_TRUE(ScpiCmdGate_TryEnter(other_transport()));
+    w.otherInFlight = 1000000;
+    ASSERT_FALSE(SCPI_RestoreIdleSdBuffers());  /* bounded, then refuses */
+    ASSERT_EQ(w.prepareCalls, 0);
+    ASSERT_EQ(w.lost, 0u);
+    ASSERT_TRUE(w.tick >= 500u && w.tick <= 510u);
+    ASSERT_EQ(w.releases, 1);
+    ScpiCmdGate_Exit(other_transport());        /* the stuck command ends */
+    assert_gate_lowered();                      /* the gate itself is down */
+}
+TEST(in_flight_command_that_never_ends_refuses_usb_caller) { in_flight_never_ends(true); }
+TEST(in_flight_command_that_never_ends_refuses_tcp_caller) { in_flight_never_ends(false); }
+
+static void in_flight_arms_sd(bool callerUsb) {
+    /* The command the restore waited out armed an SD op: re-asked, and the
+     * restore refuses before the re-partition. */
+    gate_case(callerUsb);
+    ASSERT_TRUE(ScpiCmdGate_TryEnter(other_transport()));
+    w.otherInFlight = 2;
+    w.otherEndSetsSdBusy = true;
+    ASSERT_FALSE(SCPI_RestoreIdleSdBuffers());
+    ASSERT_EQ(w.prepareCalls, 0);
+    ASSERT_EQ(w.lost, 0u);
+    ASSERT_EQ(w.releases, 1);
+    assert_gate_lowered();
+}
+TEST(waited_out_command_that_armed_sd_refuses_usb_caller) { in_flight_arms_sd(true); }
+TEST(waited_out_command_that_armed_sd_refuses_tcp_caller) { in_flight_arms_sd(false); }
+
+TEST(every_refusal_path_lowers_the_gate) {
+    gate_case(true);  w.claimOk = false;
+    ASSERT_FALSE(SCPI_RestoreIdleSdBuffers()); assert_gate_lowered();
+    gate_case(true);  w.sdBusy = true;
+    ASSERT_FALSE(SCPI_RestoreIdleSdBuffers()); assert_gate_lowered();
+    gate_case(false); w.prepareOk = false;
+    ASSERT_FALSE(SCPI_RestoreIdleSdBuffers()); assert_gate_lowered();
+    gate_case(false); w.prepareFallsBack = true;
+    ASSERT_FALSE(SCPI_RestoreIdleSdBuffers()); assert_gate_lowered();
+    gate_case(true);  w.hostReading = false; w.usbQueued = 5u;
+    ASSERT_FALSE(SCPI_RestoreIdleSdBuffers()); assert_gate_lowered();
+}
+
 int main(void) {
     printf("test_1279_restore_keeps_queued_output\n");
     RUN(usb_reply_earlier_in_the_message_is_sent_not_discarded);
@@ -278,5 +435,16 @@ int main(void) {
     RUN(idle_layout_touches_nothing);
     RUN(busy_sd_manager_refuses_before_draining);
     RUN(refused_claim_refuses_before_draining);
+    RUN(other_command_during_the_wait_is_deferred_not_deleted_usb_caller);
+    RUN(other_command_during_the_wait_is_deferred_not_deleted_tcp_caller);
+    RUN(other_command_at_prepare_entry_is_deferred_not_refused_usb_caller);
+    RUN(other_command_at_prepare_entry_is_deferred_not_refused_tcp_caller);
+    RUN(in_flight_other_command_is_waited_out_usb_caller);
+    RUN(in_flight_other_command_is_waited_out_tcp_caller);
+    RUN(in_flight_command_that_never_ends_refuses_usb_caller);
+    RUN(in_flight_command_that_never_ends_refuses_tcp_caller);
+    RUN(waited_out_command_that_armed_sd_refuses_usb_caller);
+    RUN(waited_out_command_that_armed_sd_refuses_tcp_caller);
+    RUN(every_refusal_path_lowers_the_gate);
     return TEST_SUMMARY();
 }

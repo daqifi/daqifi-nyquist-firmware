@@ -6,6 +6,7 @@
 #include "wdrv_winc_client_api.h"
 #include "Util/Logger.h"
 #include "wifi_tcp_server.h"
+#include "services/SCPI/SCPICmdGate.h"
 #include "state/data/BoardData.h"
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "wifi_serial_bridge.h"
@@ -4002,7 +4003,9 @@ static void wifi_manager_ProcessStateImpl(bool drainTcpRx) {
     // Always clear the flag under the socket-valid guard, so a RECV that
     // arrived just before the client disconnected doesn't leave stale data
     // queued for the next client.
-    if (drainTcpRx && gTcpRxPending) {
+    // #1279: deferred (gTcpRxPending stays set, recv not re-armed) while an idle
+    // SD-buffer restore on the USB task holds the SCPI command gate.
+    if (drainTcpRx && gTcpRxPending && ScpiCmdGate_TryEnter(SCPI_CMD_GATE_TCP)) {
         gTcpRxPending = false;
         if (gStateMachineContext.pTcpServerContext != NULL &&
             gStateMachineContext.pTcpServerContext->client.clientSocket >= 0) {
@@ -4011,6 +4014,7 @@ static void wifi_manager_ProcessStateImpl(bool drainTcpRx) {
                  gStateMachineContext.pTcpServerContext->client.readBuffer,
                  WIFI_RBUFFER_SIZE, 0);
         }
+        ScpiCmdGate_Exit(SCPI_CMD_GATE_TCP);
     }
 
     if (xQueueReceive(gEventQH, &event, 1) == pdPASS) {

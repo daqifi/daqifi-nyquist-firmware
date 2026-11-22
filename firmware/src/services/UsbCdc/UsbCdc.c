@@ -46,6 +46,7 @@ void UsbCdc_Profile_ResetPendingStamp(void) {
 
 // services
 #include "services/SCPI/SCPIInterface.h"
+#include "services/SCPI/SCPICmdGate.h"
 #include "Util/Logger.h"
 
 /* #511: bytes confirmed transferred by the USB peripheral (WRITE_COMPLETE),
@@ -1466,8 +1467,13 @@ void UsbCdc_ProcessState() {
             // If a write operation is not in progress
             if (gRunTimeUsbSttings.readTransferHandle ==
                     USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID) {
-                // Process any input
-                UsbCdc_FinalizeRead(&gRunTimeUsbSttings);
+                // Process any input. #1279: deferred (not dropped) while an idle
+                // SD-buffer restore on the TCP task holds the command gate; the
+                // bytes stay in readBuffer and the host is NAKed until it lowers.
+                if (ScpiCmdGate_TryEnter(SCPI_CMD_GATE_USB)) {
+                    UsbCdc_FinalizeRead(&gRunTimeUsbSttings);
+                    ScpiCmdGate_Exit(SCPI_CMD_GATE_USB);
+                }
 
                 // Schedule the next read
                 if (!UsbCdc_BeginRead(&gRunTimeUsbSttings)) {
