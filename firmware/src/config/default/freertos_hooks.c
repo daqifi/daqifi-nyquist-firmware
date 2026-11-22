@@ -84,9 +84,9 @@ void vAssertCalled( const char * pcFile, unsigned long ulLine );
 */
 void vApplicationStackOverflowHook( TaskHandle_t xTask, char *pcTaskName )
 {
-   /* #552: record the culprit BEFORE disabling interrupts / spinning, into
-    * fixed globals (not this task's overflowed stack) so it is diagnosable via
-    * mdb (`print gCrashTaskName`) or a Logger dump without a live repro.
+   /* #552/#1190: record the culprit BEFORE disabling interrupts / spinning, into
+    * the persistent crash record (not this task's overflowed stack) so it is
+    * readable via SYSTem:LOG? after the reset without a live repro.
     * FreeRTOS hands us the name and handle directly here — no TCB deref needed,
     * and no vsnprintf/LOG_E (that printf frame is itself what overflows). */
    CrashRecord_Begin();   /* invalidates any earlier record; Seal() validates LAST */

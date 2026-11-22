@@ -52,13 +52,11 @@
 #define CRASH_W_EXCCODE  1u
 #define CRASH_W_EXCADDR  2u
 #define CRASH_W_TCB      3u
-#define CRASH_W_NAME0    4u   /* words 4..8 */
-#define CRASH_W_NAME_CNT 5u
+#define CRASH_W_NAME0    4u   /* words 4..8 (CRASH_TASK_NAME_MAX bytes) */
 #define CRASH_W_RSVD     9u
 #define CRASH_W_MAGIC    10u
 #define CRASH_W_CHECK    11u
 #define CRASH_RECORD_WORDS 12u
-#define CRASH_RECORD_BYTES (CRASH_RECORD_WORDS * 4u)
 
 #define CRASH_RECORD_MAGIC 0xC4A5B007u
 
