@@ -28,6 +28,7 @@
                               * transitively via PowerApi.h -> definitions.h;
                               * named explicitly so it does not depend on that) */
 #include "Util/Logger.h"
+#include "Util/CrashRecord.h"
 #include "state/data/BoardData.h"
 #include "state/board/BoardConfig.h"
 #include "services/daqifi_settings.h"
@@ -1428,8 +1429,27 @@ __stalled_exit:
  * @return SCPI_RES_OK, or SCPI_RES_ERR with -200 queued if truncated
  */
 static scpi_result_t SCPI_SysLogGet(scpi_t * context) {
+    /* #1190: a crash record that survived the last reset is reported as one
+     * "CRASH ..." line ahead of the log, until SYSTem:LOG:CLEar discards it.
+     * Read-only: dumping does not consume it. */
+    bool complete = true;
+    CrashRecordView crash;
+    /* The snapshot read is log-free; the transport WRITE below is not (a stalled
+     * write retries and its error callback LOG_E's), so the write sits inside the
+     * dump bracket with the dump's own writes: those records are not buffered
+     * and cannot overwrite the unread ring entries this dump is about to send. */
+    bool haveCrash = CrashRecord_Read(&crash);
     bool bracketed = LogMessageDumpBegin();
-    bool complete = LogMessageDump(context);
+    if (haveCrash) {
+        char line[CRASH_LINE_MAX];   /* worst-case line is 146 bytes (#1190 r3) */
+        size_t n = CrashRecord_Format(line, sizeof(line), &crash);
+        if (context->interface->write(context, line, n) != n) {
+            complete = false;
+        }
+    }
+    if (complete) {
+        complete = LogMessageDump(context);
+    }
     if (!complete) {
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
     }
@@ -1445,6 +1465,16 @@ static scpi_result_t SCPI_SysLogGet(scpi_t * context) {
  * @return 
  */
 static scpi_result_t SCPI_SysLogTest(scpi_t * context) {
+#ifdef CRASH_RECORD_TEST_HOOK
+    /* #1190 test builds only (-DCRASH_RECORD_TEST_HOOK=1): SYSTem:LOG:TEST <n>
+     * forces crash-capture path n (1 overflow hook, 2 general exception, 3
+     * malloc failure) and the build then resets. Not compiled into a shipped
+     * image, and registers no new pattern. */
+    int32_t crashPath = 0;
+    if (SCPI_ParamInt32(context, &crashPath, FALSE) && crashPath != 0) {
+        CrashRecord_TestFire(crashPath);
+    }
+#endif
     // Add test messages to the log (task context)
     LOG_D("Test log message 1");
     LOG_E("Test error message");
@@ -1468,6 +1498,7 @@ static scpi_result_t SCPI_SysLogTest(scpi_t * context) {
 static scpi_result_t SCPI_SysLogClear(scpi_t * context) {
 
     LogMessageClear();
+    CrashRecord_Clear();   /* #1190: the persisted crash record is part of the log */
     context->interface->write(context, "Log cleared\n", 12);
     return SCPI_RES_OK;
 }
@@ -9955,7 +9986,10 @@ static uint32_t SCPI_FirmwareImageCrc32(void)
 
 void SCPI_PrecomputeFirmwareImageCrc32(void)
 {
-    (void)SCPI_FirmwareImageCrc32();
+    /* #1190 r3: the same fingerprint identifies the image a crash record was
+     * written by, so a record that outlives a firmware update reads as
+     * "previous". Published here, before the scheduler starts. */
+    CrashRecord_SetImageId(SCPI_FirmwareImageCrc32());
 }
 
 static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {

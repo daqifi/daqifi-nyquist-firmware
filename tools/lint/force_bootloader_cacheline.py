@@ -29,6 +29,20 @@ bench run would notice -- the flag still gets written, `SYSTem:FORceBoot`
 still usually works, and the failure is a narrow eviction-timing window
 that a PICkit flash and a manual reboot will not hit.
 
+## The crash record block (#1190)
+
+`exceptions.c` places the persisted #552 crash record (`sCrashRecord`) at
+`CRASH_RECORD_ADDR` with the same `persistent, coherent, address()` construct,
+and the same hazard applies: a cached global linked into one of its lines can
+write back over a record the exception handler stored through the uncached
+alias. `check_crash_block()` applies the same declaration checks (persistent,
+coherent, a whole number of 16-byte lines) to that declaration, and
+`check_crash_header()` checks the address arithmetic in `Util/CrashRecord.h`:
+`CRASH_RECORD_ADDR` is `FORCE_BOOTLOADER_FLAG_ADDR - CRASH_RECORD_GAP`, the gap
+must be 16-byte aligned and large enough that the block ends below the
+reboot-handoff line (flag line + handoff line = 32 bytes), and the block size
+the header declares must match a whole number of lines.
+
 ## What this does NOT protect
 
 This is a source-text check, not a linker-map check: it does not prove the
@@ -81,7 +95,7 @@ _TYPE_SIZES = {
 # separate source lines (as they do in SCPIInterface.c today).
 _DECL_RE = re.compile(
     r"\b(?P<type>%s)\b\s+(?P<name>[A-Za-z_][A-Za-z_0-9]*)\s*"
-    r"(?:\[\s*(?P<size>\d+)\s*\])?\s*"
+    r"(?:\[\s*(?P<size>\w+)\s*\])?\s*"
     r"__attribute__\s*\(\(\s*(?P<attrs>.*?)\)\)\s*;"
     % "|".join(sorted(_TYPE_SIZES, key=len, reverse=True)),
     re.DOTALL,
@@ -194,14 +208,21 @@ def _mask_disabled_blocks(text):
     return "\n".join(out)
 
 
-def check(source_text):
+def check(source_text, addr_macro=ADDR_MACRO, whole_lines=False,
+          what="force_bootloader_flag", defines=None):
     """-> list of problem strings; [] means the reservation is intact.
 
-    Finds the one statement that places an object at
-    `address(FORCE_BOOTLOADER_FLAG_ADDR)` and requires it to be:
+    `addr_macro`/`whole_lines`/`what` retarget the same declaration check at
+    another persistent, coherent block (the #1190 crash record): with
+    `whole_lines` the size must be a non-zero multiple of CACHE_LINE_BYTES
+    instead of exactly one line.
+
+    Finds the one statement that places an object at `address(<addr_macro>)`
+    (by default FORCE_BOOTLOADER_FLAG_ADDR) and requires it to be:
       - qualified `persistent` AND `coherent` (both attributes present), and
       - sized (type width * array count, or just the type width for a bare
-        scalar) at least CACHE_LINE_BYTES.
+        scalar) exactly CACHE_LINE_BYTES, or a whole number of lines with
+        `whole_lines`.
 
     Does not attempt to find every object that might overlap the address
     range some other way (e.g. two smaller `address()`-placed objects that
@@ -210,31 +231,34 @@ def check(source_text):
     """
     code = _mask_comments_and_literals(source_text)
     code = _mask_disabled_blocks(code)
+    # A preprocessor line has no terminating ';', so it would otherwise be
+    # swallowed into the front of the next declaration statement.
+    code = re.sub(r"^[ \t]*#[^\n]*$", "", code, flags=re.MULTILINE)
 
-    needle = "address(%s)" % ADDR_MACRO
+    needle = "address(%s)" % addr_macro
     positions = [m.start() for m in re.finditer(re.escape(needle), code)]
     if not positions:
         return ["no declaration places anything at %s -- "
-                 "SCPI_ForceBootloader has nothing to write" % ADDR_MACRO]
+                 "%s has nothing to write" % (addr_macro, what)]
     if len(positions) > 1:
         return ["%d candidate declarations place something at %s in active "
                  "code (comments, string/char literals and `#if 0` blocks "
                  "excluded) -- refusing to guess which is authoritative; "
                  "there must be exactly one"
-                 % (len(positions), ADDR_MACRO)]
+                 % (len(positions), addr_macro)]
     idx = positions[0]
 
     start = code.rfind(";", 0, idx) + 1
     end = code.find(";", idx)
     if end == -1:
-        return ["unterminated declaration containing address(%s)" % ADDR_MACRO]
+        return ["unterminated declaration containing address(%s)" % addr_macro]
     stmt = code[start:end + 1]
 
     m = _DECL_RE.search(stmt)
-    if not m or ADDR_MACRO not in m.group("attrs"):
+    if not m or addr_macro not in m.group("attrs"):
         return ["found address(%s) but could not parse the declaring "
                  "statement as '<type> <name>[N] __attribute__((...));': %r"
-                 % (ADDR_MACRO, stmt.strip())]
+                 % (addr_macro, stmt.strip())]
 
     problems = []
     attrs = m.group("attrs")
@@ -246,18 +270,38 @@ def check(source_text):
             problems.append(
                 "%s is missing '%s' in its attribute list (%r) -- without "
                 "it the object is not the uncached, crt0-untouched "
-                "placement force_bootloader_flag needs"
-                % (m.group("name"), required, attrs))
+                "placement %s needs"
+                % (m.group("name"), required, attrs, what))
 
     type_size = _TYPE_SIZES[m.group("type")]
-    array_size = int(m.group("size")) if m.group("size") else 1
+    size_tok = m.group("size")
+    if size_tok is None:
+        array_size = 1
+    elif size_tok.isdigit():
+        array_size = int(size_tok)
+    elif defines and size_tok in defines:
+        array_size = defines[size_tok]
+    else:
+        return ["array size %r of %s is neither a literal nor a macro the "
+                "checker was given the value of" % (size_tok, m.group("name"))]
     total_bytes = type_size * array_size
     # Exactly one line, not merely "at least": FORCE_BOOTLOADER_FLAG_ADDR is
     # the last 16 bytes of physical RAM, so growing the reservation past 16
     # bytes runs off the end of RAM rather than protecting anything further
     # -- catch that misconfiguration here too, not only the under-reservation
     # this checker was written for.
-    if total_bytes != CACHE_LINE_BYTES:
+    if whole_lines:
+        if total_bytes == 0 or total_bytes % CACHE_LINE_BYTES != 0:
+            problems.append(
+                "%s reserves %d byte(s) (%s%s) at %s, not a whole number of "
+                "%d-byte D-cache lines -- a cached (KSEG0) global can link "
+                "into the remainder of the last line and a later write-back "
+                "can undo a record stored through the uncached alias (#1190, "
+                "#1083)"
+                % (m.group("name"), total_bytes, m.group("type"),
+                   ("[%d]" % array_size) if m.group("size") else "",
+                   addr_macro, CACHE_LINE_BYTES))
+    elif total_bytes != CACHE_LINE_BYTES:
         problems.append(
             "%s reserves %d byte(s) (%s%s) at %s, not exactly one %d-byte "
             "D-cache line -- fewer bytes lets a cached (KSEG0) global link "
@@ -266,8 +310,71 @@ def check(source_text):
             "of physical RAM at this fixed address"
             % (m.group("name"), total_bytes, m.group("type"),
                ("[%d]" % array_size) if m.group("size") else "",
-               ADDR_MACRO, CACHE_LINE_BYTES))
+               addr_macro, CACHE_LINE_BYTES))
 
+    return problems
+
+
+CRASH_ADDR_MACRO = "CRASH_RECORD_ADDR"
+DEFAULT_CRASH_SRC = "firmware/src/config/default/exceptions.c"
+DEFAULT_CRASH_HDR = "firmware/src/Util/CrashRecord.h"
+# Flag line (top 16 bytes of RAM) + reboot-handoff line directly below it.
+RESERVED_TOP_BYTES = 2 * CACHE_LINE_BYTES
+
+
+def check_crash_block(source_text, header_text=None):
+    """The #1190 crash record's declaration: persistent, coherent, whole lines.
+
+    The array length is a macro (CRASH_RECORD_WORDS), whose value is read from
+    the header when one is given.
+    """
+    defines = {}
+    if header_text is not None:
+        code = _mask_disabled_blocks(_mask_comments_and_literals(header_text))
+        words = _define_int(code, "CRASH_RECORD_WORDS")
+        if words is not None:
+            defines["CRASH_RECORD_WORDS"] = words
+    return check(source_text, addr_macro=CRASH_ADDR_MACRO, whole_lines=True,
+                 what="the crash record", defines=defines)
+
+
+def _define_int(code, name):
+    m = re.search(r"^[ \t]*#[ \t]*define[ \t]+%s[ \t]+\(?[ \t]*"
+                  r"(0[xX][0-9a-fA-F]+|\d+)[uU]?[ \t]*\)?[ \t]*$" % name,
+                  code, re.MULTILINE)
+    return int(m.group(1), 0) if m else None
+
+
+def check_crash_header(header_text):
+    """-> problems with the address arithmetic in Util/CrashRecord.h."""
+    code = _mask_disabled_blocks(_mask_comments_and_literals(header_text))
+    problems = []
+    gap = _define_int(code, "CRASH_RECORD_GAP")
+    words = _define_int(code, "CRASH_RECORD_WORDS")
+    m = re.search(r"^[ \t]*#[ \t]*define[ \t]+%s[ \t]+(.*)$" % CRASH_ADDR_MACRO,
+                  code, re.MULTILINE)
+    if gap is None or words is None or not m:
+        return ["could not find CRASH_RECORD_GAP, CRASH_RECORD_WORDS and "
+                "CRASH_RECORD_ADDR in the header -- the placement cannot be "
+                "checked"]
+    if not re.fullmatch(r"\(\s*%s\s*-\s*CRASH_RECORD_GAP\s*\)" % ADDR_MACRO,
+                        m.group(1).strip()):
+        problems.append("CRASH_RECORD_ADDR must be (%s - CRASH_RECORD_GAP), "
+                        "got %r" % (ADDR_MACRO, m.group(1).strip()))
+    if gap % CACHE_LINE_BYTES != 0:
+        problems.append("CRASH_RECORD_GAP 0x%X is not a multiple of the "
+                        "%d-byte D-cache line, so the block is misaligned"
+                        % (gap, CACHE_LINE_BYTES))
+    nbytes = words * 4
+    if nbytes % CACHE_LINE_BYTES != 0:
+        problems.append("CRASH_RECORD_WORDS %d is %d bytes, not a whole "
+                        "number of %d-byte lines" % (words, nbytes,
+                                                     CACHE_LINE_BYTES))
+    if gap < RESERVED_TOP_BYTES + nbytes:
+        problems.append("CRASH_RECORD_GAP 0x%X leaves the %d-byte block "
+                        "overlapping the flag/reboot-handoff lines (needs at "
+                        "least 0x%X)" % (gap, nbytes,
+                                         RESERVED_TOP_BYTES + nbytes))
     return problems
 
 
@@ -454,6 +561,68 @@ def self_test():
     _ck("an unparsable shape is flagged rather than silently passed",
         len(up_problems) >= 1, True)
 
+    # ---- #1190: the crash-record block ----------------------------------
+    crash_ok = (
+        "static volatile uint32_t sCrashRecord[12]\n"
+        "    __attribute__((persistent, coherent, address(CRASH_RECORD_ADDR)));\n"
+    )
+    _ck("crash block: 48 bytes (3 whole lines) passes",
+        check_crash_block(crash_ok), [])
+    _ck("crash block: 16 bytes (1 line) passes",
+        check_crash_block(crash_ok.replace("[12]", "[4]")), [])
+    cb_partial = check_crash_block(crash_ok.replace("[12]", "[10]"))
+    _ck("crash block: 40 bytes (a PARTIAL line) is flagged -- must fail",
+        len(cb_partial), 1)
+    _ck("...and the problem says whole number of lines",
+        "whole number" in cb_partial[0] if cb_partial else False, True)
+    _ck("crash block: missing 'coherent' is flagged -- must fail",
+        len(check_crash_block(crash_ok.replace("persistent, coherent",
+                                               "persistent"))), 1)
+    _ck("crash block: missing 'persistent' is flagged -- must fail",
+        len(check_crash_block(crash_ok.replace("persistent, coherent",
+                                               "coherent"))), 1)
+    _ck("crash block: no declaration at all is flagged -- must fail",
+        len(check_crash_block("static volatile uint32_t x[12];\n")), 1)
+    _ck("crash block: the flag declaration does not satisfy the crash check",
+        len(check_crash_block(fixed)), 1)
+    _ck("flag check is unchanged: a crash declaration does not satisfy it",
+        len(check(crash_ok)), 1)
+
+    macro_decl = crash_ok.replace("[12]", "[CRASH_RECORD_WORDS]")
+    _ck("crash block: macro-sized array resolves through the header",
+        check_crash_block(macro_decl, "#define CRASH_RECORD_WORDS 12u\n"), [])
+    _ck("crash block: macro-sized array that resolves to a partial line fails",
+        len(check_crash_block(macro_decl, "#define CRASH_RECORD_WORDS 10u\n")),
+        1)
+    _ck("crash block: an unresolvable size macro is refused, not passed",
+        len(check_crash_block(macro_decl)), 1)
+    _ck("crash block: a #include line before the declaration does not break it",
+        check_crash_block('#include "Util/CrashRecord.h"\n' + crash_ok), [])
+
+    hdr_ok = (
+        "#define CRASH_RECORD_WORDS 12u\n"
+        "#define CRASH_RECORD_GAP   0x400\n"
+        "#define CRASH_RECORD_ADDR  (FORCE_BOOTLOADER_FLAG_ADDR - CRASH_RECORD_GAP)\n"
+    )
+    _ck("crash header: 0x400 gap, 12 words passes",
+        check_crash_header(hdr_ok), [])
+    _ck("crash header: gap 0x30 (smallest block that clears flag+handoff) passes",
+        check_crash_header(hdr_ok.replace("0x400", "0x50")), [])
+    _ck("crash header: misaligned gap is flagged -- must fail",
+        len(check_crash_header(hdr_ok.replace("0x400", "0x404"))) >= 1, True)
+    _ck("crash header: gap that overlaps the handoff line is flagged -- must fail",
+        len(check_crash_header(hdr_ok.replace("0x400", "0x30"))), 1)
+    _ck("crash header: a partial-line word count is flagged -- must fail",
+        len(check_crash_header(hdr_ok.replace("12u", "10u"))) >= 1, True)
+    _ck("crash header: an address not anchored to the flag macro is flagged",
+        len(check_crash_header(hdr_ok.replace(
+            "(FORCE_BOOTLOADER_FLAG_ADDR - CRASH_RECORD_GAP)",
+            "0x8007FBF0"))), 1)
+    _ck("crash header: missing defines are flagged, not passed",
+        len(check_crash_header("/* nothing */\n")), 1)
+    _ck("crash header: defines inside a comment do not count",
+        len(check_crash_header("/*\n" + hdr_ok + "*/\n")), 1)
+
     bad = _CHECKS.count(False)
     print("self-test: %d/%d checks passed" % (_CHECKS.count(True), len(_CHECKS)))
     return 1 if bad else 0
@@ -463,6 +632,10 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--scpi", default=DEFAULT_SCPI,
                      help="path to SCPIInterface.c")
+    ap.add_argument("--crash-src", default=DEFAULT_CRASH_SRC,
+                     help="path to exceptions.c (the #1190 crash record)")
+    ap.add_argument("--crash-hdr", default=DEFAULT_CRASH_HDR,
+                     help="path to Util/CrashRecord.h")
     ap.add_argument("--self-test", action="store_true",
                      help="run the built-in checks and exit (no source needed)")
     args = ap.parse_args()
@@ -477,16 +650,37 @@ def main():
     with open(args.scpi, "r", encoding="utf-8", errors="replace") as fh:
         source = fh.read()
 
+    failed = False
     problems = check(source)
     if problems:
+        failed = True
         print("FAIL: force_bootloader_flag's D-cache-line reservation (#1083)")
         for p in problems:
             print("  - %s" % p)
-        return 1
+    else:
+        print("OK: the object at %s reserves the full %d-byte D-cache line "
+              "(persistent, coherent)" % (ADDR_MACRO, CACHE_LINE_BYTES))
 
-    print("OK: the object at %s reserves the full %d-byte D-cache line "
-          "(persistent, coherent)" % (ADDR_MACRO, CACHE_LINE_BYTES))
-    return 0
+    for path in (args.crash_src, args.crash_hdr):
+        if not os.path.isfile(path):
+            sys.exit("error: %r not found (run from the repo root, or pass "
+                      "--crash-src/--crash-hdr)" % path)
+    with open(args.crash_src, "r", encoding="utf-8", errors="replace") as fh:
+        crash_src = fh.read()
+    with open(args.crash_hdr, "r", encoding="utf-8", errors="replace") as fh:
+        crash_hdr = fh.read()
+    cproblems = (check_crash_block(crash_src, crash_hdr)
+                 + check_crash_header(crash_hdr))
+    if cproblems:
+        failed = True
+        print("FAIL: the crash record's D-cache-line reservation (#1190)")
+        for p in cproblems:
+            print("  - %s" % p)
+    else:
+        print("OK: the object at %s reserves whole D-cache lines "
+              "(persistent, coherent) clear of the flag/handoff lines"
+              % CRASH_ADDR_MACRO)
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

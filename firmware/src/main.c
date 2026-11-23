@@ -26,6 +26,7 @@
 #include <stdbool.h>                    // Defines true
 #include <stdlib.h>                     // Defines EXIT_FAILURE
 #include "definitions.h"                // SYS function prototypes
+#include "Util/CrashRecord.h"          // CrashRecord_SetImageId
 
 
 // *****************************************************************************
@@ -38,6 +39,12 @@
 
 int main ( void )
 {
+    /* #1190: the crash record carries the identity of the image that wrote it.
+     * Scrub the identity word BEFORE anything can crash: it lives in .bss that is
+     * not guaranteed zeroed across a reset (#409), so it could still hold the
+     * previous image's value. Published below once the fingerprint exists. */
+    CrashRecord_SetImageId ( 0U );
+
     /* Initialize all modules */
     SYS_Initialize ( NULL );
 
