@@ -1592,11 +1592,14 @@ scpi_result_t SCPI_ADCChanCalbGet(scpi_t * context) {
  * factory record valid right now?" without disturbing the live runtime array
  * and without a scratch buffer on the caller's stack. */
 static void RefreshFactoryCalPresence(void) {
-    if (daqifi_settings_ValidateADCCalBank(DaqifiSettings_FactAInCalParams)) {
-        daqifi_settings_ClearFactoryCalMissing();
-    } else {
-        daqifi_settings_MarkFactoryCalMissing();
-    }
+    const bool valid =
+        daqifi_settings_ValidateADCCalBank(DaqifiSettings_FactAInCalParams);
+    /* #1185: factory_slot follows the page too (blank / valid / invalid).
+     * Both are derived FIRST and published in ONE store (r1), so a
+     * concurrent CONF:CAP:JSON? never sees a new factory_present beside a
+     * stale factory_slot. */
+    const DaqifiFactorySlotState slot = daqifi_settings_ClassifyFactoryCalSlot();
+    daqifi_settings_PublishFactoryCal(!valid, slot);
 }
 
 static scpi_result_t CalSaveCommon(scpi_t * context,
@@ -1890,8 +1893,10 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
      * independent audit legs disproved it:
      *
      *   1. A WRITE-PROTECTED page leaves the OLD record INTACT AND VALID.
-     *      nvm_ErasePage returns true even when the erase is refused, and the
-     *      row write then fails its readback comparison. Nothing is
+     *      nvm_ErasePage returned true even when the erase was refused, and
+     *      the row write then failed its readback comparison. (#1206: the
+     *      erase now reports false and SaveToNvm skips the row write -- the
+     *      old record still survives intact.) Nothing is
      *      CRC-invalid, so USECal? cheerfully reports the OLD selector while
      *      acquisition runs the NEW coefficients. The getter does not expose
      *      the divergence; it conceals it.
@@ -2069,6 +2074,11 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
              * either way". That premise is FALSE, and an adversarial audit
              * demonstrated it without any hardware fault:
              *
+             * [#1206 changed the next sentence's premise: nvm_ErasePage now
+             * returns FALSE for a refused erase and SaveToNvm then skips the
+             * row write. The outcome this paragraph relies on -- the OLD,
+             * checksum-valid record survives a write-protected page -- is
+             * unchanged.]
              * nvm_ErasePage (HAL/NVM/nvm.c ~:14-54) reads the target word
              * back and returns TRUE on BOTH branches -- the erased case and
              * the WRITE-PROTECTED, erase-refused case (whose only other
@@ -2148,8 +2158,9 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
                      * WHY that is reachable at all: daqifi_settings_SaveToNvm
                      * always calls daqifi_settings_ClearNvm (daqifi_settings.c:
                      * 293), which erases the TOP_LEVEL page UNCONDITIONALLY via
-                     * nvm_ErasePage (daqifi_settings.c:334; nvm.c:45-54 returns
-                     * true whether or not the erase actually took) BEFORE the row
+                     * nvm_ErasePage (daqifi_settings.c:334; since #1206 it
+                     * returns false when the erase did not take, and SaveToNvm
+                     * then stops before writing) BEFORE the row
                      * write (daqifi_settings.c:310, nvm_WriteRowtoAddr) whose own
                      * readback comparison (nvm.c:132) is what can then fail -- so
                      * a failed persist can destroy the old record outright, not
@@ -2221,15 +2232,16 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
      *   call returns -200 without it. Ordinary concurrent USB/WiFi
      *   configuration reaches this path; no flash fault is required.
      *
-     * nvm_ErasePage cannot help either: it returns true on BOTH branches
-     * (nvm.c:45-54 -- the failure branch's only action is a commented-out
-     * log), so an unsuccessful erase is not merely unhandled, it is
-     * UNREPORTABLE to this layer.
+     * nvm_ErasePage reports an unsuccessful erase since #1206 (before it,
+     * both branches returned true), but that only stops SaveToNvm from
+     * writing over an un-erased page; it does not make the replacement
+     * failure-safe.
      *
      * The ordering below is therefore NOT a fix for the divergence; it moves
      * which side goes stale. A correct fix is failure-safe replacement in the
      * settings layer -- retain the committed record until its replacement
-     * verifies -- plus an NVM HAL that can report an erase failure, plus a
+     * verifies -- plus (now present, #1206) an NVM HAL that can report an
+     * erase failure, plus a
      * claim discipline covering every settings writer. All three are outside
      * this PR; see the row for the parked transaction question. What this
      * ordering does buy is that the common case -- a bank that fails
@@ -2370,14 +2382,17 @@ static scpi_result_t ADCThresholdSetClaimed(scpi_t * context) {
     int32_t ch, mode, lo = 0, hi = 0;
     if (!SCPI_ParamInt32(context, &ch, TRUE))   return SCPI_RES_ERR;
     if (!SCPI_ParamInt32(context, &mode, TRUE)) return SCPI_RES_ERR;
-    bool haveLo = SCPI_ParamInt32(context, &lo, FALSE);
-    bool haveHi = SCPI_ParamInt32(context, &hi, FALSE);
-    // A malformed optional lo/hi (e.g. "...,banana") pushes a data-type error but
-    // still returns FALSE; treat that as a hard reject, not "absent", so a bad
-    // token can't fall through to a mode-0 release or a partially-parsed arm.
-    if (SCPI_ParamErrorOccurred(context)) {
+    // A malformed optional lo/hi (e.g. "...,banana", or ".5", which libscpi
+    // queues NOTHING for) is a hard reject, not "absent", so a bad token can't
+    // fall through to a mode-0 release or a partially-parsed arm (#876:
+    // contract at SCPI_OptionalParamInt32).
+    const SCPI_OptionalParam loState = SCPI_OptionalParamInt32(context, &lo);
+    const SCPI_OptionalParam hiState = SCPI_OptionalParamInt32(context, &hi);
+    if (loState == SCPI_OPT_BAD || hiState == SCPI_OPT_BAD) {
         return SCPI_RES_ERR;
     }
+    const bool haveLo = (loState == SCPI_OPT_PRESENT);
+    const bool haveHi = (hiState == SCPI_OPT_PRESENT);
     // Reject before the (uint8_t) narrowing so a value like 256 can't alias
     // onto a valid channel (#671 truncation-alias lesson).
     if (ch < 0 || ch > 255 || mode < 0 || mode > 4) {
@@ -2454,14 +2469,15 @@ scpi_result_t SCPI_ADCThresholdGet(scpi_t * context) {
 // CONF:ADC:THREshold:CLEar [<ch>] -> clear latch+counter (no arg = all)
 scpi_result_t SCPI_ADCThresholdClear(scpi_t * context) {
     int32_t ch;
-    if (!SCPI_ParamInt32(context, &ch, FALSE)) {
-        /* FALSE means EITHER "no argument" (clear all) OR "argument present but
-         * malformed" (e.g. `CLE ch5`, which pushes a data-type error). Only the
-         * absent case should clear all — a malformed token must not trigger a
-         * destructive clear-all of every unit (incl. an alarm on another ch). */
-        if (SCPI_ParamErrorOccurred(context)) {
-            return SCPI_RES_ERR;
-        }
+    /* Only an ABSENT argument clears all -- a malformed token (`CLE ch5`, or
+     * `.5`, which libscpi queues nothing for) must not trigger a destructive
+     * clear-all of every unit (incl. an alarm on another ch). #876: contract
+     * at SCPI_OptionalParamInt32. */
+    const SCPI_OptionalParam chState = SCPI_OptionalParamInt32(context, &ch);
+    if (chState == SCPI_OPT_BAD) {
+        return SCPI_RES_ERR;
+    }
+    if (chState == SCPI_OPT_ABSENT) {
         AdcThreshold_Clear(ADC_THRESHOLD_ALL_CH);
         return SCPI_RES_OK;
     }

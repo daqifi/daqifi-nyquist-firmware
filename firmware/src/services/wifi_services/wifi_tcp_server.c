@@ -424,7 +424,10 @@ void wifi_tcp_server_Initialize(wifi_tcp_server_context_t *pServerData) {
             gpServerData->client.inflightSizes[i] = 0;
         }
         microrl_init(&gpServerData->client.console, microrl_echo);
-        microrl_set_echo(&gpServerData->client.console, false);
+        // 0 = echo ON for microrl (only -1 disables; gates test echoOn > -1, microrl.c:290/:624/:766).
+        // Kept at 0, not removed: SYSTem:ECHO? reports echoOn verbatim and TCP hosts read 0.
+        // Passing -1 would disable echo, a wire change for every TCP host (#1268).
+        microrl_set_echo(&gpServerData->client.console, 0);
         microrl_set_execute_callback(&gpServerData->client.console, microrl_commandComplete);
         gpServerData->client.scpiContext = CreateSCPIContext(&scpi_interface,
                                                              &gpServerData->client,
@@ -602,6 +605,27 @@ bool wifi_tcp_server_HasActiveClient(void) {
 uint32_t wifi_tcp_server_GetCircularBufferAvailable(void) {
     if (gpServerData == NULL) return 0;
     return CircularBuf_NumBytesAvailable(&gpServerData->client.wCirbuf);
+}
+
+// #1279: bytes queued in the write circular buffer that
+// wifi_tcp_server_SetWriteBuffer would discard.  Unlike
+// wifi_tcp_server_GetCircularBufferAvailable this reads under wMutex (so it is
+// never torn against a producer or the drain) and counts only DELIVERABLE
+// bytes: with no client connected, or a disconnect's reset still deferred
+// (pendingBufferReset), the bytes can never be sent -- the close path discards
+// them anyway -- so they count as 0 rather than make an idle re-partition wait
+// on a ring nobody can drain.
+uint32_t wifi_tcp_server_PendingWriteBytes(void) {
+    if (gpServerData == NULL || gpServerData->client.wMutex == NULL ||
+        gpServerData->client.clientSocket < 0) {
+        return 0u;
+    }
+    xSemaphoreTake(gpServerData->client.wMutex, portMAX_DELAY);
+    DrainPendingBufferReset();
+    uint32_t n = (gpServerData->client.clientSocket >= 0)
+            ? CircularBuf_NumBytesAvailable(&gpServerData->client.wCirbuf) : 0u;
+    xSemaphoreGive(gpServerData->client.wMutex);
+    return n;
 }
 
 size_t wifi_tcp_server_GetWriteBuffFreeSize() {

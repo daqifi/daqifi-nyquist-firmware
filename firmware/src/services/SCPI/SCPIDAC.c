@@ -135,12 +135,12 @@ static bool DAC_EnsureHardwareInitialized(void) {
     // clears PowerWriteVars.EN_5_10V_Val -- the rail's own commanded enable --
     // and calls Power_Write() to drop the rail, WITHOUT touching powerState.
     // A caller can pass the check above while the rail the DAC actually needs
-    // is commanded off. Same field #1099 already added this exact check for,
-    // one call site over at the HAL level in DAC7718_ReadWriteReg() -- this
-    // closes the matching gap here so the caller-level and HAL-level checks
+    // is commanded off. This check is the ONLY rail check on this path today:
+    // DAC7718_ReadWriteReg() has no powerState/EN_5_10V_Val check on main.
+    // Open PR #1099 (not merged) proposes the matching point-of-use check at
+    // the HAL level; if it lands, the caller-level and HAL-level checks should
     // agree about what "powered" means. EN_5_10V_Val is the COMMANDED state
-    // (what Power_Write() was last told), not a measured/settled one -- same
-    // caveat #1099's HAL-level check documents.
+    // (what Power_Write() was last told), not a measured/settled one.
     const tPowerWriteVars* pPowerWriteVars =
         BoardRunTimeConfig_Get(BOARDRUNTIME_POWER_WRITE_VARIABLES);
     if ((pPowerWriteVars == NULL) || (!pPowerWriteVars->EN_5_10V_Val)) {
