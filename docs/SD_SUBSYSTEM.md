@@ -175,6 +175,52 @@ failed:
   queue tells them apart. A tool that reports "0 bytes, no error" without
   having read `SYST:ERR?` has not established that the file was empty.
 
+**Tagged `SYST:STOR:SD:GET "<file>",<tag>` (#1265): the file and nothing else.**
+An untagged GET is byte-identical to the pre-#1265 reply (every shipped host
+parses it); the tag is the opt-in. A tagged GET answers with:
+
+```
+#SDGET <tag>\r\n          the header, carrying the tag exactly as sent
+#<d><length><bytes...>     an IEEE 488.2 definite-length block: the file
+__END_OF_FILE__ OK <n>\r\n   or  __END_OF_FILE__ FAILED <reason>\r\n
+```
+
+- **A failure before the header is framed too.** An open, buffer, size, busy,
+  abort or stream refusal that fails before any block was advertised answers
+  `#SDGET <tag>\r\n#10__END_OF_FILE__ FAILED <reason>\r\n` -- the header, the
+  empty block `#10`, then the verdict -- so the host's one parser reads header,
+  zero block bytes and FAILED, and a host that discards everything before its
+  own `#SDGET <tag>` header does not discard the verdict with the echo.
+- **Every tagged outcome holds the transport's data window until its reply has
+  left the write ring** (`sd_get_send_end`, which makes sure of the window
+  before it queues the verdict -- `sd_get_hold_window_for_verdict`, round 8). A
+  `SYST:MEM:AUTO` processed in between would otherwise reset the ring and
+  delete the verdict. Pinned by `tests/host/check_1267_verdict_window.py`.
+- ⛔ **A HOST MUST USE A FRESH, UNPREDICTABLE TAG FOR EVERY REQUEST AND MUST
+  NEVER REUSE ONE** (for example a random 31-bit value; the tag is a
+  non-negative `int32`). This is a requirement on the host, not a courtesy, and
+  it is what makes "skip everything until my own `#SDGET <tag>` header" a sound
+  recovery rule. The reason is a residual the firmware cannot close from its
+  side: when a USB session ends mid-transfer the old output ring is discarded
+  and the replacement session is held out of PROCESS until the DMA already
+  handed to the USB driver has drained, but that DMA is **drained, not
+  cancelled**. `DRV_USBHS_DEVICE_IRPCancelAll`
+  (`drv_usbhs_device.c:2098`) flushes the endpoint's IRP queue and the TX FIFO;
+  it contains no stop for a DMA channel that is already programmed, and the
+  DMA-complete handler (`drv_usbhs_device.c:3714`, TX branch from :3725) runs
+  after it. So up to one transfer's worth of the OLD session's bytes can still
+  reach the NEW session, and if the file being downloaded contains a complete
+  `#SDGET <tag>` header, body and `__END_OF_FILE__ OK` line (a file that holds
+  a previous download, for instance), a host that reused that tag would accept
+  those stale bytes as its answer. With a fresh unpredictable tag a stale frame
+  can only carry an old tag, which the host skips. (That the DMA is not stopped
+  is an inference from reading the driver, not a measurement: the observable
+  consequence is bounded by the rule above either way.)
+- The companion tests (`test_1265_clean_sd_get.py`, `test_harness.py`'s
+  `fresh_sdget_tag()`) generate a fresh random tag for every tagged GET; the
+  two fixed tags they keep are the ones whose subject is a specific value (0,
+  and INT32_MAX at the overflow boundary).
+
 **CSV Headers:** ⚠️ **every split file carries its own header, including
 continuations.** The bullet here used to say "Split files: Data rows only (no
 headers) - simplifies merging". That is wrong and has been for some time —
