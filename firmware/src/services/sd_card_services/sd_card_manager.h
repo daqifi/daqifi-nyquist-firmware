@@ -439,6 +439,14 @@ extern "C" {
      * a tagged GET can never both be admitted. */
     bool sd_card_manager_TaggedGetPending(void);
 
+    /* fw#1265 round 10: retry a tagged GET's verdict that could not get a data
+     * window. SD task idle loop only (never inside a transfer). */
+    void sd_card_manager_ServicePendingVerdict(void);
+
+    /* fw#1265 round 10: verdicts that could never be delivered (session ended
+     * or superseded). Every one is also LOG_E'd; this is the counter. */
+    uint32_t sd_card_manager_GetVerdictLostCount(void);
+
     /*! fw#1265 round 7: is the USB CDC session a tagged GET was armed on still
      *  the one on the wire? `generation` is settings->replyGeneration, which
      *  for USB is UsbCdc_GetSessionGeneration() at arm time. */

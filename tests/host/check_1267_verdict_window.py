@@ -37,6 +37,19 @@ the one function, and checks:
      until the download ended. The order matters: the stamp makes the running
      transfer's own window 0 ms stale, so Service cannot force-close it.
 
+ROUND 10 (#1267 round-9 audit) pins INVARIANTS, not sites:
+  6. a verdict is never queued without a held window: sd_get_hold_window_for_verdict
+     returns false on timeout, sd_get_send_end_core defers (keeps it pending)
+     instead of queueing, and the pending retry holds a window and gSDOpMutex
+     before it delivers (check_pending).
+  7. every loop in the SD task's GET path -- every sd_get_* loop and every loop
+     in READ_FROM_FILE -- services the windows (check_loops).
+  8. every exit from an armed tagged GET emits a verdict: the owed latch set at
+     INIT, settled at both MOUNT_DISK exits and CURRENT_DRIVE, and by the ERROR
+     and DEINIT funnels; a new ERROR-assigning state must be reviewed
+     (check_exits).
+Items 1-3 above are now the `hold-or-defer` guard in sd_get_send_end_core.
+
 A text pin over one file (the #1033 class): it catches a deleted or moved
 call, not determined obfuscation. `--self-test` proves each check can fail.
 
@@ -203,43 +216,173 @@ def check_claim(s):
                                  "its first sd_get_send_end call")
 
 
+def case_region(ps, state):
+    m = re.search(r"case\s+SD_CARD_MANAGER_PROCESS_STATE_%s\s*:" % state, ps)
+    if not m:
+        raise AssertionError("ProcessState case %s not found" % state)
+    nxt = re.search(r"case\s+SD_CARD_MANAGER_PROCESS_STATE_\w+\s*:", ps[m.end():])
+    return m.end(), m.end() + (nxt.start() if nxt else len(ps) - m.end())
+
+
+# States that contain a `currentProcessState = ..._ERROR` today. A NEW state
+# that errors must be added here on purpose -- which is the point: that is the
+# moment to decide whether an armed tagged GET can be in it.
+#   MOUNT_DISK, CURRENT_DRIVE   settle the owed verdict at the exit (named reason)
+#   READ_FROM_FILE, OPEN_FILE   queue it through sd_get_send_end[_claimed]
+#   the rest                    WRITE/CRC/streaming-only states a READ never
+#                               enters; the ERROR funnel settles it regardless
+KNOWN_ERROR_STATES = {
+    "MOUNT_DISK", "CURRENT_DRIVE", "CHECK_DISK_FULL", "CREATE_DIRECTORY",
+    "OPEN_FILE", "WRITE_TO_FILE", "READ_FROM_FILE", "COMPUTE_CRC",
+}
+
+
+def check_exits(s):
+    """Round 10 (#1267 round-9 finding 3): every exit from an armed tagged GET
+    emits a verdict. The owed-verdict latch is set at INIT, settled by
+    sd_get_send_end_core, and settled by EVERY other exit:
+      - MOUNT_DISK's two ERROR exits and CURRENT_DRIVE's call it by name,
+        immediately before the ERROR assignment;
+      - the ERROR and DEINIT cases call it first, which covers every other
+        route into teardown (and any state added later).
+    """
+    pm = re.search(r"\bvoid\s+sd_card_manager_ProcessState\s*\(\s*\)\s*\{", s)
+    if not pm:
+        raise AssertionError("sd_card_manager_ProcessState not found")
+    pe = _match_close(s, pm.end() - 1, "{", "}")
+    ps = s[pm.end():pe]
+
+    if ws(ps).count("gGetVerdictOwed=(gpSDCardSettings->mode=="
+                    "SD_CARD_MANAGER_MODE_READ)&&sd_get_is_tagged();") != 1:
+        raise AssertionError("INIT must latch gGetVerdictOwed exactly once, "
+                             "for an armed tagged READ")
+
+    for st in ("ERROR", "DEINIT"):
+        a, b = case_region(ps, st)
+        if not ws(ps[a:b]).startswith("sd_get_settle_owed_verdict("):
+            raise AssertionError("%s funnel must call sd_get_settle_owed_verdict() "
+                                 "as its FIRST statement" % st)
+
+    errs = [(m.start()) for m in re.finditer(
+        r"currentProcessState\s*=\s*SD_CARD_MANAGER_PROCESS_STATE_ERROR\s*;", ps)]
+    cases = [(m.start(), m.group(1)) for m in re.finditer(
+        r"case\s+SD_CARD_MANAGER_PROCESS_STATE_(\w+)\s*:", ps)]
+
+    def enclosing(pos):
+        cur = None
+        for cp, name in cases:
+            if cp < pos:
+                cur = name
+        return cur
+
+    states = {enclosing(e) for e in errs}
+    unknown = states - KNOWN_ERROR_STATES
+    if unknown:
+        raise AssertionError("new ERROR exit in state(s) %s: decide whether an "
+                             "armed tagged GET can be there, then add it to "
+                             "KNOWN_ERROR_STATES" % sorted(unknown))
+
+    for st in ("MOUNT_DISK", "CURRENT_DRIVE"):
+        a, b = case_region(ps, st)
+        seg = ps[a:b]
+        e = [m.start() for m in re.finditer(
+            r"currentProcessState\s*=\s*SD_CARD_MANAGER_PROCESS_STATE_ERROR\s*;", seg)]
+        c = [m.start() for m in re.finditer(r"\bsd_get_settle_owed_verdict\s*\(", seg)]
+        if not e or len(e) != len(c):
+            raise AssertionError("%s: %d ERROR exits but %d settle calls"
+                                 % (st, len(e), len(c)))
+        prev = -1
+        for ep in e:
+            if not [x for x in c if prev < x < ep]:
+                raise AssertionError("%s: an ERROR exit has no "
+                                     "sd_get_settle_owed_verdict() before it" % st)
+            prev = ep
+
+    st = ws(body(s, "sd_get_settle_owed_verdict"))
+    if "sd_get_send_end_claimed(false,0u,reason," not in st:
+        raise AssertionError("settle must deliver through sd_get_send_end_claimed")
+
+
+def check_pending(s):
+    """Round 10 (#1267 round-9 finding 1): a verdict is never queued without a
+    held window; one that cannot get a window stays pending."""
+    core = ws(body(s, "sd_get_send_end_core"))
+    guard = ("if(!headerOut&&!windowHeld){if(!sd_get_hold_window_for_verdict())"
+             "{sd_get_defer_verdict(count,reason);return;}}")
+    if core.count(guard) != 1 or core.count("sd_get_hold_window_for_verdict(") != 1:
+        raise AssertionError("send_end_core: expected exactly one "
+                             "hold-or-defer guard before any verdict is queued")
+    if core.index(guard) > core.index("sd_get_emit("):
+        raise AssertionError("send_end_core: the hold-or-defer guard must come "
+                             "BEFORE the first sd_get_emit(")
+    h = ws(body(s, "sd_get_hold_window_for_verdict"))
+    if "ScpiSdWindow_TryOpen(" not in h:
+        raise AssertionError("hold: must open a window with ScpiSdWindow_TryOpen")
+    for bad in ("ReleaseWhenDrained", "HoldUntilSessionEnd", "LOG_E", "return;"):
+        if bad in h:
+            raise AssertionError("hold: must not contain %s" % bad)
+    if not h.endswith("{returnfalse;}vTaskDelay(pdMS_TO_TICKS(1));}}") and \
+            "SCPI_SD_WINDOW_IDLE_WAIT_MS)){returnfalse;}" not in h:
+        raise AssertionError("hold: a timeout must return false (never "
+                             "proceed to queue unprotected)")
+    if h.count("returntrue;") != 2:
+        raise AssertionError("hold: `return true` only when the window is held "
+                             "(IsOpenFor / TryOpen)")
+    # sd_get_send_end_core callers: the wrapper, and the pending service which
+    # must hold gSDOpMutex around it.
+    calls = [m.start() for m in re.finditer(r"(?<![\w])sd_get_send_end_core\s*\(", s)]
+    wrap = body(s, "sd_get_send_end")
+    svc = re.search(r"\bvoid\s+sd_card_manager_ServicePendingVerdict\s*\(\s*void\s*\)\s*\{", s)
+    if not svc:
+        raise AssertionError("ServicePendingVerdict not found")
+    sb = s[svc.end():_match_close(s, svc.end() - 1, "{", "}")]
+    sw = ws(sb)
+    outside = 0
+    for c in calls:
+        line_head = s[:c].rstrip().endswith("void")
+        if line_head:
+            continue
+        outside += 1
+    if outside != 2 or "sd_get_send_end_core(" not in ws(wrap):
+        raise AssertionError("sd_get_send_end_core must be called only from "
+                             "sd_get_send_end and ServicePendingVerdict")
+    t = sw.find("xSemaphoreTake(gSDOpMutex,0)")
+    k = sw.find("sd_get_send_end_core(")
+    g = sw.find("xSemaphoreGive(gSDOpMutex")
+    if not (0 <= t < k < g):
+        raise AssertionError("ServicePendingVerdict: must try-take gSDOpMutex, "
+                             "THEN deliver, THEN give it")
+    if "ScpiSdWindow_IsOpenFor(" not in sw or "ScpiSdWindow_TryOpen(" not in sw \
+            or sw.find("ScpiSdWindow_TryOpen(") > k:
+        raise AssertionError("ServicePendingVerdict: must hold a window BEFORE "
+                             "delivering")
+    for needle in ("wifi_tcp_server_ConnIsCurrent(", "sd_get_verdict_lost("):
+        if needle not in sw:
+            raise AssertionError("ServicePendingVerdict: missing %s" % needle)
+
+
 def check(text):
     s = strip(text)
     check_claim(s)
     check_loops(s)
-    send = body(s, "sd_get_send_end")
-    w = ws(send)
-    hold = re.findall(r"if\(!headerOut\)\{sd_get_hold_window_for_verdict\(\);\}", w)
-    if len(hold) != 1 or w.count("sd_get_hold_window_for_verdict(") != 1:
-        raise AssertionError("send_end: expected exactly one "
-                             "`if (!headerOut) { sd_get_hold_window_for_verdict(); }`")
-    if w.index("sd_get_hold_window_for_verdict(") > w.index("sd_get_emit("):
-        raise AssertionError("send_end: the window hold must come BEFORE the first "
-                             "sd_get_emit( -- a hold after the verdict is queued "
-                             "protects nothing")
-    h = ws(body(s, "sd_get_hold_window_for_verdict"))
-    if "ScpiSdWindow_TryOpen(" not in h:
-        raise AssertionError("hold: must open a window with ScpiSdWindow_TryOpen")
-    for bad in ("ReleaseWhenDrained", "HoldUntilSessionEnd"):
-        if bad in h:
-            raise AssertionError("hold: must not release a window (%s): "
-                                 "sd_get_send_end is the single release site" % bad)
+    check_pending(s)
+    check_exits(s)
 
 
 def self_test():
     good = SDM.read_text(encoding="utf-8")
     check(good)
     muts = {
-        "call deleted": lambda t: t.replace(
-            "        sd_get_hold_window_for_verdict();\n", "", 1)
-        .replace("        sd_get_hold_window_for_verdict();\n", "", 1),
-        "call moved after the verdict": lambda t: t.replace(
-            "    if (!headerOut) {\n        sd_get_hold_window_for_verdict();\n    }\n", "", 1)
-        .replace("    if (!endQueued) {\n        if (transport == SCPI_SD_WINDOW_TCP) {",
-                 "    if (!headerOut) { sd_get_hold_window_for_verdict(); }\n"
-                 "    if (!endQueued) {\n        if (transport == SCPI_SD_WINDOW_TCP) {", 1),
-        "guard dropped": lambda t: t.replace("if (!headerOut) {\n        sd_get_hold",
-                                             "{\n        sd_get_hold", 1),
+        "hold timeout queues anyway": lambda t: t.replace(
+            "pdMS_TO_TICKS(SCPI_SD_WINDOW_IDLE_WAIT_MS)) {\n            return false;",
+            "pdMS_TO_TICKS(SCPI_SD_WINDOW_IDLE_WAIT_MS)) {\n            return true;", 1),
+        "defer dropped (queues unprotected)": lambda t: t.replace(
+            "            sd_get_defer_verdict(count, reason);\n            return;\n", "", 1),
+        "guard dropped": lambda t: t.replace(
+            "if (!headerOut && !windowHeld) {", "{", 1),
+        "guard after the verdict": lambda t: t.replace(
+            "    gGetVerdictOwed = false;\n    if (!headerOut && !windowHeld) {",
+            "    gGetVerdictOwed = false;\n    if (!headerOut && !windowHeld && 0) {", 1),
         "open failure unclaimed": lambda t: t.replace(
             'sd_get_send_end_claimed(false, 0u, "open"',
             'sd_get_send_end(false, 0u, "open"', 1),
@@ -251,14 +394,19 @@ def self_test():
             "    if (gSDOpMutex) {\n        xSemaphoreGive(gSDOpMutex);\n    }",
             "    if (gSDOpMutex) {\n        xSemaphoreGive(gSDOpMutex);\n    }\n"
             "    sd_get_send_end(ok, count, reason, blockDelivered, headerOut);", 1),
-        "service dropped from the loop": lambda t: t.replace(
+        "pending service without the mutex": lambda t: t.replace(
+            "xSemaphoreTake(gSDOpMutex, 0) != pdTRUE", "0", 1),
+        "pending delivers without a window": lambda t: t.replace(
+            "            ScpiSdWindow_TryOpen(transport, gGetPendingVerdict.generation)) {",
+            "            1) {", 1),
+        "service dropped from the READ loop": lambda t: t.replace(
             "                    ScpiSdWindow_Service();\n                    if (lenFail",
             "                    if (lenFail", 1),
         "service before the stamp": lambda t: t.replace(
             "ScpiSdWindow_NoteProgress(sd_get_window_transport());\n"
-            "                    /* \u2b50 fw#1265 round 9 (#1267 round-8 finding 2)",
+            "                    /* ⭐ fw#1265 round 9 (#1267 round-8 finding 2)",
             "ScpiSdWindow_Service();\n                    ScpiSdWindow_NoteProgress(sd_get_window_transport());\n"
-            "                    /* \u2b50 fw#1265 round 9 (#1267 round-8 finding 2)", 1)
+            "                    /* ⭐ fw#1265 round 9 (#1267 round-8 finding 2)", 1)
         .replace("                    ScpiSdWindow_Service();\n                    if (lenFail",
                  "                    if (lenFail", 1),
         "pad loop service dropped": lambda t: t.replace(
@@ -266,12 +414,31 @@ def self_test():
             "            ScpiSdWindow_Service();\n        }\n        if (took < chunk) {",
             "        }\n        if (took < chunk) {", 1),
         "hold loop service dropped": lambda t: t.replace(
-            "        ScpiSdWindow_Service();\n        if (ScpiSdWindow_TryOpen(transport, generation)) {\n            return;",
-            "        if (ScpiSdWindow_TryOpen(transport, generation)) {\n            return;", 1),
+            "        ScpiSdWindow_Service();\n        if (ScpiSdWindow_TryOpen(transport, generation)) {\n            return true;",
+            "        if (ScpiSdWindow_TryOpen(transport, generation)) {\n            return true;", 1),
         "hold releases": lambda t: t.replace(
-            "ScpiSdWindow_TryOpen(transport, generation)) {\n            return;",
+            "ScpiSdWindow_TryOpen(transport, generation)) {\n            return true;",
             "ScpiSdWindow_TryOpen(transport, generation)) {\n"
-            "            ScpiSdWindow_ReleaseWhenDrained(transport);\n            return;", 1),
+            "            ScpiSdWindow_ReleaseWhenDrained(transport);\n            return true;", 1),
+        "mount retries-exhausted exit": lambda t: t.replace(
+            '                        sd_get_settle_owed_verdict("mount");\n', "", 1),
+        "mount filesystem exit": lambda t: t.replace(
+            '                        sd_get_settle_owed_verdict("filesystem");\n', "", 1),
+        "current-drive exit": lambda t: t.replace(
+            '                sd_get_settle_owed_verdict("drive");\n', "", 1),
+        "ERROR funnel": lambda t: t.replace(
+            '            sd_get_settle_owed_verdict("error");\n', "", 1),
+        "DEINIT funnel": lambda t: t.replace(
+            '            sd_get_settle_owed_verdict("abort");\n', "", 1),
+        "INIT latch": lambda t: t.replace(
+            "gGetVerdictOwed = (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_READ) &&\n"
+            "                                      sd_get_is_tagged();",
+            "gGetVerdictOwed = false;", 1),
+        "new ERROR state unreviewed": lambda t: t.replace(
+            "        case SD_CARD_MANAGER_PROCESS_STATE_LIST_DIR:\n",
+            "        case SD_CARD_MANAGER_PROCESS_STATE_LIST_DIR:\n"
+            "            gSDCardData.currentProcessState = "
+            "SD_CARD_MANAGER_PROCESS_STATE_ERROR;\n", 1),
     }
     bad = 0
     for name, mut in muts.items():

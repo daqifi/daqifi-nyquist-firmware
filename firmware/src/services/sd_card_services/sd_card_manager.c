@@ -737,6 +737,20 @@ static bool sd_get_is_tagged(void) {
     return (gpSDCardSettings != NULL) && gpSDCardSettings->opGetTagValid;
 }
 
+/* The owed verdict of an ARMED tagged GET (#1267 round-9 finding 3).
+ *
+ * Set when the SD task starts an armed tagged READ (INIT), cleared the moment
+ * sd_get_send_end_core takes responsibility for the verdict (queued OR kept
+ * pending). Every state-machine exit that can leave an armed GET without one
+ * settles it: MOUNT_DISK (both exits), CURRENT_DRIVE, and the ERROR and DEINIT
+ * funnels that every other exit passes through. The snapshot of the GET's
+ * identity guards the funnels, which run after `mode` was already cleared. */
+static bool gGetVerdictOwed;
+static bool gGetHeaderOut;
+static uint32_t gGetOwedTag;
+static uint32_t gGetOwedGeneration;
+static sd_card_manager_reply_target_t gGetOwedTarget;
+
 /* fw#1265: ONE teardown for the exits this feature adds.
  *
  * The READ state already carries two hand-duplicated teardowns and the r1
@@ -959,17 +973,29 @@ static bool sd_get_send_header(uint32_t length) {
          * the host has seen some of a block prefix and is owed a terminator it
          * can find, and over-padding a prefix it never parsed is harmless
          * where under-padding a block it did parse desyncs it. */
-        return (sd_get_emit((const uint8_t*) hdr, (uint32_t) n) != 0u);
+        const bool out = (sd_get_emit((const uint8_t*) hdr, (uint32_t) n) != 0u);
+        if (out) {
+            gGetHeaderOut = true;
+        }
+        return out;
     }
     return false;
 }
 
 /* fw#1265 round 8: make sure a data window is open for THIS session before a
  * verdict that no window protects is queued. Bounded by the same idle wait as
- * sd_get_open_window; on timeout the verdict is queued anyway (a late verdict
- * beats none) and the loss is logged. It OPENS a window and never releases
- * one: the single release site stays sd_get_send_end. */
-static void sd_get_hold_window_for_verdict(void) {
+ * sd_get_open_window. It OPENS a window and never releases one: the single
+ * release site stays sd_get_send_end.
+ *
+ * ⛔ fw#1265 round 10 (#1267 round-9 finding 1): RETURNS WHETHER THE WINDOW IS
+ * HELD, AND ON TIMEOUT THE ANSWER IS `false` -- THE CALLER MUST NOT QUEUE.
+ * Rounds 8 and 9 queued the verdict anyway on timeout ("a late verdict beats
+ * none"). The audit's scenario: a stalled other-transport command keeps the
+ * transport busy for over two seconds, the verdict is queued with no window,
+ * and a SYST:MEM:AUTO that was already queued behind it resets the ring and
+ * deletes the verdict. A verdict is never queued without a window; instead it
+ * stays PENDING (sd_get_defer_verdict) and is retried on every service pass. */
+static bool sd_get_hold_window_for_verdict(void) {
     const ScpiSdWindowTransport_t transport = sd_get_window_transport();
     const uint32_t generation = gpSDCardSettings->replyGeneration;
     const TickType_t start = xTaskGetTickCount();
@@ -980,22 +1006,69 @@ static void sd_get_hold_window_for_verdict(void) {
          * this partition until its ring drains, and the verdict queued next
          * goes into that ring. */
         if (ScpiSdWindow_IsOpenFor(transport, generation)) {
-            return;
+            return true;
         }
         ScpiSdWindow_Service();
         if (ScpiSdWindow_TryOpen(transport, generation)) {
-            return;
+            return true;
         }
         if ((TickType_t)(xTaskGetTickCount() - start) >=
                 pdMS_TO_TICKS(SCPI_SD_WINDOW_IDLE_WAIT_MS)) {
-            /* log_budget: max=6 */
-            LOG_E("[SD] GET: no data window for the pre-header verdict - "
-                  "queueing it unprotected");
-            return;
+            return false;
         }
         vTaskDelay(pdMS_TO_TICKS(1));
     }
 }
+
+/* ⭐ fw#1265 round 10: THE PENDING VERDICT. One slot, owned by the SD task.
+ *
+ * A pre-header verdict whose window could not be opened is kept here instead of
+ * being queued unprotected. It carries its OWN copy of the identity (tag,
+ * reply target, session generation) because the settings fields describing
+ * "the current GET" are overwritten by the next arm, and the shared reply
+ * writer (DataReadyCB) reads them. sd_card_manager_ServicePendingVerdict()
+ * delivers it only while the settings still describe the SAME GET, so a
+ * verdict can never be framed with another request's tag.
+ *
+ * NEVER A SILENT DROP: a verdict that can no longer be delivered (its session
+ * ended, or a newer GET superseded it) is counted and LOG_E'd. */
+typedef struct {
+    bool active;
+    uint32_t count;
+    const char* reason;               /* a string literal at every call site */
+    uint32_t tag;
+    uint32_t generation;
+    sd_card_manager_reply_target_t target;
+} sd_get_pending_verdict_t;
+
+static sd_get_pending_verdict_t gGetPendingVerdict;
+static uint32_t gGetVerdictLostCount;
+
+uint32_t sd_card_manager_GetVerdictLostCount(void) {
+    return gGetVerdictLostCount;
+}
+
+static void sd_get_verdict_lost(const char* why) {
+    gGetVerdictLostCount++;
+    /* log_budget: max=14 */
+    LOG_E("[SD] GET verdict lost (%s) tag=%u", why,
+          (unsigned) gGetPendingVerdict.tag);
+    gGetPendingVerdict.active = false;
+}
+
+static void sd_get_defer_verdict(uint32_t count, const char* reason) {
+    if (gGetPendingVerdict.active) {
+        sd_get_verdict_lost("superseded");
+    }
+    gGetPendingVerdict.count = count;
+    gGetPendingVerdict.reason = reason;
+    gGetPendingVerdict.tag = gpSDCardSettings->opGetTag;
+    gGetPendingVerdict.generation = gpSDCardSettings->replyGeneration;
+    gGetPendingVerdict.target = gpSDCardSettings->replyTarget;
+    gGetPendingVerdict.active = true;
+    LOG_E("[SD] GET: no data window yet - verdict kept pending");
+}
+
 
 /* The end line, and the ONE place a transfer gives up its data window.
  *
@@ -1011,8 +1084,9 @@ static void sd_get_hold_window_for_verdict(void) {
  * answering -- once the window is released. For a completed transfer that is
  * when its tail and end line have left the transport's write ring
  * (ScpiSdWindow_ReleaseWhenDrained), not when they were queued. */
-static void sd_get_send_end(bool ok, uint32_t count, const char* reason,
-                            bool blockDelivered, bool headerOut) {
+static void sd_get_send_end_core(bool ok, uint32_t count, const char* reason,
+                                 bool blockDelivered, bool headerOut,
+                                 bool windowHeld) {
     const ScpiSdWindowTransport_t transport = sd_get_window_transport();
     const bool tagged = sd_get_is_tagged();
 
@@ -1097,8 +1171,17 @@ static void sd_get_send_end(bool ok, uint32_t count, const char* reason,
      * made sure of HERE, before the verdict is queued: afterwards
      * ReleaseWhenDrained hands it over exactly as it does for a completed
      * transfer, and no re-partition can be fed until the ring is empty. */
-    if (!headerOut) {
-        sd_get_hold_window_for_verdict();
+    /* fw#1265 round 10: THE VERDICT IS QUEUED ONLY ONCE A WINDOW IS HELD. If it
+     * cannot be opened inside the bound, keep the verdict PENDING and return;
+     * sd_card_manager_ServicePendingVerdict retries on every service pass and
+     * re-enters here with windowHeld set. (`ok` is always false on this path:
+     * a success verdict follows a header, so headerOut is true.) */
+    gGetVerdictOwed = false;
+    if (!headerOut && !windowHeld) {
+        if (!sd_get_hold_window_for_verdict()) {
+            sd_get_defer_verdict(count, reason);
+            return;
+        }
     }
 
     const char* const label = (reason != NULL) ? reason
@@ -1249,6 +1332,11 @@ static void sd_get_send_end(bool ok, uint32_t count, const char* reason,
     }
 }
 
+static void sd_get_send_end(bool ok, uint32_t count, const char* reason,
+                            bool blockDelivered, bool headerOut) {
+    sd_get_send_end_core(ok, count, reason, blockDelivered, headerOut, false);
+}
+
 /* ⭐ fw#1265 round 9 (#1267 round-8 finding 1): THE PRE-HEADER OPEN FAILURE
  * RUNS ONLY THE VERDICT, SO IT MUST TAKE THE CLAIM ITSELF.
  *
@@ -1281,6 +1369,77 @@ static void sd_get_send_end_claimed(bool ok, uint32_t count, const char* reason,
     if (gSDOpMutex) {
         xSemaphoreGive(gSDOpMutex);
     }
+}
+
+/* ⭐ fw#1265 round 10: retry a pending verdict. Called from the SD task's idle
+ * loop only (app_freertos.c, next to ScpiSdWindow_Service), so it never runs
+ * inside a transfer and never holds gSDOpMutex already. Non-blocking: the
+ * mutex is try-taken and a miss just retries on the next pass.
+ *
+ * Delivery requires (1) the settings still describe the SAME GET -- DataReadyCB
+ * and the framing read them, so a newer GET would mis-frame it -- and (2) the
+ * requesting session still live. Otherwise the verdict is counted lost and
+ * logged, never dropped silently. It re-enters sd_get_send_end_core with the
+ * window held, under the same claim sd_get_send_end_claimed takes. */
+void sd_card_manager_ServicePendingVerdict(void) {
+    if (!gGetPendingVerdict.active || (gpSDCardSettings == NULL)) {
+        return;
+    }
+    const bool same = gpSDCardSettings->opGetTagValid &&
+            (gpSDCardSettings->opGetTag == gGetPendingVerdict.tag) &&
+            (gpSDCardSettings->replyGeneration == gGetPendingVerdict.generation) &&
+            (gpSDCardSettings->replyTarget == gGetPendingVerdict.target);
+    if (!same) {
+        sd_get_verdict_lost("superseded");
+        return;
+    }
+    const bool live = (gGetPendingVerdict.target == SD_CARD_REPLY_WIFI_TCP)
+            ? wifi_tcp_server_ConnIsCurrent(gGetPendingVerdict.generation)
+            : sd_card_manager_UsbReplySessionCurrent(gGetPendingVerdict.generation);
+    if (!live) {
+        sd_get_verdict_lost("session ended");
+        return;
+    }
+    if (gSDOpMutex && (xSemaphoreTake(gSDOpMutex, 0) != pdTRUE)) {
+        return;
+    }
+    const ScpiSdWindowTransport_t transport = sd_get_window_transport();
+    ScpiSdWindow_Service();
+    if (ScpiSdWindow_IsOpenFor(transport, gGetPendingVerdict.generation) ||
+            ScpiSdWindow_TryOpen(transport, gGetPendingVerdict.generation)) {
+        const uint32_t count = gGetPendingVerdict.count;
+        const char* const reason = gGetPendingVerdict.reason;
+        gGetPendingVerdict.active = false;
+        sd_get_send_end_core(false, count, reason, true, false, true);
+    }
+    if (gSDOpMutex) {
+        xSemaphoreGive(gSDOpMutex);
+    }
+}
+
+/* ⭐ fw#1265 round 10 (#1267 round-9 finding 3): EVERY EXIT FROM AN ARMED
+ * TAGGED GET EMITS A VERDICT. Settles the owed verdict, if any, through the
+ * claimed finalizer. Idempotent: sd_get_send_end_core clears the owed flag, so
+ * the call sites need not know which of them ran first. `mode` is already NONE
+ * when the ERROR / DEINIT funnels get here, so the GET's identity is the
+ * snapshot taken at INIT, not the settings (a newer arm would differ: then the
+ * old verdict cannot be framed and is counted lost). */
+static void sd_get_settle_owed_verdict(const char* reason) {
+    if (!gGetVerdictOwed) {
+        return;
+    }
+    gGetVerdictOwed = false;
+    if ((gpSDCardSettings == NULL) || !gpSDCardSettings->opGetTagValid ||
+            (gpSDCardSettings->opGetTag != gGetOwedTag) ||
+            (gpSDCardSettings->replyGeneration != gGetOwedGeneration) ||
+            (gpSDCardSettings->replyTarget != gGetOwedTarget)) {
+        gGetPendingVerdict.tag = gGetOwedTag;
+        sd_get_verdict_lost("superseded");
+        return;
+    }
+    /* A header that went out means a block of unknown completeness: hold the
+     * session (blockDelivered false) rather than frame an end line into it. */
+    sd_get_send_end_claimed(false, 0u, reason, !gGetHeaderOut, gGetHeaderOut);
 }
 
 /* #914: per-transport, one-deep latch for a failure the SD TASK detects AFTER
@@ -2624,6 +2783,15 @@ void sd_card_manager_ProcessState() {
                 if ((!needsDir || dirValid) && (!needsFile || fileValid)) {
                     errorLogged = false;  // Reset flag on successful validation
                     gSDCardData.mountRetryCount = 0;
+                    /* fw#1265 round 10: an armed tagged GET owes a verdict from
+                     * here on (settled by sd_get_send_end_core or, on any other
+                     * exit, sd_get_settle_owed_verdict). */
+                    gGetVerdictOwed = (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_READ) &&
+                                      sd_get_is_tagged();
+                    gGetHeaderOut = false;
+                    gGetOwedTag = gpSDCardSettings->opGetTag;
+                    gGetOwedGeneration = gpSDCardSettings->replyGeneration;
+                    gGetOwedTarget = gpSDCardSettings->replyTarget;
                     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_MOUNT_DISK;
                 } else {
                     // Only log error once per enable, not continuously
@@ -2669,6 +2837,7 @@ void sd_card_manager_ProcessState() {
                             Streaming_SdInterfaceReleased();
                         }
                         gSDCardData.lastOperationSuccess = false;
+                        sd_get_settle_owed_verdict("mount");
                         gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
                         gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
                     } else {
@@ -2696,6 +2865,7 @@ void sd_card_manager_ProcessState() {
                             Streaming_SdInterfaceReleased();
                         }
                         gSDCardData.lastOperationSuccess = false;
+                        sd_get_settle_owed_verdict("filesystem");
                         gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
                         gSDCardData.discMounted = true;  // Mark mounted so ERROR→UNMOUNT can clean up
                         gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
@@ -2999,6 +3169,7 @@ void sd_card_manager_ProcessState() {
             if (SYS_FS_CurrentDriveSet(SD_CARD_MANAGER_DISK_MOUNT_NAME) == SYS_FS_RES_FAILURE) {
                 /* Error while setting current drive */
                 LOG_E("[%s:%d]Error Setting SD Card drive", __FILE__, __LINE__);
+                sd_get_settle_owed_verdict("drive");
                 gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
             } else if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_GET_SPACE) {
                 gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_GET_SPACE;
@@ -5641,6 +5812,8 @@ void sd_card_manager_ProcessState() {
 
             break;
         case SD_CARD_MANAGER_PROCESS_STATE_DEINIT:
+            /* fw#1265 round 10: the funnel for every teardown of an armed GET. */
+            sd_get_settle_owed_verdict("abort");
             /* #1031: a deliberate teardown ends the session; never continue it. */
             gSDCardData.errorRemountPending = false;
             gSDCardData.resumingAfterError = false;
@@ -5648,6 +5821,9 @@ void sd_card_manager_ProcessState() {
             gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_UNMOUNT_DISK;
             break;
         case SD_CARD_MANAGER_PROCESS_STATE_ERROR:
+            /* fw#1265 round 10: the funnel for every error exit of an armed GET
+             * (idempotent: the exits that know better settled it already). */
+            sd_get_settle_owed_verdict("error");
             gSDCardData.errorRemountPending =
                     (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE);
             gSDCardData.lastOperationSuccess = false;

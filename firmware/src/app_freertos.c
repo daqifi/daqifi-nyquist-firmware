@@ -674,6 +674,8 @@ static void app_SDCardTask(void* p_arg) {
          * summary below writes to a transport from THIS loop -- it therefore
          * cannot overlap a READ, for the same single-task reason. */
         ScpiSdWindow_Service();
+        /* fw#1265 round 10: a tagged GET verdict that had no window yet. */
+        sd_card_manager_ServicePendingVerdict();
 
         /* ⛔ #1055 r4 finding 1: THE OWED SESSION SUMMARY IS EMITTED HERE.
          *
