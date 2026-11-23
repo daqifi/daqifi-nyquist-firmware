@@ -1748,6 +1748,19 @@ typedef struct
      * verdict in DRV_SDSPI_Tasks, which then re-runs media init. */
     volatile bool                                   reinitRequested;
 
+    /* #1235: a CMD24 in doubt, as lDRV_SDSPI_CommandSend sent it: whether the
+     * card was checking CRC (crcEnabled then; crcEnabled itself is cleared at
+     * the start of a media init, before the resync that init's CMD0 runs) and
+     * the block number it addressed (byte addresses of standard-capacity cards
+     * converted). lDRV_SDSPI_WriteResyncEnd uses them when the card ACCEPTED
+     * the resync's block, which then counts in resyncFillerCount (saturating).
+     * These three sit in the tail padding after reinitRequested, so they cost
+     * no RAM: sizeof(DRV_SDSPI_OBJ) is 296 B before and after (XC32 v4.60,
+     * offsetof probe, 2026-11-23). */
+    bool                                            writeInDoubtCrc;
+    uint8_t                                         resyncFillerCount;
+    uint32_t                                        writeInDoubtBlock;
+
 } DRV_SDSPI_OBJ;
 
 #endif //#ifndef DRV_SDSPI_LOCAL_H

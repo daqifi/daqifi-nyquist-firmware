@@ -976,6 +976,11 @@ bool DRV_SDSPI_IsCardAttached(SYS_MODULE_OBJ object);
    abandoned writes have been resynced since boot. */
 void DRV_SDSPI_GetCrcStats(SYS_MODULE_OBJ object, bool* crcEnabled, uint32_t* resyncs);
 
+/* #1235: how many resyncs since boot had their filler block ACCEPTED by a card
+   checking CRC, i.e. programmed a made-up sector (saturates at 255). Each one
+   is also a LOG_E naming the block. Not part of SYST:STOR:SD:INFO?. */
+uint32_t DRV_SDSPI_GetResyncFillerCount(SYS_MODULE_OBJ object);
+
 /* #1217: SD:PROTect. protect = true: CRC checking on, every block written with
    CMD24. false: CRC off and CMD25 multi-block writes (faster; a stray block is
    programmed). Abandoned writes are resynced and re-sent in both modes. Takes effect at the next media init,

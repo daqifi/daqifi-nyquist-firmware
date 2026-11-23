@@ -492,6 +492,8 @@ static uint32_t lDRV_SDSPI_ProcessCSD(uint8_t* csdPtr)
  *    sequence clocks at least the 514 bytes that end the block. The last two
  *    are 0xFF 0xFF as its CRC, so it fails unless the block happens to hash to
  *    0xFFFF (about 1 in 65,536, on a sector whose write had failed anyway).
+ *    When it does, the card programs the captured prefix plus filler and
+ *    answers 0x05; lDRV_SDSPI_WriteResyncEnd logs that sector (#1235).
  *  - Busy programming: it ignores the bus, and we wait it out first. A token
  *    sent into that busy would be lost.
  *  - Not in a write at all: 0xFE has a leading 1, so a byte-aligned command
@@ -587,6 +589,26 @@ static void lDRV_SDSPI_WriteResyncEnd(DRV_SDSPI_OBJ* dObj, bool resolved)
          * after a fault should be visible in SYST:LOG?, not just the first. */
         LOG_E("SD: write in doubt resynced (type=%u token=0x%02X)",
                 (unsigned)dObj->writeInDoubt, (unsigned)dObj->resyncToken);
+        /* #1235: with CRC on, the resync's CMD24 block is meant to be
+         * rejected. Accepted means the card had captured part of a block and
+         * the rest hashed to the 0xFFFF CRC slot: it PROGRAMMED that prefix
+         * plus filler as the sector. A re-send of the request in hand rewrites
+         * it, but this resync may be for a later request after the one in
+         * doubt failed, so say which sector. With CRC off the card programs
+         * the resync's block whatever state it was in, by design (see above),
+         * and the line above already carries its token; that is not the
+         * corruption reported here. A CMD25 exists only with CRC off. */
+        if ((dObj->writeInDoubt == DRV_SDSPI_WRITE_IN_DOUBT_SINGLE) &&
+                (dObj->writeInDoubtCrc == true) &&
+                ((dObj->resyncToken & DRV_SDSPI_WRITE_RESPONSE_TOKEN_MASK) == DRV_SDSPI_DATA_ACCEPTED))
+        {
+            if (dObj->resyncFillerCount < UINT8_MAX)
+            {
+                dObj->resyncFillerCount++;
+            }
+            LOG_E("SD: resync block ACCEPTED: filler programmed at blk=%lu (#1235)",
+                    (unsigned long)dObj->writeInDoubtBlock);
+        }
         dObj->writeInDoubt = DRV_SDSPI_WRITE_IN_DOUBT_NONE;
         (void) DRV_SDSPI_SPIExclusiveAccess(dObj, false);
         dObj->cmdState = DRV_SDSPI_CMD_FRAME_PACKET;
@@ -623,6 +645,8 @@ static void lDRV_SDSPI_WriteResyncTasks(DRV_SDSPI_OBJ* dObj)
 {
     uint8_t rxByte;
     uint32_t chunk;
+    uint32_t flushed;
+    uint32_t i;
 
     /* Every state but START follows a transfer this FSM submitted. */
     if (dObj->cmdState != DRV_SDSPI_CMD_RESYNC_START)
@@ -660,6 +684,31 @@ static void lDRV_SDSPI_WriteResyncTasks(DRV_SDSPI_OBJ* dObj)
 
         case DRV_SDSPI_CMD_RESYNC_FLUSH:
 
+            /* #1235: the flush is clocked as READS, which send 0xFF (DRV_SPI's
+             * dummyDataBuffer, drv_spi.c), so the card's answer is heard. A
+             * card that had captured part of a block finishes it inside the
+             * flush and its data-response token comes out there, not after:
+             * a write-only flush discarded it and resyncToken read 0xFF. The
+             * token is the first byte that is not 0xFF (bit 4 is always 0).
+             * A card that was not in a write may put the R1 of its CMD63
+             * parse (see above) here instead; a mounted card's R1 has the
+             * idle bit 0 clear, so it never reads as accepted (0x05).
+             * pCmdResp holds the chunk just read, except on the first entry,
+             * when nothing has been flushed yet. */
+            flushed = (DRV_SDSPI_MEDIA_BLOCK_SIZE + 2U) - (uint32_t)dObj->resyncFlushLeft;
+            if ((flushed > 0U) && (dObj->resyncToken == 0xFFU))
+            {
+                chunk = ((flushed % MEDIA_INIT_ARRAY_SIZE) == 0U) ? MEDIA_INIT_ARRAY_SIZE : (flushed % MEDIA_INIT_ARRAY_SIZE);
+                for (i = 0U; i < chunk; i++)
+                {
+                    if (dObj->pCmdResp[i] != 0xFFU)
+                    {
+                        dObj->resyncToken = dObj->pCmdResp[i];
+                        break;
+                    }
+                }
+            }
+
             if (dObj->resyncFlushLeft == 0U)
             {
                 dObj->resyncIdleReads = 0U;
@@ -667,11 +716,12 @@ static void lDRV_SDSPI_WriteResyncTasks(DRV_SDSPI_OBJ* dObj)
                 lDRV_SDSPI_WriteResyncBusyRead(dObj);
                 break;
             }
-            /* Chunked from the existing 0xFF buffer: a 514-byte buffer for this
-             * rare path would be a new static, and RAM here is paid for by
-             * trimming the streaming pool (MEMORY_ARCHITECTURE.md). */
+            /* Chunked into the existing 16-byte command buffer (chunks are
+             * MEDIA_INIT_ARRAY_SIZE, 10): a 514-byte buffer for this rare path
+             * would be a new static, and RAM here is paid for by trimming the
+             * streaming pool (MEMORY_ARCHITECTURE.md). */
             chunk = (dObj->resyncFlushLeft > MEDIA_INIT_ARRAY_SIZE) ? MEDIA_INIT_ARRAY_SIZE : dObj->resyncFlushLeft;
-            if (DRV_SDSPI_SPIWrite(dObj, dObj->pClkPulseData, chunk) == true)
+            if (DRV_SDSPI_SPIRead(dObj, dObj->pCmdResp, chunk) == true)
             {
                 dObj->resyncFlushLeft -= (uint16_t)chunk;
             }
@@ -925,6 +975,12 @@ static void lDRV_SDSPI_CommandSend
             if (command == DRV_SDSPI_WRITE_SINGLE_BLOCK)
             {
                 dObj->writeInDoubt = DRV_SDSPI_WRITE_IN_DOUBT_SINGLE;
+                /* #1235: for the report if the resync's block is programmed.
+                 * Standard-capacity cards take a byte address (blockStart is
+                 * shifted at BUFFER_IO_CHECK_DEVICE); log the block number. */
+                dObj->writeInDoubtCrc = dObj->crcEnabled;
+                dObj->writeInDoubtBlock = (dObj->sdCardType == DRV_SDSPI_MODE_NORMAL) ?
+                        (address / DRV_SDSPI_MEDIA_BLOCK_SIZE) : address;
             }
             else if (command == DRV_SDSPI_WRITE_MULTI_BLOCK)
             {
@@ -3899,6 +3955,13 @@ void DRV_SDSPI_GetCrcStats(SYS_MODULE_OBJ object, bool* crcEnabled, uint32_t* re
     {
         *resyncs = count;
     }
+}
+
+/* #1235: resyncs whose filler block a CRC-checking card programmed. A single
+   aligned byte written only by the SD task, so a plain read is consistent. */
+uint32_t DRV_SDSPI_GetResyncFillerCount(SYS_MODULE_OBJ object)
+{
+    return (object < DRV_SDSPI_INSTANCES_NUMBER) ? gDrvSDSPIObj[object].resyncFillerCount : 0U;
 }
 
 /* #589: module-level card-presence query (DRV_SDSPI_IsAttached needs an open
