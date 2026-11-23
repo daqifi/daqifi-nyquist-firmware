@@ -4075,14 +4075,22 @@ static void wifi_manager_ProcessStateImpl(bool drainTcpRx) {
      * replacement: ScpiSdWindow_IsOpenFor compares the window's owner against
      * the connection that is live now. */
     /* #1279: also deferred while an idle SD-buffer restore on the USB task
-     * holds the SCPI command gate (gTcpRxPending stays set either way). The window
-     * test is first so a window-deferred pass never takes the gate. */
-    if (drainTcpRx && gTcpRxPending &&
-        !ScpiSdWindow_IsOpenFor(SCPI_SD_WINDOW_TCP,
-                                wifi_tcp_server_GetConnGeneration()) &&
-        ScpiCmdGate_TryEnter(SCPI_CMD_GATE_TCP)) {
+     * holds the SCPI command gate (gTcpRxPending stays set either way).
+     *
+     * Round 8: the gated entry below is kept in EXACTLY the shape
+     * tests/host/check_1279_sd_idle_restore.py pins ("the RX drain is gated
+     * and clears the flag only once entered"), so the window test lives INSIDE
+     * the gate rather than in the condition. A window-deferred pass therefore
+     * takes the gate for a few instructions and gives it straight back --
+     * harmless, since the only other taker is the idle-restore path, which
+     * simply retries -- and re-asserts the flag so the data is delivered, in
+     * order, on the first pass after the window closes. */
+    if (drainTcpRx && gTcpRxPending && ScpiCmdGate_TryEnter(SCPI_CMD_GATE_TCP)) {
         gTcpRxPending = false;
-        if (gStateMachineContext.pTcpServerContext != NULL &&
+        if (ScpiSdWindow_IsOpenFor(SCPI_SD_WINDOW_TCP,
+                                   wifi_tcp_server_GetConnGeneration())) {
+            gTcpRxPending = true;       /* deferred, not dropped */
+        } else if (gStateMachineContext.pTcpServerContext != NULL &&
             gStateMachineContext.pTcpServerContext->client.clientSocket >= 0) {
             wifi_tcp_server_ProcessReceivedBuff();
             recv(gStateMachineContext.pTcpServerContext->client.clientSocket,

@@ -36,13 +36,21 @@
 typedef enum { SCPI_RES_OK = 1, SCPI_RES_ERR = -1 } scpi_result_t;
 #define SCPI_ERROR_EXECUTION_ERROR (-200)
 #define SCPI_ERROR_ILLEGAL_PARAMETER_VALUE (-224)
+/* fw#1265: the tagged-GET operand checks SCPI_SD_GetData now runs. */
+#define SCPI_ERROR_DATA_TYPE_ERROR (-104)
+#define SCPI_ERROR_DATA_OUT_OF_RANGE (-222)
 #define TRUE 1
+#define FALSE 0
+typedef int scpi_bool_t;
+typedef enum { SCPI_TOKEN_UNKNOWN = 0, SCPI_TOKEN_DECIMAL_NUMERIC_PROGRAM_DATA = 1 } scpi_token_type_t;
+typedef struct { scpi_token_type_t type; size_t len; } scpi_parameter_t;
 typedef struct scpi_t scpi_t;
 struct scpi_interface_t {
     size_t (*write)(scpi_t *context, const char *data, size_t len);
 };
 struct scpi_t {
     struct scpi_interface_t *interface;
+    scpi_bool_t cmd_error;
 };
 
 #define SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX 63
@@ -68,6 +76,8 @@ typedef struct {
     char file[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX + 1];
     char opFile[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX + 1];
     uint64_t minFreeBytes;
+    uint32_t opGetTag;          /* fw#1265 */
+    bool opGetTagValid;
 } sd_card_manager_settings_t;
 
 #define BOARDRUNTIME_SD_CARD_SETTINGS 1
@@ -143,6 +153,22 @@ STUB int SCPI_ParamCharacters(scpi_t *c, const char **buf, size_t *len, int mand
     *len = strlen(gParam);
     return 1;
 }
+/* fw#1265: NO TAG on the command line, so every case below exercises the
+ * untagged GET -- the path whose refusal-exit these cases pin. The tagged
+ * operand checks are stubbed to accept so a stray tag would not mask it. */
+STUB int SCPI_Parameter(scpi_t *c, scpi_parameter_t *tok, int mandatory) {
+    (void)c; (void)mandatory;
+    tok->type = SCPI_TOKEN_UNKNOWN + 1;
+    tok->len = 0;
+    return 0;
+}
+STUB bool SCPI_ParamIsNumber(scpi_parameter_t *tok, int suffixAllowed) { (void)tok; (void)suffixAllowed; return true; }
+STUB bool SCPI_ParamToInt32(scpi_t *c, scpi_parameter_t *tok, int32_t *v) { (void)c; (void)tok; *v = 0; return true; }
+STUB bool SCPI_ParamErrorOccurred(scpi_t *c) { (void)c; return false; }
+STUB bool SD_TagEchoesExactly(scpi_parameter_t *tok, int32_t v) { (void)tok; (void)v; return true; }
+STUB uint32_t UsbCdc_GetSessionGeneration(void) { return 0u; }
+STUB bool Streaming_SessionIsLive(void) { return false; }
+STUB bool Streaming_SessionStartInProgress(void) { return false; }
 STUB bool SD_ClaimOrRefuse(scpi_t *c, const char *cmd) { (void)c; (void)cmd; return true; }
 STUB bool SD_RefuseIfSuspended(scpi_t *c, const char *cmd) { (void)c; (void)cmd; return false; }
 STUB bool SCPI_CheckSDCardPresent(scpi_t *c) { (void)c; return true; }

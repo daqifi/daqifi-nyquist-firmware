@@ -1602,18 +1602,28 @@ void UsbCdc_ProcessState() {
                     // Process any input. #1279: deferred (not dropped) while an idle
                     // SD-buffer restore on the TCP task holds the command gate; the
                     // bytes stay in readBuffer and the host is NAKed until it lowers.
-                    // fw#1265: FeedEnd only on the path where the feed happened, so a
-                    // gate-deferred buffer stays "feeding" until it is really fed.
+                    // The gate entry is kept as ONE statement of exactly this shape:
+                    // tests/host/check_1279_sd_idle_restore.py pins "the only command
+                    // entry is gated" on it, so nothing may be added inside the braces.
                     if (ScpiCmdGate_TryEnter(SCPI_CMD_GATE_USB)) {
-                    UsbCdc_FinalizeRead(&gRunTimeUsbSttings);
-                    ScpiCmdGate_Exit(SCPI_CMD_GATE_USB);
-                    /* fw#1265: only here, once per fed buffer. FinalizeRead has
-                     * returned, so the whole buffer has been fed and every
-                     * SCPI_Input it triggered has returned: this transport is
-                     * idle and a window may open. One site, on the path that
-                     * always runs after a feed, rather than a clear at each of
-                     * FinalizeRead's several returns. */
-                    ScpiSdWindow_FeedEnd(SCPI_SD_WINDOW_USB);
+                        UsbCdc_FinalizeRead(&gRunTimeUsbSttings);
+                        ScpiCmdGate_Exit(SCPI_CMD_GATE_USB);
+                    }
+                    /* fw#1265: end the feed only if it HAPPENED, once per fed
+                     * buffer. FinalizeRead zeroes readBufferLength on every path
+                     * that consumes the buffer, and the gate-deferred pass leaves
+                     * it untouched, so a non-zero length here means the buffer is
+                     * still waiting and the transport is still "feeding". (Round
+                     * 8: this used to be a FeedEnd INSIDE the gate block, which
+                     * broke the #1279 single-gated-entry pin; the condition is
+                     * equivalent because no read is armed here -- the enclosing
+                     * readTransferHandle == INVALID test -- so the read-complete
+                     * event cannot store a new length between FinalizeRead and
+                     * this test.) One site, on the path that always runs after a
+                     * feed, rather than a clear at each of FinalizeRead's several
+                     * returns. */
+                    if (gRunTimeUsbSttings.readBufferLength == 0u) {
+                        ScpiSdWindow_FeedEnd(SCPI_SD_WINDOW_USB);
                     }
                 }
 
