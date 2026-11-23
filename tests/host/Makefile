@@ -5642,6 +5642,16 @@ $(WIFI881_BIN): test_881_wifi_reset.c test_framework.h $(WIFI_MGR_SRC) $(IPERF2_
 	 rm -f $(WIFI881_GEN).part
 	$(CC) $(CFLAGS) -o $@ test_881_wifi_reset.c
 
+# #1190 (fw#1334 audit r1): the crash-record reader reports a record only if its
+# own snapshot validates. Compiles Util/CrashRecordCore.h unchanged and pins the
+# critical-section shape of exceptions.c's reader and clear.
+CRASH1190_BIN := run_1190_tests
+
+$(CRASH1190_BIN): test_1190_crash_snapshot.c test_framework.h $(FW_UTIL)/CrashRecordCore.h \
+                  $(FW_UTIL)/CrashRecord.h ../../firmware/src/config/default/exceptions.c $(RECIPES)
+	$(CC) $(CFLAGS) -I$(FW_UTIL) -DEXCEPTIONS_C='"../../firmware/src/config/default/exceptions.c"' \
+	      -o $@ test_1190_crash_snapshot.c
+
 # #1187: the extension of a log filename comes from the LEAF only. The three
 # functions are spliced out of the real sd_card_manager.c (same technique as
 # $(WIFI881_BIN)); each must be found exactly once and end in a closing brace.
@@ -5671,11 +5681,12 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
      $(NVM1153_BIN) $(NVM1206_BIN) $(ARMREFUSE_BIN) $(SDCRC_BIN) $(SDWRITE_BIN) $(LOGRING1248_BIN) $(HIF881_BIN) \
      $(HIF881SPI_BIN) $(WIFI881_BIN) $(ARMEXIT_BIN) \
      $(CMDHIST_BIN) \
-     $(SDLEAF1187_BIN)
+     $(SDLEAF1187_BIN) $(CRASH1190_BIN)
 	./$(HIF881_BIN)
 	./$(HIF881SPI_BIN)
 	./$(WIFI881_BIN)
 	./$(SDLEAF1187_BIN)
+	./$(CRASH1190_BIN)
 	./$(LOGRING1248_BIN)
 	./$(SDCRC_BIN)
 	./$(SDWRITE_BIN)
@@ -6315,6 +6326,7 @@ clean:
 	rm -f $(SEQ908_BIN) \
 	      $(CMDHIST_BIN)
 	rm -f $(TEAR904_BIN)
+	rm -f $(CRASH1190_BIN)
 	rm -f $(SDLEAF1187_BIN) $(SDLEAF1187_GEN) $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
 	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) \
 	      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(GEN_1125) $(CAP1202_BIN) $(GEN_1202) $(ISRLOG1197_BIN) $(GEN_1197) \

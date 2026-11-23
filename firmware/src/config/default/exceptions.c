@@ -117,6 +117,7 @@ volatile static uint32_t  exception_code;
  * does NOT survive a power cycle (SRAM is then undefined, and the validity pair
  * is what makes that read as "no record"). */
 #include "Util/CrashRecord.h"
+#include "Util/CrashRecordCore.h"
 
 static volatile uint32_t sCrashRecord[CRASH_RECORD_WORDS]
     __attribute__((persistent, coherent, address(CRASH_RECORD_ADDR)));
@@ -140,18 +141,6 @@ static bool CrashCapture_PtrInRam( uint32_t p )
 /* Everything down to the boot/readback marker runs while the system is already
  * faulting: plain aligned 32-bit stores through the volatile array, no library
  * calls, and leaf functions (no stack frame). */
-
-/* Rotate-xor fold of the payload words 0..9. */
-static uint32_t CrashRecord_Fold( void )
-{
-    uint32_t f = 0U;
-    uint32_t i;
-    for ( i = 0U; i < CRASH_W_MAGIC; i++ )
-    {
-        f = ( ( f << 5 ) | ( f >> 27 ) ) ^ sCrashRecord[i];
-    }
-    return f;
-}
 
 void CrashRecord_Begin( void )
 {
@@ -223,7 +212,7 @@ void CrashRecord_Seal( void )
 {
     sCrashRecord[CRASH_W_RSVD] = 0U;
     __asm__ volatile ( "sync" : : : "memory" );
-    sCrashRecord[CRASH_W_CHECK] = ~( CRASH_RECORD_MAGIC ^ CrashRecord_Fold() );
+    sCrashRecord[CRASH_W_CHECK] = ~( CRASH_RECORD_MAGIC ^ CrashRecord_FoldWords( sCrashRecord ) );
     __asm__ volatile ( "sync" : : : "memory" );
     sCrashRecord[CRASH_W_MAGIC] = CRASH_RECORD_MAGIC;
     __asm__ volatile ( "sync" : : : "memory" );
@@ -231,25 +220,21 @@ void CrashRecord_Seal( void )
 
 /* ---- boot / readback side (task or pre-scheduler context, stack available) -- */
 
-static bool CrashRecord_IsValid( void )
-{
-    uint32_t r;
-    if ( sCrashRecord[CRASH_W_MAGIC] != CRASH_RECORD_MAGIC )
-    {
-        return false;
-    }
-    if ( sCrashRecord[CRASH_W_CHECK] != ~( CRASH_RECORD_MAGIC ^ CrashRecord_Fold() ) )
-    {
-        return false;
-    }
-    r = sCrashRecord[CRASH_W_REASON];
-    return ( r >= CRASH_REASON_OVERFLOW ) && ( r <= CRASH_REASON_MALLOC );
-}
-
-void CrashRecord_Clear( void )
+/* Copy the live block into `snap` (CRASH_RECORD_WORDS words). The caller owns
+ * the exclusion: a critical section in task context, nothing pre-scheduler. */
+static void CrashRecord_Copy( uint32_t * snap )
 {
     uint32_t i;
-    /* Magic first, so an interrupted clear leaves "no record". */
+    for ( i = 0U; i < CRASH_RECORD_WORDS; i++ )
+    {
+        snap[i] = sCrashRecord[i];
+    }
+}
+
+/* Magic first, so an interrupted clear leaves "no record". No locking. */
+static void CrashRecord_ClearUnlocked( void )
+{
+    uint32_t i;
     sCrashRecord[CRASH_W_MAGIC] = 0U;
     for ( i = 0U; i < CRASH_RECORD_WORDS; i++ )
     {
@@ -257,39 +242,58 @@ void CrashRecord_Clear( void )
     }
 }
 
+/* SYSTem:LOG:CLEar. Task context (the scheduler is running at the only call
+ * site, SCPI_SysLogClear). The clear runs inside the SAME critical section the
+ * reader's snapshot copy uses (CrashRecord_Read), so a reader sees either the
+ * whole record or the whole clear, never a mix. */
+void CrashRecord_Clear( void )
+{
+    taskENTER_CRITICAL();
+    CrashRecord_ClearUnlocked();
+    taskEXIT_CRITICAL();
+}
+
 /* Validate the block at boot and clear it ONLY when it is not a valid record.
  * A valid record survives until it is read and cleared (SYSTem:LOG:CLEar). The
  * block is NOT in retained-by-accident RAM: it is placed `persistent` on purpose,
  * so a boot that follows a crash finds the record and a cold boot (undefined
  * SRAM) finds garbage that fails validation and is zeroed here. Call
- * pre-scheduler. See #552, #1190. */
+ * pre-scheduler (single-threaded, so no critical section is taken). See #552,
+ * #1190. */
 void CrashCapture_Init( void )
 {
-    if ( !CrashRecord_IsValid() )
+    uint32_t snap[CRASH_RECORD_WORDS];
+    CrashRecord_Copy( snap );
+    if ( !CrashRecord_SnapshotValid( snap ) )
     {
-        CrashRecord_Clear();
+        CrashRecord_ClearUnlocked();
     }
 }
 
+/* Snapshot the block inside a short critical section (12 word loads), then
+ * validate and decode the SNAPSHOT outside it. Returns true only if the copy
+ * itself validates, so a concurrent SYSTem:LOG:CLEar (other transport) yields
+ * "no record" rather than a zeroed or half-cleared one. Task context only.
+ *
+ * The capture WRITE path (CrashRecord_Begin/SetWord/CopyName/Seal, above)
+ * cannot take this critical section: it runs while the system is faulting,
+ * possibly from an exception with the kernel state undefined, and then resets.
+ * It does not need to. It is plain aligned 32-bit stores with the validity pair
+ * written last (check, then magic), after a Begin() that invalidated the magic
+ * first, and no task runs again before the reset, so the only reader that can
+ * ever observe it mid-write is a boot that finds it torn -- and a torn block
+ * fails the magic/check test and reads as absent. */
 bool CrashRecord_Read( CrashRecordView * out )
 {
-    uint32_t i;
-    if ( ( out == NULL ) || !CrashRecord_IsValid() )
+    uint32_t snap[CRASH_RECORD_WORDS];
+    if ( out == NULL )
     {
         return false;
     }
-    out->reason  = sCrashRecord[CRASH_W_REASON];
-    out->excCode = sCrashRecord[CRASH_W_EXCCODE];
-    out->excAddr = sCrashRecord[CRASH_W_EXCADDR];
-    out->tcb     = sCrashRecord[CRASH_W_TCB];
-    for ( i = 0U; i < CRASH_TASK_NAME_MAX; i++ )
-    {
-        uint32_t w = sCrashRecord[CRASH_W_NAME0 + ( i >> 2 )];
-        char c = (char) ( ( w >> ( 8U * ( i & 3U ) ) ) & 0xFFU );
-        out->name[i] = ( ( c >= 0x20 ) && ( c <= 0x7E ) ) ? c : '\0';
-    }
-    out->name[CRASH_TASK_NAME_MAX] = '\0';
-    return true;
+    taskENTER_CRITICAL();
+    CrashRecord_Copy( snap );
+    taskEXIT_CRITICAL();
+    return CrashRecord_SnapshotToView( snap, out );
 }
 
 size_t CrashRecord_Format( char * buf, size_t n, const CrashRecordView * v )
