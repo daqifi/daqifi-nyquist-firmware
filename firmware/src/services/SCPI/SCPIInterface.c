@@ -11448,6 +11448,24 @@ typedef struct {
 
 static ScpiSdWindowState_t gScpiSdWindow[SCPI_SD_WINDOW_COUNT];
 
+/* fw#1265 round 7: see ScpiSdWindow_UsbOutputStale. Set inside TryOpen's
+ * critical section, so a USB window can never be open without it. Cleared on
+ * the SD task (Service, UsbCdc_TryAdmitHeldSession) and read by the USB CDC
+ * event handler; one aligned flag, so no lock. */
+static volatile bool gUsbOutputStale;
+
+bool ScpiSdWindow_UsbOutputStale(void) {
+    return gUsbOutputStale;
+}
+
+void ScpiSdWindow_UsbOutputStaleClear(void) {
+    gUsbOutputStale = false;
+}
+
+bool ScpiSdWindow_UsbOpen(void) {
+    return gScpiSdWindow[SCPI_SD_WINDOW_USB].open;
+}
+
 static ScpiSdWindowState_t* ScpiSdWindow_For(ScpiSdWindowTransport_t t) {
     /* A bad enum must not index the array: return NULL and let every entry
      * point no-op, rather than corrupting the other transport's state. */
@@ -11506,6 +11524,9 @@ bool ScpiSdWindow_TryOpen(ScpiSdWindowTransport_t transport,
         w->generation = generation;
         w->lastProgress = xTaskGetTickCount();
         w->release = SCPI_SD_RELEASE_NONE;
+        if (transport == SCPI_SD_WINDOW_USB) {
+            gUsbOutputStale = true;   /* round 7: cleared only when provably clean */
+        }
         w->open = true;
         opened = true;
     }
@@ -11579,10 +11600,18 @@ void ScpiSdWindow_Service(void) {
              * bound below: a host that is not reading is the only thing that
              * keeps it open, and closing it early is exactly the round-4 A
              * defect. A session that has gone needs nothing protected. */
-            if (ScpiSdWindow_RingEmpty(i) ||
-                    !ScpiSdWindow_SessionLive(i, w->generation)) {
+            const bool live = ScpiSdWindow_SessionLive(i, w->generation);
+            if (ScpiSdWindow_RingEmpty(i) || !live) {
                 w->release = SCPI_SD_RELEASE_NONE;
                 w->open = false;
+                /* Round 7: a USB transfer that drained while its OWN session
+                 * was still on the wire stranded nothing. One whose session
+                 * ended before the drain leaves bytes in the ring and
+                 * possibly a DMA in flight: the flag stays set, and the next
+                 * session is held out of PROCESS until they are gone. */
+                if ((i == (unsigned) SCPI_SD_WINDOW_USB) && live) {
+                    gUsbOutputStale = false;
+                }
             }
             continue;
         }
@@ -11633,6 +11662,16 @@ void ScpiSdWindow_Service(void) {
               "progress - the transport was deaf until now",
               (i == (unsigned) SCPI_SD_WINDOW_TCP) ? "TCP" : "USB",
               (unsigned) SCPI_SD_WINDOW_STALE_MS);
+    }
+    /* ⭐ fw#1265 round 7 -- THE USB SESSION-ADMISSION CHOKE POINT, SD-task
+     * half. A replacement CDC session that asserted DTR while stale output was
+     * owed is parked outside PROCESS (UsbCdc event handler). It is admitted
+     * here, and only once no USB window is open -- i.e. the old GET's writer
+     * has stopped (a window closes only after its transfer ended) -- and then
+     * only after UsbCdc has thrown the stale ring away and seen the DMA go
+     * idle. Cheap when nothing is held: one flag test. */
+    if (!gScpiSdWindow[SCPI_SD_WINDOW_USB].open) {
+        UsbCdc_TryAdmitHeldSession();
     }
 }
 

@@ -439,6 +439,11 @@ extern "C" {
      * a tagged GET can never both be admitted. */
     bool sd_card_manager_TaggedGetPending(void);
 
+    /*! fw#1265 round 7: is the USB CDC session a tagged GET was armed on still
+     *  the one on the wire? `generation` is settings->replyGeneration, which
+     *  for USB is UsbCdc_GetSessionGeneration() at arm time. */
+    bool sd_card_manager_UsbReplySessionCurrent(uint32_t generation);
+
     /** @brief #1031: arm/disarm the one-shot that fails the next write of a
      *         LIVE session (SYST:STOR:SD:FAILNext 2). Bench/test only; same
      *         rails as SetFailNextWrite, without its teardown-only gate --

@@ -719,6 +719,14 @@ bool sd_card_manager_TaggedGetPending(void) {
     return pending;
 }
 
+bool sd_card_manager_UsbReplySessionCurrent(uint32_t generation) {
+    /* The same pair ScpiSdWindow_SessionLive reads for USB: a DTR drop, a bus
+     * reset and VBUS loss all clear the host flag, and it returns to true only
+     * through a NEW generation. */
+    return (UsbCdc_GetSessionGeneration() == generation) &&
+           (UsbCdc_GetSettings()->isCdcHostConnected != 0);
+}
+
 static ScpiSdWindowTransport_t sd_get_window_transport(void) {
     return ((gpSDCardSettings != NULL) &&
             (gpSDCardSettings->replyTarget == SD_CARD_REPLY_WIFI_TCP))
@@ -836,12 +844,11 @@ static const char* sd_get_open_window(void) {
     const ScpiSdWindowTransport_t transport = sd_get_window_transport();
     /* #599's generation, captured when the GET was armed -- so the window
      * belongs to the connection that ASKED, not to whoever holds the slot by
-     * the time the SD task gets here. USB has no arm-time capture; its CDC
-     * session generation is read here, and the bytes go to whichever session
-     * is on the wire, exactly as an untagged GET's always have. */
-    const uint32_t generation = (transport == SCPI_SD_WINDOW_TCP)
-            ? gpSDCardSettings->replyGeneration
-            : UsbCdc_GetSessionGeneration();
+     * the time the SD task gets here. Round 7: USB captures its CDC session
+     * generation at arm time too, so a DTR toggle between the command and this
+     * point leaves the window owed to a session that is already gone, and
+     * DataReadyCB then stops the writer rather than feeding the new one. */
+    const uint32_t generation = gpSDCardSettings->replyGeneration;
     const TickType_t start = xTaskGetTickCount();
 
     for (;;) {
@@ -1098,10 +1105,14 @@ static void sd_get_send_end(bool ok, uint32_t count, const char* reason,
              * would end the session from our side; it is not done because it
              * drops the host's port and re-enumerates the device.
              *
-             * ⚠ NOT A SCRUB. Whatever of the partial block is still in the
-             * write ring goes out on the NEXT session, as undelivered output
-             * always has at a CDC reconnect (main does not reset the ring
-             * there either). A tagged host skips everything before its own
+             * ⭐ ROUND 7: WHAT IS LEFT IN THE RING IS NOW SCRUBBED. A new CDC
+             * session that asserts DTR while this output is owed is held out
+             * of PROCESS (UsbCdc event handler), and
+             * UsbCdc_TryAdmitHeldSession discards the write ring and waits for
+             * the DMA already handed to the driver to drain before it admits
+             * that session -- so the partial block is not delivered into it
+             * behind its own header. (The DMA is drained, not cancelled: see
+             * that function.) A tagged host still skips to its own
              * `#SDGET <tag>` header, which is what the tag is for. */
         }
         ScpiSdWindow_HoldUntilSessionEnd(transport);
@@ -1238,6 +1249,13 @@ int32_t sd_card_manager_TakeAsyncError(sd_card_manager_reply_target_t target,
          * the failure is gone and this caller is its successor on the single
          * TCP slot: the error is not ours to report, and it can never match
          * again (the generation only increases), so holding it would just park
+    /* fw#1265 round 7: USB's replyGeneration is now a real CDC session
+     * generation, but the drain asks for 0 on USB (SCPI_DrainDeferredSdError:
+     * the USB slot is not session-keyed, by #914's design). Normalise here so
+     * the USB latch still matches its drain. */
+    if (target == SD_CARD_REPLY_USB) {
+        generation = 0u;
+    }
          * dead state in BSS for the life of the boot. */
         gSdAsyncError[target].code = 0;
         gSdAsyncError[target].generation = 0;

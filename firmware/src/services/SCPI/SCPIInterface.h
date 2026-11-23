@@ -319,6 +319,21 @@ extern "C" {
     /*! True while ANY window is open, so a stream start can be refused. */
     bool ScpiSdWindow_AnyOpen(void);
 
+    /*! fw#1265 round 7: USB output of a tagged SD:GET that may still be queued
+     *  for, or in flight to, a host session other than the one that will read
+     *  it. True from the moment a USB window opens until EITHER the window is
+     *  released while its own session is still live (nothing was stranded), OR
+     *  UsbCdc has discarded the write ring and seen the DMA go idle
+     *  (UsbCdc_TryAdmitHeldSession). UsbCdc reads it when a NEW host session
+     *  asserts DTR: a stale answer holds that session out of PROCESS, which is
+     *  the one place a replacement session is admitted. */
+    bool ScpiSdWindow_UsbOutputStale(void);
+    void ScpiSdWindow_UsbOutputStaleClear(void);
+
+    /*! True while a window is open on the USB transport, whatever session owns
+     *  it. */
+    bool ScpiSdWindow_UsbOpen(void);
+
     /*! Open the window, but ONLY if that transport is idle.
      *
      * ⛔ THE CHECK AND THE OPEN ARE ONE DECISION, under one critical section.

@@ -1493,8 +1493,11 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
     const bool getOverTcp = wifi_tcp_server_ContextIsTcp(context);
     pSDCardRuntimeConfig->replyTarget = getOverTcp
             ? SD_CARD_REPLY_WIFI_TCP : SD_CARD_REPLY_USB;
+    /* fw#1265 round 7: USB captures its CDC session generation too, so a tagged
+     * GET's writer can tell when its session has ended (DataReadyCB). */
     pSDCardRuntimeConfig->replyGeneration =
-            getOverTcp ? wifi_tcp_server_GetConnGeneration() : 0u;
+            getOverTcp ? wifi_tcp_server_GetConnGeneration()
+                       : UsbCdc_GetSessionGeneration();
     /* ⭐ THE ARM AND THE STREAM TEST ARE ONE DECISION (#1267 round-4 audit C).
      *
      * `mode = READ` is the #829 arm -- the last write, and the single store

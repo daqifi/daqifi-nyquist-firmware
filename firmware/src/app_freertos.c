@@ -242,6 +242,25 @@ size_t sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBu
         return 0u;
     }
 
+    /* fw#1265 round 7 (#1267 round-6 finding 1): THE USB TWIN OF THE CHECK
+     * ABOVE, FOR A TAGGED GET ONLY. A host that drops and reasserts DTR
+     * mid-transfer ends the CDC session the GET was asked on; without this the
+     * writer keeps queueing file bytes that the replacement session then
+     * receives. Identity is the session generation captured when the GET was
+     * armed (SCPI_StorageSDGetData) plus the host flag, the same pair
+     * ScpiSdWindow_SessionLive uses. An untagged GET keeps its shipped
+     * behaviour (bytes go to whichever session is on the wire). The retry loop
+     * below tests it again each pass, because a full ring is where a vanished
+     * host leaves this writer spinning for ten seconds. */
+    const bool usbTagged = (!toTcp) && (mode == SD_CARD_MANAGER_MODE_READ) &&
+                           (pSet != NULL) && pSet->opGetTagValid;
+    if (usbTagged && !sd_card_manager_UsbReplySessionCurrent(pSet->replyGeneration)) {
+        sd_card_manager_AbortTransfer();
+        LOG_E("[SD reply] USB session changed (gen %u) - reply aborted",
+              (unsigned)pSet->replyGeneration);
+        return 0u;
+    }
+
     size_t (*writeFn)(const char*, size_t) = toTcp ? sd_reply_write_tcp : sd_reply_write_usb;
 
     size_t transferredLength = 0;
@@ -264,6 +283,10 @@ size_t sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBu
                 vTaskDelay(1);
             }
         } else {
+            if (usbTagged && !sd_card_manager_UsbReplySessionCurrent(pSet->replyGeneration)) {
+                sd_card_manager_AbortTransfer();
+                break;
+            }
             retryCount++;
             if (retryCount >= USB_TRANSFER_MAX_RETRIES) {
                 LOG_E("[SD reply] %s timeout: sent %u/%u bytes after %u retries",
