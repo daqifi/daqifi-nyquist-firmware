@@ -15,7 +15,10 @@
  *   word  2       EPC          faulting instruction (0 for the two hook reasons)
  *   word  3       TCB          pxCurrentTCB / the overflowing task handle
  *   words 4..8    task name    20 bytes, NUL padded, packed little-endian
- *   word  9       reserved, written as 0
+ *   word  9       image id    identity of the firmware image that wrote the record
+ *                             (#1190 r3): the build's CRC32 fingerprint (#833,
+ *                             SCPI_FirmwareImageCrc32), 0 if the capture ran before
+ *                             main() published it. Folded into the check word.
  *   word 10       magic        CRASH_RECORD_MAGIC, written LAST
  *   word 11       check        ~(CRASH_RECORD_MAGIC ^ fold(words 0..9)), written
  *                              just before the magic
@@ -52,7 +55,7 @@
 #define CRASH_W_EXCADDR  2u
 #define CRASH_W_TCB      3u
 #define CRASH_W_NAME0    4u   /* words 4..8 (CRASH_TASK_NAME_MAX bytes) */
-#define CRASH_W_RSVD     9u
+#define CRASH_W_IMAGE    9u   /* identity of the image that captured it */
 #define CRASH_W_MAGIC    10u
 #define CRASH_W_CHECK    11u
 #define CRASH_RECORD_WORDS 12u
@@ -81,6 +84,8 @@ typedef struct {
     uint32_t excCode;
     uint32_t excAddr;
     uint32_t tcb;
+    uint32_t imageId;   /* identity of the image that WROTE the record */
+    bool     current;   /* imageId is non-zero and equals the running image's */
     char     name[CRASH_TASK_NAME_MAX + 1u];
 } CrashRecordView;
 
@@ -92,8 +97,13 @@ void CrashRecord_Seal( void );                  /* check word, then magic LAST *
 
 /* ---- boot / readback side ------------------------------------------------- */
 void CrashCapture_Init( void );                 /* validate; clear ONLY if invalid */
+/* Publish the RUNNING image's identity (its CRC32 fingerprint). Called once from
+ * main() before the scheduler starts; until then the identity is 0 (unknown). */
+void CrashRecord_SetImageId( uint32_t id );
 bool CrashRecord_Read( CrashRecordView * out ); /* true only for a valid record */
 void CrashRecord_Clear( void );                 /* explicit clear (SYSTem:LOG:CLEar) */
+/* Worst-case line length incl. CRLF and NUL is 146 bytes; size the buffer with this. */
+#define CRASH_LINE_MAX 160u
 size_t CrashRecord_Format( char * buf, size_t n, const CrashRecordView * v );
 
 #ifdef CRASH_RECORD_TEST_HOOK

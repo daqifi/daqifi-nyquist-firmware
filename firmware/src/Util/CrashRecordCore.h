@@ -11,6 +11,7 @@
  * land between the two and fabricate an all-zero "CRASH reason=0" record).
  */
 
+#include <stdio.h>
 #include "CrashRecord.h"
 
 /* Rotate-xor fold of the payload words 0..9. `volatile` so the capture side can
@@ -44,8 +45,13 @@ static inline bool CrashRecord_SnapshotValid( const uint32_t * w )
     return ( r >= CRASH_REASON_OVERFLOW ) && ( r <= CRASH_REASON_MALLOC );
 }
 
-/* Decode a snapshot. Returns true only if the SNAPSHOT validates. */
-static inline bool CrashRecord_SnapshotToView( const uint32_t * w, CrashRecordView * out )
+/* Decode a snapshot. Returns true only if the SNAPSHOT validates (magic, check
+ * word over words 0..9 INCLUDING the image id, known reason). `runningId` is the
+ * running image's identity; the view is `current` only when the record's id is
+ * non-zero and equal to it. A mismatch is still a record: it is returned, tagged
+ * `current == false`, with the old identity kept in `imageId`. */
+static inline bool CrashRecord_SnapshotToView( const uint32_t * w, uint32_t runningId,
+                                               CrashRecordView * out )
 {
     uint32_t i;
     if ( ( out == NULL ) || !CrashRecord_SnapshotValid( w ) )
@@ -56,6 +62,8 @@ static inline bool CrashRecord_SnapshotToView( const uint32_t * w, CrashRecordVi
     out->excCode = w[CRASH_W_EXCCODE];
     out->excAddr = w[CRASH_W_EXCADDR];
     out->tcb     = w[CRASH_W_TCB];
+    out->imageId = w[CRASH_W_IMAGE];
+    out->current = ( out->imageId != 0U ) && ( out->imageId == runningId );
     for ( i = 0U; i < CRASH_TASK_NAME_MAX; i++ )
     {
         uint32_t nw = w[CRASH_W_NAME0 + ( i >> 2 )];
@@ -64,4 +72,34 @@ static inline bool CrashRecord_SnapshotToView( const uint32_t * w, CrashRecordVi
     }
     out->name[CRASH_TASK_NAME_MAX] = '\0';
     return true;
+}
+
+/* One line, CRLF terminated, at most CRASH_LINE_MAX bytes. Grammar (#1190 r3):
+ *
+ *   CRASH reason=<n>(<why>) exccode=<n> <epc> tcb=0x<8 hex> task=<name> image=<img> id=<8 hex>
+ *
+ *   <epc> = epc=0x<8 hex>        image=current   (written by the running image)
+ *         | epc(prev)=0x<8 hex>  image=previous  (written by another image, or by
+ *                                one that had not yet published its identity)
+ *
+ * A previous-image EPC is an address in a binary that is no longer on the board,
+ * so it is labelled and never offered as a current-map address. id= is the
+ * identity (CRC32 fingerprint) of the image that WROTE the record, 00000000 when
+ * that was not yet known. */
+static inline size_t CrashRecord_FormatLine( char * buf, size_t n, const CrashRecordView * v )
+{
+    const char * why = ( v->reason == CRASH_REASON_OVERFLOW )  ? "stack-overflow-hook" :
+                       ( v->reason == CRASH_REASON_EXCEPTION ) ? "general-exception"   :
+                       ( v->reason == CRASH_REASON_MALLOC )    ? "malloc-failed"       : "unknown";
+    int len = snprintf( buf, n,
+        "CRASH reason=%u(%s) exccode=%u %s=0x%08X tcb=0x%08X task=%s image=%s id=%08X\r\n",
+        (unsigned) v->reason, why, (unsigned) v->excCode,
+        v->current ? "epc" : "epc(prev)", (unsigned) v->excAddr,
+        (unsigned) v->tcb, v->name,
+        v->current ? "current" : "previous", (unsigned) v->imageId );
+    if ( ( len < 0 ) || ( (size_t) len >= n ) )
+    {
+        return ( n > 0U ) ? ( n - 1U ) : 0U;
+    }
+    return (size_t) len;
 }

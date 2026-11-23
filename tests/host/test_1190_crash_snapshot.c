@@ -28,7 +28,10 @@
 #define FORCE_BOOTLOADER_FLAG_ADDR 0u
 #include "CrashRecordCore.h"
 
-static void seal(uint32_t *w, uint32_t reason, uint32_t epc)
+#define RUNNING_ID 0xA1B2C3D4u   /* the running image's identity in these tests */
+#define OLD_ID     0x0BADF00Du   /* a different (previous) image's identity */
+
+static void seal_id(uint32_t *w, uint32_t reason, uint32_t epc, uint32_t id)
 {
     memset(w, 0, CRASH_RECORD_WORDS * sizeof(uint32_t));
     w[CRASH_W_REASON]  = reason;
@@ -36,12 +39,18 @@ static void seal(uint32_t *w, uint32_t reason, uint32_t epc)
     w[CRASH_W_EXCADDR] = epc;
     w[CRASH_W_TCB]     = 0x80001234u;
     w[CRASH_W_NAME0]   = 0x4B534154u; /* "TASK" */
+    w[CRASH_W_IMAGE]   = id;
     w[CRASH_W_CHECK]   = ~(CRASH_RECORD_MAGIC ^ CrashRecord_FoldWords(w));
     w[CRASH_W_MAGIC]   = CRASH_RECORD_MAGIC;
 }
 
 /* The shipped reader's shape: copy word by word; `clear_after` words in, the
  * "other transport" wipes the live block (what the critical section prevents). */
+static void seal(uint32_t *w, uint32_t reason, uint32_t epc)
+{
+    seal_id(w, reason, epc, RUNNING_ID);
+}
+
 static bool read_with_clear_after(uint32_t *live, int clear_after, CrashRecordView *v)
 {
     uint32_t snap[CRASH_RECORD_WORDS];
@@ -52,7 +61,7 @@ static bool read_with_clear_after(uint32_t *live, int clear_after, CrashRecordVi
         }
         snap[i] = live[i];
     }
-    return CrashRecord_SnapshotToView(snap, v);
+    return CrashRecord_SnapshotToView(snap, RUNNING_ID, v);
 }
 
 /* The pre-fix shape, kept to prove the model can see the defect. */
@@ -106,7 +115,7 @@ TEST(cleared_block_is_absent)
 {
     uint32_t z[CRASH_RECORD_WORDS] = {0};
     CrashRecordView v;
-    ASSERT_TRUE(!CrashRecord_SnapshotToView(z, &v));
+    ASSERT_TRUE(!CrashRecord_SnapshotToView(z, RUNNING_ID, &v));
 }
 
 TEST(torn_payload_or_check_is_absent)
@@ -115,13 +124,113 @@ TEST(torn_payload_or_check_is_absent)
     CrashRecordView v;
     seal(live, CRASH_REASON_OVERFLOW, 0u);
     live[CRASH_W_EXCCODE] ^= 1u;                 /* payload word torn */
-    ASSERT_TRUE(!CrashRecord_SnapshotToView(live, &v));
+    ASSERT_TRUE(!CrashRecord_SnapshotToView(live, RUNNING_ID, &v));
     seal(live, CRASH_REASON_OVERFLOW, 0u);
     live[CRASH_W_CHECK] ^= 1u;                   /* check word torn */
-    ASSERT_TRUE(!CrashRecord_SnapshotToView(live, &v));
+    ASSERT_TRUE(!CrashRecord_SnapshotToView(live, RUNNING_ID, &v));
     seal(live, 9u, 0u);                          /* unknown reason */
-    ASSERT_TRUE(!CrashRecord_SnapshotToView(live, &v));
+    ASSERT_TRUE(!CrashRecord_SnapshotToView(live, RUNNING_ID, &v));
 }
+
+/* ---- #1190 round 3: image identity ---------------------------------------- */
+
+/* The decoder under test, as a function pointer so a MUTANT can stand in: the
+ * mutant IGNORES identity (treats every record as written by the running
+ * image), which is exactly the defect round 3 closes. */
+typedef bool (*decode_fn)(const uint32_t *w, CrashRecordView *v);
+
+static bool decode_real(const uint32_t *w, CrashRecordView *v)
+{
+    return CrashRecord_SnapshotToView(w, RUNNING_ID, v);
+}
+
+static bool decode_ignoring_identity(const uint32_t *w, CrashRecordView *v)
+{
+    return CrashRecord_SnapshotToView(w, w[CRASH_W_IMAGE], v); /* "always current" */
+}
+
+/* The row a mismatched identity must satisfy; returns whether the decoder passes. */
+static bool mismatch_row_passes(decode_fn dec)
+{
+    uint32_t w[CRASH_RECORD_WORDS];
+    CrashRecordView v;
+    char line[CRASH_LINE_MAX];
+    seal_id(w, CRASH_REASON_EXCEPTION, 0x9D001000u, OLD_ID);
+    if (!dec(w, &v)) return false;
+    if (v.current) return false;
+    if (v.imageId != OLD_ID) return false;
+    (void)CrashRecord_FormatLine(line, sizeof(line), &v);
+    return strstr(line, "epc(prev)=0x9D001000") != NULL
+        && strstr(line, "image=previous id=0BADF00D") != NULL
+        && strstr(line, " epc=0x") == NULL;
+}
+
+TEST(matching_identity_decodes_as_current)
+{
+    uint32_t w[CRASH_RECORD_WORDS];
+    CrashRecordView v;
+    char line[CRASH_LINE_MAX];
+    seal_id(w, CRASH_REASON_EXCEPTION, 0x9D001000u, RUNNING_ID);
+    ASSERT_TRUE(CrashRecord_SnapshotToView(w, RUNNING_ID, &v));
+    ASSERT_TRUE(v.current);
+    ASSERT_TRUE(v.imageId == RUNNING_ID);
+    (void)CrashRecord_FormatLine(line, sizeof(line), &v);
+    ASSERT_TRUE(strcmp(line, "CRASH reason=2(general-exception) exccode=5 "
+        "epc=0x9D001000 tcb=0x80001234 task=TASK image=current id=A1B2C3D4\r\n") == 0);
+}
+
+TEST(mismatched_identity_decodes_as_previous_and_keeps_the_old_id)
+{
+    ASSERT_TRUE(mismatch_row_passes(decode_real));
+}
+
+TEST(unknown_identity_zero_is_never_current)
+{
+    uint32_t w[CRASH_RECORD_WORDS];
+    CrashRecordView v;
+    seal_id(w, CRASH_REASON_MALLOC, 0u, 0u);       /* capture before main published */
+    ASSERT_TRUE(CrashRecord_SnapshotToView(w, RUNNING_ID, &v));
+    ASSERT_TRUE(!v.current);
+    seal_id(w, CRASH_REASON_MALLOC, 0u, 0u);       /* and a running image of 0 (unpublished) */
+    ASSERT_TRUE(CrashRecord_SnapshotToView(w, 0u, &v));
+    ASSERT_TRUE(!v.current);
+}
+
+TEST(corrupted_identity_word_fails_the_check_and_reads_as_absent)
+{
+    uint32_t w[CRASH_RECORD_WORDS];
+    CrashRecordView v;
+    int bit;
+    seal_id(w, CRASH_REASON_EXCEPTION, 0x9D001000u, RUNNING_ID);
+    for (bit = 0; bit < 32; bit++) {
+        uint32_t t[CRASH_RECORD_WORDS];
+        memcpy(t, w, sizeof(t));
+        t[CRASH_W_IMAGE] ^= (1u << bit);           /* the identity word is covered */
+        ASSERT_TRUE(!CrashRecord_SnapshotToView(t, RUNNING_ID, &v));
+        ASSERT_TRUE(!CrashRecord_SnapshotToView(t, t[CRASH_W_IMAGE], &v));
+    }
+}
+
+TEST(mutant_that_ignores_identity_turns_the_mismatch_row_red)
+{
+    ASSERT_TRUE(mismatch_row_passes(decode_real));               /* green */
+    ASSERT_TRUE(!mismatch_row_passes(decode_ignoring_identity)); /* mutant: RED */
+}
+
+TEST(worst_case_line_fits_the_scpi_buffer)
+{
+    CrashRecordView v;
+    char line[CRASH_LINE_MAX];
+    size_t n;
+    memset(&v, 0, sizeof(v));
+    v.reason = CRASH_REASON_OVERFLOW; v.excCode = 0xFFFFFFFFu;
+    v.excAddr = 0xFFFFFFFFu; v.tcb = 0xFFFFFFFFu; v.imageId = 0xFFFFFFFFu;
+    memset(v.name, 'N', CRASH_TASK_NAME_MAX);
+    n = CrashRecord_FormatLine(line, sizeof(line), &v);
+    ASSERT_TRUE(n < CRASH_LINE_MAX - 1u);
+    ASSERT_TRUE(line[n - 1u] == '\n');             /* not truncated */
+}
+
 
 /* ---- source pin: the firmware reader/clear keep the shape modelled above ---- */
 static char *slurp(void)
@@ -183,6 +292,22 @@ TEST(firmware_reader_and_clear_share_a_critical_section)
     free(src);
 }
 
+TEST(firmware_seals_the_running_identity_into_word_9)
+{
+    char *src = slurp();
+    char *sl;
+    ASSERT_TRUE(src != NULL);
+    if (!src) return;
+    sl = body(src, "void CrashRecord_Seal( void )");
+    ASSERT_TRUE(sl != NULL);
+    if (!sl) return;
+    {
+        char *img = strstr(sl, "sCrashRecord[CRASH_W_IMAGE] = sCrashImageId");
+        char *chk = strstr(sl, "sCrashRecord[CRASH_W_CHECK] =");
+        ASSERT_TRUE(img && chk && img < chk);   /* identity stored BEFORE the fold */
+    }
+    free(src);
+}
 int main(void)
 {
     RUN(whole_record_decodes);
@@ -190,6 +315,13 @@ int main(void)
     RUN(old_shape_fabricated_a_zero_record_and_the_model_sees_it);
     RUN(cleared_block_is_absent);
     RUN(torn_payload_or_check_is_absent);
+    RUN(matching_identity_decodes_as_current);
+    RUN(mismatched_identity_decodes_as_previous_and_keeps_the_old_id);
+    RUN(unknown_identity_zero_is_never_current);
+    RUN(corrupted_identity_word_fails_the_check_and_reads_as_absent);
+    RUN(mutant_that_ignores_identity_turns_the_mismatch_row_red);
+    RUN(worst_case_line_fits_the_scpi_buffer);
+    RUN(firmware_seals_the_running_identity_into_word_9);
     RUN(firmware_reader_and_clear_share_a_critical_section);
     return TEST_SUMMARY();
 }

@@ -122,6 +122,15 @@ volatile static uint32_t  exception_code;
 static volatile uint32_t sCrashRecord[CRASH_RECORD_WORDS]
     __attribute__((persistent, coherent, address(CRASH_RECORD_ADDR)));
 
+/* Identity of the RUNNING image, stored into every record by Seal() so a record
+ * that outlives a firmware update (the bootloader never touches the block) is
+ * recognisable as written by a different image (#1190 r3). Plain BSS, published
+ * by CrashRecord_SetImageId() from main() once the CRC32 fingerprint is computed;
+ * CrashCapture_Init() zeroes it first, because per-symbol .bss is not guaranteed
+ * zeroed across a reset (#409) and a stale value from the previous boot must not
+ * be stamped onto this image's record. 0 = not yet known. */
+static volatile uint32_t sCrashImageId = 0U;
+
 /* sizeof() cannot see persistent/coherent: tools/lint/force_bootloader_cacheline.py
  * owns that half. These two catch the size and alignment halves at compile time. */
 _Static_assert((sizeof(sCrashRecord) % 16u) == 0u,
@@ -210,7 +219,7 @@ void CrashRecord_CopyName( const char * nm )
  * before the caller spins or resets. */
 void CrashRecord_Seal( void )
 {
-    sCrashRecord[CRASH_W_RSVD] = 0U;
+    sCrashRecord[CRASH_W_IMAGE] = sCrashImageId;   /* inside the check's fold */
     __asm__ volatile ( "sync" : : : "memory" );
     sCrashRecord[CRASH_W_CHECK] = ~( CRASH_RECORD_MAGIC ^ CrashRecord_FoldWords( sCrashRecord ) );
     __asm__ volatile ( "sync" : : : "memory" );
@@ -263,11 +272,17 @@ void CrashRecord_Clear( void )
 void CrashCapture_Init( void )
 {
     uint32_t snap[CRASH_RECORD_WORDS];
+    sCrashImageId = 0U;
     CrashRecord_Copy( snap );
     if ( !CrashRecord_SnapshotValid( snap ) )
     {
         CrashRecord_ClearUnlocked();
     }
+}
+
+void CrashRecord_SetImageId( uint32_t id )
+{
+    sCrashImageId = id;
 }
 
 /* Snapshot the block inside a short critical section (12 word loads), then
@@ -293,23 +308,14 @@ bool CrashRecord_Read( CrashRecordView * out )
     taskENTER_CRITICAL();
     CrashRecord_Copy( snap );
     taskEXIT_CRITICAL();
-    return CrashRecord_SnapshotToView( snap, out );
+    return CrashRecord_SnapshotToView( snap, sCrashImageId, out );
 }
 
+/* Grammar and rationale: CrashRecord_FormatLine() in Util/CrashRecordCore.h
+ * (the pure half, compiled unchanged by the host test). */
 size_t CrashRecord_Format( char * buf, size_t n, const CrashRecordView * v )
 {
-    const char * why = ( v->reason == CRASH_REASON_OVERFLOW )  ? "stack-overflow-hook" :
-                       ( v->reason == CRASH_REASON_EXCEPTION ) ? "general-exception"   :
-                       ( v->reason == CRASH_REASON_MALLOC )    ? "malloc-failed"       : "unknown";
-    int len = snprintf( buf, n,
-        "CRASH reason=%u(%s) exccode=%u epc=0x%08X tcb=0x%08X task=%s\r\n",
-        (unsigned) v->reason, why, (unsigned) v->excCode,
-        (unsigned) v->excAddr, (unsigned) v->tcb, v->name );
-    if ( ( len < 0 ) || ( (size_t) len >= n ) )
-    {
-        return ( n > 0U ) ? ( n - 1U ) : 0U;
-    }
-    return (size_t) len;
+    return CrashRecord_FormatLine( buf, n, v );
 }
 
 #ifdef CRASH_RECORD_TEST_HOOK
