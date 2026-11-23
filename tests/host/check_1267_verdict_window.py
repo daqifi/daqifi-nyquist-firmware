@@ -29,6 +29,14 @@ the one function, and checks:
      property; the OPEN_FILE failure used to open a window and queue the
      verdict with no mutex held, so a re-partition could delete the verdict.
 
+  5. (round 9, #1267 round-8 finding 2) the READ_FROM_FILE chunk loop calls
+     ScpiSdWindow_Service() once per chunk, IMMEDIATELY after
+     ScpiSdWindow_NoteProgress(: Service otherwise runs only on the SD task's
+     idle loop, which a download occupies, so another transport's drained
+     window stayed open (that transport deaf, a held USB session unadmitted)
+     until the download ended. The order matters: the stamp makes the running
+     transfer's own window 0 ms stale, so Service cannot force-close it.
+
 A text pin over one file (the #1033 class): it catches a deleted or moved
 call, not determined obfuscation. `--self-test` proves each check can fail.
 
@@ -116,6 +124,12 @@ def check_claim(s):
                              "READ_FROM_FILE and sd_get_send_end_claimed: no "
                              "gSDOpMutex held, a re-partition can delete the "
                              "verdict" % line)
+    region = ws(s[r0:r1])
+    if region.count("ScpiSdWindow_NoteProgress(sd_get_window_transport());"
+                    "ScpiSdWindow_Service();") != 1:
+        raise AssertionError("READ_FROM_FILE: expected exactly one "
+                             "ScpiSdWindow_NoteProgress(...) immediately "
+                             "followed by ScpiSdWindow_Service() in the chunk loop")
     if inread:
         first = s.find("SD_TakeMutexDebug(gSDOpMutex", r0, r1)
         if first < 0 or first > min(inread):
@@ -170,6 +184,16 @@ def self_test():
             "    if (gSDOpMutex) {\n        xSemaphoreGive(gSDOpMutex);\n    }",
             "    if (gSDOpMutex) {\n        xSemaphoreGive(gSDOpMutex);\n    }\n"
             "    sd_get_send_end(ok, count, reason, blockDelivered, headerOut);", 1),
+        "service dropped from the loop": lambda t: t.replace(
+            "                    ScpiSdWindow_Service();\n                    if (lenFail",
+            "                    if (lenFail", 1),
+        "service before the stamp": lambda t: t.replace(
+            "ScpiSdWindow_NoteProgress(sd_get_window_transport());\n"
+            "                    /* \u2b50 fw#1265 round 9 (#1267 round-8 finding 2)",
+            "ScpiSdWindow_Service();\n                    ScpiSdWindow_NoteProgress(sd_get_window_transport());\n"
+            "                    /* \u2b50 fw#1265 round 9 (#1267 round-8 finding 2)", 1)
+        .replace("                    ScpiSdWindow_Service();\n                    if (lenFail",
+                 "                    if (lenFail", 1),
         "hold releases": lambda t: t.replace(
             "ScpiSdWindow_TryOpen(transport, generation)) {\n            return;",
             "ScpiSdWindow_TryOpen(transport, generation)) {\n"

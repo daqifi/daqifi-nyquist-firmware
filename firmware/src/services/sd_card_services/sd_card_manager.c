@@ -5288,6 +5288,31 @@ void sd_card_manager_ProcessState() {
                      * window's staleness backstop. Unconditional: a no-op when
                      * no window is open. */
                     ScpiSdWindow_NoteProgress(sd_get_window_transport());
+                    /* ⭐ fw#1265 round 9 (#1267 round-8 finding 2): SERVICE THE
+                     * WINDOWS FROM INSIDE THE TRANSFER, once per chunk.
+                     *
+                     * ScpiSdWindow_Service used to run only from the SD task's
+                     * loop, and this loop is that task for the whole of a
+                     * download. So a window another transport had handed over
+                     * (RELEASE_ON_DRAIN, an earlier GET whose ring has long
+                     * since emptied) was not released until THIS transfer
+                     * ended -- that transport stayed deaf, and a USB session
+                     * held out of PROCESS by it (UsbCdc_TryAdmitHeldSession,
+                     * the tail of Service) waited too.
+                     *
+                     * One call per chunk iteration is the cadence a running
+                     * transfer can honestly offer: an iteration is one SD read
+                     * plus one transport write, so it is as fast as the
+                     * transfer, and it blocks for as long as the reader does.
+                     * (The ~1 ms figure belongs to the idle loop only.)
+                     *
+                     * ⛔ AFTER NoteProgress, NOT BEFORE. Service now CAN see
+                     * this transfer's own window (release NONE, so only its
+                     * staleness branch applies); stamping progress first makes
+                     * that window 0 ms stale on this call, so Service cannot
+                     * force-close the window of the transfer that is calling
+                     * it. No new mechanism: the same function, the same task. */
+                    ScpiSdWindow_Service();
                     if (lenFail != NULL) {
                         /* ⛔ NO sd_get_read_teardown HERE. This `break` leaves
                          * the while(1) and falls into the case's own teardown

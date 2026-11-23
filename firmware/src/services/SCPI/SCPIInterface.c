@@ -11681,14 +11681,16 @@ void ScpiSdWindow_Service(void) {
          * that can never be talked to again -- so the window is what has to
          * yield.
          *
-         * ⚠ EVERY WINDOW THAT REACHES THIS POINT IS AN ORPHAN -- one that no
-         * transfer handed over above -- and that bounds what it can
-         * usefully do. Both callers are the SD task, which runs the transfer
-         * too -- its loop, between transfers, and sd_get_open_window, before
-         * the new transfer's window exists -- so this never sees a running
-         * transfer's window; see the API comment in SCPIInterface.h for why
-         * that makes a verdict term here impossible rather than merely
-         * unnecessary.
+         * ⚠ EVERY WINDOW THAT REACHES THIS POINT IS AN ORPHAN OR THE CALLING
+         * TRANSFER'S OWN -- one that no transfer handed over above. Every
+         * caller is the SD task: its loop between transfers,
+         * sd_get_open_window before the new transfer's window exists, and
+         * (round 9) the READ loop once per chunk. The third can see its own
+         * transfer's window, but it calls right after
+         * ScpiSdWindow_NoteProgress, so that window is 0 ms stale and falls
+         * through the elapsed test above. Still no verdict term here: a window
+         * closed by this function was by construction not the caller's -- see
+         * the API comment in SCPIInterface.h.
          *
          * Not a critical section: this is the only task that force-closes and
          * `open` is a plain aligned store. A close racing the transfer's own

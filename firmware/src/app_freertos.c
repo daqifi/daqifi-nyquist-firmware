@@ -644,7 +644,11 @@ static void app_SDCardTask(void* p_arg) {
         /* fw#1265: close a tagged SD:GET data window that has gone stale --
          * and, since round 5, a window a finished transfer handed over, once
          * its write ring has drained or its session has ended. Polled at this
-         * loop's ~1 ms cadence; nothing waits on it.
+         * loop's ~1 ms cadence while no transfer runs; nothing waits on it.
+         * A RUNNING SD:GET is this same task, so it calls Service itself once
+         * per chunk (sd_card_manager.c READ_FROM_FILE, fw#1265 round 9) --
+         * otherwise another transport's drained window would wait out the
+         * whole download.
          *
          * HERE because this runs on EVERY iteration in EVERY state -- so it is
          * reached however the transfer ended, including when the task is

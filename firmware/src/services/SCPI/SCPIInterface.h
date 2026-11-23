@@ -377,7 +377,9 @@ extern "C" {
      * re-partitions the pool and resets both write rings), so the host loses
      * its tail and its verdict. Keeping input paused until the ring is empty
      * closes that at source, without anyone waiting: the SD task returns at
-     * once, and the release is polled from its ~1 ms loop. A host that has
+     * once, and the release is polled from its ~1 ms loop -- or, while the SD
+     * task is inside another transfer, once per chunk of that transfer
+     * (fw#1265 round 9). A host that has
      * stopped reading keeps the window open, and input paused, for exactly as
      * long as it does not read -- which costs it nothing it could have used.
      */
@@ -417,20 +419,14 @@ extern "C" {
      *  byte delivered rather than from the window opening.
      *
      * ⚠ WHAT THIS ACTUALLY BUYS TODAY, because the obvious reading is wrong.
-     * It is NOT what keeps a running transfer alive: ScpiSdWindow_Service runs
-     * on the SD task's loop, and so does the transfer, so the task cannot be
-     * in both -- every window Service can observe is one a finished transfer
-     * left behind (V: app_SDCard_Task calls sd_card_manager_ProcessState and
-     * ScpiSdWindow_Service in the same iteration; the other caller,
-     * sd_get_open_window, runs before its own window opens). All this stamp
-     * decides is
-     * how long AFTER the last data byte such an orphan is reclaimed.
-     *
-     * Kept rather than deleted because the bound has to stay correct if the
-     * transfer ever moves off the SD task: without the stamp, a transfer
-     * longer than SCPI_SD_WINDOW_STALE_MS would have its window closed
-     * underneath it. The cost of keeping it is that an orphan survives up to
-     * SCPI_SD_WINDOW_STALE_MS past the last byte instead of past the open. */
+     * Round 9: it IS now what keeps a running transfer's window alive. The
+     * READ loop calls ScpiSdWindow_Service once per chunk, immediately AFTER
+     * this stamp, so Service can see the running transfer's own window and the
+     * stamp is what makes it 0 ms stale at that call. (Before round 9 the
+     * only callers were the SD task's loop and sd_get_open_window, neither of
+     * which can run while a transfer does, so every window Service could
+     * observe was an orphan and the stamp only set how long an orphan lived.)
+     * Keep the order: stamp, then Service. */
     void ScpiSdWindow_NoteProgress(ScpiSdWindowTransport_t transport);
 
     /*! Close windows whose transfers have finished with them: a handed-over
@@ -438,10 +434,15 @@ extern "C" {
      *  ScpiSdWindow_ReleaseWhenDrained / _HoldUntilSessionEnd), and -- the
      *  staleness backstop -- a window nobody handed over that has gone quiet.
      *  Called from the SD task's loop -- reached whatever the transfer did --
-     *  and, since round 5, from sd_get_open_window's retry loop BEFORE that
-     *  transfer's own window exists; both are the SD task, never a transport
-     *  task. Either way it never sees the window of a transfer still running:
-     *  the SD task runs one transfer at a time, and it is not inside one.
+     *  from sd_get_open_window's retry loop BEFORE that transfer's own window
+     *  exists (round 5), and -- round 9 -- once per chunk from inside the READ
+     *  loop, so that a window ANOTHER transport handed over is released while
+     *  a long download runs rather than after it. All three are the SD task,
+     *  never a transport task. The third caller can see its own transfer's
+     *  window: it is release-NONE, so only the staleness branch applies, and
+     *  that call is made right after ScpiSdWindow_NoteProgress, which leaves
+     *  the window 0 ms stale -- Service cannot force-close the window of the
+     *  transfer that is calling it.
      *
      * ⛔ IT DOES NOT AFFECT ANY TRANSFER'S VERDICT, and an earlier revision of
      * this API wrongly said it did. It carried a `WasForceClosed` flag that
