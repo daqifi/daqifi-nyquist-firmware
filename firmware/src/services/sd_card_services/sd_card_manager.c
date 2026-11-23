@@ -963,7 +963,7 @@ static bool sd_get_send_header(uint32_t length) {
  * when its tail and end line have left the transport's write ring
  * (ScpiSdWindow_ReleaseWhenDrained), not when they were queued. */
 static void sd_get_send_end(bool ok, uint32_t count, const char* reason,
-                            bool blockDelivered) {
+                            bool blockDelivered, bool headerOut) {
     const ScpiSdWindowTransport_t transport = sd_get_window_transport();
     const bool tagged = sd_get_is_tagged();
 
@@ -1039,15 +1039,36 @@ static void sd_get_send_end(bool ok, uint32_t count, const char* reason,
                                                : (ok ? "ok" : "error");
     bool endQueued = false;
     if (blockDelivered) {
-        char line[64];
-        int n;
-        if (ok) {
-            n = snprintf(line, sizeof(line), "%s OK %u\r\n", eofMarker,
-                         (unsigned) count);
-        } else {
-            n = snprintf(line, sizeof(line), "%s FAILED %s\r\n", eofMarker,
-                         label);
+        char line[96];
+        int n = 0;
+        /* ⭐ fw#1265 round 7 (#1267 round-6 finding 2): A FAILURE BEFORE THE
+         * HEADER STILL CARRIES THE TAG. The documented recovery for a tagged
+         * host is "discard everything until my own `#SDGET <tag>` header", so a
+         * bare `__END_OF_FILE__ FAILED open` was discarded with the echo and
+         * the host waited for a verdict that had already been sent. When no
+         * header went out, the failure is framed exactly like an empty
+         * success -- `#SDGET <tag>`, the empty block `#10`, then the end line
+         * -- in ONE write, so the host's single parser reads header, zero
+         * block bytes, FAILED <reason>, and no second code path exists.
+         * Accepting an untagged marker instead is not an option: file data
+         * left over from an earlier session can contain that marker. */
+        if (!headerOut) {
+            n = snprintf(line, sizeof(line), "#SDGET %u\r\n#10",
+                         (unsigned) gpSDCardSettings->opGetTag);
+            if ((n < 0) || ((size_t) n >= sizeof(line))) {
+                n = 0;
+            }
         }
+        const size_t off = (size_t) n;
+        int m;
+        if (ok) {
+            m = snprintf(&line[off], sizeof(line) - off, "%s OK %u\r\n",
+                         eofMarker, (unsigned) count);
+        } else {
+            m = snprintf(&line[off], sizeof(line) - off, "%s FAILED %s\r\n",
+                         eofMarker, label);
+        }
+        n = (m > 0) ? (int) off + m : m;
         if ((n > 0) && ((size_t) n < sizeof(line))) {
             endQueued = (sd_get_emit((const uint8_t*) line, (uint32_t) n)
                          == (uint32_t) n);
@@ -1228,6 +1249,13 @@ void sd_card_manager_LatchAsyncError(int32_t scpiError,
     if (((int)target < 0) || ((int)target >= SD_ASYNC_ERR_SLOT_COUNT)) {
         return;   /* unreachable today; costs nothing and cannot corrupt BSS */
     }
+    /* fw#1265 round 7: USB's replyGeneration is now a real CDC session
+     * generation, but the drain asks for 0 on USB (SCPI_DrainDeferredSdError:
+     * the USB slot is not session-keyed, by #914's design). Normalise here so
+     * the USB latch still matches its drain. */
+    if (target == SD_CARD_REPLY_USB) {
+        generation = 0u;
+    }
     taskENTER_CRITICAL();
     gSdAsyncError[target].code = scpiError;
     gSdAsyncError[target].generation = generation;
@@ -1249,13 +1277,6 @@ int32_t sd_card_manager_TakeAsyncError(sd_card_manager_reply_target_t target,
          * the failure is gone and this caller is its successor on the single
          * TCP slot: the error is not ours to report, and it can never match
          * again (the generation only increases), so holding it would just park
-    /* fw#1265 round 7: USB's replyGeneration is now a real CDC session
-     * generation, but the drain asks for 0 on USB (SCPI_DrainDeferredSdError:
-     * the USB slot is not session-keyed, by #914's design). Normalise here so
-     * the USB latch still matches its drain. */
-    if (target == SD_CARD_REPLY_USB) {
-        generation = 0u;
-    }
          * dead state in BSS for the life of the boot. */
         gSdAsyncError[target].code = 0;
         gSdAsyncError[target].generation = 0;
@@ -4143,7 +4164,7 @@ void sd_card_manager_ProcessState() {
                         if (sd_get_is_tagged()) {
                             /* No header went out on this path, so the end
                              * line cannot be inside a block: delivered. */
-                            sd_get_send_end(false, 0u, "open", true);
+                            sd_get_send_end(false, 0u, "open", true, false);
                         } else {
                             sd_card_manager_DataReadyCB(
                                     SD_CARD_MANAGER_MODE_READ,
@@ -4778,7 +4799,7 @@ void sd_card_manager_ProcessState() {
                 /* fw#1265: same end line as every other exit, so a tagged
                  * host never has to distinguish "no data" from "no
                  * terminator". Closes the window too. */
-                sd_get_send_end(false, 0u, "buffer", true);
+                sd_get_send_end(false, 0u, "buffer", true, false);
                 if (gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
                     (void)SYS_FS_FileClose(gSDCardData.fileHandle);
                     gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
@@ -4915,7 +4936,7 @@ void sd_card_manager_ProcessState() {
                      * can be short. */
                     const bool padOk = (!headerSent) ||
                             sd_get_pad_to_declared(declaredLen, 0u);
-                    sd_get_send_end(false, 0u, headerFail, padOk);
+                    sd_get_send_end(false, 0u, headerFail, padOk, headerSent);
                     sd_get_read_teardown(currentTask, originalPriority);
                     break;
                 }
@@ -4968,7 +4989,7 @@ void sd_card_manager_ProcessState() {
                         {
                             const bool padOk = sd_get_pad_to_declared(
                                     declaredLen, sentReal);
-                            sd_get_send_end(false, sentReal, "abort", padOk);
+                            sd_get_send_end(false, sentReal, "abort", padOk, true);
                         }
                     } else if (totalBytesRead == 0u) {
                         sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
@@ -5013,7 +5034,7 @@ void sd_card_manager_ProcessState() {
                         {
                             const bool padOk = sd_get_pad_to_declared(
                                     declaredLen, sentReal);
-                            sd_get_send_end(false, sentReal, "handle", padOk);
+                            sd_get_send_end(false, sentReal, "handle", padOk, true);
                         }
                     }
                     totalBytesRead = 0;
@@ -5058,7 +5079,7 @@ void sd_card_manager_ProcessState() {
                         {
                             const bool padOk = sd_get_pad_to_declared(
                                     declaredLen, sentReal);
-                            sd_get_send_end(false, sentReal, "read", padOk);
+                            sd_get_send_end(false, sentReal, "read", padOk, true);
                         }
                     } else {
                         sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
@@ -5097,7 +5118,7 @@ void sd_card_manager_ProcessState() {
                         {
                             const bool padOk = sd_get_pad_to_declared(
                                     declaredLen, sentReal);
-                            sd_get_send_end(false, sentReal, "short", padOk);
+                            sd_get_send_end(false, sentReal, "short", padOk, true);
                         }
                     } else {
                         /* `sentReal` rather than `totalBytesRead`: the audit's
@@ -5111,7 +5132,7 @@ void sd_card_manager_ProcessState() {
                          * this changes no wire byte; it makes the equality a
                          * property of the expression instead of an argument
                          * about reachability. */
-                        sd_get_send_end(true, sentReal, NULL, true);
+                        sd_get_send_end(true, sentReal, NULL, true, true);
                     }
 
                     // Close file handle
@@ -5192,7 +5213,7 @@ void sd_card_manager_ProcessState() {
                          * so this costs nothing in the normal case. */
                         const bool padOk = sd_get_pad_to_declared(declaredLen,
                                                                   sentReal);
-                        sd_get_send_end(false, sentReal, lenFail, padOk);
+                        sd_get_send_end(false, sentReal, lenFail, padOk, true);
                         break;
                     }
 
