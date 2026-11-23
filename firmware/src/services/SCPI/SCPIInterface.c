@@ -1434,14 +1434,19 @@ static scpi_result_t SCPI_SysLogGet(scpi_t * context) {
      * Read-only: dumping does not consume it. */
     bool complete = true;
     CrashRecordView crash;
-    if (CrashRecord_Read(&crash)) {
+    /* The snapshot read is log-free; the transport WRITE below is not (a stalled
+     * write retries and its error callback LOG_E's), so the write sits inside the
+     * dump bracket with the dump's own writes: those records are not buffered
+     * and cannot overwrite the unread ring entries this dump is about to send. */
+    bool haveCrash = CrashRecord_Read(&crash);
+    bool bracketed = LogMessageDumpBegin();
+    if (haveCrash) {
         char line[128];
         size_t n = CrashRecord_Format(line, sizeof(line), &crash);
         if (context->interface->write(context, line, n) != n) {
             complete = false;
         }
     }
-    bool bracketed = LogMessageDumpBegin();
     if (complete) {
         complete = LogMessageDump(context);
     }
