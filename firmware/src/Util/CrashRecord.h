@@ -97,8 +97,9 @@ void CrashRecord_Seal( void );                  /* check word, then magic LAST *
 
 /* ---- boot / readback side ------------------------------------------------- */
 void CrashCapture_Init( void );                 /* validate; clear ONLY if invalid */
-/* Publish the RUNNING image's identity (its CRC32 fingerprint). Called once from
- * main() before the scheduler starts; until then the identity is 0 (unknown). */
+/* Set the RUNNING image's identity (its CRC32 fingerprint). main() calls it with 0
+ * first (scrub a stale value) and with the fingerprint before the scheduler
+ * starts; in between, and until then, the identity is 0 (unknown). */
 void CrashRecord_SetImageId( uint32_t id );
 bool CrashRecord_Read( CrashRecordView * out ); /* true only for a valid record */
 void CrashRecord_Clear( void );                 /* explicit clear (SYSTem:LOG:CLEar) */

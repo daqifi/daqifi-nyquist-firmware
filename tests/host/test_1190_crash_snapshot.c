@@ -308,6 +308,23 @@ TEST(firmware_seals_the_running_identity_into_word_9)
     }
     free(src);
 }
+/* Bench-found on the first round-3 image: CrashCapture_Init runs in the
+ * application task AFTER main() published the identity, so zeroing it there made
+ * every record read id 00000000 / previous. It must not write the word. */
+TEST(boot_validation_does_not_clobber_the_published_identity)
+{
+    char *src = slurp();
+    char *ci;
+    ASSERT_TRUE(src != NULL);
+    if (!src) return;
+    ci = body(src, "void CrashCapture_Init( void )");
+    ASSERT_TRUE(ci != NULL);
+    if (!ci) return;
+    ASSERT_TRUE(strstr(ci, "sCrashImageId") == NULL);
+    ASSERT_TRUE(strstr(ci, "CrashRecord_SetImageId") == NULL);
+    free(src);
+}
+
 int main(void)
 {
     RUN(whole_record_decodes);
@@ -322,6 +339,7 @@ int main(void)
     RUN(mutant_that_ignores_identity_turns_the_mismatch_row_red);
     RUN(worst_case_line_fits_the_scpi_buffer);
     RUN(firmware_seals_the_running_identity_into_word_9);
+    RUN(boot_validation_does_not_clobber_the_published_identity);
     RUN(firmware_reader_and_clear_share_a_critical_section);
     return TEST_SUMMARY();
 }

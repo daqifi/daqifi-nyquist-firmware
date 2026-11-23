@@ -124,11 +124,14 @@ static volatile uint32_t sCrashRecord[CRASH_RECORD_WORDS]
 
 /* Identity of the RUNNING image, stored into every record by Seal() so a record
  * that outlives a firmware update (the bootloader never touches the block) is
- * recognisable as written by a different image (#1190 r3). Plain BSS, published
- * by CrashRecord_SetImageId() from main() once the CRC32 fingerprint is computed;
- * CrashCapture_Init() zeroes it first, because per-symbol .bss is not guaranteed
- * zeroed across a reset (#409) and a stale value from the previous boot must not
- * be stamped onto this image's record. 0 = not yet known. */
+ * recognisable as written by a different image (#1190 r3). Plain BSS, written
+ * ONLY through CrashRecord_SetImageId(): main() scrubs it to 0 as its first
+ * statement (per-symbol .bss is not guaranteed zeroed across a reset, #409, and a
+ * value left by the previous boot's image must not be stamped onto this one's
+ * record), then publishes the CRC32 fingerprint once it is computed. 0 = not yet
+ * known. CrashCapture_Init() must NOT touch it: it runs in the application task,
+ * AFTER main() has published (bench-found on the first r3 image: zeroing it there
+ * made every record read as id 00000000). */
 static volatile uint32_t sCrashImageId = 0U;
 
 /* sizeof() cannot see persistent/coherent: tools/lint/force_bootloader_cacheline.py
@@ -272,7 +275,6 @@ void CrashRecord_Clear( void )
 void CrashCapture_Init( void )
 {
     uint32_t snap[CRASH_RECORD_WORDS];
-    sCrashImageId = 0U;
     CrashRecord_Copy( snap );
     if ( !CrashRecord_SnapshotValid( snap ) )
     {
