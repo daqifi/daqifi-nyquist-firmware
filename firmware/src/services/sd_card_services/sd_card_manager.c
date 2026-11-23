@@ -943,7 +943,7 @@ static bool sd_get_send_header(uint32_t length) {
          * the host has seen some of a block prefix and is owed a terminator it
          * can find, and over-padding a prefix it never parsed is harmless
          * where under-padding a block it did parse desyncs it. */
-        return (sd_get_emit((const uint8_t*) hdr, (uint32_t) n) > 0u);
+        return (sd_get_emit((const uint8_t*) hdr, (uint32_t) n) != 0u);
     }
     return false;
 }
@@ -1312,6 +1312,18 @@ static int32_t SdAsyncErrorForFsError(SYS_FS_ERROR fsErr) {
     }
 }
 
+/* The weak default's answer lives in an EXTERNAL-LINKAGE volatile (a static one is
+ * still folded to 0 by cppcheck 2.13) so it is NOT a compile-time
+ * constant. This translation unit contains the default, so a static analyser
+ * (cppcheck, which cannot know app_freertos.c overrides it at link time) folds
+ * the call to 0 and reports sd_get_emit's callers' `== n`, `endQueued` and
+ * `!endQueued` tests as always false/true (the 3 knownConditionTrueFalse
+ * findings of round 7). They were not dead code -- the strong definition in
+ * app_freertos.c returns what the transport really took -- so the fix is to
+ * stop the default pretending to be one, not to suppress the finding. */
+extern volatile size_t gNoTransportAccepted;
+volatile size_t gNoTransportAccepted = 0u;
+
 size_t __attribute__((weak)) sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff, size_t dataLen) {
     /* No transport in this build: nothing was accepted. Returning dataLen
      * would tell a tagged GET its bytes had been delivered to a host that
@@ -1319,7 +1331,7 @@ size_t __attribute__((weak)) sd_card_manager_DataReadyCB(sd_card_manager_mode_t 
     (void) mode;
     (void) pDataBuff;
     (void) dataLen;
-    return 0u;
+    return gNoTransportAccepted;
 }
 
 static int SDCardWrite() {
@@ -4769,10 +4781,6 @@ void sd_card_manager_ProcessState() {
              * header block for why the order is load-bearing. */
             uint32_t declaredLen = 0u;
             uint32_t sentReal = 0u;
-            /* fw#1265 / #1267 round-2 audit defect 5: did a block header reach
-             * the transport? The pre-loop failure exit reads this to decide
-             * whether the host is owed the declared length. */
-            bool headerSent = false;
             const char* lenFail = NULL;
 
             // eofMarker / transferErrorMarker: file-scope now (#914), so the
@@ -4845,6 +4853,12 @@ void sd_card_manager_ProcessState() {
                 const int32_t fileSize =
                         SYS_FS_FileSize(gSDCardData.fileHandle);
                 const char* headerFail = NULL;
+                /* fw#1265 / #1267 round-2 audit defect 5: did a block header
+                 * reach the transport? The pre-loop failure exit reads this to
+                 * decide whether the host is owed the declared length. Scoped
+                 * to this block (cppcheck variableScope, round 7): nothing
+                 * after the pre-loop exit reads it. */
+                bool headerSent = false;
                 if (fileSize < 0) {
                     headerFail = "size";
                     LOG_E("[SD] GET tag %u: file size unavailable",
