@@ -92,6 +92,72 @@ def ws(s):
     return re.sub(r"\s+", "", s)
 
 
+def _match_close(s, open_idx, o, c):
+    depth = 0
+    for k in range(open_idx, len(s)):
+        depth += (s[k] == o) - (s[k] == c)
+        if depth == 0:
+            return k
+    raise AssertionError("unbalanced %s%s" % (o, c))
+
+
+def _loops(region, line_of):
+    """Yield (offset, body) for every while/for loop in a stripped region."""
+    for m in re.finditer(r"\b(while|for)\s*\(", region):
+        pe = _match_close(region, m.end() - 1, "(", ")")
+        rest = region[pe + 1:].lstrip()
+        if rest.startswith(";"):
+            continue  # the tail of a do { } while (x);
+        if not rest.startswith("{"):
+            raise AssertionError("loop at line %d has no braced body"
+                                 % line_of(m.start()))
+        bs = region.index("{", pe)
+        yield m.start(), region[bs:_match_close(region, bs, "{", "}") + 1]
+
+
+def check_loops(s):
+    """Round 10 (#1267 round-9 findings 1/2: pin the INVARIANT, not the site).
+
+    EVERY loop on the SD task's tagged-GET path services the windows: every
+    loop inside any sd_get_* function, and every loop in the READ_FROM_FILE
+    state. Round 9 added the call to the READ loop and missed the pad loop, a
+    twin that runs just as long. sd_wait_usb_drain is the one other loop the
+    path calls, and it is a fixed 50 ms bound (pinned here so that stays true).
+    """
+    found = {}
+    for m in re.finditer(r"\bstatic\s+[\w\s\*]*?\b(sd_get_\w+)\s*\([^)]*\)\s*\{", s):
+        end = _match_close(s, m.end() - 1, "{", "}")
+        found[m.group(1)] = (m.end(), s[m.end():end])
+    if "sd_get_pad_to_declared" not in found:
+        raise AssertionError("sd_get_pad_to_declared not found")
+    n_loops = 0
+    for name, (off, b) in found.items():
+        for pos, lb in _loops(b, lambda p: s.count("\n", 0, off + p) + 1):
+            n_loops += 1
+            if "ScpiSdWindow_Service(" not in lb:
+                raise AssertionError(
+                    "%s: the loop at line %d does not call ScpiSdWindow_Service():"
+                    " it occupies the SD task and starves every other "
+                    "transport's window" % (name, s.count("\n", 0, off + pos) + 1))
+    m = re.search(r"case\s+SD_CARD_MANAGER_PROCESS_STATE_READ_FROM_FILE\s*:", s)
+    nxt = re.search(r"case\s+SD_CARD_MANAGER_PROCESS_STATE_\w+\s*:", s[m.end():])
+    r0, r1 = m.end(), m.end() + nxt.start()
+    rl = list(_loops(s[r0:r1], lambda p: s.count("\n", 0, r0 + p) + 1))
+    if not rl:
+        raise AssertionError("READ_FROM_FILE: no loop found (pin out of date)")
+    for pos, lb in rl:
+        n_loops += 1
+        if "ScpiSdWindow_Service(" not in lb:
+            raise AssertionError("READ_FROM_FILE: the loop at line %d does not "
+                                 "call ScpiSdWindow_Service()"
+                                 % (s.count("\n", 0, r0 + pos) + 1))
+    if n_loops < 4:  # pad + open_window + hold_window + the READ loop
+        raise AssertionError("expected >= 4 GET-path loops, found %d" % n_loops)
+    if "pdMS_TO_TICKS(50)" not in ws(body(s, "sd_wait_usb_drain")):
+        raise AssertionError("sd_wait_usb_drain is no longer a fixed 50 ms bound; "
+                             "it must then service the windows too")
+
+
 def check_claim(s):
     """Round 9: every sd_get_send_end( call is made holding gSDOpMutex."""
     m = re.search(r"case\s+SD_CARD_MANAGER_PROCESS_STATE_READ_FROM_FILE\s*:", s)
@@ -140,6 +206,7 @@ def check_claim(s):
 def check(text):
     s = strip(text)
     check_claim(s)
+    check_loops(s)
     send = body(s, "sd_get_send_end")
     w = ws(send)
     hold = re.findall(r"if\(!headerOut\)\{sd_get_hold_window_for_verdict\(\);\}", w)
@@ -194,6 +261,13 @@ def self_test():
             "                    /* \u2b50 fw#1265 round 9 (#1267 round-8 finding 2)", 1)
         .replace("                    ScpiSdWindow_Service();\n                    if (lenFail",
                  "                    if (lenFail", 1),
+        "pad loop service dropped": lambda t: t.replace(
+            "            ScpiSdWindow_NoteProgress(sd_get_window_transport());\n"
+            "            ScpiSdWindow_Service();\n        }\n        if (took < chunk) {",
+            "        }\n        if (took < chunk) {", 1),
+        "hold loop service dropped": lambda t: t.replace(
+            "        ScpiSdWindow_Service();\n        if (ScpiSdWindow_TryOpen(transport, generation)) {\n            return;",
+            "        if (ScpiSdWindow_TryOpen(transport, generation)) {\n            return;", 1),
         "hold releases": lambda t: t.replace(
             "ScpiSdWindow_TryOpen(transport, generation)) {\n            return;",
             "ScpiSdWindow_TryOpen(transport, generation)) {\n"

@@ -793,6 +793,22 @@ static bool sd_get_pad_to_declared(uint32_t declared, uint32_t sent) {
                 ? owed : (uint32_t) sizeof(sdGetPadByte);
         const uint32_t took = sd_get_emit(sdGetPadByte, chunk);
         sent += took;
+        if (took >= chunk) {
+            /* ⭐ fw#1265 round 10 (#1267 round-9 finding 2): THIS LOOP IS THE
+             * SD TASK TOO, AND IT CAN RUN FOR HOURS AGAINST A SLOW BUT STEADY
+             * READER (there is deliberately no wall-clock budget, see above).
+             * Round 9 serviced the windows from the READ loop and missed this
+             * twin: a window another transport had handed over stayed open,
+             * and a USB session held out of PROCESS stayed unadmitted, for the
+             * whole pad. Same cadence as the READ loop (one call per chunk
+             * taken), same order: stamp progress FIRST so Service cannot
+             * force-close the window of the transfer that is calling it.
+             * The invariant, not the site: every long-running loop in the SD
+             * task's GET path services the windows -- pinned for ALL of them
+             * by check_1267_verdict_window.py. */
+            ScpiSdWindow_NoteProgress(sd_get_window_transport());
+            ScpiSdWindow_Service();
+        }
         if (took < chunk) {
             /* ⭐ THE ONE STOP CONDITION: THE READER'S TRANSPORT STOPPED
              * ACCEPTING. The shim is all-or-nothing after its own ~10 s
