@@ -1441,7 +1441,7 @@ static scpi_result_t SCPI_SysLogGet(scpi_t * context) {
     bool haveCrash = CrashRecord_Read(&crash);
     bool bracketed = LogMessageDumpBegin();
     if (haveCrash) {
-        char line[128];
+        char line[CRASH_LINE_MAX];   /* worst-case line is 146 bytes (#1190 r3) */
         size_t n = CrashRecord_Format(line, sizeof(line), &crash);
         if (context->interface->write(context, line, n) != n) {
             complete = false;
@@ -9918,7 +9918,10 @@ static uint32_t SCPI_FirmwareImageCrc32(void)
 
 void SCPI_PrecomputeFirmwareImageCrc32(void)
 {
-    (void)SCPI_FirmwareImageCrc32();
+    /* #1190 r3: the same fingerprint identifies the image a crash record was
+     * written by, so a record that outlives a firmware update reads as
+     * "previous". Published here, before the scheduler starts. */
+    CrashRecord_SetImageId(SCPI_FirmwareImageCrc32());
 }
 
 static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
