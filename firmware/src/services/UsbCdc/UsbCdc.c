@@ -352,7 +352,9 @@ USB_DEVICE_CDC_EVENT_RESPONSE UsbCdc_CDCEventHandler
                         admit = false;
                     }
                 }
-                if (admit) {
+                /* A repeat DTR=1 inside a held session (a host that sets DTR
+                 * and RTS in separate requests) must not bypass the hold. */
+                if (admit && !gUsbAdmissionHeld) {
                     gRunTimeUsbSttings.state = USB_CDC_STATE_PROCESS;
                 }
                 gRunTimeUsbSttings.isCdcHostConnected=1;
@@ -1739,6 +1741,10 @@ uint32_t UsbCdc_GetCircularBufferAvailable(void) {
  * since gone: the condition it records is resolved either way. */
 void UsbCdc_TryAdmitHeldSession(void) {
     if (!gUsbAdmissionHeld) {
+        return;
+    }
+    if (gRunTimeUsbSttings.state == USB_CDC_STATE_PROCESS) {
+        gUsbAdmissionHeld = false;      /* already admitted: never wipe a live ring */
         return;
     }
     if (xSemaphoreTake(gRunTimeUsbSttings.wMutex, 0) != pdTRUE) {

@@ -766,7 +766,7 @@ bool sd_card_manager_WriteIsStreamingLog(void);
      * @param scpiError   A negative libscpi error code (SD_ASYNC_ERR_*).
      * @param target      Which transport's reply this failure belongs to.
      * @param generation  The TCP connection generation the operation was armed
-     *                    for (settings->replyGeneration, #599); 0 for USB.
+     *                    for (settings->replyGeneration, #599); the CDC session generation for USB.
      */
     void sd_card_manager_LatchAsyncError(int32_t scpiError,
                                          sd_card_manager_reply_target_t target,
