@@ -9078,7 +9078,10 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize,
      * paused by that window. So refuse while any window is open -- fail-fast,
      * no wait. Sound here, after TryLockBuffer: a window opens only inside
      * the SD READ state, which holds gSDOpMutex -- the lock just taken --
-     * from before sd_get_open_window until its teardown, so none can open
+     * from before sd_get_open_window until its teardown, or inside
+     * sd_get_send_end_claimed (the OPEN_FILE failure verdict, which takes
+     * the same mutex around its window open and queue; fw#1265 round 9,
+     * pinned by tests/host/check_1267_verdict_window.py), so none can open
      * between this test and the swap. The stream-start callers are already
      * refused by Streaming_BeginSessionStart on the same predicate; this is
      * what covers SYST:MEM:AUTO and SYST:MEM:RESet, whose claim does not

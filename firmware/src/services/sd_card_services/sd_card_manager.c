@@ -1233,6 +1233,40 @@ static void sd_get_send_end(bool ok, uint32_t count, const char* reason,
     }
 }
 
+/* ⭐ fw#1265 round 9 (#1267 round-8 finding 1): THE PRE-HEADER OPEN FAILURE
+ * RUNS ONLY THE VERDICT, SO IT MUST TAKE THE CLAIM ITSELF.
+ *
+ * Every other sd_get_send_end caller is inside the READ_FROM_FILE state, which
+ * takes gSDOpMutex before sd_get_open_window and releases it in teardown --
+ * that is the fact PrepareStreamingBuffers relies on when it says a window
+ * opens only under the mutex it try-locked (sd_card_manager_TryLockBuffer), so
+ * its ScpiSdWindow_AnyOpen() test cannot race an open. The open FAILURE in
+ * OPEN_FILE never reaches READ_FROM_FILE: it opened a window
+ * (sd_get_hold_window_for_verdict) and queued the framed verdict with NO
+ * mutex held, so a SYST:MEM:AUTO on the other transport could try-lock, see no
+ * window yet, and reset the ring between the open and the queue -- deleting the
+ * verdict the window exists to protect.
+ *
+ * The take is BLOCKING and costs nothing it should not: this is the SD task,
+ * the only task that ever holds gSDOpMutex for a transfer, and the only other
+ * holder is PrepareStreamingBuffers' try-lock, which never waits for this
+ * task. The mutex is released as soon as the verdict is queued and the window
+ * handed to ReleaseWhenDrained: from then on the OPEN WINDOW is what refuses
+ * a re-partition, exactly as for a completed transfer.
+ *
+ * tests/host/check_1267_verdict_window.py pins that every sd_get_send_end
+ * caller is either inside READ_FROM_FILE or inside this function. */
+static void sd_get_send_end_claimed(bool ok, uint32_t count, const char* reason,
+                                    bool blockDelivered, bool headerOut) {
+    if (gSDOpMutex) {
+        SD_TakeMutexDebug(gSDOpMutex, "get_open_failure_verdict");
+    }
+    sd_get_send_end(ok, count, reason, blockDelivered, headerOut);
+    if (gSDOpMutex) {
+        xSemaphoreGive(gSDOpMutex);
+    }
+}
+
 /* #914: per-transport, one-deep latch for a failure the SD TASK detects AFTER
  * the SCPI handler that armed the operation has already returned SCPI_RES_OK
  * (e.g. a GET whose file will not open). The SD task owns no scpi_t and must
@@ -4226,7 +4260,7 @@ void sd_card_manager_ProcessState() {
                         if (sd_get_is_tagged()) {
                             /* No header went out on this path, so the end
                              * line cannot be inside a block: delivered. */
-                            sd_get_send_end(false, 0u, "open", true, false);
+                            sd_get_send_end_claimed(false, 0u, "open", true, false);
                         } else {
                             sd_card_manager_DataReadyCB(
                                     SD_CARD_MANAGER_MODE_READ,

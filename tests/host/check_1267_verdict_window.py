@@ -21,6 +21,14 @@ the one function, and checks:
      never releases one (no ReleaseWhenDrained / HoldUntilSessionEnd), so the
      single release site stays sd_get_send_end.
 
+  4. (round 9, #1267 round-8 finding 1) EVERY sd_get_send_end( caller holds
+     gSDOpMutex: it is either inside the READ_FROM_FILE state after that
+     state's mutex take, or inside sd_get_send_end_claimed, which takes the
+     mutex BEFORE the call and gives it AFTER. PrepareStreamingBuffers'
+     "a window opens only under the mutex I try-locked" claim is exactly this
+     property; the OPEN_FILE failure used to open a window and queue the
+     verdict with no mutex held, so a re-partition could delete the verdict.
+
 A text pin over one file (the #1033 class): it catches a deleted or moved
 call, not determined obfuscation. `--self-test` proves each check can fail.
 
@@ -76,8 +84,48 @@ def ws(s):
     return re.sub(r"\s+", "", s)
 
 
+def check_claim(s):
+    """Round 9: every sd_get_send_end( call is made holding gSDOpMutex."""
+    m = re.search(r"case\s+SD_CARD_MANAGER_PROCESS_STATE_READ_FROM_FILE\s*:", s)
+    if not m:
+        raise AssertionError("READ_FROM_FILE case not found")
+    nxt = re.search(r"case\s+SD_CARD_MANAGER_PROCESS_STATE_\w+\s*:", s[m.end():])
+    r0, r1 = m.end(), m.end() + (nxt.start() if nxt else len(s) - m.end())
+    cm = re.search(r"\bstatic\s+void\s+sd_get_send_end_claimed\s*\([^)]*\)\s*\{", s)
+    if not cm:
+        raise AssertionError("sd_get_send_end_claimed not found")
+    cb = ws(body(s, "sd_get_send_end_claimed"))
+    c0 = cm.end()
+    c1 = c0 + len(body(s, "sd_get_send_end_claimed"))
+    take = cb.find("SD_TakeMutexDebug(gSDOpMutex")
+    call = cb.find("sd_get_send_end(")
+    give = cb.find("xSemaphoreGive(gSDOpMutex")
+    if not (0 <= take < call < give):
+        raise AssertionError("claimed: must take gSDOpMutex, THEN call "
+                             "sd_get_send_end, THEN give it")
+    calls = [x.start() for x in re.finditer(r"(?<![\w])sd_get_send_end\s*\(", s)
+             if not s[:x.start()].rstrip().endswith("void")]
+    if not calls:
+        raise AssertionError("no sd_get_send_end callers found")
+    inread = [c for c in calls if r0 <= c < r1]
+    for c in calls:
+        if c in inread or c0 <= c < c1:
+            continue
+        line = s.count("\n", 0, c) + 1
+        raise AssertionError("sd_get_send_end called at line %d outside "
+                             "READ_FROM_FILE and sd_get_send_end_claimed: no "
+                             "gSDOpMutex held, a re-partition can delete the "
+                             "verdict" % line)
+    if inread:
+        first = s.find("SD_TakeMutexDebug(gSDOpMutex", r0, r1)
+        if first < 0 or first > min(inread):
+            raise AssertionError("READ_FROM_FILE must take gSDOpMutex before "
+                                 "its first sd_get_send_end call")
+
+
 def check(text):
     s = strip(text)
+    check_claim(s)
     send = body(s, "sd_get_send_end")
     w = ws(send)
     hold = re.findall(r"if\(!headerOut\)\{sd_get_hold_window_for_verdict\(\);\}", w)
@@ -103,7 +151,7 @@ def self_test():
     muts = {
         "call deleted": lambda t: t.replace(
             "        sd_get_hold_window_for_verdict();\n", "", 1)
-        .replace("        sd_get_hold_window_for_verdict();\r\n", "", 1),
+        .replace("        sd_get_hold_window_for_verdict();\n", "", 1),
         "call moved after the verdict": lambda t: t.replace(
             "    if (!headerOut) {\n        sd_get_hold_window_for_verdict();\n    }\n", "", 1)
         .replace("    if (!endQueued) {\n        if (transport == SCPI_SD_WINDOW_TCP) {",
@@ -111,6 +159,17 @@ def self_test():
                  "    if (!endQueued) {\n        if (transport == SCPI_SD_WINDOW_TCP) {", 1),
         "guard dropped": lambda t: t.replace("if (!headerOut) {\n        sd_get_hold",
                                              "{\n        sd_get_hold", 1),
+        "open failure unclaimed": lambda t: t.replace(
+            'sd_get_send_end_claimed(false, 0u, "open"',
+            'sd_get_send_end(false, 0u, "open"', 1),
+        "claimed take dropped": lambda t: t.replace(
+            'SD_TakeMutexDebug(gSDOpMutex, "get_open_failure_verdict");',
+            '(void)0;', 1),
+        "claimed gives before the call": lambda t: t.replace(
+            "    sd_get_send_end(ok, count, reason, blockDelivered, headerOut);\n"
+            "    if (gSDOpMutex) {\n        xSemaphoreGive(gSDOpMutex);\n    }",
+            "    if (gSDOpMutex) {\n        xSemaphoreGive(gSDOpMutex);\n    }\n"
+            "    sd_get_send_end(ok, count, reason, blockDelivered, headerOut);", 1),
         "hold releases": lambda t: t.replace(
             "ScpiSdWindow_TryOpen(transport, generation)) {\n            return;",
             "ScpiSdWindow_TryOpen(transport, generation)) {\n"
