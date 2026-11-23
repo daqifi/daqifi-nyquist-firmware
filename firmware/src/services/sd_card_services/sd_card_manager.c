@@ -948,6 +948,39 @@ static bool sd_get_send_header(uint32_t length) {
     return false;
 }
 
+/* fw#1265 round 8: make sure a data window is open for THIS session before a
+ * verdict that no window protects is queued. Bounded by the same idle wait as
+ * sd_get_open_window; on timeout the verdict is queued anyway (a late verdict
+ * beats none) and the loss is logged. It OPENS a window and never releases
+ * one: the single release site stays sd_get_send_end. */
+static void sd_get_hold_window_for_verdict(void) {
+    const ScpiSdWindowTransport_t transport = sd_get_window_transport();
+    const uint32_t generation = gpSDCardSettings->replyGeneration;
+    const TickType_t start = xTaskGetTickCount();
+
+    for (;;) {
+        /* Already ours (the "stream" refusal opens it before it fails, and an
+         * earlier transfer on this session may have handed one over): it holds
+         * this partition until its ring drains, and the verdict queued next
+         * goes into that ring. */
+        if (ScpiSdWindow_IsOpenFor(transport, generation)) {
+            return;
+        }
+        ScpiSdWindow_Service();
+        if (ScpiSdWindow_TryOpen(transport, generation)) {
+            return;
+        }
+        if ((TickType_t)(xTaskGetTickCount() - start) >=
+                pdMS_TO_TICKS(SCPI_SD_WINDOW_IDLE_WAIT_MS)) {
+            /* log_budget: max=6 */
+            LOG_E("[SD] GET: no data window for the pre-header verdict - "
+                  "queueing it unprotected");
+            return;
+        }
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+}
+
 /* The end line, and the ONE place a transfer gives up its data window.
  *
  * Here rather than at each teardown is deliberate: the READ state has several
@@ -1035,6 +1068,23 @@ static void sd_get_send_end(bool ok, uint32_t count, const char* reason,
      * counts. Anything less is handled exactly like a short block below: the
      * block may be whole, but the host is still waiting for a line that will
      * never complete, so nothing else may follow it on that session. */
+    /* ⭐ fw#1265 round 8 (#1267 round-7 finding 2): EVERY TAGGED OUTCOME HOLDS
+     * THE WINDOW UNTIL ITS REPLY DRAINS -- the pre-header failures too.
+     *
+     * Open, buffer, size and busy fail before sd_get_open_window ever opened a
+     * window (or after it refused to), so ReleaseWhenDrained below was a no-op
+     * for them and the framed verdict sat in the write ring unprotected. A
+     * SYST:MEM:AUTO processed before WifiTask transmitted it took the
+     * non-idle partition path, which resets the TCP ring and DELETED the
+     * verdict: the requester got neither a header nor a failure. This is the
+     * one choke point every tagged outcome passes through, so the window is
+     * made sure of HERE, before the verdict is queued: afterwards
+     * ReleaseWhenDrained hands it over exactly as it does for a completed
+     * transfer, and no re-partition can be fed until the ring is empty. */
+    if (!headerOut) {
+        sd_get_hold_window_for_verdict();
+    }
+
     const char* const label = (reason != NULL) ? reason
                                                : (ok ? "ok" : "error");
     bool endQueued = false;
