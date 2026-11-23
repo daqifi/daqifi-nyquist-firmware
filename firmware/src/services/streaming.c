@@ -405,6 +405,22 @@ static volatile uint32_t gDryTicks = 0;
  * flag would have silently removed (Qodo #746). */
 static volatile bool gPrimingPending = false;
 
+/* #1319: latched TRUE at Streaming_Start when at least one ENABLED USER channel
+ * takes its value from the shared MODULE7 scan (same count as gPrimingPending),
+ * and FALSE when the scan carries only OBDiag monitoring channels. Unlike
+ * gPrimingPending it is NOT cleared on the first scan: it answers "does a
+ * scan that fails to complete freeze USER data?" for the whole session.
+ *
+ * Gates only the STEADY stale counter (the one the session-end summary books
+ * as sample loss). The raw ScanStaleDropped still counts every tick whose scan
+ * did not complete, because that is a true statement about the scan. But in a
+ * T1-only OBDiag=1 session the user's channels are read directly via ARDY, so
+ * nothing the user streams is stale; booking those ticks as lost samples made
+ * the summary read 142% (E: 5xT1, benchmark 1, 30 kHz, ScanStaleDropped =
+ * TimerISRCalls - 1 with 51k samples streamed). Written by Streaming_Start
+ * while the timer is stopped; read by the timer ISR (byte, atomic). */
+static volatile bool gScanFeedsUser = false;
+
 /* #691: was SD logging expected when this session STARTED?
  *
  * The skipped-byte accounting below used to read the SD manager's LIVE mode.
@@ -1820,7 +1836,10 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
                 /* #1018: gate lives INSIDE the stale branch, not beside it —
                  * staleness is ~0 with the cap in place, so the extra tick
                  * read costs nothing on the normal (non-frozen) path. */
-                if (Streaming_PastStartupGraceFromISR()) {
+                /* #1319: ...and only when a USER channel rides the scan; a
+                 * monitoring-only scan (T1-only, OBDiag=1) freezes no streamed
+                 * sample, so it is not loss. Raw counter above is unchanged. */
+                if (gScanFeedsUser && Streaming_PastStartupGraceFromISR()) {
                     gScanStaleDroppedSteady++;
                 }
             }
@@ -2364,6 +2383,7 @@ static void Streaming_Start(void) {
                  * excluded, no registers written (pure count). */
                 gPrimingPending =
                         (MC12b_ComputeScanList(true, false, NULL, NULL) > 0u);
+                gScanFeedsUser = gPrimingPending;   /* #1319 */
                 /* #691: decide the SD expectation ONCE, here, from what this
                  * session actually asked for.
                  *
@@ -2697,6 +2717,15 @@ static void Streaming_Stop(void) {
         TimerApi_Stop(gpStreamingConfig->TimerIndex);
         TimerApi_InterruptDisable(gpStreamingConfig->TimerIndex);
 
+        /* #1301: latch "no scan ever completed this session" BEFORE the idle
+         * scan list is restored -- Streaming_NoteEosFired() is called from the
+         * ADC EOS ISR for idle/monitoring scans too, so a later EOS would bump
+         * gScanEosSeq and hide the condition. Dry ticks only accrue while
+         * gPrimingPending (an enabled user T2 channel), and gScanEosSeq == 1 is
+         * the EOS ISR's own "no scan completed" signal, so T1-only sessions and
+         * a normal priming window (EOS arrives within a few ticks) never set it. */
+        const bool noScanEver = (gDryTicks > 0u) && (gScanEosSeq == 1u);
+
         // Revert ADC to software triggering so non-streaming reads
         // (ADC_Tasks polling) still work.
         MC12b_ConfigureHardwareTrigger(false, false);
@@ -2752,6 +2781,22 @@ static void Streaming_Stop(void) {
         taskENTER_CRITICAL();
         gQuesBits &= (QUES_BIT_TRANSPORT_DOWN | QUES_BIT_SPI_BUS_FAULT);
         taskEXIT_CRITICAL();
+
+        /* #1301: a session whose shared scan never completed streamed nothing
+         * and booked every tick as a dry tick, which #745 deliberately keeps
+         * out of the loss counters -- so every loss figure read 0%. Report it
+         * as total loss in the window figure, set BEFORE the session snapshot
+         * so the SCPI read and the deferred summary both see it. The queue-only
+         * fields (SampleLossPercent/PPM) and the TimerISRCalls invariant are
+         * unchanged. */
+        if (noScanEver) {
+            uint32_t dryTicks = gDryTicks;
+            taskENTER_CRITICAL();
+            gStreamStats.windowLossPercent = 100u;
+            taskEXIT_CRITICAL();
+            LOG_E("Stream end: no scan completed; %u ticks emitted nothing",
+                  (unsigned)dryTicks);
+        }
 
         /* #982: do NOT decide hadDrops or print here. The stop-time SD
          * teardown (SD_CARD_MANAGER_PROCESS_STATE_UNMOUNT_DISK,
@@ -3023,13 +3068,32 @@ static void Streaming_EmitSessionSummaryImpl(bool recordDying) {
         // loss total, unlike eosOverruns (task-behind-but-fresh, excluded).
         // #1018: the Steady subset, matching hadDrops above — see that
         // term's comment.
-        uint32_t totalSampleLoss = snap.queueDroppedSamplesSteady +
+        /* #1319: queueDropped and scanStale are both counted in AIN TICKS,
+         * the unit of totalAttempted (streamed + queueDropped ==
+         * TimerISRCalls), and they can OVERLAP: a stale tick either streamed
+         * frozen data or was also queue-dropped, and which is not recorded.
+         * Their raw sum could therefore exceed the ticks (E: 127444/89494 =
+         * 142%). Cap only that pair at the ticks -- a cap rather than a
+         * subtraction because the overlap is unknown.
+         *
+         * The encoder and DIO terms are NOT in tick units (the encoder counts
+         * one per popped queue entry, so an evicted AIN+DIO row is 2), and
+         * they do not overlap the pair, so they are added after the cap and
+         * never reduced by it: clamping the whole sum would hide real
+         * encoder losses. In that (encoder-dominated) case the percentage can
+         * still exceed 100%, which is a unit mix this fix does not change. */
+        uint64_t tickLoss = (uint64_t)snap.queueDroppedSamplesSteady +
+                            snap.scanStaleDroppedSteady;
+        if (totalAttempted > 0 && tickLoss > totalAttempted) {
+            tickLoss = totalAttempted;
+        }
+        uint32_t totalSampleLoss = (uint32_t)tickLoss +
                                   snap.encoderDroppedSamplesSteady +
-                                  snap.dioDroppedSamplesSteady +
-                                  snap.scanStaleDroppedSteady;
+                                  snap.dioDroppedSamplesSteady;
+        /* #1301: nothing attempted but stale ticks booked is total loss, not 0%. */
         uint32_t lossPercent = totalAttempted > 0
             ? (uint32_t)((totalSampleLoss * 100ULL) / totalAttempted)
-            : 0;
+            : (totalSampleLoss > 0 ? 100u : 0u);
         // #982: by construction this runs after the stop-time SD teardown
         // has had its chance to call Streaming_ReportSdDiscard(), so
         // sdDroppedBytesSteady here already reflects any stop-time drain
@@ -3177,6 +3241,7 @@ void Streaming_Init(tStreamingConfig* pStreamingConfigInit,
     gClipLiveMask = 0;
     gDryTicks = 0;
     gPrimingPending = false;
+    gScanFeedsUser = false;  // #1319
     gScanEosSeq = 1u;       // #557/#563: prime seq one ahead of "seen" so the
     gScanEosSeqSeen = 0u;   // first post-start tick (no scan completed yet) reads fresh
     memset(gFlowWindow, 0, sizeof(gFlowWindow));

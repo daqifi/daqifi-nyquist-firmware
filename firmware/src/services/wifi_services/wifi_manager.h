@@ -520,6 +520,19 @@ extern "C" {
     uint32_t wifi_manager_GetListenSocketUptimeSec(void);
 
     /**
+     * @brief #1324: record an M2M_WIFI_RESP_IP_CONFLICT event from the WINC.
+     * Emits one LOG_E and increments the counter.  Called from the WINC event
+     * callback (wdrv_winc.c), i.e. on app_WifiTask.
+     */
+    void wifi_manager_NoteIpConflict(void);
+
+    /** @brief #1324: IP-conflict events since boot or the last STATS:CLEar. */
+    uint32_t wifi_manager_GetIpConflicts(void);
+
+    /** @brief #1324: zero the IP-conflict counter (STATS:CLEar). */
+    void wifi_manager_ClearIpConflicts(void);
+
+    /**
      * @brief Formats a UDP announcement packet with the provided WiFi settings.
      * 
      * This callback function prepares a UDP packet containing relevant network information, such as IP address,

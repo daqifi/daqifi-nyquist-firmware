@@ -2035,6 +2035,15 @@ bool sd_card_manager_Init(sd_card_manager_settings_t *pSettings) {
     return true;
 }
 
+/* #1187: the extension is taken from the LEAF only. A dot in a subdirectory
+ * name ("sub.dir/exp") is not an extension; both extractBaseFilename and
+ * generateFilename must derive it here so they cannot disagree. */
+static const char* sd_leafExtension(const char* path) {
+    const char* slash = strrchr(path, '/');
+    const char* leaf = (slash != NULL) ? slash + 1 : path;
+    return strrchr(leaf, '.');
+}
+
 /**
  * @brief Extracts base filename (without extension) from given filename.
  *
@@ -2046,10 +2055,10 @@ static void extractBaseFilename(const char* filename) {
     strncpy(gSDCardData.baseFilename, filename, sizeof(gSDCardData.baseFilename) - 1);
     gSDCardData.baseFilename[sizeof(gSDCardData.baseFilename) - 1] = '\0';
 
-    // Find last dot for extension
-    char* ext = strrchr(gSDCardData.baseFilename, '.');
+    // Find last dot of the leaf for the extension
+    const char* ext = sd_leafExtension(gSDCardData.baseFilename);
     if (ext != NULL) {
-        *ext = '\0';  // Remove extension from base filename
+        gSDCardData.baseFilename[ext - gSDCardData.baseFilename] = '\0';  // Remove extension from base filename
     }
 }
 
@@ -2179,7 +2188,7 @@ static void generateFilename(char* outPath, size_t maxLen, uint32_t counter,
                              const char* directory, const char* baseFilename,
                              const char* originalFilename) {
     // Extract extension (includes leading dot if present)
-    const char* ext = strrchr(originalFilename, '.');
+    const char* ext = sd_leafExtension(originalFilename);
     const char* useExt = (ext != NULL) ? ext : "";
 
     // Pre-validate length to avoid truncation
@@ -5484,6 +5493,44 @@ void sd_card_manager_SetWriteBuffer(uint8_t* buf, uint32_t size) {
     xSemaphoreGive(gSDCardData.wMutex);
 }
 
+/* #1279 r4: SD side of the coherent-DMA swap; same contract as the USB one
+ * (UsbCdc_DmaSwapAcquire): scheduler suspended, never blocks.
+ *
+ * The SD write DMA reads writeBuffer inside SYS_FS_FileWrite, which is
+ * synchronous in the SD task (disk_write spins to completion), and that
+ * happens in WRITE_TO_FILE / UNMOUNT_DISK. So the region is idle when the
+ * state machine is IDLE/INIT and no WRITE is armed (mode != WRITE; only the
+ * write path touches writeBuffer, and a stale READ/LIST/DELETE mode must not
+ * refuse a restore) -- a write is armed by a handler setting mode WRITE, and
+ * handlers run on tasks, none of which runs suspended. The wMutex try-take proves no task is mid-copy into
+ * writeBuffer (CircularBufferToSDWrite runs under it). */
+bool sd_card_manager_DmaSwapAcquire(void) {
+    if (xSemaphoreTake(gSDCardData.wMutex, 0) != pdTRUE) {
+        return false;
+    }
+    bool idle = (gSDCardData.currentProcessState == SD_CARD_MANAGER_PROCESS_STATE_IDLE ||
+                 gSDCardData.currentProcessState == SD_CARD_MANAGER_PROCESS_STATE_INIT) &&
+                gpSDCardSettings != NULL &&
+                gpSDCardSettings->mode != SD_CARD_MANAGER_MODE_WRITE;
+    if (!idle) {
+        xSemaphoreGive(gSDCardData.wMutex);
+        return false;
+    }
+    return true;                       /* wMutex stays held until Commit/Release */
+}
+
+void sd_card_manager_DmaSwapCommitAndRelease(uint8_t* buf, uint32_t size) {
+    gSDCardData.writeBuffer = buf;
+    gSDCardData.writeBufferSize = size;
+    gSDCardData.writeBufferLength = 0;
+    gSDCardData.sdCardWriteBufferOffset = 0;
+    xSemaphoreGive(gSDCardData.wMutex);
+}
+
+void sd_card_manager_DmaSwapRelease(void) {
+    xSemaphoreGive(gSDCardData.wMutex);
+}
+
 void sd_card_manager_SetCircularBuffer(uint8_t* buf, uint32_t size) {
     if (buf == NULL || size == 0) return;
 
@@ -6193,6 +6240,12 @@ bool sd_card_manager_IsBufferAccepting(void) {
  * see. The floor fix keeps this true; this is the host-visible fail-loud guard. */
 bool sd_card_manager_ReadBufferReady(void) {
     return gSdSharedBufferSize >= SD_READ_ALIGNMENT_SIZE;
+}
+
+/* #1279: a 32-bit aligned scalar, so a plain load is atomic on PIC32MZ; its
+ * only writers are sd_card_manager_SetWriteBuffer (under wMutex) and init. */
+uint32_t sd_card_manager_GetWriteBufferSize(void) {
+    return gSDCardData.writeBufferSize;
 }
 
 /* #703: is an async SD op in flight that touches a STREAMING-POOL buffer the

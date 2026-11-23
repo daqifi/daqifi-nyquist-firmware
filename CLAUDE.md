@@ -86,14 +86,19 @@ When the gate fails:
   regenerate the baseline (`bash tools/lint/cppcheck.sh`) and commit
   the updated `cppcheck-baseline.txt`.
 
-The current baseline is **empty** — `tools/lint/cppcheck-baseline.txt`
-is a 0-line file, so any new finding fails the gate. (An earlier
-revision of this file said "2 style findings, both in
-`firmware/src/services/wifi_services/wifi_serial_bridge.c`"; those were
-fixed and the baseline regenerated. Verified 2026-08-21 against
-cppcheck 2.13.0, the CI version.) The suppression file documents the
-DioProbe.c array-bounds false positive and the FreeRTOS portmacro
-FPU-guard `#error` (chip-specific macro that cppcheck doesn't see).
+The baseline is **NOT empty**: it records the 231 pre-existing findings
+accepted at #1309 Phase 1 (226 style, 4 warning, 0 error, 1 portability;
+triage tracked in a follow-up issue). Until #1309 the gate silently skipped
+every FreeRTOS-including file (portmacro.h's FPU `#error` fired without
+`-D__mips_hard_float=1`, and the error was suppressed), so the old empty
+baseline was not evidence of cleanliness. `cppcheck.sh` now passes the define
+in every pass. The comparison is **line-insensitive**
+(`tools/lint/cppcheck_compare.py`: strips `:line:col`, compares the multiset),
+so a line shift does not fail it but a new or duplicated finding does.
+Residual: within one file, removing one finding and adding another with the
+identical message and id nets to zero and passes. The portmacro.h
+`preprocessorErrorDirective` suppression still exists, so a future missing
+define would again be silent (narrowing it is #1309 Phase 2).
 
 ### LOG_E budget (log_budget)
 
@@ -571,7 +576,7 @@ needs to be added there for the scratchpad.)
 
 **Device state basics:** power states `0`=STANDBY, `1`=POWERED_UP (full power — required for WiFi and the DAC's 10 V rail), `2`=POWERED_UP_EXT_DOWN (low-battery). Before tests: known state (`SYST:POW:STAT 0/1` cycle if needed), drain the error queue (`SYST:ERR?` until `0,"No error"`), `ABOR` any pending operation. Don't guess SCPI syntax — see the verification protocol above (e.g. the network name is `SYST:COMM:LAN:SSID?`, the mode `NETType?`, the address `ADDRess?` — not `SSID:STR`/`MODE`/`IP`; note `SSIDStr?` is the **signal strength** (RSSI, `SCPI_LANSsidStrengthGet`), not the SSID — an earlier revision of this line cited it as the SSID getter).
 
-**WiFi config sequence** (`NETType`: **1 = STA, 4 = AP** — `wifi_manager.h`; 0 is invalid and the setter rejects it, silently leaving the previous mode. `SECurity`: 0 = open, **3 = WPA with passphrase**)**:** **`SYST:POW:STAT 1` first, and confirm `SYST:POW:STAT?` → `1`** — after a flash the board boots to STANDBY (`0`) with the WiFi module unpowered, and every later step then answers `-200`; the power state is **not** restored from NVM on reboot even though the WiFi config is (only `SYST:POW:AUTOOn 1` then `SYST:POW:AUTOOn:SAVE` would change that, which is a boot-policy decision, not part of a restore — measured on lane nq-c's board 2026-10-25) → `ENAbled 0` → set `NETType`/`SECurity`/`SSID`/`PASs` → `ENAbled 1` → `APPLY` (all-caps; `APPL` is `-113`) → wait ~20 s → verify `ADDR?` → `SAVE` (persists to NVM — without it a reboot reverts; **every flash wipes NVM regardless**). The WiFi module itself takes ~2–3 s to initialize after power-up. AP-mode defaults: open AP `DAQiFi-XXXX` (MAC suffix auto-applied to the bare default name; user names preserved), hostname = SSID (used for DHCP Option 12 network discovery), needs POWERED_UP.
+**WiFi config sequence** (`NETType`: **1 = STA, 4 = AP** — `wifi_manager.h`; 0 is invalid and the setter rejects it, silently leaving the previous mode. `SECurity`: 0 = open, **3 = WPA with passphrase**)**:** **`SYST:POW:STAT 1` first, and confirm `SYST:POW:STAT?` → `1`** — after a flash the board boots to STANDBY (`0`) with the WiFi module unpowered, and every later step then answers `-200`; after a flash or a bootloader update the power state is **not** restored even though the WiFi config is (only `SYST:POW:AUTOOn 1` then `SYST:POW:AUTOOn:SAVE` would change that, which is a boot-policy decision, not part of a restore — measured on lane nq-c's board 2026-10-25). A `SYST:REboot`, by contrast, **keeps** whatever power state was set, `0` or `1` (with `AUTOOn` 0: 4 trials, nq-c's board, 2026-11-19, [#1273](https://github.com/daqifi/daqifi-nyquist-firmware/issues/1273)), so never read `POW:STAT?` as evidence that a reboot happened — the serial port dropping and coming back is the witness. A USB power cycle is untested → `ENAbled 0` → set `NETType`/`SECurity`/`SSID`/`PASs` → `ENAbled 1` → `APPLY` (all-caps; `APPL` is `-113`) → wait ~20 s → verify `ADDR?` → `SAVE` (persists to NVM — without it a reboot reverts; **every flash wipes NVM regardless**). The WiFi module itself takes ~2–3 s to initialize after power-up. AP-mode defaults: open AP `DAQiFi-XXXX` (MAC suffix auto-applied to the bare default name; user names preserved), hostname = SSID (used for DHCP Option 12 network discovery), needs POWERED_UP.
 
 ### USB CDC behavior every test must respect
 

@@ -7,6 +7,7 @@
 #include "Util/Logger.h"
 #include "wifi_tcp_server.h"
 #include "services/SCPI/SCPIInterface.h"       // fw#1265 SD:GET input pause
+#include "services/SCPI/SCPICmdGate.h"
 #include "state/data/BoardData.h"
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "wifi_serial_bridge.h"
@@ -4073,9 +4074,13 @@ static void wifi_manager_ProcessStateImpl(bool drainTcpRx) {
      * The generation test is what stops a dead client's window gagging its
      * replacement: ScpiSdWindow_IsOpenFor compares the window's owner against
      * the connection that is live now. */
+    /* #1279: also deferred while an idle SD-buffer restore on the USB task
+     * holds the SCPI command gate (gTcpRxPending stays set either way). The window
+     * test is first so a window-deferred pass never takes the gate. */
     if (drainTcpRx && gTcpRxPending &&
         !ScpiSdWindow_IsOpenFor(SCPI_SD_WINDOW_TCP,
-                                wifi_tcp_server_GetConnGeneration())) {
+                                wifi_tcp_server_GetConnGeneration()) &&
+        ScpiCmdGate_TryEnter(SCPI_CMD_GATE_TCP)) {
         gTcpRxPending = false;
         if (gStateMachineContext.pTcpServerContext != NULL &&
             gStateMachineContext.pTcpServerContext->client.clientSocket >= 0) {
@@ -4084,6 +4089,7 @@ static void wifi_manager_ProcessStateImpl(bool drainTcpRx) {
                  gStateMachineContext.pTcpServerContext->client.readBuffer,
                  WIFI_RBUFFER_SIZE, 0);
         }
+        ScpiCmdGate_Exit(SCPI_CMD_GATE_TCP);
     }
 
     if (xQueueReceive(gEventQH, &event, 1) == pdPASS) {
@@ -4124,6 +4130,29 @@ void wifi_manager_ProcessStateNoTcpRx(void) {
 
 wifi_tcp_server_context_t* wifi_manager_GetTcpServerContext() {
     return gStateMachineContext.pTcpServerContext;
+}
+
+// #1324: count of M2M_WIFI_RESP_IP_CONFLICT events.  Two writers: the WINC
+// event callback (WINC driver task, via m2m_wifi_handle_events) increments it,
+// and SYST:STR:STATS:CLEar (USB or WiFi SCPI task, both higher priority) zeroes
+// it.  ++ is a read-modify-write, so it runs in a critical section; otherwise a
+// clear landing between its load and store is undone.  The 32-bit read and the
+// clear's plain store are each atomic on PIC32MZ.
+static volatile uint32_t gWifiIpConflicts = 0;
+
+void wifi_manager_NoteIpConflict(void) {
+    taskENTER_CRITICAL();
+    gWifiIpConflicts++;
+    taskEXIT_CRITICAL();
+    LOG_E("WiFi: IP address conflict reported by WINC\r\n");
+}
+
+uint32_t wifi_manager_GetIpConflicts(void) {
+    return gWifiIpConflicts;
+}
+
+void wifi_manager_ClearIpConflicts(void) {
+    gWifiIpConflicts = 0;
 }
 
 uint32_t wifi_manager_GetListenSocketUptimeSec(void) {
