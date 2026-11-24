@@ -954,6 +954,13 @@ CALFINITE_BIN := run_1154_tests
 # this one.
 EMIT1199_BIN := run_1199_tests
 
+# #1347: Util/WifiSettingsStage.h (the LAN:LOAD 1 / FACRESET 1 runtime-staging
+# rule) is header-only; the test supplies a stand-in wifi_manager_settings_t,
+# so no stubs and NOT $(INCLUDES). The wiring check runs INSIDE the recipe, as
+# for $(EMIT1199_BIN): the rule being right and the handlers USING it are two
+# halves of one claim.
+STAGE1347_BIN := run_1347_tests
+
 # #996: the eviction DECISION, modelled, with the real source pinned inside
 # the recipe below. Separate from check-1200-parity, which pins the BOOKING
 # for the same eviction and passes unchanged if the decision is weakened.
@@ -1586,6 +1593,11 @@ $(EMIT1199_BIN): test_1199_sample_emit.c test_framework.h $(FW_UTIL)/SampleEmit.
 # The wiring check runs INSIDE this recipe, not as a sibling target: the
 # formatter being correct and the formatter being REACHED are two halves of
 # one claim, and a sibling target can be skipped on its own. See #1199.
+$(STAGE1347_BIN): test_1347_wifi_settings_stage.c test_framework.h $(FW_UTIL)/WifiSettingsStage.h check_1347_stage_wiring.py ../../firmware/src/services/SCPI/SCPILAN.c $(RECIPES)
+	@python3 check_1347_stage_wiring.py >/dev/null \
+	  || { python3 check_1347_stage_wiring.py; exit 1; }
+	$(CC) $(CFLAGS) -I$(FW_UTIL) -o $(STAGE1347_BIN) test_1347_wifi_settings_stage.c
+
 $(FMT1156_BIN): test_1156_double_fmt.c test_framework.h $(FW_UTIL)/DoubleFmt.h check_1156_doublefmt_wiring.py $(SCPI_CONFIG_H) $(RECIPES)
 	@python3 check_1156_doublefmt_wiring.py >/dev/null \
 	  || { python3 check_1156_doublefmt_wiring.py; exit 1; }
@@ -5699,7 +5711,7 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
      $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) \
      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(CAP1202_BIN) $(ISRLOG1197_BIN) $(STOP1201_BIN) $(CLAMP1231_BIN) $(SDIDLE1279_BIN) $(OUT1279_BIN) $(WINCSWAP1279_BIN) \
      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(USECALTYPE_BIN) $(ARM_BIN) $(NAME_BIN) \
-     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) check-1200-parity check-885-savecal-claim \
+     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(STAGE1347_BIN) $(EVICT996_BIN) $(FMT1156_BIN) check-1200-parity check-885-savecal-claim \
      $(NVM1153_BIN) $(NVM1206_BIN) $(ARMREFUSE_BIN) $(SDCRC_BIN) $(SDWRITE_BIN) $(LOGRING1248_BIN) $(HIF881_BIN) \
      $(HIF881SPI_BIN) $(WIFI881_BIN) $(ARMEXIT_BIN) \
      $(CMDHIST_BIN) \
@@ -5725,6 +5737,7 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(EMIT1199_BIN)
+	./$(STAGE1347_BIN)
 	./$(EVICT996_BIN)
 	./$(FMT1156_BIN)
 	./$(AD7609_BIN)
@@ -6357,7 +6370,7 @@ clean:
 	      $(WINCSWAP1279_BIN) $(WINCSWAP1279_GEN) $(OUT1279_BIN) $(OUT1279_DUE) $(OUT1279_RESTORE) $(OUT1279_DEFS) \
 	      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(SDLOG1029_GEN).tmp \
 	      $(USECALTYPE_BIN) $(NAME_BIN) $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(ARM_BIN) $(SCPIDAC_RAILGATE_BIN) \
-	      $(FORCEGATE_BIN) $(LOG1039_BIN) $(LOG1039_GEN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) $(ARMREFUSE_BIN) $(ARMEXIT_BIN)
+	      $(FORCEGATE_BIN) $(LOG1039_BIN) $(LOG1039_GEN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(STAGE1347_BIN) $(EVICT996_BIN) $(FMT1156_BIN) $(ARMREFUSE_BIN) $(ARMEXIT_BIN)
 
 # #1200: the three encoders must book the same loss for the same discard.
 # A source-derived check rather than a mock, because a model of the encoders
