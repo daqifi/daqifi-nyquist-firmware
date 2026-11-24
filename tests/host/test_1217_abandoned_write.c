@@ -745,6 +745,7 @@ static bool gErrorStartTokenDeliversNothing; /* with gErrorStartTokenWriteAt */
 /* #1235 r4: what the resync's busy reads before its flush clock instead of the
  * card's byte; -1 = the card's own. */
 static int gStrayBeforeBlockByte = -1;
+static bool gStrayBeforeBlockOnce;
 
 #define SPI_QUEUE 16U
 static Xfer gQueue[SPI_QUEUE];
@@ -1020,6 +1021,10 @@ static void spiClock(Xfer* x)
                 if ((gStrayBeforeBlockByte >= 0) && (x->n == 1U) && test1217_ResyncBeforeBlock())
                 {
                     miso = (uint8_t)gStrayBeforeBlockByte;
+                    if (gStrayBeforeBlockOnce)
+                    {
+                        gStrayBeforeBlockByte = -1;
+                    }
                 }
                 x->buf[i] = selected ? miso : 0xFFU;
             }
@@ -1246,6 +1251,7 @@ static void resetAll(void)
     gStrayStartTokenByte = -1;
     gErrorStartTokenDeliversNothing = false;
     gStrayBeforeBlockByte = -1;
+    gStrayBeforeBlockOnce = false;
     gFault.isRead = -1;
     gFault.len = -1;
     gFault.firstByte = -1;
@@ -3431,29 +3437,24 @@ TEST(resync_0xfe_write_clocking_a_byte_that_is_not_a_token_reports_nothing)
     assertCardHealthy(42U);
 }
 
-/* The 0xFE transfer fails delivering nothing (the card is not clocked), and
- * the byte before it held something token-shaped: the receive buffer is cleared
- * before the transfer, so no acceptance is read from a byte nobody received. A
- * card that rejects the filler (an ordinary abandoned write) reports none. */
-TEST(resync_0xfe_write_failing_with_nothing_delivered_reports_no_stale_byte)
+/* r4 (review): the FIRST resync's busy reads before the flush are data bytes
+ * to a card one byte short of a block (they send 0xFF), so its token can arrive
+ * in them with no earlier resync having left anything pending. Here the byte on
+ * the wire is a token on the first resync's busy read, once. */
+TEST(resync_block_accepted_token_in_the_first_resyncs_busy_read_is_reported)
 {
     uint8_t data[BLOCK];
 
     bootCard();
     fill(data, BLOCK, 0x61U);
     abandonPartway(1U);
-    gStrayBeforeBlockByte = 0x05; /* the last busy read leaves a token-shaped byte */
-    gKeepUndelivered = true;
-    gErrorStartTokenDeliversNothing = true;
-    gErrorStartTokenWriteAt = 1U;
-    gStartTokenWrites = 0U;
-    ASSERT_EQ(writeBlocks(41U, data, 1U), DRV_SDSPI_EVENT_COMMAND_ERROR);
-    ASSERT_EQ(gErrorStartTokenWriteAt, 0U); /* the failed write did happen */
-    ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 0U);
-    ASSERT_FALSE(logged("ACCEPTED", "blk=41 ("));
-    gStrayBeforeBlockByte = -1;
-    gKeepUndelivered = false;
-    gErrorStartTokenDeliversNothing = false;
+    gStrayBeforeBlockByte = 0xE5;
+    gStrayBeforeBlockOnce = true;
+    ASSERT_EQ(writeBlocks(41U, data, 1U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+    ASSERT_EQ(gStrayBeforeBlockByte, -1); /* it was used */
+    ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 1U);
+    ASSERT_TRUE(logged("ACCEPTED", "blk=41 ("));
+    assertCardHealthy(42U);
 }
 
 /* BEFORE_BLOCK, error path, nothing delivered: the pending acceptance is not
@@ -3707,7 +3708,7 @@ int main(void)
     RUN(resync_block_accepted_token_clocked_by_the_next_resyncs_0xfe_write_256);
     RUN(resync_block_accepted_token_in_a_0xfe_write_that_then_fails);
     RUN(resync_0xfe_write_clocking_a_byte_that_is_not_a_token_reports_nothing);
-    RUN(resync_0xfe_write_failing_with_nothing_delivered_reports_no_stale_byte);
+    RUN(resync_block_accepted_token_in_the_first_resyncs_busy_read_is_reported);
     RUN(resync_token_still_to_come_when_the_bus_is_released_is_reported);
     RUN(resync_token_in_a_completed_chunk_when_the_bus_is_released_is_reported);
     RUN(resync_before_block_read_failing_with_nothing_delivered_reports_no_stale_byte);

@@ -106,12 +106,12 @@ run_mutant after_block_scan resync_block_accepted_token_after_the_flush_is_repor
 
 # M3: the pending acceptance is not looked for in the next resync's first reads.
 run_mutant before_block_scan resync_block_accepted_token_read_in_the_next_requests_resync \
-"                (dObj->resyncFillerPending == true))
+"                (dObj->writeInDoubt == DRV_SDSPI_WRITE_IN_DOUBT_SINGLE) && (dObj->writeInDoubtCrc == true))
         {
-            len = 1U;" \
+            /* #1235 r4: not only" \
 "                (false))
         {
-            len = 1U;"
+            /* #1235 r4: not only"
 
 # M4: the scan runs only AFTER the error branch has ended the resync, as in
 # the round-2 code (a failed transfer's bytes are never looked at).
@@ -131,7 +131,7 @@ run_mutant scan_after_error_guard "resync_block_accepted_token_in_a_flush_read_t
 
 # M5: a resync that ends with the filler programmed and its token unread does
 # not leave the acceptance pending.
-run_mutant pending_not_set resync_block_accepted_token_read_in_the_next_requests_resync \
+run_mutant pending_not_set resync_before_block_read_failing_with_nothing_delivered_reports_no_stale_byte \
 "        dObj->resyncFillerPending = true;
     }" \
 "        dObj->resyncFillerPending = false;
@@ -159,13 +159,10 @@ run_mutant releasebus_scan resync_token_in_a_completed_chunk_when_the_bus_is_rel
         lDRV_SDSPI_WriteResyncNotePending(dObj);" \
 "        lDRV_SDSPI_WriteResyncNotePending(dObj);"
 
-# M9: DRV_SDSPI_ReleaseBus does not leave an unread acceptance pending.
-run_mutant releasebus_pending resync_token_still_to_come_when_the_bus_is_released_is_reported \
-"            lDRV_SDSPI_WriteResyncScanReceived(dObj);
-        }
-        lDRV_SDSPI_WriteResyncNotePending(dObj);" \
-"            lDRV_SDSPI_WriteResyncScanReceived(dObj);
-        }"
+# (M9, ReleaseBus not noting the acceptance pending, was removed in r4: the busy
+# reads before the flush are now scanned whether or not anything is pending, so
+# the flag only gates a pre-clear and the mutant is equivalent for the test it
+# named. NotePending itself is covered by M5.)
 
 # r4 -- the transfers that CLOCK the card without reading from it. SPI is full
 # duplex: a write-only transfer discards what the card answers, so each write
@@ -203,11 +200,15 @@ run_mutant start_token_shape resync_0xfe_write_clocking_a_byte_that_is_not_a_tok
         {
             /* A CMD25 resync"
 
-# M13: the 0xFE transfer's receive byte is not cleared before the transfer.
-run_mutant start_token_prefill resync_0xfe_write_failing_with_nothing_delivered_reports_no_stale_byte \
-"                dObj->pCmdResp[0] = 0xFFU;
-                dObj->pCmdResp[1] = DRV_SDSPI_DATA_START_TOKEN;" \
-"                dObj->pCmdResp[1] = DRV_SDSPI_DATA_START_TOKEN;"
+# M13: the busy reads before the flush are scanned only while an earlier
+# resync left an acceptance pending (the r3 rule): the first resync's token is lost.
+run_mutant first_resync_busy_scan resync_block_accepted_token_in_the_first_resyncs_busy_read_is_reported \
+"                (dObj->writeInDoubt == DRV_SDSPI_WRITE_IN_DOUBT_SINGLE) && (dObj->writeInDoubtCrc == true))
+        {
+            /* #1235 r4: not only" \
+"                (dObj->resyncFillerPending == true))
+        {
+            /* #1235 r4: not only"
 
 echo "RESULT: $passed passed, $failures failed"
 [ "$failures" -eq 0 ]
