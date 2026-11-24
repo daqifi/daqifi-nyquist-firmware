@@ -224,6 +224,30 @@ def mutants():
                   "pRunTimeWifiSettings)")
     cases = {}
     cases["memset removed"] = swap(src, memset, "")
+
+    def in_handler(name, fn):
+        """src with handler `name`'s body rewritten by fn(body)."""
+        body = body_of(src, name)
+        return src.replace(body, fn(body), 1)
+
+    def ms_after(b):
+        b = b.replace(memset, "", 1)
+        return swap(b, "if (applySettings)", memset + "\n    if (applySettings)")
+    cases["memset after the load (before the apply arm)"] = in_handler(
+        "SCPI_LANSettingsFactoryLoad", ms_after)
+
+    def to_else(b):
+        m = re.search(HELPER, b)
+        b = b.replace(m.group(0), "0", 1)
+        ow = re.search(r"WifiSettingsStage_Overwrite\([^;]*\)", b)
+        return b.replace(ow.group(0), m.group(0), 1)
+    cases["LOAD: helper moved to the else arm"] = in_handler("SCPI_LANSettingsLoad", to_else)
+    cases["FACRESET: helper moved to the else arm"] = in_handler(
+        "SCPI_LANSettingsFactoryLoad", to_else)
+    cases["helper present in BOTH arms of FACRESET"] = in_handler(
+        "SCPI_LANSettingsFactoryLoad",
+        lambda b: re.sub(r"WifiSettingsStage_Overwrite\([^;]*\)",
+                         lambda m: re.search(HELPER, b).group(0), b, count=1))
     cases["old direct call restored"] = swap(src, re.search(HELPER, lo).group(0),
         "wifi_manager_UpdateNetworkSettings(&daqifiSettings.settings.wifi)")
     cases["live copy as the source"] = swap(src,
@@ -241,8 +265,7 @@ def mutants():
     cases["FACRESET no-arg arm: helper replaced by bare memcpy"] = src[:second] + bare_ow + src[second + len(ow):]
     bad = 0
     for label, text in cases.items():
-        if text is None:
-            continue
+        assert text is not None and text != src, "mutant %r did not change the text" % label
         probs = all_problems(text, hdr)
         print("  [%s] mutant %-52s -> %s" % ("RED " if probs else "GREEN!", label,
                                               probs[0][:90] if probs else "NOT CAUGHT"))
