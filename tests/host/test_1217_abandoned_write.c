@@ -3292,6 +3292,61 @@ TEST(resync_flush_read_failing_part_way_reports_no_stale_byte)
     ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 0U);
 }
 
+/* DRV_SDSPI_ReleaseBus (the WiFi task parking the SD bus) is an exit of the
+ * resync like any other. Stop the resync after its Nth flush read has been
+ * clocked, release the bus, and let a later request through: the token must be
+ * counted once, whether it was in the chunk already completed (N = 26) or still
+ * to come (N = 25). */
+static void releaseBusDuringFlushThenWrite(unsigned stopAfterReads)
+{
+    uint8_t data[BLOCK];
+    uint8_t other[BLOCK];
+    DRV_SDSPI_COMMAND_HANDLE h = DRV_SDSPI_COMMAND_HANDLE_INVALID;
+
+    bootCard();
+    collisionData261(data);
+    abandonPartwayBytes(1U, PREFIX_1235_B);
+    gRefuseResyncFlushAt = 100000U; /* never refuses; counts the flush reads */
+    gResyncFlushReads = 0U;
+    const unsigned seen = gEventsSeen;
+    DRV_SDSPI_AsyncWrite(gHandle, &h, (void*)data, 41U, 1U);
+    ASSERT_TRUE(h != DRV_SDSPI_COMMAND_HANDLE_INVALID);
+    for (unsigned i = 0U; (i < 20000U) && (gResyncFlushReads < stopAfterReads); i++)
+    {
+        pass();
+    }
+    ASSERT_EQ(gResyncFlushReads, stopAfterReads);
+    ASSERT_TRUE(test1217_InResync());
+    ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 0U);
+    DRV_SDSPI_ReleaseBus(0);
+    gRefuseResyncFlushAt = 0U;
+    suspendMs(3000U);
+    for (unsigned i = 0U; (i < 20000U) && (gEventsSeen == seen); i++)
+    {
+        pass();
+    }
+    ASSERT_TRUE(runUntilAttached(20000U));
+    passes(3000U);
+    ASSERT_TRUE(runUntilAttached(20000U));
+
+    fill(other, sizeof(other), 0x62U);
+    ASSERT_EQ(writeBlocks(9U, other, 1U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+    ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 1U);
+    ASSERT_TRUE(logged("ACCEPTED", "blk=41 ("));
+    ASSERT_EQ(writeBlocks(10U, other, 1U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+    ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 1U);
+}
+
+TEST(resync_token_still_to_come_when_the_bus_is_released_is_reported)
+{
+    releaseBusDuringFlushThenWrite(25U);
+}
+
+TEST(resync_token_in_a_completed_chunk_when_the_bus_is_released_is_reported)
+{
+    releaseBusDuringFlushThenWrite(26U);
+}
+
 /* A standard-capacity card takes a byte address; the report gives the block. */
 TEST(resync_block_accepted_on_a_byte_addressed_card_names_the_block)
 {
@@ -3429,6 +3484,8 @@ int main(void)
     RUN(resync_block_accepted_token_after_the_flush_is_reported);
     RUN(resync_block_accepted_token_in_an_after_block_read_that_then_fails);
     RUN(resync_block_accepted_token_in_a_before_block_read_that_then_fails);
+    RUN(resync_token_still_to_come_when_the_bus_is_released_is_reported);
+    RUN(resync_token_in_a_completed_chunk_when_the_bus_is_released_is_reported);
     RUN(resync_before_block_read_failing_with_nothing_delivered_reports_no_stale_byte);
     RUN(resync_flush_read_failing_part_way_reports_no_stale_byte);
     RUN(resync_block_accepted_on_a_byte_addressed_card_names_the_block);

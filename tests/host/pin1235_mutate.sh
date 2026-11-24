@@ -132,10 +132,10 @@ run_mutant scan_after_error_guard "resync_block_accepted_token_in_a_flush_read_t
 # M5: a resync that ends with the filler programmed and its token unread does
 # not leave the acceptance pending.
 run_mutant pending_not_set resync_block_accepted_token_read_in_the_next_requests_resync \
-"            dObj->resyncFillerPending = true;
-        }" \
-"            dObj->resyncFillerPending = false;
-        }"
+"        dObj->resyncFillerPending = true;
+    }" \
+"        dObj->resyncFillerPending = false;
+    }"
 
 # M6: the flush's receive buffer is not cleared before the read.
 run_mutant flush_prefill resync_flush_read_failing_part_way_reports_no_stale_byte \
@@ -149,6 +149,23 @@ run_mutant busy_prefill resync_before_block_read_failing_with_nothing_delivered_
         dObj->pCmdResp[0] = 0xFFU;
     }" \
 "    /* mutant: no prefill */"
+
+# M8: DRV_SDSPI_ReleaseBus ends a resync without scanning the completed chunk.
+run_mutant releasebus_scan resync_token_in_a_completed_chunk_when_the_bus_is_released_is_reported \
+"        if (dObj->spiTransferStatus != DRV_SDSPI_SPI_TRANSFER_STATUS_IN_PROGRESS)
+        {
+            lDRV_SDSPI_WriteResyncScanReceived(dObj);
+        }
+        lDRV_SDSPI_WriteResyncNotePending(dObj);" \
+"        lDRV_SDSPI_WriteResyncNotePending(dObj);"
+
+# M9: DRV_SDSPI_ReleaseBus does not leave an unread acceptance pending.
+run_mutant releasebus_pending resync_token_still_to_come_when_the_bus_is_released_is_reported \
+"            lDRV_SDSPI_WriteResyncScanReceived(dObj);
+        }
+        lDRV_SDSPI_WriteResyncNotePending(dObj);" \
+"            lDRV_SDSPI_WriteResyncScanReceived(dObj);
+        }"
 
 echo "RESULT: $passed passed, $failures failed"
 [ "$failures" -eq 0 ]

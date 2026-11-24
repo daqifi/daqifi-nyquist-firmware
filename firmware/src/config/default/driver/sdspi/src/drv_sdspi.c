@@ -600,7 +600,8 @@ static void lDRV_SDSPI_WriteResyncTokenCaptured(DRV_SDSPI_OBJ* dObj, uint8_t tok
         if (dObj->resyncFillerCount < UINT8_MAX)
         {
             dObj->resyncFillerCount++;
-        }        LOG_E("SD: resync block ACCEPTED: filler programmed at blk=%lu (#1235)",
+        }
+        LOG_E("SD: resync block ACCEPTED: filler programmed at blk=%lu (#1235)",
                 (unsigned long)dObj->writeInDoubtBlock);
     }
 }
@@ -681,6 +682,23 @@ static void lDRV_SDSPI_WriteResyncScanReceived(DRV_SDSPI_OBJ* dObj)
     }
 }
 
+/* #1235 r3: a resync that ends WITHOUT resolving may leave the filler programmed
+ * with its token unread (the block can complete anywhere in the flush). Leave
+ * it to the NEXT resync of this write, whose first reads clock it out; one that
+ * already read a token has nothing pending. The flush has started once the 0xFE
+ * went out (cmdState FLUSH) or the stage moved past it. Every way a resync ends
+ * unresolved calls this: WriteResyncEnd(false) and DRV_SDSPI_ReleaseBus. */
+static void lDRV_SDSPI_WriteResyncNotePending(DRV_SDSPI_OBJ* dObj)
+{
+    if ((dObj->resyncToken == 0xFFU) && (dObj->writeInDoubt == DRV_SDSPI_WRITE_IN_DOUBT_SINGLE) &&
+            (dObj->writeInDoubtCrc == true) &&
+            ((dObj->resyncStage != DRV_SDSPI_RESYNC_STAGE_BEFORE_BLOCK) ||
+             (dObj->cmdState == DRV_SDSPI_CMD_RESYNC_FLUSH)))
+    {
+        dObj->resyncFillerPending = true;
+    }
+}
+
 static void lDRV_SDSPI_WriteResyncEnd(DRV_SDSPI_OBJ* dObj, bool resolved)
 {
     (void) DRV_SDSPI_CmdResponseTimerStop(dObj);
@@ -703,18 +721,7 @@ static void lDRV_SDSPI_WriteResyncEnd(DRV_SDSPI_OBJ* dObj, bool resolved)
     }
     else
     {
-        /* #1235 r3: the filler may have been programmed with its token still
-         * unread (the block can complete anywhere in the flush). Leave it to the
-         * NEXT resync of this write, whose first reads clock it out; one that
-         * already read a token has nothing pending. The flush has started once
-         * the 0xFE went out (cmdState FLUSH) or the stage moved past it. */
-        if ((dObj->resyncToken == 0xFFU) && (dObj->writeInDoubt == DRV_SDSPI_WRITE_IN_DOUBT_SINGLE) &&
-                (dObj->writeInDoubtCrc == true) &&
-                ((dObj->resyncStage != DRV_SDSPI_RESYNC_STAGE_BEFORE_BLOCK) ||
-                 (dObj->cmdState == DRV_SDSPI_CMD_RESYNC_FLUSH)))
-        {
-            dObj->resyncFillerPending = true;
-        }
+        lDRV_SDSPI_WriteResyncNotePending(dObj);
         /* One-shot, static string: a stuck-busy card retries this on every
          * command, which LOG_E would turn into a flood. */
         LOG_E_ONCE(LOG_ONCE_SD_WRITE_RESYNC_FAIL, "SD: write in doubt resync failed; retrying (#1217)");
@@ -3554,6 +3561,19 @@ void DRV_SDSPI_ReleaseBus(SYS_MODULE_OBJ object)
      * CommandSend watchdog keyed on IN_PROGRESS) starts from a settled state
      * instead of burning a timeout on a transfer that no longer exists. Its
      * late completion, if any, must be ignored by the callback. */
+    /* #1235 r3 (review): a resync cut short here is an exit like any other. The
+     * chunk that had completed is scanned, and an acceptance possibly still
+     * unread is left pending for the next resync. A transfer still in flight
+     * delivers its bytes after this and is not seen (the abort cannot wait). */
+    if ((dObj->cmdState == DRV_SDSPI_CMD_RESYNC_START) || (dObj->cmdState == DRV_SDSPI_CMD_RESYNC_FLUSH) ||
+            (dObj->cmdState == DRV_SDSPI_CMD_RESYNC_BUSY_CHECK) || (dObj->cmdState == DRV_SDSPI_CMD_RESYNC_STOP))
+    {
+        if (dObj->spiTransferStatus != DRV_SDSPI_SPI_TRANSFER_STATUS_IN_PROGRESS)
+        {
+            lDRV_SDSPI_WriteResyncScanReceived(dObj);
+        }
+        lDRV_SDSPI_WriteResyncNotePending(dObj);
+    }
     DRV_SDSPI_AbortedXferRecord(dObj);
     dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_ERROR;
 
