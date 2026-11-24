@@ -1045,10 +1045,17 @@ static bool OpenUdpSocket(SOCKET *pSocket) {
  * WINC's MAC address until the WINC is closed again. While it is false the
  * runtime SSID/hostname may hold the unsuffixed default "DAQiFi", which is not
  * what the AP will broadcast. Every (re)init of the WINC applies the suffix
- * again, so the flag is cleared where the WINC is closed (the DEINIT handler)
- * and scrubbed in wifi_manager_BootInit (retained RAM across MCLR, #409).
+ * again, so the flag is cleared where the WINC is closed: in
+ * wifi_manager_Deinit (which the button-standby path calls and then never
+ * processes the queued DEINIT, so that handler alone is not enough) and in the
+ * DEINIT handler (a REINIT/INIT queued ahead of DEINIT can set it again). It is
+ * also scrubbed in wifi_manager_BootInit (retained RAM across MCLR, #409).
  * Writers: the WiFi task (set in ApplyDefaultSuffixAndDeviceName, clear in the
- * DEINIT handler) and wifi_manager_BootInit before the scheduler starts.
+ * DEINIT handler, and in wifi_manager_Deinit when that is the caller),
+ * whichever task calls wifi_manager_Deinit (USB CDC SCPI task for SYST:REboot /
+ * SYST:POW:STAT 0, the WiFi task for TCP SCPI and button standby), and
+ * wifi_manager_BootInit before the scheduler starts. A clear is idempotent and
+ * the only racing set is the WiFi task's own, which the DEINIT handler follows.
  * Readers on USB/TCP tasks: an aligned bool read is atomic.
  */
 static volatile bool gDefaultSuffixApplied = false;
@@ -2653,6 +2660,9 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             // #1266: the WINC is being closed, so the suffix applied on its MAC
             // is no longer in force: a bare default in the runtime SSID (LAN:
             // FACRESET / LOAD / APPLY while powered down) is pending again.
+            // Kept even though wifi_manager_Deinit clears too: a REINIT/INIT
+            // queued ahead of this DEINIT re-runs ApplyDefaultSuffix... and
+            // sets the flag after Deinit's clear.
             gDefaultSuffixApplied = false;
             mdns_responder_Stop();       // #345: full teardown — free the mDNS socket
             if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN))
@@ -3376,6 +3386,11 @@ bool wifi_manager_Deinit() {
     // STA_STARTED/assocHandle leaves BSSID?/RSSI/ADDR? reporting the dead
     // link.  Doing it here makes the query gates trip the moment Deinit runs.
     InvalidateStaLinkState();
+    // #1266: same reason, for the suffix flag. Button standby calls this from
+    // app_WifiTask and then stops processing events, so the DEINIT handler's
+    // clear never runs; the WINC is going down, so the suffix is no longer in
+    // force. Placed before SendEvent so a failed queue cannot skip it.
+    gDefaultSuffixApplied = false;
     return SendEvent(WIFI_MANAGER_EVENT_DEINIT);
 }
 

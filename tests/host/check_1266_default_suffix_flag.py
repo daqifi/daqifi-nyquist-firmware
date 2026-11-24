@@ -16,12 +16,21 @@ default visible:
             LAN:FACRESET + LAN:APPLY the runtime name is bare again while the
             flag says "applied".
 
-THE INVARIANT pinned here is the complete set of writers, not the two sites:
-exactly three assignments exist --
+  r3 MED    the physical power button enters standby through
+            wifi_manager_Deinit() and then never processes the queued DEINIT,
+            so the DEINIT-handler clear is unreachable on that path and the
+            flag stayed true: FACRESET + APPLY in standby then reported the
+            bare default.
+
+THE INVARIANT pinned here is the complete set of writers, not the sites:
+exactly four assignments exist --
   set   `= true`  in ApplyDefaultSuffixAndDeviceName
   clear `= false` in wifi_manager_BootInit
   clear `= false` in the MainState DEINIT case (where the WINC is closed)
-A fourth writer (or a missing one) fails the COUNT, so a site cannot be added
+  clear `= false` in wifi_manager_Deinit, BEFORE its SendEvent (so a failed
+        queue cannot skip it; the DEINIT-handler clear is kept because a
+        REINIT/INIT queued ahead of DEINIT can set the flag after this one)
+A fifth writer (or a missing one) fails the COUNT, so a site cannot be added
 or dropped quietly.
 
 WHAT THIS IS NOT. It does not drive the real state machine (nothing on the host
@@ -143,8 +152,8 @@ def check(src):
         problems.append("expected exactly one declaration of %s, found %d"
                         % (FLAG, decl))
     writers = len(allw) - decl
-    if writers != 3:
-        problems.append("expected exactly 3 writers of %s (1 set + 2 clears), "
+    if writers != 4:
+        problems.append("expected exactly 4 writers of %s (1 set + 3 clears), "
                         "found %d" % (FLAG, writers))
 
     def one(label, body_fn, want):
@@ -169,6 +178,26 @@ def check(src):
     one("MainState DEINIT case",
         lambda: case_body(code, "WIFI_MANAGER_EVENT_DEINIT"),
         "false")
+    deinit_re = r"^bool\s+wifi_manager_Deinit\s*\(\s*(void)?\s*\)\s*"
+    one("wifi_manager_Deinit", lambda: function_body(code, deinit_re), "false")
+    # the Deinit clear must precede the SendEvent that can fail
+    try:
+        body = function_body(code, deinit_re)
+        m = ASSIGN.search(body)
+        e = body.find("SendEvent(")
+        if m and (e < 0 or m.start() > e):
+            problems.append("wifi_manager_Deinit: the clear must come BEFORE "
+                            "SendEvent(")
+        # ...and run on EVERY path to it, not inside a nested branch such as
+        # the early `return false` guard: brace depth 1 = the function body.
+        if m:
+            depth = body[:m.start()].count("{") - body[:m.start()].count("}")
+            if depth != 1:
+                problems.append("wifi_manager_Deinit: the clear must be at the "
+                                "top level of the function, not in a branch "
+                                "(brace depth %d)" % depth)
+    except ValueError:
+        pass
     return problems
 
 
@@ -178,6 +207,12 @@ MUTANTS = {
     "drop the DEINIT clear (r2 MED 2)": (
         "            gDefaultSuffixApplied = false;\n            mdns_responder_Stop();",
         "            mdns_responder_Stop();"),
+    "drop the wifi_manager_Deinit clear (r3 MED)": (
+        "    gDefaultSuffixApplied = false;\n    return SendEvent(WIFI_MANAGER_EVENT_DEINIT);",
+        "    return SendEvent(WIFI_MANAGER_EVENT_DEINIT);"),
+    "move the wifi_manager_Deinit clear after SendEvent": (
+        "    gDefaultSuffixApplied = false;\n    return SendEvent(WIFI_MANAGER_EVENT_DEINIT);",
+        "    bool q = SendEvent(WIFI_MANAGER_EVENT_DEINIT);\n    gDefaultSuffixApplied = false;\n    return q;"),
     "drop the set in ApplyDefaultSuffixAndDeviceName": (
         "    gDefaultSuffixApplied = true;\n", ""),
 }
@@ -210,7 +245,7 @@ def run_mutants(src):
         else:
             print("SURVIVED: %s" % name)
             bad += 1
-    # an added fourth writer must be caught too
+    # an added extra writer must be caught too
     extra = src.replace("    gApplyInProgress = false;\r\n    gApplyInProgressDeadlineTick = 0;",
                         "    gApplyInProgress = false;\r\n    gDefaultSuffixApplied = false;\r\n    gApplyInProgressDeadlineTick = 0;", 1)
     if extra == src:
@@ -220,9 +255,9 @@ def run_mutants(src):
         print("FAIL: could not place the extra-writer mutant")
         bad += 1
     elif check(extra):
-        print("caught: a fourth writer")
+        print("caught: an extra writer")
     else:
-        print("SURVIVED: a fourth writer")
+        print("SURVIVED: an extra writer")
         bad += 1
     print("RESULT: %d mutant problem(s)" % bad)
     return 1 if bad else 0
@@ -248,6 +283,12 @@ static int MainState(int ev) {
 void wifi_manager_BootInit(void) {
     gDefaultSuffixApplied = false;
 }
+bool wifi_manager_Deinit() {
+    if (x) return false;
+    InvalidateStaLinkState();
+    gDefaultSuffixApplied = false;
+    return SendEvent(WIFI_MANAGER_EVENT_DEINIT);
+}
 """
 
 
@@ -272,6 +313,15 @@ def self_test():
     expect("DEINIT clear moved into the neighbouring case", GOOD.replace(
         "            gDefaultSuffixApplied = false;\n            break;\n        case WIFI_MANAGER_EVENT_ERROR:\n",
         "            break;\n        case WIFI_MANAGER_EVENT_ERROR:\n            gDefaultSuffixApplied = false;\n"), True)
+    expect("Deinit clear dropped (r3 MED; red on 4af8bcd5)", GOOD.replace(
+        "    gDefaultSuffixApplied = false;\n    return SendEvent(WIFI_MANAGER_EVENT_DEINIT);",
+        "    return SendEvent(WIFI_MANAGER_EVENT_DEINIT);"), True)
+    expect("Deinit clear after SendEvent", GOOD.replace(
+        "    gDefaultSuffixApplied = false;\n    return SendEvent(WIFI_MANAGER_EVENT_DEINIT);",
+        "    bool q = SendEvent(WIFI_MANAGER_EVENT_DEINIT);\n    gDefaultSuffixApplied = false;\n    return q;"), True)
+    expect("Deinit clear only in the early-return branch", GOOD.replace(
+        "    if (x) return false;\n    InvalidateStaLinkState();\n    gDefaultSuffixApplied = false;",
+        "    if (x) { gDefaultSuffixApplied = false; return false; }\n    InvalidateStaLinkState();"), True)
     expect("set dropped", GOOD.replace(
         "    gDefaultSuffixApplied = true;\n", ""), True)
     expect("a fourth writer", GOOD.replace(
