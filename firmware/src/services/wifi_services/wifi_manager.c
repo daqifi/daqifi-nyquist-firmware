@@ -1041,10 +1041,15 @@ static bool OpenUdpSocket(SOCKET *pSocket) {
 }
 
 /**
- * #1266: set once ApplyDefaultSuffixAndDeviceName has run with the WINC's MAC
- * address. Until then the runtime SSID/hostname hold the unsuffixed default
- * "DAQiFi", which is not what the AP will broadcast. Single writer (WiFi
- * task), readers on USB/TCP tasks: an aligned bool read is atomic.
+ * #1266: true from the moment ApplyDefaultSuffixAndDeviceName has run with the
+ * WINC's MAC address until the WINC is closed again. While it is false the
+ * runtime SSID/hostname may hold the unsuffixed default "DAQiFi", which is not
+ * what the AP will broadcast. Every (re)init of the WINC applies the suffix
+ * again, so the flag is cleared where the WINC is closed (the DEINIT handler)
+ * and scrubbed in wifi_manager_BootInit (retained RAM across MCLR, #409).
+ * Writers: the WiFi task (set in ApplyDefaultSuffixAndDeviceName, clear in the
+ * DEINIT handler) and wifi_manager_BootInit before the scheduler starts.
+ * Readers on USB/TCP tasks: an aligned bool read is atomic.
  */
 static volatile bool gDefaultSuffixApplied = false;
 
@@ -2645,6 +2650,10 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             }
             returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_TRAN;
             pInstance->nextState = MainState;
+            // #1266: the WINC is being closed, so the suffix applied on its MAC
+            // is no longer in force: a bare default in the runtime SSID (LAN:
+            // FACRESET / LOAD / APPLY while powered down) is pending again.
+            gDefaultSuffixApplied = false;
             mdns_responder_Stop();       // #345: full teardown — free the mDNS socket
             if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN))
                 CloseUdpSocket(&pInstance->udpServerSocket);
@@ -2836,6 +2845,7 @@ void wifi_manager_BootInit(void) {
     gApplyInProgressDeadlineTick = 0;
     gApplyTeardownStartTick = 0;
     gListenSocketOpenTick = 0;  // #475 step 3 — retained-RAM scrub
+    gDefaultSuffixApplied = false;  // #1266 — retained-RAM scrub
     // BSSID cache — scrub retained RAM (#516).
     gBssidUpdateComplete = false;
     memset((void *) gLastBssid, 0, sizeof(gLastBssid));
