@@ -167,7 +167,17 @@ static int fw_log_emit(char *out, const char *format, ...)
     "Clock mismatch (#716): PBCLK3 %u Hz, built for %u Hz - " \
     "reprogram via PICkit/IPE, not a firmware update."
 
-/* SCPIADC.c, ADCChanEnableSetClaimed()'s not-addressable-channel refusal. */
+/* SCPIADC.c, ADCChanEnableSetClaimed()'s not-addressable-channel refusal.
+ *
+ * Still byte-for-byte what the device emits, which is the only thing this
+ * suite measures -- but since #888 it is ASSEMBLED rather than written out
+ * in one literal. The nine channel-resolve sites in SCPIADC.c share one
+ * AdcChannelResolve helper whose format is "%s: channel %d not
+ * addressable%s"; this site supplies "CONFigure:ADC:CHANnel" as cmd and
+ * "; two-arg form is ..." as hint, and the concatenation is the string
+ * below. The Makefile recipe therefore pins the helper's format line AND
+ * this site's cmd/hint arguments as two separate positional block checks;
+ * see the comment above LOGCEIL_BIN's recipe for why both are required. */
 #define MSG2_FORMAT \
     "CONFigure:ADC:CHANnel: channel %d not addressable; " \
     "two-arg form is <channel>,<state>, one-arg form is a " \

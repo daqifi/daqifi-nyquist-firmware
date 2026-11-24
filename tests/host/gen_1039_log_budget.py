@@ -173,14 +173,30 @@ SITES = [
     {
         "key": "ADCCHAN",
         "path": FW / "services/SCPI/SCPIADC.c",
-        # The channelIndex guard appears in three ADC callbacks, so the
-        # function's own definition line (with its opening brace, which the
-        # forward declaration does not have) narrows it first.
-        "anchors": [
-            "static scpi_result_t ADCChanEnableSetClaimed(scpi_t * context) {",
-            "if (channelIndex >= (size_t) pBoardConfigAInChannels->Size) {",
-        ],
-        "nth": 1,
+        # #888: the not-addressable refusal is no longer open-coded here. All
+        # nine channel-resolve sites in SCPIADC.c share AdcChannelResolve(),
+        # whose LOG_E format is "%s: channel %d not addressable%s"; this
+        # site supplies cmd and hint as two literal arguments. The message
+        # the device emits is therefore ASSEMBLED, and this site is too:
+        # "compose" extracts the helper's format and this call's two
+        # literals separately (each anchored on code, each failing the build
+        # by name) and substitutes the second and third into the first. The
+        # composed text keeps the one-%d signature the test substitutes
+        # into, so the byte-for-byte message under measurement is unchanged.
+        "compose": {
+            "helper_anchors": [
+                "static bool AdcChannelResolve(scpi_t * context, int channel, "
+                "const char * cmd,",
+            ],
+            "helper_specs": ["%s", "%d", "%s"],
+            # AdcChannelResolve( is called from nine functions; the enclosing
+            # definition line (with its opening brace, which the forward
+            # declaration does not have) narrows it to this one.
+            "call_anchors": [
+                "static scpi_result_t ADCChanEnableSetClaimed(scpi_t * context) {",
+                "if (!AdcChannelResolve(context, param1,",
+            ],
+        },
         "specs": ["%d"],
         "what": "CONF:ADC:CHAN not-addressable refusal",
     },
@@ -569,7 +585,87 @@ def splice_continuations(src):
     return re.sub(r"\\\r?\n", "", src)
 
 
+def extract_composed(site):
+    """A message the firmware ASSEMBLES: a helper's format plus a call's args.
+
+    #888 moved the CONF:ADC:CHAN refusal's LOG_E into AdcChannelResolve(), so
+    the bytes the device emits are the helper's "%s: channel %d not
+    addressable%s" with this call site's cmd and hint literals substituted for
+    the two %s. Extracting only the helper's format would measure a message the
+    device never sends; extracting only the call's literals would measure half
+    of one. So both halves are read from the real source and joined here.
+
+    A cmd or hint containing '%' is refused: it would change the composed
+    text's conversion signature, which the test substitutes arguments for.
+    """
+    comp = site["compose"]
+    where = f"{site['path']}: {site['what']}"
+    helper = {"path": site["path"], "what": site["what"] + " (helper format)",
+              "anchors": comp["helper_anchors"], "nth": 1,
+              "specs": comp["helper_specs"]}
+    fmt = extract_site(helper)
+
+    masked, pos = _walk_anchors(
+        {"path": site["path"], "what": site["what"] + " (call site)",
+         "anchors": comp["call_anchors"]})
+    cmd, after = read_literal_group(masked, pos, where + " (cmd argument)")
+    j = after
+    while masked[j] in " \t\r\n":
+        j += 1
+    if masked[j] != ",":
+        raise GenError(f"{where}: expected ',' after the cmd literal, found "
+                       f"{masked[j:j + 20]!r}")
+    hint, _ = read_literal_group(masked, j + 1, where + " (hint argument)")
+    for part, name in ((cmd, "cmd"), (hint, "hint")):
+        if "%" in part:
+            raise GenError(f"{where}: the {name} literal {part!r} contains "
+                           f"'%'; the composed message's conversion signature "
+                           f"would no longer be the one the test substitutes "
+                           f"arguments for. Re-derive the worst case.")
+    first, second = fmt.find("%s"), fmt.rfind("%s")
+    if first < 0 or first == second:
+        raise GenError(f"{where}: the helper format {fmt!r} no longer has two "
+                       f"%s conversions to substitute cmd and hint into")
+    text = (fmt[:first] + cmd + fmt[first + 2:second] + hint
+            + fmt[second + 2:])
+    specs = conversion_signature(text, where)
+    if specs != site["specs"]:
+        raise GenError(f"{where}: composed signature is {specs}, expected "
+                       f"{site['specs']}.")
+    return text
+
+
+def _walk_anchors(site):
+    """(masked source, index just past the last anchor) for `site`."""
+    path = site["path"]
+    where = f"{path}: {site['what']}"
+    try:
+        src = path.read_text(encoding="utf-8", errors="surrogateescape")
+    except OSError as e:
+        raise GenError(f"{where}: cannot read the source: {e}") from e
+    src = splice_continuations(src)
+    masked = mask_comments(src)
+    first = site["anchors"][0]
+    hits = masked.count(first)
+    if hits != 1:
+        raise GenError(
+            f"{where}: the anchor {first!r} appears {hits} time(s) in {path}, "
+            f"expected exactly 1. This test identifies the site by the code "
+            f"around it; re-derive the anchor before trusting any verdict.")
+    pos = masked.index(first) + len(first)
+    for anchor in site["anchors"][1:]:
+        nxt = masked.find(anchor, pos)
+        if nxt < 0:
+            raise GenError(
+                f"{where}: the anchor {anchor!r} was not found after the "
+                f"previous one. The code around this message has moved.")
+        pos = nxt + len(anchor)
+    return masked, pos
+
+
 def extract_site(site):
+    if "compose" in site:
+        return extract_composed(site)
     path = site["path"]
     where = f"{path}: {site['what']}"
     try:
