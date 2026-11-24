@@ -195,7 +195,7 @@ extern "C" {
         LOG_ONCE_SD_WRITE_RESYNC_FAIL,    /**< drv_sdspi.c: a resync attempt failed and will retry (#1217); a stuck-busy card would otherwise log per attempt */
         LOG_ONCE_FIND_NO_SAMPLES,         /**< SCPIInterface.c: a WIFI:FIND? step streamed no sample and was not scored clean (#1339); one-shot so a dry-heavy sweep can't fill the log ring */
         /* Add new entries above this line */
-        LOG_ONCE_COUNT                  /**< Must be <= 32 */
+        LOG_ONCE_COUNT                     /**< Must be <= 32 */
     } LogOnceBit_t;
 
     #if (LOG_ONCE_COUNT > 32)
