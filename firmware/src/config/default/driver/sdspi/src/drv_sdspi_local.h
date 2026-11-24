@@ -1752,13 +1752,19 @@ typedef struct
      * card was checking CRC (crcEnabled then; crcEnabled itself is cleared at
      * the start of a media init, before the resync that init's CMD0 runs) and
      * the block number it addressed (byte addresses of standard-capacity cards
-     * converted). lDRV_SDSPI_WriteResyncEnd uses them when the card ACCEPTED
-     * the resync's block, which then counts in resyncFillerCount (saturating).
-     * These three sit in the tail padding after reinitRequested, so they cost
-     * no RAM: sizeof(DRV_SDSPI_OBJ) is 296 B before and after (XC32 v4.60,
-     * offsetof probe, 2026-11-23). */
+     * converted). lDRV_SDSPI_WriteResyncTokenCaptured uses them when the card
+     * ACCEPTED the resync's block, which then counts in resyncFillerCount
+     * (saturating). resyncFillerPending: a resync ended with the filler
+     * possibly programmed and its token unread, so the NEXT resync of the same
+     * write looks for that token in its first reads (r3).
+     * These four sit in the tail padding after reinitRequested, so they cost
+     * no RAM: sizeof(DRV_SDSPI_OBJ) is 296 B on target before the counter
+     * (XC32 v4.60, offsetof probe, 2026-11-23); the field added in r3 fits the
+     * one byte of padding that was left, checked on the host (sizeof 408 B
+     * before and after, same member order), not re-measured with XC32. */
     bool                                            writeInDoubtCrc;
     uint8_t                                         resyncFillerCount;
+    bool                                            resyncFillerPending;
     uint32_t                                        writeInDoubtBlock;
 
 } DRV_SDSPI_OBJ;

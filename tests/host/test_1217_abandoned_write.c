@@ -70,6 +70,10 @@ static struct {
 
     uint8_t out[OUT_QUEUE];
     unsigned outHead, outCount;
+    /* #1235 r3: a slow card -- the data-response token of a programmed block
+     * is held back this many bytes (0xFF meanwhile), as a card that is slow to
+     * answer holds it back, so the token reaches the resync AFTER its flush. */
+    unsigned tokenDelay, silentBytes;
     unsigned busyLeft;
     bool stuckBusy;
 
@@ -402,6 +406,8 @@ static void cardBlockDone(void)
             memcpy(card.sector[card.writeLba], card.capture, BLOCK);
         }
         card.writeLba++;
+        card.silentBytes = card.tokenDelay;
+        card.tokenDelay = 0U; /* one block only: the re-send must answer promptly */
         cardOut(0xE5U); /* xxx0_0101 */
         card.busyLeft = card.programBusy;
     }
@@ -498,7 +504,11 @@ static uint8_t cardClock(uint8_t mosi)
 {
     uint8_t miso = 0xFFU;
 
-    if (card.outCount > 0U)
+    if (card.silentBytes > 0U)
+    {
+        card.silentBytes--;
+    }
+    else if (card.outCount > 0U)
     {
         miso = card.out[card.outHead];
         card.outHead = (card.outHead + 1U) % OUT_QUEUE;
@@ -664,6 +674,7 @@ typedef struct {
     bool started;
     bool noCs;     /* #1255: DRV_SPI_WriteTransferAddNoCs */
     size_t deliver; /* #1235: bytes the card sees before CS rises; n = all */
+    bool forceError; /* #1235 r3: all of it clocked, but the transfer reports ERROR */
 } Xfer;
 
 /* FAULT_PARTIAL (#1235): the card sees only the first gFault.partial bytes.
@@ -677,6 +688,8 @@ typedef enum { FAULT_NONE, FAULT_REJECT, FAULT_LOSE, FAULT_CORRUPT, FAULT_PARTIA
 /* test_1217_driver_uut.c: whether the driver's command FSM is in its resync,
  * and how many CMD24 re-sends the current request has spent. */
 extern bool test1217_InResync(void);
+extern bool test1217_ResyncAfterBlock(void); /* #1235 r3: in the resync, past its flush */
+extern void test1217_PlantResponseByte(unsigned index, uint8_t value);
 extern unsigned test1217_WriteRetries(void);
 extern unsigned test1217_RetryLimit(void);
 extern unsigned test1217_AbortedRingCount(void);
@@ -701,6 +714,24 @@ static struct {
  * the abandon and the later refusal are one scenario. 0 = not armed. */
 static unsigned gRefuseResyncFlushAt;
 static unsigned gResyncFlushReads;
+/* #1235 r3: the Nth 10-byte flush read delivers only gPartialResyncFlushBytes
+ * bytes and ends in ERROR (the same count as the refusal's). 0 = not armed. */
+static unsigned gPartialResyncFlushAt;
+static unsigned gPartialResyncFlushBytes;
+/* #1235 r3: the Nth 1-byte read the resync submits after its flush is fully
+ * clocked and then reports ERROR: the byte arrived, the transfer did not
+ * complete. 0 = not armed. */
+static unsigned gErrorAfterBlockReadAt;
+static unsigned gAfterBlockReads;
+/* Same, for the Nth 1-byte read the resync submits in ANY stage (counted from
+ * arming). */
+static unsigned gErrorResyncBusyReadAt;
+static unsigned gResyncBusyReads;
+/* #1235 r3: a read that fails part-way leaves the bytes it did not deliver as
+ * they were (a failed DMA writes nothing there), instead of the 0xFF this model
+ * fills in by default. */
+static bool gKeepUndelivered;
+static bool gErrorResyncDeliversNothing; /* with gErrorResyncBusyReadAt */
 
 #define SPI_QUEUE 16U
 static Xfer gQueue[SPI_QUEUE];
@@ -807,12 +838,39 @@ static void spiAdd(bool isRead, void* buf, size_t n, DRV_SPI_TRANSFER_HANDLE* ou
     bool stuck = false;
     size_t deliver = n;
 
-    if ((gRefuseResyncFlushAt != 0U) && isRead && (n == 10U) && test1217_InResync() &&
-            (++gResyncFlushReads == gRefuseResyncFlushAt))
+    bool forceError = false;
+
+    if (((gRefuseResyncFlushAt != 0U) || (gPartialResyncFlushAt != 0U)) && isRead && (n == 10U) &&
+            test1217_InResync())
     {
-        gRefuseResyncFlushAt = 0U;
-        *out = DRV_SPI_TRANSFER_HANDLE_INVALID;
-        return;
+        const unsigned reads = ++gResyncFlushReads;
+        if (reads == gRefuseResyncFlushAt)
+        {
+            gRefuseResyncFlushAt = 0U;
+            *out = DRV_SPI_TRANSFER_HANDLE_INVALID;
+            return;
+        }
+        if (reads == gPartialResyncFlushAt)
+        {
+            gPartialResyncFlushAt = 0U;
+            deliver = gPartialResyncFlushBytes;
+        }
+    }
+    if ((gErrorAfterBlockReadAt != 0U) && isRead && (n == 1U) && test1217_ResyncAfterBlock() &&
+            (++gAfterBlockReads == gErrorAfterBlockReadAt))
+    {
+        gErrorAfterBlockReadAt = 0U;
+        forceError = true;
+    }
+    if ((gErrorResyncBusyReadAt != 0U) && isRead && (n == 1U) && test1217_InResync() &&
+            (++gResyncBusyReads == gErrorResyncBusyReadAt))
+    {
+        gErrorResyncBusyReadAt = 0U;
+        forceError = true;
+        if (gErrorResyncDeliversNothing)
+        {
+            deliver = 0U; /* the card is not even clocked */
+        }
     }
 
     if ((gFault.action != FAULT_NONE) &&
@@ -858,7 +916,7 @@ static void spiAdd(bool isRead, void* buf, size_t n, DRV_SPI_TRANSFER_HANDLE* ou
 
     gNextHandle++;
     *out = gNextHandle;
-    gQueue[(gQueueHead + gQueueCount) % SPI_QUEUE] = (Xfer){ isRead, (uint8_t*)buf, n, *out, corrupt, stuck, false, noCs, deliver };
+    gQueue[(gQueueHead + gQueueCount) % SPI_QUEUE] = (Xfer){ isRead, (uint8_t*)buf, n, *out, corrupt, stuck, false, noCs, deliver, forceError };
     gQueueCount++;
     if (gCompleteInAdd && (gQueueCount == 1U))
     {
@@ -959,7 +1017,7 @@ static void spiComplete(Xfer* x)
         x->n = x->deliver;
         spiClock(x);
         SYS_PORT_PinSet(SD_CS);
-        if (x->isRead)
+        if (x->isRead && !gKeepUndelivered)
         {
             memset(&x->buf[x->deliver], 0xFF, full - x->deliver);
         }
@@ -975,7 +1033,7 @@ static void spiComplete(Xfer* x)
     {
         SYS_PORT_PinSet(gSetupCs);
     }
-    gHandler(partial ? DRV_SPI_TRANSFER_EVENT_ERROR : DRV_SPI_TRANSFER_EVENT_COMPLETE, x->h, gHandlerCtx);
+    gHandler((partial || x->forceError) ? DRV_SPI_TRANSFER_EVENT_ERROR : DRV_SPI_TRANSFER_EVENT_COMPLETE, x->h, gHandlerCtx);
 }
 
 /* One interrupt's worth of bus progress. A stuck head stays put, as a lost DMA
@@ -1117,6 +1175,14 @@ static void resetAll(void)
     memset(&gFault, 0, sizeof(gFault));
     gRefuseResyncFlushAt = 0U;
     gResyncFlushReads = 0U;
+    gPartialResyncFlushAt = 0U;
+    gPartialResyncFlushBytes = 0U;
+    gErrorAfterBlockReadAt = 0U;
+    gAfterBlockReads = 0U;
+    gErrorResyncBusyReadAt = 0U;
+    gResyncBusyReads = 0U;
+    gKeepUndelivered = false;
+    gErrorResyncDeliversNothing = false;
     gFault.isRead = -1;
     gFault.len = -1;
     gFault.firstByte = -1;
@@ -3003,6 +3069,229 @@ TEST(resync_block_accepted_then_a_later_flush_read_refused_is_still_reported)
     ASSERT_FALSE(logged("ACCEPTED", "blk=9 ("));
 }
 
+/* ---- #1235 r3: the INVARIANT -- every byte the driver RECEIVES from the card
+ * while a filler-acceptance outcome is unresolved is scanned for the token
+ * before any error or exit branch can discard it, in EVERY phase. Enumerated
+ * receive sites of the resync, and the test of each:
+ *
+ *   site                                 ok path                  error path
+ *   -----------------------------------  -----------------------  ----------------------
+ *   BEFORE_BLOCK busy reads (1 byte),    ..._read_in_the_next_    (a pending token is
+ *     with an acceptance pending           requests_resync          read at the next resync)
+ *   RESYNC_FLUSH 10-byte reads           ..._names_the_sector     ..._flush_read_that_
+ *                                          (r1/r2 tests)            then_fails
+ *   AFTER_BLOCK busy reads (1 byte)      ..._after_the_flush_     ..._after_block_read_
+ *                                          is_reported              that_then_fails
+ *   AFTER_STOP / CMD12_R1 busy reads     not scanned: a card out of the write answers
+ *                                        CMD12 with an R1 that can read 0x05, which is
+ *                                        NOT an acceptance
+ *   RESYNC_START / RESYNC_STOP           nothing received (write-only)
+ * ------------------------------------------------------------------------- */
+
+#define PREFIX_1235_B 261U
+#define TOKEN_DELAY_AFTER_FLUSH_1235 259U /* the token lands in AFTER_BLOCK's first read */
+
+/* The audit's second example: 3C 8A + 259 x 00, then FF FF FE + 248 x FF. */
+static void collisionData261(uint8_t* data)
+{
+    fill(data, BLOCK, 0x61U);
+    memset(data, 0, PREFIX_1235_B);
+    data[0] = 0x3CU;
+    data[1] = 0x8AU;
+}
+
+static void abandonPartwayBytes(unsigned attempts, unsigned bytes)
+{
+    abandonPartway(attempts);
+    gFault.partial = bytes;
+}
+
+/* r3 finding 1 (BEFORE_BLOCK): the flush's 26th read is refused, so the card
+ * has PROGRAMMED the filler and its 0xE5 is still on the wire. The next
+ * request's resync reads it in BEFORE_BLOCK. */
+TEST(resync_block_accepted_token_read_in_the_next_requests_resync)
+{
+    uint8_t data[BLOCK];
+    uint8_t filler[BLOCK];
+    uint8_t other[BLOCK];
+
+    bootCard();
+    collisionData261(data);
+    fillerBlock(filler, data, PREFIX_1235_B);
+    ASSERT_EQ(modelCrc16(filler, BLOCK), 0xFFFFU); /* the premise */
+
+    abandonPartwayBytes(1U, PREFIX_1235_B);
+    gRefuseResyncFlushAt = 26U;
+    gResyncFlushReads = 0U;
+    const unsigned programmed = cmdCount(EV_BLOCK_PROGRAMMED);
+    ASSERT_EQ(writeBlocks(41U, data, 1U), DRV_SDSPI_EVENT_COMMAND_ERROR);
+    ASSERT_EQ(gRefuseResyncFlushAt, 0U);
+    ASSERT_EQ(cmdCount(EV_BLOCK_PROGRAMMED) - programmed, 1U); /* the card did program it */
+    ASSERT_TRUE(sectorIs(41U, filler));
+    ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 0U); /* the token is not read yet */
+
+    fill(other, sizeof(other), 0x62U);
+    ASSERT_EQ(writeBlocks(9U, other, 1U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+    ASSERT_TRUE(sectorIs(9U, other));
+    ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 1U);
+    ASSERT_TRUE(logged("ACCEPTED", "blk=41 ("));
+    ASSERT_FALSE(logged("ACCEPTED", "blk=9 ("));
+
+    /* Once: a third request must not count it again. */
+    ASSERT_EQ(writeBlocks(10U, other, 1U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+    ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 1U);
+    assertCardHealthy(42U);
+}
+
+/* r3 finding 2 (flush, error path): the 26th flush read delivers six bytes,
+ * 0xE5 the last of them, and then reports ERROR. The error branch ends the
+ * resync; the token it consumed must already be recorded. */
+TEST(resync_block_accepted_token_in_a_flush_read_that_then_fails)
+{
+    uint8_t data[BLOCK];
+    uint8_t other[BLOCK];
+
+    bootCard();
+    collisionData(data);
+    abandonPartway(1U);
+    gPartialResyncFlushAt = 26U;
+    gPartialResyncFlushBytes = 6U;
+    gResyncFlushReads = 0U;
+    ASSERT_EQ(writeBlocks(41U, data, 1U), DRV_SDSPI_EVENT_COMMAND_ERROR);
+    ASSERT_EQ(gPartialResyncFlushAt, 0U); /* the failed read did happen */
+    ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 1U);
+    ASSERT_TRUE(logged("ACCEPTED", "blk=41 ("));
+
+    fill(other, sizeof(other), 0x62U);
+    ASSERT_EQ(writeBlocks(9U, other, 1U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+    ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 1U);
+    ASSERT_FALSE(logged("ACCEPTED", "blk=9 ("));
+    assertCardHealthy(42U);
+}
+
+/* AFTER_BLOCK, ok path: a card slow to answer gives the token after the whole
+ * flush; it is in the first busy read after it. */
+TEST(resync_block_accepted_token_after_the_flush_is_reported)
+{
+    uint8_t data[BLOCK];
+
+    bootCard();
+    collisionData(data);
+    card.tokenDelay = TOKEN_DELAY_AFTER_FLUSH_1235;
+    abandonPartway(1U);
+    ASSERT_EQ(writeBlocks(41U, data, 1U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+    ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 1U);
+    ASSERT_TRUE(logged("ACCEPTED", "blk=41 ("));
+    assertCardHealthy(42U);
+}
+
+/* AFTER_BLOCK, error path: the byte is clocked and then the transfer reports
+ * ERROR. */
+TEST(resync_block_accepted_token_in_an_after_block_read_that_then_fails)
+{
+    uint8_t data[BLOCK];
+    uint8_t other[BLOCK];
+
+    bootCard();
+    collisionData(data);
+    card.tokenDelay = TOKEN_DELAY_AFTER_FLUSH_1235;
+    abandonPartway(1U);
+    gErrorAfterBlockReadAt = 1U;
+    gAfterBlockReads = 0U;
+    ASSERT_EQ(writeBlocks(41U, data, 1U), DRV_SDSPI_EVENT_COMMAND_ERROR);
+    ASSERT_EQ(gErrorAfterBlockReadAt, 0U);
+    ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 1U);
+    ASSERT_TRUE(logged("ACCEPTED", "blk=41 ("));
+
+    fill(other, sizeof(other), 0x62U);
+    ASSERT_EQ(writeBlocks(9U, other, 1U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+    ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 1U);
+    assertCardHealthy(42U);
+}
+
+/* BEFORE_BLOCK, error path: the next request's first resync read delivers the
+ * pending 0xE5 and then reports ERROR. */
+TEST(resync_block_accepted_token_in_a_before_block_read_that_then_fails)
+{
+    uint8_t data[BLOCK];
+    uint8_t other[BLOCK];
+
+    bootCard();
+    collisionData261(data);
+    abandonPartwayBytes(1U, PREFIX_1235_B);
+    gRefuseResyncFlushAt = 26U;
+    gResyncFlushReads = 0U;
+    ASSERT_EQ(writeBlocks(41U, data, 1U), DRV_SDSPI_EVENT_COMMAND_ERROR);
+    ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 0U);
+
+    fill(other, sizeof(other), 0x62U);
+    gErrorResyncBusyReadAt = 1U;
+    gResyncBusyReads = 0U;
+    ASSERT_EQ(writeBlocks(9U, other, 1U), DRV_SDSPI_EVENT_COMMAND_ERROR);
+    ASSERT_EQ(gErrorResyncBusyReadAt, 0U);
+    ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 1U);
+    ASSERT_TRUE(logged("ACCEPTED", "blk=41 ("));
+
+    ASSERT_EQ(writeBlocks(9U, other, 1U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+    ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 1U);
+    assertCardHealthy(42U);
+}
+
+/* BEFORE_BLOCK, error path, nothing delivered: the pending acceptance is not
+ * reported from a byte the buffer held before the read (here a 0xE5, which is
+ * token-shaped), and is still reported when its real token is read. */
+TEST(resync_before_block_read_failing_with_nothing_delivered_reports_no_stale_byte)
+{
+    uint8_t data[BLOCK];
+    uint8_t other[BLOCK];
+
+    bootCard();
+    collisionData261(data);
+    abandonPartwayBytes(1U, PREFIX_1235_B);
+    gRefuseResyncFlushAt = 26U;
+    gResyncFlushReads = 0U;
+    ASSERT_EQ(writeBlocks(41U, data, 1U), DRV_SDSPI_EVENT_COMMAND_ERROR);
+    ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 0U);
+
+    fill(other, sizeof(other), 0x62U);
+    test1217_PlantResponseByte(0U, 0xE5U);
+    gKeepUndelivered = true;
+    gErrorResyncDeliversNothing = true;
+    gErrorResyncBusyReadAt = 1U;
+    gResyncBusyReads = 0U;
+    ASSERT_EQ(writeBlocks(9U, other, 1U), DRV_SDSPI_EVENT_COMMAND_ERROR);
+    ASSERT_EQ(gErrorResyncBusyReadAt, 0U);
+    ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 0U); /* nothing was read */
+
+    gKeepUndelivered = false;
+    gErrorResyncDeliversNothing = false;
+    ASSERT_EQ(writeBlocks(9U, other, 1U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+    ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 1U); /* the real token */
+    ASSERT_TRUE(logged("ACCEPTED", "blk=41 ("));
+    assertCardHealthy(42U);
+}
+
+/* A flush read that fails after delivering only part of its bytes must not report whatever the
+ * response buffer held before it: byte 9 holds 0xE5, which is an acceptance if
+ * read as one. */
+TEST(resync_flush_read_failing_part_way_reports_no_stale_byte)
+{
+    uint8_t data[BLOCK];
+
+    bootCard();
+    collisionData(data);
+    abandonPartway(1U);
+    gPartialResyncFlushAt = 1U;
+    gPartialResyncFlushBytes = 6U;
+    gResyncFlushReads = 0U;
+    for (unsigned i = 6U; i < 9U; i++) { test1217_PlantResponseByte(i, 0xFFU); }
+    test1217_PlantResponseByte(9U, 0xE5U);
+    gKeepUndelivered = true;
+    ASSERT_EQ(writeBlocks(41U, data, 1U), DRV_SDSPI_EVENT_COMMAND_ERROR);
+    ASSERT_EQ(gPartialResyncFlushAt, 0U);
+    ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 0U);
+}
+
 /* A standard-capacity card takes a byte address; the report gives the block. */
 TEST(resync_block_accepted_on_a_byte_addressed_card_names_the_block)
 {
@@ -3135,6 +3424,13 @@ int main(void)
     RUN(resync_block_accepted_after_a_partial_capture_names_the_sector);
     RUN(resync_block_accepted_then_rewritten_is_still_reported);
     RUN(resync_block_accepted_then_a_later_flush_read_refused_is_still_reported);
+    RUN(resync_block_accepted_token_read_in_the_next_requests_resync);
+    RUN(resync_block_accepted_token_in_a_flush_read_that_then_fails);
+    RUN(resync_block_accepted_token_after_the_flush_is_reported);
+    RUN(resync_block_accepted_token_in_an_after_block_read_that_then_fails);
+    RUN(resync_block_accepted_token_in_a_before_block_read_that_then_fails);
+    RUN(resync_before_block_read_failing_with_nothing_delivered_reports_no_stale_byte);
+    RUN(resync_flush_read_failing_part_way_reports_no_stale_byte);
     RUN(resync_block_accepted_on_a_byte_addressed_card_names_the_block);
     RUN(resync_block_rejected_after_a_partial_capture_is_not_reported);
     RUN(fast_mode_resync_block_programmed_after_a_partial_capture_is_not_reported);
