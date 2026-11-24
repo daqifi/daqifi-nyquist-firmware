@@ -167,7 +167,7 @@ LC_ALL=C sort "$TMP_OUT" >"$SORTED_OUT"
 case "$MODE" in
   check)
     # The SAME comparator CI runs (line-insensitive multiset, #1309), so the
-    # local check and the gate cannot disagree. Exit 2 (cannot compare) stays 2.
+    # local check and the gate apply one rule. Exit 2 (cannot compare) stays 2.
     RC=0
     python3 -I tools/lint/cppcheck_compare.py "$BASELINE" "$SORTED_OUT" || RC=$?
     if [ "$RC" = 1 ]; then
@@ -186,7 +186,7 @@ case "$MODE" in
     # A baseline that does not exist yet accepts nothing.
     OLD="$BASELINE"; [ -e "$OLD" ] || OLD=/dev/null
     ADDED="$(python3 -I tools/lint/cppcheck_compare.py --count-added "$OLD" "$SORTED_OUT")"
-    if [ "$ADDED" -gt 0 ] && [ "$FORCE" != 1 ]; then
+    if [ "$ADDED" != 0 ] && [ "$FORCE" != 1 ]; then
       echo "::error::refusing to write the baseline: $ADDED finding(s) not in $BASELINE." >&2
       echo "Writing them would adopt new findings. Fix or suppress them; use --force only if deliberate." >&2
       python3 -I tools/lint/cppcheck_compare.py "$OLD" "$SORTED_OUT" >&2 || true
