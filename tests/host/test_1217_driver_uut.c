@@ -32,6 +32,13 @@ bool test1217_ResyncAfterBlock(void)
     return test1217_InResync() && (gDrvSDSPIObj[0].resyncStage == DRV_SDSPI_RESYNC_STAGE_AFTER_BLOCK);
 }
 
+/* #1235 r4: the resync is before its flush (the 0xFE and the busy reads that
+ * precede it). */
+bool test1217_ResyncBeforeBlock(void)
+{
+    return test1217_InResync() && (gDrvSDSPIObj[0].resyncStage == DRV_SDSPI_RESYNC_STAGE_BEFORE_BLOCK);
+}
+
 /* #1235 r3: leave a byte in the command-response buffer, as an earlier command
  * would have. Index 9 is written only by the resync's 10-byte flush reads. */
 void test1217_PlantResponseByte(unsigned index, uint8_t value)

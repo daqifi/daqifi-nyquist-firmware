@@ -675,6 +675,7 @@ typedef struct {
     bool noCs;     /* #1255: DRV_SPI_WriteTransferAddNoCs */
     size_t deliver; /* #1235: bytes the card sees before CS rises; n = all */
     bool forceError; /* #1235 r3: all of it clocked, but the transfer reports ERROR */
+    uint8_t* rx;   /* #1235 r4: a write-read's receive buffer (buf is its transmit one) */
 } Xfer;
 
 /* FAULT_PARTIAL (#1235): the card sees only the first gFault.partial bytes.
@@ -688,6 +689,7 @@ typedef enum { FAULT_NONE, FAULT_REJECT, FAULT_LOSE, FAULT_CORRUPT, FAULT_PARTIA
 /* test_1217_driver_uut.c: whether the driver's command FSM is in its resync,
  * and how many CMD24 re-sends the current request has spent. */
 extern bool test1217_InResync(void);
+extern bool test1217_ResyncBeforeBlock(void); /* #1235 r4 */
 extern bool test1217_ResyncAfterBlock(void); /* #1235 r3: in the resync, past its flush */
 extern void test1217_PlantResponseByte(unsigned index, uint8_t value);
 extern unsigned test1217_WriteRetries(void);
@@ -732,6 +734,17 @@ static unsigned gResyncBusyReads;
  * fills in by default. */
 static bool gKeepUndelivered;
 static bool gErrorResyncDeliversNothing; /* with gErrorResyncBusyReadAt */
+/* #1235 r4: the Nth write-read the resync submits for its 0xFE start token
+ * (counted from arming) is clocked in full and then reports ERROR. */
+static unsigned gErrorStartTokenWriteAt;
+static unsigned gStartTokenWrites;
+/* #1235 r4: what MISO carries during the 0xFE start token instead of what the
+ * card sent; -1 = the card's own byte. */
+static int gStrayStartTokenByte = -1;
+static bool gErrorStartTokenDeliversNothing; /* with gErrorStartTokenWriteAt */
+/* #1235 r4: what the resync's busy reads before its flush clock instead of the
+ * card's byte; -1 = the card's own. */
+static int gStrayBeforeBlockByte = -1;
 
 #define SPI_QUEUE 16U
 static Xfer gQueue[SPI_QUEUE];
@@ -832,7 +845,7 @@ bool DRV_SPI_IsExclusiveHolder(DRV_HANDLE h)
 
 static void spiRun(void);
 
-static void spiAdd(bool isRead, void* buf, size_t n, DRV_SPI_TRANSFER_HANDLE* out, bool noCs)
+static void spiAdd(bool isRead, void* buf, size_t n, DRV_SPI_TRANSFER_HANDLE* out, bool noCs, uint8_t* rx)
 {
     bool corrupt = false;
     bool stuck = false;
@@ -861,6 +874,17 @@ static void spiAdd(bool isRead, void* buf, size_t n, DRV_SPI_TRANSFER_HANDLE* ou
     {
         gErrorAfterBlockReadAt = 0U;
         forceError = true;
+    }
+    if ((gErrorStartTokenWriteAt != 0U) && (rx != NULL) && (n == 1U) && (((uint8_t*)buf)[0] == 0xFEU) &&
+            test1217_InResync() && (++gStartTokenWrites == gErrorStartTokenWriteAt))
+    {
+        gErrorStartTokenWriteAt = 0U;
+        gStrayBeforeBlockByte = -1; /* the stray byte was for the busy reads before THIS 0xFE */
+        forceError = true;
+        if (gErrorStartTokenDeliversNothing)
+        {
+            deliver = 0U; /* the card is not even clocked */
+        }
     }
     if ((gErrorResyncBusyReadAt != 0U) && isRead && (n == 1U) && test1217_InResync() &&
             (++gResyncBusyReads == gErrorResyncBusyReadAt))
@@ -916,7 +940,7 @@ static void spiAdd(bool isRead, void* buf, size_t n, DRV_SPI_TRANSFER_HANDLE* ou
 
     gNextHandle++;
     *out = gNextHandle;
-    gQueue[(gQueueHead + gQueueCount) % SPI_QUEUE] = (Xfer){ isRead, (uint8_t*)buf, n, *out, corrupt, stuck, false, noCs, deliver, forceError };
+    gQueue[(gQueueHead + gQueueCount) % SPI_QUEUE] = (Xfer){ isRead, (uint8_t*)buf, n, *out, corrupt, stuck, false, noCs, deliver, forceError, rx };
     gQueueCount++;
     if (gCompleteInAdd && (gQueueCount == 1U))
     {
@@ -927,13 +951,27 @@ static void spiAdd(bool isRead, void* buf, size_t n, DRV_SPI_TRANSFER_HANDLE* ou
 void DRV_SPI_WriteTransferAdd(DRV_HANDLE h, void* buf, size_t n, DRV_SPI_TRANSFER_HANDLE* out)
 {
     (void) h;
-    spiAdd(false, buf, n, out, false);
+    spiAdd(false, buf, n, out, false, NULL);
+}
+
+/* #1235 r4: full duplex. buf is transmitted, rx receives what the card clocks
+ * back during the same bytes. */
+void DRV_SPI_WriteReadTransferAdd(DRV_HANDLE h, void* tx, size_t ntx, void* rx, size_t nrx,
+        DRV_SPI_TRANSFER_HANDLE* out)
+{
+    (void) h;
+    if ((ntx != nrx) || (rx == NULL))
+    {
+        *out = DRV_SPI_TRANSFER_HANDLE_INVALID; /* not a shape this model clocks */
+        return;
+    }
+    spiAdd(false, tx, ntx, out, false, (uint8_t*)rx);
 }
 
 void DRV_SPI_WriteTransferAddNoCs(DRV_HANDLE h, void* buf, size_t n, DRV_SPI_TRANSFER_HANDLE* out)
 {
     (void) h;
-    spiAdd(false, buf, n, out, true);
+    spiAdd(false, buf, n, out, true, NULL);
 }
 
 /* drv_spi.c: a held CS survives completions; releasing raises it now. */
@@ -961,7 +999,7 @@ void DRV_SPI_ChipSelectHold(DRV_HANDLE h, bool hold)
 void DRV_SPI_ReadTransferAdd(DRV_HANDLE h, void* buf, size_t n, DRV_SPI_TRANSFER_HANDLE* out)
 {
     (void) h;
-    spiAdd(true, buf, n, out, false);
+    spiAdd(true, buf, n, out, false, NULL);
 }
 
 static void spiClock(Xfer* x)
@@ -976,15 +1014,31 @@ static void spiClock(Xfer* x)
             {
                 mosi ^= 0x10U;
             }
-            const uint8_t miso = cardClock(mosi);
+            uint8_t miso = cardClock(mosi);
             if (x->isRead)
             {
+                if ((gStrayBeforeBlockByte >= 0) && (x->n == 1U) && test1217_ResyncBeforeBlock())
+                {
+                    miso = (uint8_t)gStrayBeforeBlockByte;
+                }
                 x->buf[i] = selected ? miso : 0xFFU;
+            }
+            else if (x->rx != NULL)
+            {
+                if ((gStrayStartTokenByte >= 0) && (x->n == 1U) && (mosi == 0xFEU))
+                {
+                    miso = (uint8_t)gStrayStartTokenByte;
+                }
+                x->rx[i] = selected ? miso : 0xFFU;
             }
         }
         else if (x->isRead)
         {
             x->buf[i] = 0xFFU;
+        }
+        else if (x->rx != NULL)
+        {
+            x->rx[i] = 0xFFU;
         }
         else
         {
@@ -1020,6 +1074,10 @@ static void spiComplete(Xfer* x)
         if (x->isRead && !gKeepUndelivered)
         {
             memset(&x->buf[x->deliver], 0xFF, full - x->deliver);
+        }
+        else if ((x->rx != NULL) && !gKeepUndelivered)
+        {
+            memset(&x->rx[x->deliver], 0xFF, full - x->deliver);
         }
         x->n = full;
     }
@@ -1183,6 +1241,11 @@ static void resetAll(void)
     gResyncBusyReads = 0U;
     gKeepUndelivered = false;
     gErrorResyncDeliversNothing = false;
+    gErrorStartTokenWriteAt = 0U;
+    gStartTokenWrites = 0U;
+    gStrayStartTokenByte = -1;
+    gErrorStartTokenDeliversNothing = false;
+    gStrayBeforeBlockByte = -1;
     gFault.isRead = -1;
     gFault.len = -1;
     gFault.firstByte = -1;
@@ -1205,6 +1268,10 @@ static void resetAll(void)
     gLastEvent = -1;
     gEventsSeen = 0U;
     gTest1217LogE = 0U;
+    /* LOG_E_ONCE counts without storing a line, so the ring would otherwise
+     * keep a PREVIOUS test's text where this test's count says nothing was
+     * written, and logged() would find it (#1235 r4). */
+    memset(gLogLines, 0, sizeof(gLogLines));
     gUseDriverDefault = false;
     memset(gClients, 0, sizeof(gClients));
     memset(gBuffers, 0, sizeof(gBuffers));
@@ -3085,7 +3152,10 @@ TEST(resync_block_accepted_then_a_later_flush_read_refused_is_still_reported)
  *   AFTER_STOP / CMD12_R1 busy reads     not scanned: a card out of the write answers
  *                                        CMD12 with an R1 that can read 0x05, which is
  *                                        NOT an acceptance
- *   RESYNC_START / RESYNC_STOP           nothing received (write-only)
+ *   RESYNC_START                         submits nothing
+ *   RESYNC_STOP (0xFD, CMD12)            write-only, CMD25 resyncs only: an acceptance is
+ *                                        counted only while writeInDoubt is SINGLE
+ *   0xFE start token                     r4: full duplex, see below
  * ------------------------------------------------------------------------- */
 
 #define PREFIX_1235_B 261U
@@ -3235,6 +3305,155 @@ TEST(resync_block_accepted_token_in_a_before_block_read_that_then_fails)
     ASSERT_EQ(writeBlocks(9U, other, 1U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
     ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 1U);
     assertCardHealthy(42U);
+}
+
+/* ---- #1235 r4: the invariant is every byte CLOCKED, not every byte READ. SPI is
+ * full duplex, so the resync's write-only 0xFE transfer clocks MISO too, and
+ * the driver discarded it. After a previous resync left 512 payload bytes in
+ * the card, the next resync's BEFORE_BLOCK reads supply the CRC (FF FF), the
+ * card programs the filler, and its 0xE5 is what the 0xFE transfer clocks. */
+
+/* The audit's first interleaving, verbatim: collisionData261(), the CMD24 cut
+ * off after 261 bytes, the 25th flush read delivering 8 of its 10 bytes and
+ * then ERROR, and then a write to another block. */
+TEST(resync_block_accepted_token_clocked_by_the_next_resyncs_0xfe_write_261)
+{
+    uint8_t data[BLOCK];
+    uint8_t filler[BLOCK];
+    uint8_t other[BLOCK];
+
+    bootCard();
+    collisionData261(data);
+    fillerBlock(filler, data, PREFIX_1235_B);
+    ASSERT_EQ(modelCrc16(filler, BLOCK), 0xFFFFU); /* the premise */
+
+    abandonPartwayBytes(1U, PREFIX_1235_B);
+    gPartialResyncFlushAt = 25U;
+    gPartialResyncFlushBytes = 8U;
+    gResyncFlushReads = 0U;
+    ASSERT_EQ(writeBlocks(41U, data, 1U), DRV_SDSPI_EVENT_COMMAND_ERROR);
+    ASSERT_EQ(gPartialResyncFlushAt, 0U); /* the failed read did happen */
+    ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 0U); /* the CRC is still outstanding */
+
+    fill(other, sizeof(other), 0x62U);
+    ASSERT_EQ(writeBlocks(9U, other, 1U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+    ASSERT_TRUE(sectorIs(9U, other));
+    ASSERT_TRUE(sectorIs(41U, filler)); /* the card did program it */
+    ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 1U);
+    ASSERT_TRUE(logged("ACCEPTED", "blk=41 ("));
+    ASSERT_FALSE(logged("ACCEPTED", "blk=9 ("));
+
+    ASSERT_EQ(writeBlocks(10U, other, 1U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+    ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 1U); /* once */
+    assertCardHealthy(42U);
+}
+
+/* The audit's second interleaving, verbatim: collisionData(), the CMD24 cut off
+ * after 256 bytes, the 26th flush read delivering 3 of its 10 bytes and then
+ * ERROR, and then a write to another block. */
+TEST(resync_block_accepted_token_clocked_by_the_next_resyncs_0xfe_write_256)
+{
+    uint8_t data[BLOCK];
+    uint8_t filler[BLOCK];
+    uint8_t other[BLOCK];
+
+    bootCard();
+    collisionData(data);
+    fillerBlock(filler, data, PREFIX_1235);
+    ASSERT_EQ(modelCrc16(filler, BLOCK), 0xFFFFU); /* the premise */
+
+    abandonPartway(1U);
+    gPartialResyncFlushAt = 26U;
+    gPartialResyncFlushBytes = 3U;
+    gResyncFlushReads = 0U;
+    ASSERT_EQ(writeBlocks(41U, data, 1U), DRV_SDSPI_EVENT_COMMAND_ERROR);
+    ASSERT_EQ(gPartialResyncFlushAt, 0U);
+    ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 0U);
+
+    fill(other, sizeof(other), 0x62U);
+    ASSERT_EQ(writeBlocks(9U, other, 1U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+    ASSERT_TRUE(sectorIs(9U, other));
+    ASSERT_TRUE(sectorIs(41U, filler));
+    ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 1U);
+    ASSERT_TRUE(logged("ACCEPTED", "blk=41 ("));
+    ASSERT_FALSE(logged("ACCEPTED", "blk=9 ("));
+
+    ASSERT_EQ(writeBlocks(10U, other, 1U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+    ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 1U);
+    assertCardHealthy(42U);
+}
+
+/* The 0xFE transfer's error path: the byte is clocked and then the transfer
+ * reports ERROR. The resync ends; the token it consumed is already recorded. */
+TEST(resync_block_accepted_token_in_a_0xfe_write_that_then_fails)
+{
+    uint8_t data[BLOCK];
+    uint8_t other[BLOCK];
+
+    bootCard();
+    collisionData261(data);
+    abandonPartwayBytes(1U, PREFIX_1235_B);
+    gPartialResyncFlushAt = 25U;
+    gPartialResyncFlushBytes = 8U;
+    gResyncFlushReads = 0U;
+    ASSERT_EQ(writeBlocks(41U, data, 1U), DRV_SDSPI_EVENT_COMMAND_ERROR);
+    ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 0U);
+
+    fill(other, sizeof(other), 0x62U);
+    gErrorStartTokenWriteAt = 1U;
+    gStartTokenWrites = 0U;
+    ASSERT_EQ(writeBlocks(9U, other, 1U), DRV_SDSPI_EVENT_COMMAND_ERROR);
+    ASSERT_EQ(gErrorStartTokenWriteAt, 0U); /* the failed write did happen */
+    ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 1U);
+    ASSERT_TRUE(logged("ACCEPTED", "blk=41 ("));
+
+    ASSERT_EQ(writeBlocks(9U, other, 1U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+    ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 1U);
+    assertCardHealthy(42U);
+}
+
+/* What the 0xFE transfer clocks is not always a token: a card that is idle
+ * answers 0xFF, and one that is still busy 0x00. Neither is an acceptance, and
+ * the healthy resyncs of the rest of this file (nothing counted) cover the
+ * first; this covers a stray byte of the wrong shape arriving there. */
+TEST(resync_0xfe_write_clocking_a_byte_that_is_not_a_token_reports_nothing)
+{
+    uint8_t data[BLOCK];
+
+    bootCard();
+    collisionData(data);
+    abandonPartway(1U);
+    gStrayStartTokenByte = 0x00U;
+    ASSERT_EQ(writeBlocks(41U, data, 1U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+    gStrayStartTokenByte = -1;
+    /* The ordinary acceptance (in the flush) is still counted exactly once. */
+    ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 1U);
+    assertCardHealthy(42U);
+}
+
+/* The 0xFE transfer fails delivering nothing (the card is not clocked), and
+ * the byte before it held something token-shaped: the receive buffer is cleared
+ * before the transfer, so no acceptance is read from a byte nobody received. A
+ * card that rejects the filler (an ordinary abandoned write) reports none. */
+TEST(resync_0xfe_write_failing_with_nothing_delivered_reports_no_stale_byte)
+{
+    uint8_t data[BLOCK];
+
+    bootCard();
+    fill(data, BLOCK, 0x61U);
+    abandonPartway(1U);
+    gStrayBeforeBlockByte = 0x05; /* the last busy read leaves a token-shaped byte */
+    gKeepUndelivered = true;
+    gErrorStartTokenDeliversNothing = true;
+    gErrorStartTokenWriteAt = 1U;
+    gStartTokenWrites = 0U;
+    ASSERT_EQ(writeBlocks(41U, data, 1U), DRV_SDSPI_EVENT_COMMAND_ERROR);
+    ASSERT_EQ(gErrorStartTokenWriteAt, 0U); /* the failed write did happen */
+    ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 0U);
+    ASSERT_FALSE(logged("ACCEPTED", "blk=41 ("));
+    gStrayBeforeBlockByte = -1;
+    gKeepUndelivered = false;
+    gErrorStartTokenDeliversNothing = false;
 }
 
 /* BEFORE_BLOCK, error path, nothing delivered: the pending acceptance is not
@@ -3484,6 +3703,11 @@ int main(void)
     RUN(resync_block_accepted_token_after_the_flush_is_reported);
     RUN(resync_block_accepted_token_in_an_after_block_read_that_then_fails);
     RUN(resync_block_accepted_token_in_a_before_block_read_that_then_fails);
+    RUN(resync_block_accepted_token_clocked_by_the_next_resyncs_0xfe_write_261);
+    RUN(resync_block_accepted_token_clocked_by_the_next_resyncs_0xfe_write_256);
+    RUN(resync_block_accepted_token_in_a_0xfe_write_that_then_fails);
+    RUN(resync_0xfe_write_clocking_a_byte_that_is_not_a_token_reports_nothing);
+    RUN(resync_0xfe_write_failing_with_nothing_delivered_reports_no_stale_byte);
     RUN(resync_token_still_to_come_when_the_bus_is_released_is_reported);
     RUN(resync_token_in_a_completed_chunk_when_the_bus_is_released_is_reported);
     RUN(resync_before_block_read_failing_with_nothing_delivered_reports_no_stale_byte);

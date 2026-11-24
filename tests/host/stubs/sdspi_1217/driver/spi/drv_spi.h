@@ -26,6 +26,8 @@ void DRV_SPI_TransferEventHandlerSet(DRV_HANDLE h, DRV_SPI_TRANSFER_EVENT_HANDLE
 bool DRV_SPI_TransferSetup(DRV_HANDLE h, DRV_SPI_TRANSFER_SETUP* setup);
 void DRV_SPI_WriteTransferAdd(DRV_HANDLE h, void* buf, size_t n, DRV_SPI_TRANSFER_HANDLE* out);
 void DRV_SPI_ReadTransferAdd(DRV_HANDLE h, void* buf, size_t n, DRV_SPI_TRANSFER_HANDLE* out);
+void DRV_SPI_WriteReadTransferAdd(DRV_HANDLE h, void* tx, size_t ntx, void* rx, size_t nrx,
+                                  DRV_SPI_TRANSFER_HANDLE* out);           /* #1235 r4 */
 bool DRV_SPI_Lock(DRV_HANDLE h, bool lock);
 bool DRV_SPI_IsExclusiveHolder(DRV_HANDLE h);
 bool DRV_SPI_TransferIsPending(DRV_HANDLE h, DRV_SPI_TRANSFER_HANDLE xfer);

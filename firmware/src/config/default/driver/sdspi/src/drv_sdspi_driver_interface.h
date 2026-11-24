@@ -95,6 +95,27 @@ bool DRV_SDSPI_SPIWrite(
 );
 
 // *****************************************************************************
+/* SD Card SPI Write and Read (full duplex)
+
+  Summary:
+    Submits a write whose received bytes are kept (#1235 r4)
+
+  Description:
+    Transmits nBytes from pWriteBuffer and receives nBytes into pReadBuffer in
+    the same transfer. The buffers must not overlap.
+
+  Remarks:
+    This is a non-blocking implementation.
+*/
+
+bool DRV_SDSPI_SPIWriteRead(
+    DRV_SDSPI_OBJ* dObj,
+    void* pWriteBuffer,
+    void* pReadBuffer,
+    uint32_t nBytes
+);
+
+// *****************************************************************************
 /* SD Card SPI Write With CS Disabled
 
   Summary:

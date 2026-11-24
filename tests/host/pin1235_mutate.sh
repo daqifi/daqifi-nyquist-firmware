@@ -167,5 +167,47 @@ run_mutant releasebus_pending resync_token_still_to_come_when_the_bus_is_release
 "            lDRV_SDSPI_WriteResyncScanReceived(dObj);
         }"
 
+# r4 -- the transfers that CLOCK the card without reading from it. SPI is full
+# duplex: a write-only transfer discards what the card answers, so each write
+# site is either full duplex with its received byte scanned, or proven unable to
+# carry an acceptance (RESYNC_START/STOP and the CMD25 sites: see the table in
+# test_1217_abandoned_write.c).
+
+# M10: the 0xFE start token's received byte is not scanned.
+run_mutant start_token_scan "resync_block_accepted_token_clocked_by_the_next_resyncs_0xfe_write_261 resync_block_accepted_token_clocked_by_the_next_resyncs_0xfe_write_256 resync_block_accepted_token_in_a_0xfe_write_that_then_fails" \
+"        else if (dObj->writeInDoubt == DRV_SDSPI_WRITE_IN_DOUBT_SINGLE)
+        {
+            /* Nothing flushed yet" \
+"        else if (false)
+        {
+            /* Nothing flushed yet"
+
+# M11: the 0xFE start token is sent write-only again (its received byte is
+# discarded by the SPI driver).
+run_mutant start_token_write_only "resync_block_accepted_token_clocked_by_the_next_resyncs_0xfe_write_261 resync_block_accepted_token_clocked_by_the_next_resyncs_0xfe_write_256" \
+"DRV_SDSPI_SPIWriteRead(dObj, &dObj->pCmdResp[1], dObj->pCmdResp, 1)" \
+"DRV_SDSPI_SPIWrite(dObj, &dObj->pCmdResp[1], 1)"
+
+# M12: the byte the 0xFE transfer received is accepted whatever its shape (a
+# busy 0x00 or an idle 0xFF-adjacent byte is not a data-response token).
+run_mutant start_token_shape resync_0xfe_write_clocking_a_byte_that_is_not_a_token_reports_nothing \
+"            len = 1U;
+            tokenShapedOnly = true;
+        }
+        else
+        {
+            /* A CMD25 resync" \
+"            len = 1U;
+        }
+        else
+        {
+            /* A CMD25 resync"
+
+# M13: the 0xFE transfer's receive byte is not cleared before the transfer.
+run_mutant start_token_prefill resync_0xfe_write_failing_with_nothing_delivered_reports_no_stale_byte \
+"                dObj->pCmdResp[0] = 0xFFU;
+                dObj->pCmdResp[1] = DRV_SDSPI_DATA_START_TOKEN;" \
+"                dObj->pCmdResp[1] = DRV_SDSPI_DATA_START_TOKEN;"
+
 echo "RESULT: $passed passed, $failures failed"
 [ "$failures" -eq 0 ]

@@ -606,11 +606,21 @@ static void lDRV_SDSPI_WriteResyncTokenCaptured(DRV_SDSPI_OBJ* dObj, uint8_t tok
     }
 }
 
-/* #1235 r3: THE scan. Every byte the resync receives from the card is looked
+/* #1235 r3/r4: THE scan. Every byte the resync CLOCKS from the card is looked
  * at here, once per completed transfer, BEFORE lDRV_SDSPI_WriteResyncTasks
  * branches on how the transfer ended: a transfer that fails after delivering
  * bytes has still consumed whatever token was among them, and nothing else will
- * ever see it. Receive sites (resync states that follow a read):
+ * ever see it. SPI is full duplex, so "clocked" is wider than "read": a
+ * write-only transfer clocks MISO too and the SPI driver discards it. Every
+ * transfer the resync submits, and what happens to the bytes it clocks:
+ *  - RESYNC_START: submits nothing.
+ *  - BUSY_CHECK read, BEFORE_BLOCK: scanned only while an acceptance is pending
+ *    (below).
+ *  - 0xFE start token (RESYNC_BUSY_CHECK -> RESYNC_FLUSH): sent FULL DUPLEX, its
+ *    one received byte scanned here at the first RESYNC_FLUSH pass (nothing
+ *    flushed yet), token-shaped bytes only: a card idle answers 0xFF, one still
+ *    busy 0x00. This is where the token of a block the BEFORE_BLOCK reads
+ *    completed (they clock the CRC bytes FF FF) comes out.
  *  - RESYNC_FLUSH: the 10-byte read just made (a failed one included; its
  *    undelivered bytes were pre-filled 0xFF, so only delivered bytes can match);
  *  - RESYNC_BUSY_CHECK after the flush (AFTER_BLOCK): a card that is slow to
@@ -623,13 +633,18 @@ static void lDRV_SDSPI_WriteResyncTokenCaptured(DRV_SDSPI_OBJ* dObj, uint8_t tok
  *    the busy and the R1 of a lost CMD24 look different.
  * The busy reads after the stop token and CMD12 are not scanned: a card that
  * is out of the write answers CMD12 with an R1 that may read 0x05, which is not
- * an acceptance. RESYNC_START and RESYNC_STOP follow write-only transfers. */
+ * an acceptance.
+ *  - 0xFD stop-tran token and CMD12 (RESYNC_STOP): write-only, and only a CMD25
+ *    resync sends them. No acceptance outcome exists to leave unresolved there:
+ *    lDRV_SDSPI_WriteResyncTokenCaptured counts only while writeInDoubt is
+ *    SINGLE, and writeInDoubt stays MULTI for the whole of a CMD25 resync (only
+ *    a command's SEND_PACKET sets it, and only a resolved resync clears it). */
 static void lDRV_SDSPI_WriteResyncScanReceived(DRV_SDSPI_OBJ* dObj)
 {
     uint32_t len = 0U;
     uint32_t flushed;
     uint32_t i;
-    bool beforeFlush = false;
+    bool tokenShapedOnly = false;
 
     if (dObj->resyncToken != 0xFFU)
     {
@@ -644,6 +659,18 @@ static void lDRV_SDSPI_WriteResyncScanReceived(DRV_SDSPI_OBJ* dObj)
         {
             len = ((flushed % MEDIA_INIT_ARRAY_SIZE) == 0U) ? MEDIA_INIT_ARRAY_SIZE : (flushed % MEDIA_INIT_ARRAY_SIZE);
         }
+        else if (dObj->writeInDoubt == DRV_SDSPI_WRITE_IN_DOUBT_SINGLE)
+        {
+            /* Nothing flushed yet: the transfer that just ended is the 0xFE
+             * start token (sent full duplex, its byte received into pCmdResp[0]).
+             * A CMD25 resync sends no 0xFE. */
+            len = 1U;
+            tokenShapedOnly = true;
+        }
+        else
+        {
+            /* A CMD25 resync enters the flush with its busy read already scanned. */
+        }
     }
     else if (dObj->cmdState == DRV_SDSPI_CMD_RESYNC_BUSY_CHECK)
     {
@@ -655,7 +682,7 @@ static void lDRV_SDSPI_WriteResyncScanReceived(DRV_SDSPI_OBJ* dObj)
                 (dObj->resyncFillerPending == true))
         {
             len = 1U;
-            beforeFlush = true;
+            tokenShapedOnly = true;
         }
     }
     else
@@ -673,7 +700,7 @@ static void lDRV_SDSPI_WriteResyncScanReceived(DRV_SDSPI_OBJ* dObj)
         {
             continue;
         }
-        if ((beforeFlush == true) && ((dObj->pCmdResp[i] & 0x11U) != 0x01U))
+        if ((tokenShapedOnly == true) && ((dObj->pCmdResp[i] & 0x11U) != 0x01U))
         {
             continue;
         }
@@ -892,15 +919,29 @@ static void lDRV_SDSPI_WriteResyncTasks(DRV_SDSPI_OBJ* dObj)
             if (dObj->resyncStage == DRV_SDSPI_RESYNC_STAGE_BEFORE_BLOCK)
             {
                 dObj->resyncFlushLeft = (uint16_t)(DRV_SDSPI_MEDIA_BLOCK_SIZE + 2U);
-                dObj->cmdState = DRV_SDSPI_CMD_RESYNC_FLUSH;
                 if (dObj->writeInDoubt == DRV_SDSPI_WRITE_IN_DOUBT_MULTI)
                 {
                     /* No 0xFE: see the CMD25 notes above. The busy read just
                      * completed, so RESYNC_FLUSH proceeds at once. */
+                    dObj->cmdState = DRV_SDSPI_CMD_RESYNC_FLUSH;
                     break;
                 }
-                dObj->pCmdResp[0] = DRV_SDSPI_DATA_START_TOKEN;
-                if (DRV_SDSPI_SPIWrite(dObj, dObj->pCmdResp, 1) == false)
+                /* #1235 r4: FULL DUPLEX. The card answers a block it finished
+                 * during the clocks that follow its last byte, and the first of
+                 * them is this one: a write-only transfer clocks MISO into a
+                 * dummy buffer, so a token the previous resync's flush left
+                 * unread (this resync's BEFORE_BLOCK reads supplied the CRC that
+                 * completed the block) went out here and was lost. The byte to
+                 * send is at [1] and the byte received lands at [0], cleared
+                 * BEFORE the state moves on so that an exit that scans it while
+                 * the transfer has not completed sees an idle 0xFF, never the
+                 * last busy byte. The scan reads [0]
+                 * (lDRV_SDSPI_WriteResyncScanReceived, RESYNC_FLUSH with nothing
+                 * flushed yet). */
+                dObj->pCmdResp[0] = 0xFFU;
+                dObj->pCmdResp[1] = DRV_SDSPI_DATA_START_TOKEN;
+                dObj->cmdState = DRV_SDSPI_CMD_RESYNC_FLUSH;
+                if (DRV_SDSPI_SPIWriteRead(dObj, &dObj->pCmdResp[1], dObj->pCmdResp, 1) == false)
                 {
                     lDRV_SDSPI_WriteResyncEnd(dObj, false);
                 }

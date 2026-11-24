@@ -283,6 +283,41 @@ bool DRV_SDSPI_SPIRead(
     return isSuccess;
 }
 
+/* #1235 r4: full duplex. SPI clocks MISO whenever it clocks MOSI, and a
+ * write-only transfer hands the received bytes to the driver's dummy buffer,
+ * discarding them. The resync's 0xFE start token is clocked while a card that
+ * has just finished a block may be sending its data-response token, so it is
+ * sent with the receive buffer kept: pWriteBuffer and pReadBuffer must not
+ * overlap (the transmit byte is still being read while the receive byte
+ * arrives). */
+bool DRV_SDSPI_SPIWriteRead(
+    DRV_SDSPI_OBJ* dObj,
+    void* pWriteBuffer,
+    void* pReadBuffer,
+    uint32_t nBytes
+)
+{
+    bool isSuccess = false;
+    DRV_SPI_TRANSFER_HANDLE wrTransferHandle;
+
+    lDRV_SDSPI_AbortedXferPrune(dObj);   /* #1217: before the submit, not after */
+    dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_IN_PROGRESS;
+
+    DRV_SPI_WriteReadTransferAdd (dObj->spiDrvHandle, pWriteBuffer, nBytes, pReadBuffer, nBytes, &wrTransferHandle);
+    dObj->expectedXferHandle = wrTransferHandle;   /* #567: correlate completion */
+
+    if (wrTransferHandle != DRV_SPI_TRANSFER_HANDLE_INVALID)
+    {
+        isSuccess = true;
+    }
+    else
+    {
+        dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_ERROR;
+    }
+
+    return isSuccess;
+}
+
 bool DRV_SDSPI_SPIWriteWithChipSelectDisabled(
     DRV_SDSPI_OBJ* dObj,
     void* pWriteBuffer,
