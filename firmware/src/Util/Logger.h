@@ -193,8 +193,9 @@ extern "C" {
         LOG_ONCE_SD_WBUF_SUBSECTOR,       /**< sd_card_manager.c: SD DMA write buffer below one sector, so the sector-aligned drain can extract nothing (#738); unreachable with the current 512-byte floor, one-shot so a broken floor can't flood the drain loop */
         LOG_ONCE_SD_CMD59_REJECTED,       /**< drv_sdspi.c: card refused CRC checking, so it is not mounted (#1217); media init retries about once a second, one-shot so that can't flood */
         LOG_ONCE_SD_WRITE_RESYNC_FAIL,    /**< drv_sdspi.c: a resync attempt failed and will retry (#1217); a stuck-busy card would otherwise log per attempt */
+        LOG_ONCE_FIND_NO_SAMPLES,         /**< SCPIInterface.c: a WIFI:FIND? step streamed no sample and was not scored clean (#1339); one-shot so a dry-heavy sweep can't fill the log ring */
         /* Add new entries above this line */
-        LOG_ONCE_COUNT                     /**< Must be <= 32 */
+        LOG_ONCE_COUNT                  /**< Must be <= 32 */
     } LogOnceBit_t;
 
     #if (LOG_ONCE_COUNT > 32)

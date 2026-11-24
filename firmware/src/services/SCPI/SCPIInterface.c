@@ -3388,6 +3388,15 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
 //                        START_FAIL = a LATER step's was, so the reply
 //                        describes a partial sweep. Same five fields either
 //                        way; a first-step refusal reads 0,0,START_REFUSED,0,0.
+//                        NO_LINK is "no step was sustainable", and (#1339) that
+//                        includes a sweep in which every step streamed NO
+//                        sample: such a step is scored not-clean, so the climb
+//                        trips twice at the start rate and lastGoodHz stays 0.
+//                        The token does not say WHY nothing was sustainable;
+//                        the cause is in SYSTem:LOG? (step lines end in
+//                        NO_SAMPLES, samp=0). A sweep that streamed clean
+//                        steps first and ran dry only higher up reads as the
+//                        usual saturation tokens, since a dry step is a trip.
 //   ceilingHz/KBps     = raw arc/refine ceiling (the pre-soak, pre-clamp
 //                        overestimate) — kept unclamped for diagnostics/testing.
 //
@@ -3918,10 +3927,27 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
      * scan (#1301), and a tick before the first scan completes is a dry tick
      * that is kept out of the queue/WiFi drop counters (#745) -- so with no
      * sample streamed every term of `lossy` above can read zero and the step
-     * would come out OK. The sample count is the one input that is zero in
-     * exactly that case, whether or not a TCP client is attached. Count it as
-     * lossy: a rate that carried no data is not evidence it is sustainable. */
+     * would come out OK. The sample count is zero whenever no scan completed
+     * during the step, whether or not a TCP client is attached. It is ALSO
+     * zero if the pool was exhausted from the first scan on (nothing was ever
+     * accepted), but there queueDroppedSamplesSteady normally trips `lossy`
+     * already, so this term adds nothing for that cause. NO_SAMPLES reports
+     * what was observed (no sample reached the stream), not why. Count it as
+     * lossy: a rate that carried no data is not evidence it is sustainable.
+     * Limit: this is all-or-nothing -- a step that streamed even one sample
+     * is not caught here (see the PR for why no principled threshold exists).
+     *
+     * #1339: logged at LOG_E like the other step causes, ONCE per SYST:LOG?
+     * cycle (LOG_E_ONCE): the per-step line below is LOG_I and carries
+     * NO_SAMPLES for every dry step, so one error entry makes the cause
+     * findable at error level without a dry-heavy sweep putting a LOG_E per
+     * step into the 64-entry ring and evicting the climb's step lines. */
     bool noSamples = (s.totalSamplesStreamed == 0);
+    if (noSamples) {
+        LOG_E_ONCE(LOG_ONCE_FIND_NO_SAMPLES,
+                   "WIFI:FIND %u Hz: step streamed 0 samples - not scored clean; "
+                   "see samp= in the step lines (#1339)", (unsigned)freq);
+    }
     lossy = lossy || noSamples;
     bool tripped = poolFull || lossy;
 
