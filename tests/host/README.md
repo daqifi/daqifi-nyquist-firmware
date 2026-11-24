@@ -452,14 +452,14 @@ the firmware site.
 
 `test_1004_help_write_abort.c` covers `SCPI_Help`'s (the `HELP` command)
 shared-response-buffer write-abort bound (issue #1004) — the third site of a
-pattern whose other two fixes are still IN FLIGHT: #947/PR #992 for
-`SCPI_SysInfoTextGet` and #995/PR #1008 for `SCPI_GetCommandHistory` are both
-still open, so neither sibling fix — nor `test_995` — is in this tree. Same
-technique as `test_943`/`test_953`: `SCPIInterface.c` is not includable on the host, so the test
+pattern whose other two fixes are #947/PR #992 for `SCPI_SysInfoTextGet`
+(merged, `test_947_sysinfo_write_abort.c` above) and #995/PR #1008 for
+`SCPI_GetCommandHistory` (`test_995_cmdhistory_write_abort.c`, this same
+directory). Same technique as `test_943`/`test_953`: `SCPIInterface.c` is not includable on the host, so the test
 re-implements the pre-fix and post-fix write **shapes** — the self-gating
 `ScpiHelpWrite` helper's two guards (cumulative deadline, checked before each
 transport call; short-write latch, checked after) — against an injected mock
-clock and mock transport, then compares their verdicts. Unlike #995's planned test,
+clock and mock transport, then compares their verdicts. Unlike #995's test,
 `SCPI_Help`'s write count is not pinned to a single firmware constant (it
 depends on the registered command table's total text size), so the test uses
 a representative write count from the issue's own measurement plus a sweep
@@ -590,6 +590,28 @@ high byte would make the whole JSON stream invalid UTF-8), the `inLen` bound
 wholesale rather than truncating mid-escape, the exact worst-case sizing
 `JSON_Encoder.c` allocates on its stack, and NULL/zero-size safety.
 
+`test_995_cmdhistory_write_abort.c` covers `SCPI_GetCommandHistory`
+(`SYSTem:LOG:CMDHistory?`, issue #995) — the second instance of the
+`SCPI_SysInfoTextGet`/#947 shared-response-buffer write-abort defect class.
+Like `test_943_bench_stall_bound.c` it does **not** include any firmware
+source (`SCPIInterface.c` drags in libscpi, FreeRTOS and the whole
+board/driver graph): the test re-implements the pre-fix and post-fix write
+loop **shapes** against an injected mock clock and mock transport, and
+compares their verdicts on identical inputs. Covers: a healthy host sees
+byte-for-byte identical behavior; a fully-stalled host is bounded to one
+retry budget instead of up to eleven (~1 s vs ~11 s); a transport that
+drains at exactly the trickle rate needed to dodge the short-write guard on
+every write (proving the cumulative deadline guard is load-bearing on its
+own); the complementary mutation -- deadline guard present, short-write
+guard removed -- against a fully-stalled host (proving the short-write
+guard is *also* not redundant with the deadline guard, since the deadline
+alone would let two full ~1 s writes through before refusing a third);
+the tick-counter wrap in both guard paths; and the zero-history early
+return spending no budget at all. Three firmware
+constants are a copy here too, grepped out of `SCPIInterface.c` by the
+Makefile target (plus the same `configTICK_RATE_HZ` /
+`configTICK_TYPE_WIDTH_IN_BITS` assumption checked against
+`FreeRTOSConfig.h`) so a stale copy cannot pass silently.
 `test_947_sysinfo_write_abort.c` covers the shared-response-buffer hold inside
 `SYSTem:INFo?` (`SCPI_SysInfoTextGet`, issue #947). Same situation as #943:
 `SCPIInterface.c` is not includable on the host, so the test re-implements
@@ -1158,6 +1180,14 @@ and a rejection that erases first).
 | `test_1217_abandoned_write.c` + `test_1217_driver_uut.c` | The **real** `drv_sdspi.c` and `drv_sdspi_driver_interface.c` against a model of DRV_SPI and of an SPI-mode card, with faults injected at the SPI layer. It asserts only on what the card did, so it also builds against the unfixed driver, where most of its cases fail. It shows the driver does the right thing to a card that behaves like the model. Whether a real card does is the bench's question: #1217's success criteria keep the fault-injection and soak runs. |
 
 The stubs are in `stubs/sdspi_1217/`, separate from `stubs/` because this test needs much more of Harmony's surface than the others.
+
+### Bounded NVM waits (#1206)
+
+| File | What it does |
+|---|---|
+| `test_1206_nvm_bounded_waits.c` | The **real** `HAL/NVM/nvm.c` against stubs whose DMACON / NVM PLIB / CP0 accessors drive a simulated clock, plus a SIGALRM tick that delivers the completion callback the way the NVM interrupt does. Each of the nine waits is made to never complete, per entry point, and the call must return false within a bound, with DMA restored to the caller's state and the NVM mutex released; a refused or partial erase must return false; the slowest datasheet operations (and 5x that for an erase), a CP0 wrap and a long preemption must still succeed; a late completion interrupt from a timed-out operation must not end the next one's wait early. Each case runs in a forked child, so the pre-#1206 source's hangs show as failures: `make run_1206_tests NVM1206_SRC=<other nvm.c>` builds it against any revision. |
+
+The stubs are in `stubs/nvm_1206/`.
 
 ## Framework
 

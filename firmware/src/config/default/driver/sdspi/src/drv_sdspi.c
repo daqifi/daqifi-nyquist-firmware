@@ -1845,6 +1845,19 @@ static void lDRV_SDSPI_MediaInitialize ( SYS_MODULE_OBJ object )
                20Mbps SPI speeds. SD cards would typically operate at up to 25Mbps
                or higher SPI speeds.
              */
+            /* #1262: take the bus BEFORE the dummy read, not after it. The read
+             * selects the card, and the card keeps driving DataOut after CS
+             * rises until it sees one more clock (SanDisk SD Card Product
+             * Manual v2.2, section 5.23.4). Taken after the read, the lock left
+             * a window in which a WiFi transfer could run against a card still
+             * driving the shared MISO line. Held from here, the release that
+             * ends this phase (DRV_SDSPI_SPIExclusiveAccess) clocks that byte.
+             * Retried on the next pass if another client holds the bus. */
+            if (DRV_SDSPI_SPIExclusiveAccess(dObj, true) == false)
+            {
+                break;
+            }
+
             (void) DRV_SDSPI_SPISpeedSetup(dObj, dObj->sdcardSpeedHz, dObj->chipSelectPin);
 
             /* Do a dummy read to ensure that the receiver buffer is cleared */
@@ -1858,13 +1871,19 @@ static void lDRV_SDSPI_MediaInitialize ( SYS_MODULE_OBJ object )
 
             if (dObj->spiTransferStatus == DRV_SDSPI_SPI_TRANSFER_STATUS_COMPLETE)
             {
-                if (DRV_SDSPI_SPIExclusiveAccess(dObj, true) == true)
-                {
-                    dObj->mediaInitState = DRV_SDSPI_INIT_READ_CSD;
-                }
+                /* The bus is already held (INIT_INCR_CLK_SPD, #1262). */
+                dObj->mediaInitState = DRV_SDSPI_INIT_READ_CSD;
             }
             else if (dObj->spiTransferStatus == DRV_SDSPI_SPI_TRANSFER_STATUS_ERROR)
             {
+                /* #1262: give back the lock INIT_INCR_CLK_SPD took. The
+                 * DRV_SDSPI_INIT_ERROR case below does not run now:
+                 * DRV_SDSPI_TASK_MEDIA_INIT sees the error state and goes to
+                 * the polling timer, so that release would come only with the
+                 * next init attempt, and with no card there may be none.
+                 * (That later release then finds the lock already free, as
+                 * it does after an error in any state before this one.) */
+                (void) DRV_SDSPI_SPIExclusiveAccess(dObj, false);
                 dObj->mediaInitState = DRV_SDSPI_INIT_ERROR;
             }
             else

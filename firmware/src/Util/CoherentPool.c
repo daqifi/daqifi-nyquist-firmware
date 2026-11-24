@@ -27,8 +27,9 @@ void CoherentPool_Reset(void) {
 /**
  * Thread safety: No mutex needed. All CoherentPool_Alloc calls happen during
  * single-threaded init (app_SystemInit → sd_card_manager_Init, before the
- * FreeRTOS scheduler starts other tasks). The pool is never allocated from
- * after init completes. If this changes in future, add a mutex here.
+ * FreeRTOS scheduler starts other tasks). After init, the pool is
+ * reset and re-carved only by SCPI_SwapCoherentDmaBuffers (SCPIInterface.c),
+ * with the scheduler suspended (#1279), so no mutex is needed.
  */
 uint8_t* CoherentPool_Alloc(const char* name, uint32_t size) {
     if (size == 0) {

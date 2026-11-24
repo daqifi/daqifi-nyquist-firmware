@@ -23,10 +23,17 @@
 # Usage:  bash tests/host/pin1060_mutate.sh [WORKTREE]
 set -u
 
+# Every refusal path prints a terminal RESULT line (#1183): a caller that
+# filters for ^RESULT must never read a refused run as a clean one.
+refuse() {      # refuse <exit-code> <reason>
+    echo "RESULT: 0 passed, 0 failed (REFUSED: $2)"
+    exit "$1"
+}
+
 W="${1:-$(git rev-parse --show-toplevel)}"
 F="$W/firmware/src/services/wifi_services/wifi_manager.c"
 
-[ -f "$F" ] || { echo "FATAL: $F missing."; exit 2; }
+[ -f "$F" ] || { echo "FATAL: $F missing."; refuse 2 "source file missing"; }
 
 echo "################################################################"
 echo "# OPERATING ON: $W"
@@ -37,7 +44,7 @@ if [ -n "$(git -C "$W" status --porcelain -- "$F" 2>/dev/null)" ]; then
     echo "FATAL: uncommitted changes in $F. Commit or set them aside --"
     echo "       restore here is a byte copy and cannot arbitrate between"
     echo "       your edits and the mutants'."
-    exit 2
+    refuse 2 "uncommitted changes in the mutated files"
 fi
 
 # The backup is checked and verified byte-identical BEFORE the EXIT trap is
@@ -49,7 +56,7 @@ backup_failed() {
     echo "       Nothing mutated and no trap installed; the worktree is"
     echo "       untouched."
     [ -n "$BK" ] && rm -f "$BK"
-    exit 2
+    refuse 2 "backup failed: $1"
 }
 BK=$(mktemp 2>/dev/null) || backup_failed "mktemp failed"
 [ -n "$BK" ] && [ -f "$BK" ] || backup_failed "mktemp gave no usable path"
@@ -93,14 +100,37 @@ if crlf:
 open(p, "w", newline="").write(t)
 sys.stderr.write("    (M2 neutered %d marker setter(s))\n" % n)' "$1"
 }
+# #1188: the CLEAR-side twin of sub_all_setters, keyed on the same kind of
+# PATTERN so it is total over the sites by construction (a mutant that
+# enumerates its targets goes stale the day the code grows another clear).
+# It neuters every `ResetEventFlag(... TEARDOWN_PENDING)` -- the half of PIN 7
+# that nothing else in this harness exercised.
+sub_all_clears() {
+    python3 -c '
+import sys, re
+p = sys.argv[1]
+raw = open(p, newline="").read()
+crlf = "\r\n" in raw
+t = raw.replace("\r\n", "\n") if crlf else raw
+pat = re.compile(
+    r"(?<![A-Za-z])ResetEventFlag\(&pInstance->eventFlags,\s*\n?\s*"
+    r"WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING\);")
+t, n = pat.subn("(void)0;", t)
+if n == 0:
+    sys.exit(9)
+if crlf:
+    t = t.replace("\n", "\r\n")
+open(p, "w", newline="").write(t)
+sys.stderr.write("    (M8 neutered %d marker clear(s))\n" % n)' "$1"
+}
 cleanup() { restore; rm -f "$BK"; }
 # The signal handlers exit EXPLICITLY: on INT/TERM bash runs the handler and
 # then RESUMES, so a plain `trap ... EXIT INT TERM` restores and re-mutates.
 trap cleanup EXIT
-trap 'printf "\n** INTERRUPTED -- restoring **\n" >&2; exit 130' INT
-trap 'printf "\n** TERMINATED -- restoring **\n" >&2; exit 143' TERM
+trap 'printf "\n** INTERRUPTED -- restoring **\n" >&2; echo "RESULT: ${pass:-0} passed, ${fail:-0} failed (INTERRUPTED)"; exit 130' INT
+trap 'printf "\n** TERMINATED -- restoring **\n" >&2; echo "RESULT: ${pass:-0} passed, ${fail:-0} failed (TERMINATED)"; exit 143' TERM
 
-cd "$W/tests/host" || exit 2
+cd "$W/tests/host" || refuse 2 "cannot cd to tests/host"
 pass=0; fail=0
 
 first_error() {
@@ -158,7 +188,7 @@ echo "== setup: the baseline must be clean, or every result below is noise =="
 expect "baseline" CLEAN
 if [ "$fail" -ne 0 ]; then
     echo "ABORT: baseline is not clean; mutants would be meaningless."
-    exit 1
+    refuse 1 "baseline not clean"
 fi
 
 echo "== M1 (PIN 6): drop the REINIT-side re-attempt. The bounded retry in the =="
@@ -189,10 +219,8 @@ if sub_all_setters "$F"; then
     # ⚠ CONSEQUENCE WORTH KNOWING: PIN 4 now SHADOWS PIN 7's set half for this
     # mutant, so PIN 7's set direction is no longer what catches it. PIN 7 is
     # NOT redundant -- its CLEAR half is unique coverage and nothing else in
-    # this file asserts that anything ever clears the marker. ⛔ And that clear
-    # half has NO mutant of its own: a `sub_all_clears` twin of
-    # sub_all_setters would close it, which is a real hole in this harness and
-    # is left stated rather than fixed in a capped round.
+    # this file asserts that anything ever clears the marker. That half is
+    # exercised by M8 below (#1188), via sub_all_clears.
     expect "M2 marker is set somewhere" "BSSDisconnect failure has 0"
 else
     echo "  FAIL M2 anchor absent."; fail=$((fail+1))
@@ -251,6 +279,18 @@ if sub "$F" '                            ResetEventFlag(&pInstance->eventFlags,
     expect "M6 marker write count" "write(s) of the #1060 teardown marker"
 else
     echo "  FAIL M6 anchor absent."; fail=$((fail+1))
+fi
+restore
+
+echo "== M8 (PIN 7, the CLEAR half): never CLEAR the marker anywhere. A set-only =="
+echo "==            implementation would re-issue a BSSDisconnect on every      =="
+echo "==            REINIT for the rest of the session. #1188: until this        =="
+echo "==            mutant nothing exercised PIN 7's clear direction. Measured: =="
+echo "==            PIN 7 itself answers (PIN 4 and PIN 10 do not shadow it).   =="
+if sub_all_clears "$F"; then
+    expect "M8 marker is cleared somewhere" "nothing CLEARS the #1060 teardown-pending flag"
+else
+    echo "  FAIL M8 anchor absent."; fail=$((fail+1))
 fi
 restore
 

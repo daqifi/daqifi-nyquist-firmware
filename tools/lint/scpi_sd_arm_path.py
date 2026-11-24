@@ -250,7 +250,9 @@ about which branch of a function a line sits in. The same stated limits as
 * Property 4 establishes the streaming-log arm's verdict is consumed. It does
   NOT establish it is ever tested again, that a refusal exits before the
   readiness poll, or that `mode` is cleared under the claim -- see "The same
-  shape at a second site" above; none of that is checked by anything today.
+  shape at a second site" above. The refusal EXIT is now checked, by execution
+  and per site, in `tests/host/check_1160_arm_exit.py` (#1160); the other two
+  are still checked by nothing.
 * Whether the claim's RELEASE runs on every path, on either file, is not
   examined by anything here -- it never was, and even less is asked of this
   file after #976 than before it.

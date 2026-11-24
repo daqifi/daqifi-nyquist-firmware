@@ -1572,7 +1572,7 @@ size_t Nanopb_EncodeStreamingFast(tBoardData* state,
 
         /* Build port direction bitmap (1=input per channel) */
         uint32_t dirData = 0;
-        for (uint32_t x = 0; x < pBoardConfig->DIOChannels.Size && x < 32; x++) {
+        for (uint32_t x = 0; x < pBoardConfig->DIOChannels.Size && x < MAX_DIO_CHANNEL; x++) {
             dirData |= ((uint32_t)pRuntimeDIOChannels->Data[x].IsInput << x);
         }
         for (size_t y = 0; y < sizeof(dioDir); y++) {
