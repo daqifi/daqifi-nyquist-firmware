@@ -121,6 +121,7 @@ static bool csvHeaderSent = false;
 static const char CSV_HEADER_DEVICE_PREFIX[] = "# Device: ";
 static const char CSV_HEADER_TICKRATE_PREFIX[] = "# Timestamp Tick Rate: ";
 static const char CSV_HEADER_HZ_SUFFIX[] = " Hz\n";
+static const char CSV_HEADER_UNITS_PREFIX[] = "# Units: ";   /* #1179 */
 
 // Channel header strings are now stored in board config (csvChannelHeadersFirst/Subsequent)
 // This allows board-specific naming conventions (e.g., "ain" vs "ch" prefix)
@@ -165,6 +166,7 @@ static inline char* fast_strcpy_bounded(char* dst, size_t* prem, const char* src
  * Header (sent once per session):
  * # Device: Nyquist NQ1
  * # Sample Rate: 100 Hz
+ * # Units: V
  * ch0_ts,ch0_val,ch4_ts,ch4_val,ch7_ts,ch7_val,dio_ts,dio_val
  *
  * Data rows (only enabled channels):
@@ -262,7 +264,21 @@ static size_t generateHeader(char *out, size_t rem, AInRuntimeArray* channelConf
 
     q = fast_strcpy_bounded(q, &rem, CSV_HEADER_HZ_SUFFIX);
 
-    // Line 4: Column headers
+    // Line 4 (#1179): the unit of the analog values -- raw ADC codes, integer
+    // millivolts or decimal volts -- so a reader parses by declaration instead
+    // of guessing from the presence of a decimal point. Same decision the row
+    // emitter makes (sample_units_name mirrors its branch order).
+    {
+        StreamingRuntimeConfig *pUnitsCfg = BoardRunTimeConfig_Get(
+                BOARDRUNTIME_STREAMING_CONFIGURATION);
+        bool unitsRaw = (pUnitsCfg != NULL) ? pUnitsCfg->RawOutputMode : false;
+        uint8_t unitsPrec = (pUnitsCfg != NULL) ? pUnitsCfg->VoltagePrecision : 4;
+        q = fast_strcpy_bounded(q, &rem, CSV_HEADER_UNITS_PREFIX);
+        q = fast_strcpy_bounded(q, &rem, sample_units_name(unitsRaw, unitsPrec));
+        q = fast_strcpy_bounded(q, &rem, "\n");
+    }
+
+    // Line 5: Column headers
     const char* const* headerFirst = boardConfig->csvChannelHeadersFirst;
     const char* const* headerSubsequent = boardConfig->csvChannelHeadersSubsequent;
     if (!headerFirst || !headerSubsequent) {
