@@ -3912,6 +3912,17 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
     // the grace semantics already used for wifiDroppedBytesSteady).
     bool lossy = (s.queueDroppedSamplesSteady > 0) ||
                  (s.wifiDroppedBytesSteady > 0) || (s.windowLossPercent > 0);
+    /* #1339: a step that streamed NO sample measured nothing and must not be
+     * scored clean. `s` was snapshotted before the teardown, i.e. before
+     * Streaming_Stop() derives WindowLossPercent=100 for a never-completed
+     * scan (#1301), and a tick before the first scan completes is a dry tick
+     * that is kept out of the queue/WiFi drop counters (#745) -- so with no
+     * sample streamed every term of `lossy` above can read zero and the step
+     * would come out OK. The sample count is the one input that is zero in
+     * exactly that case, whether or not a TCP client is attached. Count it as
+     * lossy: a rate that carried no data is not evidence it is sustainable. */
+    bool noSamples = (s.totalSamplesStreamed == 0);
+    lossy = lossy || noSamples;
     bool tripped = poolFull || lossy;
 
     // Use the ACTUAL observed dwell (stepTicks may round up vs obsMs/N) so the
@@ -3930,7 +3941,7 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
           (unsigned)poolPeak, (unsigned)poolCap,
           (unsigned)s.queueDroppedSamples,
           (unsigned)s.wifiDroppedBytesSteady, (unsigned)s.windowLossPercent,
-          (!tripped ? "OK" : (lossy ? "LOSSY" : "BUF_FULL")));
+          (!tripped ? "OK" : (noSamples ? "NO_SAMPLES" : (lossy ? "LOSSY" : "BUF_FULL"))));
 
     return tripped;
 }
