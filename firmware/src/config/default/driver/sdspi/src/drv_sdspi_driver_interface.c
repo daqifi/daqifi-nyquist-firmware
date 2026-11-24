@@ -119,6 +119,9 @@ void DRV_SDSPI_AbortedXferRecord(DRV_SDSPI_OBJ* const dObj)
     {
         dObj->abortedXferHandles[dObj->abortedXferIdx] = dObj->expectedXferHandle;
         dObj->abortedXferIdx = (uint8_t)((dObj->abortedXferIdx + 1U) % DRV_SDSPI_ABORTED_XFER_SLOTS);
+        /* #1235 r5: DRV_SPI still holds it, so its receive buffer can still
+         * be written after this. The resync scan stays armed for it. */
+        dObj->resyncRxLate = true;
     }
     OSAL_CRIT_Leave(OSAL_CRIT_TYPE_HIGH, critState);
 }

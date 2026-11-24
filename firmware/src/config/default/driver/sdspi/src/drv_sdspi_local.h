@@ -1752,20 +1752,33 @@ typedef struct
      * card was checking CRC (crcEnabled then; crcEnabled itself is cleared at
      * the start of a media init, before the resync that init's CMD0 runs) and
      * the block number it addressed (byte addresses of standard-capacity cards
-     * converted). lDRV_SDSPI_WriteResyncTokenCaptured uses them when the card
+     * converted). lDRV_SDSPI_WriteResyncRecordAcceptance uses them when the card
      * ACCEPTED the resync's block, which then counts in resyncFillerCount
-     * (saturating). resyncFillerPending: a resync ended with the filler
-     * possibly programmed and its token unread, so the NEXT resync of the same
-     * write looks for that token in its first reads (r3).
-     * These four sit in the tail padding after reinitRequested, so they cost
-     * no RAM: sizeof(DRV_SDSPI_OBJ) is 296 B on target before the counter
-     * (XC32 v4.60, offsetof probe, 2026-11-23); the field added in r3 fits the
-     * one byte of padding that was left, checked on the host (sizeof 408 B
-     * before and after, same member order), not re-measured with XC32. */
+     * (saturating). Unlike r1-r4 there is no "pending" flag: a token left
+     * unread is found by the scan of the next resync's first transfer, and by
+     * the inherited scan of whatever an aborted transfer left in the buffer
+     * (resyncRx* below). Size: sizeof(DRV_SDSPI_OBJ) was 296 B on target before
+     * #1235 (XC32 v4.60, offsetof probe, 2026-11-23); r5 adds 5 bytes of flags,
+     * not re-measured with XC32 (one instance, so at most a word). */
     bool                                            writeInDoubtCrc;
     uint8_t                                         resyncFillerCount;
-    bool                                            resyncFillerPending;
     uint32_t                                        writeInDoubtBlock;
+
+    /* #1235 r5 (buffer reuse): what the LAST resync transfer was going to put in
+     * pCmdResp, recorded when it was armed (lDRV_SDSPI_WriteResyncRxReset), so
+     * that whoever reuses the buffer next can first look at what that transfer
+     * left there, however it ended. resyncRxLen bytes are scanned (0 = none),
+     * resyncRxShaped says token-shaped bytes only, resyncRxUnscanned that no
+     * scan has consumed them yet, resyncRxLate that the transfer was ABORTED
+     * while DRV_SPI still held it, so more bytes can land after any scan.
+     * writeInDoubtBlockSent: the CMD24 in doubt got its whole block, payload
+     * AND CRC, clocked to the card (r5 attribution): a token after that is the
+     * original write's data response, not a filler's. */
+    uint8_t                                         resyncRxLen;
+    bool                                            resyncRxShaped;
+    bool                                            resyncRxUnscanned;
+    bool                                            resyncRxLate;
+    bool                                            writeInDoubtBlockSent;
 
 } DRV_SDSPI_OBJ;
 

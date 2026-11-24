@@ -1817,9 +1817,15 @@ $(SDCRC_BIN): test_1217_sd_crc.c test_framework.h $(SDSPI_CRC_HDR) $(RECIPES)
 # the build if any handler loses its half. Read its docstring before editing.
 $(SDWRITE_BIN): test_1217_abandoned_write.c test_1217_driver_uut.c test_framework.h \
                 $(SDSPI_DRV_SRC) $(SDSPI_IFACE_SRC) $(SDSPI_CRC_HDR) $(SDSPI_LOCAL_HDR) $(SDSPI_PUBLIC_HDR) \
-                $(SDWRITE_STUBS) check_1217_mount_gate.py $(SD_BENCH_SRC) $(RECIPES)
+                $(SDWRITE_STUBS) check_1217_mount_gate.py check_1235_rx_buffer_writes.py $(SD_BENCH_SRC) $(RECIPES)
 	@python3 check_1217_mount_gate.py --source $(SD_BENCH_SRC) >/dev/null \
 	  || { python3 check_1217_mount_gate.py --source $(SD_BENCH_SRC); exit 1; }
+	@# #1235 r5: every write into the resync's receive buffer goes through the
+	@# guarded helper (scan what an aborted/late transfer left, THEN clear).
+	@python3 check_1235_rx_buffer_writes.py --self-test >/dev/null \
+	  || { python3 check_1235_rx_buffer_writes.py --self-test; exit 1; }
+	@python3 check_1235_rx_buffer_writes.py >/dev/null \
+	  || { python3 check_1235_rx_buffer_writes.py; exit 1; }
 	$(CC) -std=c11 -w -O0 -g $(SDWRITE_INCLUDES) -I$(SDSPI_SRC_DIR) -c test_1217_driver_uut.c -o $(SDWRITE_UUT_OBJ)
 	$(CC) $(CFLAGS) $(SDWRITE_INCLUDES) -o $(SDWRITE_BIN) test_1217_abandoned_write.c $(SDWRITE_UUT_OBJ)
 
