@@ -50,7 +50,8 @@
     PB_TAG1_SIZE + PB_VARINT32_MAX +             /* field 2: packed length */ \
     (PB_AIN_MAX_COUNT * PB_VARINT32_MAX) +       /* field 2: sint32 values */\
     PB_TAG1_SIZE + 1 + PB_DIO_DATA_MAX +         /* field 5: digital_data */ \
-    PB_TAG2_SIZE + 1 + PB_DIO_DIR_MAX            /* field 37: port_dir */    \
+    PB_TAG2_SIZE + 1 + PB_DIO_DIR_MAX +          /* field 37: port_dir */    \
+    PB_TAG2_SIZE + PB_VARINT32_MAX               /* field 73: ain mask (#62) */\
 )
 
 /**
@@ -1377,7 +1378,11 @@ void int2PBByteArray(const size_t integer,
  * @param stream    nanopb output stream (sizing or buffer-backed)
  * @param timestamp Sample set timestamp (ISR trigger time from hardware timer)
  * @param ainData   Array of raw ADC values (sint32, zigzag-encoded on wire)
- * @param ainCount  Number of values in ainData (= number of enabled channels)
+ * @param ainCount  Number of values in ainData (the VALID channels this tick;
+ *                  equals ainEnabledCount unless a channel missed its sample)
+ * @param ainValidMask  Bit j set = the j-th ENABLED channel is in ainData (#62)
+ * @param ainEnabledCount  Number of enabled channels; tag 73 is emitted only
+ *                  when ainCount differs from it
  * @param dioData   Digital I/O sample bytes (2 bytes, LSB=ch0), or NULL
  * @param dioSize   Size of dioData (0 if no DIO data)
  * @param dioDir    Digital port direction bitmap bytes, or NULL
@@ -1387,6 +1392,7 @@ void int2PBByteArray(const size_t integer,
 static bool encode_streaming_fields(pb_ostream_t *stream,
         uint32_t timestamp,
         const int32_t* ainData, size_t ainCount,
+        uint32_t ainValidMask, size_t ainEnabledCount,
         const uint8_t* dioData, size_t dioSize,
         const uint8_t* dioDir, size_t dioDirSize) {
 
@@ -1428,6 +1434,19 @@ static bool encode_streaming_fields(pb_ostream_t *stream,
         }
     }
 
+    /* Field 73: analog_in_data_mask (uint32, varint) -- #62.
+     * Emitted ONLY for a short frame (ARDY miss / scan freeze left a channel
+     * out of analog_in_data), so a client can tell WHICH channels are present
+     * instead of misassigning values. A full frame omits it: the steady-state
+     * wire is byte-for-byte what it was before this field existed, and a
+     * client that has never heard of tag 73 skips it as an unknown field. */
+    if (ainCount > 0 && ainCount != ainEnabledCount && ainValidMask != 0) {
+        if (!pb_encode_tag(stream, PB_WT_VARINT, DaqifiOutMessage_analog_in_data_mask_tag))
+            return false;
+        if (!pb_encode_varint(stream, ainValidMask))
+            return false;
+    }
+
     /* Field 5: digital_data (bytes, wire type 2 = length-delimited)
      * 2-byte bitmap: bit N = digital channel N value (LSB = ch0). */
     if (dioData != NULL && dioSize > 0) {
@@ -1466,6 +1485,8 @@ static bool encode_streaming_fields(pb_ostream_t *stream,
  * @param timestamp Sample set timestamp
  * @param ainData   ADC channel values array, or NULL if no AIN data
  * @param ainCount  Number of AIN values (0 if no AIN data)
+ * @param ainValidMask  Valid-channel bitmask (#62); see encode_streaming_fields
+ * @param ainEnabledCount  Number of enabled channels (#62)
  * @param dioData   Digital I/O sample bytes, or NULL
  * @param dioSize   Size of dioData
  * @param dioDir    Digital port direction bytes, or NULL
@@ -1476,13 +1497,15 @@ static size_t encode_streaming_msg_delimited(
         uint8_t* pBuffer, size_t buffSize,
         uint32_t timestamp,
         const int32_t* ainData, size_t ainCount,
+        uint32_t ainValidMask, size_t ainEnabledCount,
         const uint8_t* dioData, size_t dioSize,
         const uint8_t* dioDir, size_t dioDirSize) {
 
     /* Pass 1: calculate inner message size without writing */
     pb_ostream_t sizestream = PB_OSTREAM_SIZING;
     if (!encode_streaming_fields(&sizestream, timestamp,
-            ainData, ainCount, dioData, dioSize, dioDir, dioDirSize)) {
+            ainData, ainCount, ainValidMask, ainEnabledCount,
+            dioData, dioSize, dioDir, dioDirSize)) {
         LOG_E_SESSION(LOG_SESSION_NANOPB_FAIL, "NanoPB: streaming size pass failed");
         return 0;
     }
@@ -1494,7 +1517,8 @@ static size_t encode_streaming_msg_delimited(
         return 0;
     }
     if (!encode_streaming_fields(&stream, timestamp,
-            ainData, ainCount, dioData, dioSize, dioDir, dioDirSize)) {
+            ainData, ainCount, ainValidMask, ainEnabledCount,
+            dioData, dioSize, dioDir, dioDirSize)) {
         LOG_E_SESSION(LOG_SESSION_NANOPB_FAIL, "NanoPB: streaming encode failed");
         return 0;
     }
@@ -1631,6 +1655,12 @@ size_t Nanopb_EncodeStreamingFast(tBoardData* state,
                 count++;
             }
 
+            /* #62: capture before the list returns to the pool. Bit j is the
+             * j-th enabled channel; mask off bits beyond chCount so stale
+             * high bits can never claim a channel that is not enabled. */
+            uint32_t validMaskForMsg = pPublicSampleList->validMask &
+                    ((chCount >= 32u) ? 0xFFFFFFFFu : ((1u << chCount) - 1u));
+
             AInSampleList_FreeToPool(pPublicSampleList);
 
             if (count > 0) {
@@ -1644,6 +1674,7 @@ size_t Nanopb_EncodeStreamingFast(tBoardData* state,
                 size_t written = encode_streaming_msg_delimited(
                     pBuffer + bufferOffset, buffSize - bufferOffset,
                     timestamp, values, count,
+                    validMaskForMsg, chCount,
                     dioV, dioS, dioD, dioDS);
 
                 if (written == 0) {
@@ -1677,7 +1708,7 @@ size_t Nanopb_EncodeStreamingFast(tBoardData* state,
     if (!dioIncluded && dioSize > 0) {
         size_t written = encode_streaming_msg_delimited(
             pBuffer + bufferOffset, buffSize - bufferOffset,
-            dioTimestamp, NULL, 0,
+            dioTimestamp, NULL, 0, 0, 0,
             dioValues, dioSize, dioDir, dioDirSize);
 
         if (written > 0) {

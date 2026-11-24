@@ -5695,6 +5695,52 @@ $(SDLEAF1187_BIN): test_1187_sd_leaf_extension.c test_framework.h $(SD_MGR_SRC) 
 	 done; rm -f $(SDLEAF1187_GEN).part
 	$(CC) $(CFLAGS) -o $@ test_1187_sd_leaf_extension.c
 
+# #62: PB streaming analog_in_data_mask (tag 73). The REAL
+# encode_streaming_fields() and the PB_*/STREAMING_MSG_MAX_SIZE block are
+# spliced verbatim out of NanoPB_Encoder.c and linked against the REAL nanopb
+# encoder/decoder and the REAL generated DaqifiOutMessage.pb.c, so the test
+# reads actual wire bytes. On a tree without the fix the splice still succeeds
+# but the test does not compile (the new parameters and tag macro are absent).
+#
+# The mask itself is computed in Nanopb_EncodeStreamingFast, which needs the
+# sample pool and FreeRTOS and so is not host-compilable. Two pins hold that
+# call site still, scoped to that ONE function (a file-scoped grep would match
+# the encode_streaming_fields definition and pass on a tree where the caller
+# was reverted): it must capture the mask BEFORE the list returns to the pool
+# and must pass it together with the enabled count (chCount).
+PBMASK62_BIN := run_62_tests
+PBMASK62_DEFS := gen_62_defs.h
+PBMASK62_FIELDS := gen_62_fields.h
+PBMASK62_SRC := ../../firmware/src/services/DaqifiPB/NanoPB_Encoder.c
+PBMASK62_PB := ../../firmware/src/services/DaqifiPB/DaqifiOutMessage.pb.c
+PBMASK62_NANOPB := ../../firmware/src/libraries/nanopb
+
+$(PBMASK62_BIN): test_62_pb_analog_in_data_mask.c test_framework.h $(PBMASK62_SRC) \
+                 $(PBMASK62_PB) ../../firmware/src/services/DaqifiPB/DaqifiOutMessage.pb.h \
+                 $(PBMASK62_NANOPB)/pb_encode.c $(PBMASK62_NANOPB)/pb_decode.c \
+                 $(PBMASK62_NANOPB)/pb_common.c $(RECIPES)
+	@sed -n '/^#define PB_VARINT32_MAX/,/^)/p' $(PBMASK62_SRC) | tr -d '\r' > $(PBMASK62_DEFS)
+	@sed -n '/^static bool encode_streaming_fields(/,/^}/p' $(PBMASK62_SRC) | tr -d '\r' > $(PBMASK62_FIELDS)
+	@d=`wc -l < $(PBMASK62_DEFS) | tr -d ' '`; f=`wc -l < $(PBMASK62_FIELDS) | tr -d ' '`; \
+	 lf=`tail -1 $(PBMASK62_FIELDS) | tr -d '[:space:]'`; \
+	 if [ "$$d" -lt 8 ] || [ "$$d" -gt 40 ] || [ "$$f" -lt 20 ] || [ "$$f" -gt 200 ] || [ "$$lf" != "}" ]; then \
+	   echo "ERROR: #62 -- could not splice the PB streaming encoder out of $(PBMASK62_SRC):"; \
+	   echo "       defs block $$d line(s), encode_streaming_fields $$f line(s) ending in '$$lf'."; \
+	   rm -f $(PBMASK62_DEFS) $(PBMASK62_FIELDS); exit 1; \
+	 fi
+	@fn=`sed -n '/^size_t Nanopb_EncodeStreamingFast(/,/^}/p' $(PBMASK62_SRC) | tr -d '\r'`; \
+	 echo "$$fn" | grep -q 'validMaskForMsg, chCount' \
+	   || { echo "ERROR: #62 -- Nanopb_EncodeStreamingFast no longer passes the valid mask and the"; \
+	        echo "       enabled count (validMaskForMsg, chCount) to encode_streaming_msg_delimited."; exit 1; }; \
+	 pool=`echo "$$fn" | grep -n 'AInSampleList_FreeToPool' | head -1 | cut -d: -f1`; \
+	 cap=`echo "$$fn" | grep -n 'validMaskForMsg =' | head -1 | cut -d: -f1`; \
+	 { [ -n "$$pool" ] && [ -n "$$cap" ] && [ "$$cap" -lt "$$pool" ]; } \
+	   || { echo "ERROR: #62 -- validMaskForMsg must be captured BEFORE AInSampleList_FreeToPool"; \
+	        echo "       (cap line '$$cap', pool-free line '$$pool')."; exit 1; }
+	$(CC) $(CFLAGS) -I. -I../../firmware/src -I../../firmware/src/services/DaqifiPB -I$(PBMASK62_NANOPB) $(INCLUDES) -o $@ \
+	  test_62_pb_analog_in_data_mask.c $(PBMASK62_PB) \
+	  $(PBMASK62_NANOPB)/pb_encode.c $(PBMASK62_NANOPB)/pb_decode.c $(PBMASK62_NANOPB)/pb_common.c
+
 run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) \
      $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) \
      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(CAP1202_BIN) $(ISRLOG1197_BIN) $(STOP1201_BIN) $(CLAMP1231_BIN) $(SDIDLE1279_BIN) $(OUT1279_BIN) $(WINCSWAP1279_BIN) \
@@ -5702,7 +5748,7 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
      $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) check-1200-parity check-885-savecal-claim \
      $(NVM1153_BIN) $(NVM1206_BIN) $(ARMREFUSE_BIN) $(SDCRC_BIN) $(SDWRITE_BIN) $(LOGRING1248_BIN) $(HIF881_BIN) \
      $(HIF881SPI_BIN) $(WIFI881_BIN) $(ARMEXIT_BIN) \
-     $(CMDHIST_BIN) \
+     $(CMDHIST_BIN) $(PBMASK62_BIN) \
      $(SDLEAF1187_BIN) $(CRASH1190_BIN)
 	./$(HIF881_BIN)
 	./$(HIF881SPI_BIN)
@@ -5718,6 +5764,7 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
 	./$(NVM1206_BIN)
 	./$(SEQ908_BIN)
 	./$(CMDHIST_BIN)
+	./$(PBMASK62_BIN)
 	./$(APSTA1060_BIN)
 	./$(BUTTONLATCH_BIN)
 	./$(TEAR904_BIN)
@@ -6346,7 +6393,7 @@ clean:
 	rm -f $(SDCRC_BIN) $(SDWRITE_BIN) $(SDWRITE_UUT_OBJ)
 	rm -f $(NVM1153_BIN) $(NVM1206_BIN)
 	rm -f $(SEQ908_BIN) \
-	      $(CMDHIST_BIN)
+	      $(CMDHIST_BIN) $(PBMASK62_BIN) $(PBMASK62_DEFS) $(PBMASK62_FIELDS)
 	rm -f $(TEAR904_BIN)
 	rm -f $(CRASH1190_BIN)
 	rm -f $(SDLEAF1187_BIN) $(SDLEAF1187_GEN) $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \

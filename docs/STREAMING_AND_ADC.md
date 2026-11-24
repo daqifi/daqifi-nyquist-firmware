@@ -366,6 +366,8 @@ JSON's ratio is **not** a flat "2–3×" — it is ~3.1× at one channel and ~1.
 
 An unrecognised format value is **rejected** with `-224` since #801/#802; before that it silently selected JSON.
 
+**ProtoBuffer short frames carry `analog_in_data_mask` (#62, tag 73).** `analog_in_data` holds one value per channel that produced a sample *this tick*, so a Type-1 ARDY miss (`T1ArdyMisses`) or a scan freeze leaves it shorter than the enabled-channel count. For such a frame only, `Nanopb_EncodeStreamingFast` adds `analog_in_data_mask`: bit j set = the j-th **enabled** channel is present in `analog_in_data` (popcount = value count). **Absent means complete** (proto3 omits zero), so the steady-state wire is byte-for-byte unchanged and a client that does not know tag 73 skips it as an unknown field; such a client keeps the old positional mapping, and so keeps the old misassignment on a short frame until it is updated. The field is streaming-only: it is not in `fields_info` and does not appear in `SYSTem:SYSInfoPB?`. Channel/value pairs and a proto3 map were rejected (breaking, and they cost bytes on every sample to fix a rare condition). Host test `tests/host/test_62_pb_analog_in_data_mask.c`; bench test `test_62_pb_channel_mask.py` in the test suite.
+
 `Streaming_TransportMaxFreq` (`firmware/src/services/streaming.h`) branches on
 `isNQ1` for four of its eight interface/PB-or-CSV coefficient sets — the tables
 below are split per variant rather than annotated, so each cell can be read

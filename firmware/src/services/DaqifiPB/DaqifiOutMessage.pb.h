@@ -125,12 +125,16 @@ typedef struct _DaqifiOutMessage { /* Put repetitive information in first 15 fie
     char device_hw_rev[16]; /* Device hardware revision */
     char device_fw_rev[16]; /* Device firmware revision */
     uint64_t device_sn; /* Device serial number */
-    /* Streaming timebase (#730). timestamp_freq (12) is the timestamp counter;
+    /* Streaming timebase (#730). timestamp_freq (16) is the timestamp counter;
  these three complete the picture so a client never has to assume a clock
  or a prescale ratio, and can see the rate the hardware ACTUALLY runs. */
     uint32_t stream_timer_freq; /* Streaming trigger timer frequency, Hz */
     uint32_t timestamp_ticks_per_sample; /* Exact timestamp ticks per streaming period (0 = unconfigured) */
     uint32_t actual_rate_millihz; /* Quantized streaming rate actually applied, millihertz (0 = unconfigured) */
+    /* #62: streaming-only. Bit j set = the j-th ENABLED channel is present in analog_in_data.
+ Field ABSENT (proto3 omits zero) = every enabled channel is present, which is the
+ steady state; the encoder emits it only for a short frame (ARDY miss, scan freeze). */
+    uint32_t analog_in_data_mask;
 } DaqifiOutMessage;
 
 
@@ -139,8 +143,8 @@ extern "C" {
 #endif
 
 /* Initializer values for message structs */
-#define DaqifiOutMessage_init_default            {0, 0, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, {0, {0}}, 0, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0}, 0, 0, 0, 0, 0, 0, 0, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, 0, {0, 0}, 0, {0}, 0, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0}, 0, 0, 0, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, {0}}, {0, {0}}, 0, {0, {0}}, 0, 0, {0}, 0, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, "", 0, "", "", 0, 0, 0, 0, {"", "", "", "", "", "", "", ""}, 0, {0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0}, "", "", "", 0, 0, 0, 0}
-#define DaqifiOutMessage_init_zero               {0, 0, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, {0, {0}}, 0, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0}, 0, 0, 0, 0, 0, 0, 0, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, 0, {0, 0}, 0, {0}, 0, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0}, 0, 0, 0, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, {0}}, {0, {0}}, 0, {0, {0}}, 0, 0, {0}, 0, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, "", 0, "", "", 0, 0, 0, 0, {"", "", "", "", "", "", "", ""}, 0, {0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0}, "", "", "", 0, 0, 0, 0}
+#define DaqifiOutMessage_init_default            {0, 0, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, {0, {0}}, 0, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0}, 0, 0, 0, 0, 0, 0, 0, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, 0, {0, 0}, 0, {0}, 0, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0}, 0, 0, 0, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, {0}}, {0, {0}}, 0, {0, {0}}, 0, 0, {0}, 0, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, "", 0, "", "", 0, 0, 0, 0, {"", "", "", "", "", "", "", ""}, 0, {0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0}, "", "", "", 0, 0, 0, 0, 0}
+#define DaqifiOutMessage_init_zero               {0, 0, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, {0, {0}}, 0, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0}, 0, 0, 0, 0, 0, 0, 0, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, 0, {0, 0}, 0, {0}, 0, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0}, 0, 0, 0, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, {0}}, {0, {0}}, 0, {0, {0}}, 0, 0, {0}, 0, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, {0, {0}}, "", 0, "", "", 0, 0, 0, 0, {"", "", "", "", "", "", "", ""}, 0, {0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0}, 0, {0, 0, 0, 0, 0, 0, 0, 0}, "", "", "", 0, 0, 0, 0, 0}
 
 /* Field tags (for use in manual encoding/decoding) */
 #define DaqifiOutMessage_msg_time_stamp_tag      1
@@ -211,6 +215,7 @@ extern "C" {
 #define DaqifiOutMessage_stream_timer_freq_tag   70
 #define DaqifiOutMessage_timestamp_ticks_per_sample_tag 71
 #define DaqifiOutMessage_actual_rate_millihz_tag 72
+#define DaqifiOutMessage_analog_in_data_mask_tag 73
 
 /* Struct field encoding specification for nanopb */
 #define DaqifiOutMessage_FIELDLIST(X, a) \
@@ -281,7 +286,8 @@ X(a, STATIC,   SINGULAR, STRING,   device_fw_rev,    68) \
 X(a, STATIC,   SINGULAR, UINT64,   device_sn,        69) \
 X(a, STATIC,   SINGULAR, UINT32,   stream_timer_freq,  70) \
 X(a, STATIC,   SINGULAR, UINT32,   timestamp_ticks_per_sample,  71) \
-X(a, STATIC,   SINGULAR, UINT32,   actual_rate_millihz,  72)
+X(a, STATIC,   SINGULAR, UINT32,   actual_rate_millihz,  72) \
+X(a, STATIC,   SINGULAR, UINT32,   analog_in_data_mask,  73)
 #define DaqifiOutMessage_CALLBACK NULL
 #define DaqifiOutMessage_DEFAULT NULL
 
@@ -292,7 +298,7 @@ extern const pb_msgdesc_t DaqifiOutMessage_msg;
 
 /* Maximum encoded size of messages (where known) */
 #define DAQIFIOUTMESSAGE_PB_H_MAX_SIZE           DaqifiOutMessage_size
-#define DaqifiOutMessage_size                    2029
+#define DaqifiOutMessage_size                    2036
 
 #ifdef __cplusplus
 } /* extern "C" */
