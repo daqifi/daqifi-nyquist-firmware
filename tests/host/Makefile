@@ -1427,13 +1427,16 @@ $(APSTA1060_BIN): test_1060_apsta_disconnect_retry.c test_framework.h \
 	@# explicit preserve the marker dies on the fresh-init fall-through -- and
 	@# that falsifies r3's central claim that the disconnect is re-attempted on
 	@# every REINIT pass. It is re-attempted ONCE, then the marker is erased.
-	@# Checked as the file's own idiom: read into a local BEFORE the reset and
-	@# re-set AFTER, the same shape the firmware-update request uses.
+	@# #1182: the reset is ONE atomic keep-mask step (ResetEventFlagsExcept),
+	@# and the marker must be in that mask. The behaviour of the helper is
+	@# driven by test_1182_event_flag_atomic; this pin only says the ENTRY call
+	@# names the marker (and the firmware-update request) in its mask.
 	@pp=`$(CC) -fpreprocessed -E $(WIFI_MGR_SRC) 2>/dev/null | tr '\n' ' ' | tr -s ' '`; \
 	 case "$$pp" in \
-	   *"bool teardownPending = GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING);"*) ;; \
+	   *"ResetEventFlagsExcept(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_REQUESTED | WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING);"*) ;; \
 	   *) echo "ERROR: MainState ENTRY does not preserve the #1060 teardown"; \
-	      echo "       marker across ResetAllEventFlags() (r4). That memset"; \
+	      echo "       marker across its flag reset (r4, #1182). A reset that"; \
+	      echo "       does not keep TEARDOWN_PENDING in its mask"; \
 	      echo "       erases the whole flag word, so a FAILED REINIT-side"; \
 	      echo "       retry -- which falls through to fresh-init and re-enters"; \
 	      echo "       MainState -- loses the marker and the disconnect is"; \
@@ -1474,12 +1477,13 @@ $(APSTA1060_BIN): test_1060_apsta_disconnect_retry.c test_framework.h \
 	         {prev=$$0} \
 	         END{printf "%d %d\n", n+0, bad+0}' > /tmp/.p1060cs.$$$$; \
 	 read n bad < /tmp/.p1060cs.$$$$; rm -f /tmp/.p1060cs.$$$$; \
-	 test "$$n" -eq 10 \
+	 test "$$n" -eq 9 \
 	  || { echo "ERROR: found $$n write(s) of the #1060 teardown marker,"; \
-	       echo "       expected 10: a set+clear PAIR at each of the four"; \
+	       echo "       expected 9: a set+clear PAIR at each of the four"; \
 	       echo "       BSSDisconnect sites (AP->STA, STA-reconfigure, disable,"; \
-	       echo "       STA->AP), plus the clear in the REINIT retry and the"; \
-	       echo "       ENTRY restore. A different count means this pin is no"; \
+	       echo "       STA->AP), plus the clear in the REINIT retry (the ENTRY"; \
+	       echo "       restore became a keep-mask in #1182). A different count"; \
+	       echo "       means this pin is no"; \
 	       echo "       longer looking at the writes it was written for --"; \
 	       echo "       which is a failure, not a pass."; \
 	       echo "       (4 before r7, 6 after it, 10 after r8. Each step added"; \
@@ -1567,6 +1571,32 @@ $(APSTA1060_BIN): test_1060_apsta_disconnect_retry.c test_framework.h \
 	       echo "       live STA with WiFi stopped. Under-report instead."; \
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(APSTA1060_BIN) test_1060_apsta_disconnect_retry.c
+
+# #1182: SetEventFlag / ResetEventFlag / ResetEventFlagsExcept are spliced
+# VERBATIM out of wifi_manager.c and run against a recording critical-section
+# stub. ResetEventFlagsExcept does not exist on a tree without the fix, so the
+# splice count fails the build there. The `{ *\r*$$` anchor skips the forward
+# declarations (which end in `;`).
+EVTFLAG1182_BIN := run_1182_event_flag_tests
+EVTFLAG1182_HELPERS := gen_1182_helpers.h
+EVTFLAG1182_FLAGS := gen_1182_flags.h
+$(EVTFLAG1182_BIN): test_1182_event_flag_atomic.c test_framework.h $(WIFI_MGR_SRC)
+	@for fn in SetEventFlag ResetEventFlag ResetEventFlagsExcept; do \
+	   sed -n "/^static .* $$fn(.*{ *\r*$$/,/^}/p" $(WIFI_MGR_SRC) | tr -d '\r' > $(EVTFLAG1182_HELPERS).$$fn; \
+	   test "`grep -c '^}' $(EVTFLAG1182_HELPERS).$$fn`" = 1 \
+	   || { echo "ERROR: #1182 -- could not splice $$fn out of $(WIFI_MGR_SRC)"; \
+	        echo "       (expected exactly one definition; absent on a tree without the fix)."; \
+	        rm -f $(EVTFLAG1182_HELPERS).*; exit 1; }; \
+	 done; \
+	 cat $(EVTFLAG1182_HELPERS).SetEventFlag $(EVTFLAG1182_HELPERS).ResetEventFlag \
+	     $(EVTFLAG1182_HELPERS).ResetEventFlagsExcept > $(EVTFLAG1182_HELPERS); \
+	 rm -f $(EVTFLAG1182_HELPERS).SetEventFlag $(EVTFLAG1182_HELPERS).ResetEventFlag \
+	       $(EVTFLAG1182_HELPERS).ResetEventFlagsExcept
+	@sed -n '/enum app_eventFlag {/,/} wifi_manager_stateFlag_t;/p' $(WIFI_MGR_SRC) \
+	   | tr -d '\r' | sed '$$d' > $(EVTFLAG1182_FLAGS); \
+	 test "`grep -c 'WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING' $(EVTFLAG1182_FLAGS)`" -ge 1 \
+	 || { echo "ERROR: #1182 -- could not splice the flag enum out of $(WIFI_MGR_SRC)"; exit 1; }
+	$(CC) $(CFLAGS) -Wno-attributes -o $@ test_1182_event_flag_atomic.c
 
 $(BIN): test_circularbuffer.c test_framework.h stubs/Logger.h stubs/osal/osal.h $(FW_UTIL)/CircularBuffer.c $(FW_UTIL)/CircularBuffer.h $(RECIPES)
 	cp $(FW_UTIL)/CircularBuffer.c $(UUT)
@@ -5699,7 +5729,7 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
      $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) \
      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(CAP1202_BIN) $(ISRLOG1197_BIN) $(STOP1201_BIN) $(CLAMP1231_BIN) $(SDIDLE1279_BIN) $(OUT1279_BIN) $(WINCSWAP1279_BIN) \
      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(USECALTYPE_BIN) $(ARM_BIN) $(NAME_BIN) \
-     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) check-1200-parity check-885-savecal-claim \
+     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EVTFLAG1182_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) check-1200-parity check-885-savecal-claim \
      $(NVM1153_BIN) $(NVM1206_BIN) $(ARMREFUSE_BIN) $(SDCRC_BIN) $(SDWRITE_BIN) $(LOGRING1248_BIN) $(HIF881_BIN) \
      $(HIF881SPI_BIN) $(WIFI881_BIN) $(ARMEXIT_BIN) \
      $(CMDHIST_BIN) \
@@ -5719,6 +5749,7 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
 	./$(SEQ908_BIN)
 	./$(CMDHIST_BIN)
 	./$(APSTA1060_BIN)
+	./$(EVTFLAG1182_BIN)
 	./$(BUTTONLATCH_BIN)
 	./$(TEAR904_BIN)
 	./$(SUMBUDGET_BIN)
@@ -6357,7 +6388,7 @@ clean:
 	      $(WINCSWAP1279_BIN) $(WINCSWAP1279_GEN) $(OUT1279_BIN) $(OUT1279_DUE) $(OUT1279_RESTORE) $(OUT1279_DEFS) \
 	      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(SDLOG1029_GEN).tmp \
 	      $(USECALTYPE_BIN) $(NAME_BIN) $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(ARM_BIN) $(SCPIDAC_RAILGATE_BIN) \
-	      $(FORCEGATE_BIN) $(LOG1039_BIN) $(LOG1039_GEN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) $(ARMREFUSE_BIN) $(ARMEXIT_BIN)
+	      $(FORCEGATE_BIN) $(LOG1039_BIN) $(LOG1039_GEN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EVTFLAG1182_BIN) $(EVTFLAG1182_HELPERS) $(EVTFLAG1182_FLAGS) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) $(ARMREFUSE_BIN) $(ARMEXIT_BIN)
 
 # #1200: the three encoders must book the same loss for the same discard.
 # A source-derived check rather than a mock, because a model of the encoders
