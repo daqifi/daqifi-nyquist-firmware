@@ -852,7 +852,7 @@ scpi_result_t SCPI_LANSettingsApply(scpi_t * context) {
     }
     if (saveSettings) {
         DaqifiSettings daqifiSettings;
-        memcpy(&daqifiSettings.settings.wifi, pRunTimeWifiSettings, sizeof (wifi_manager_settings_t));
+        WifiSettingsStage_Snapshot(&daqifiSettings.settings.wifi, pRunTimeWifiSettings);  // #1347
         daqifiSettings.type = DaqifiSettings_Wifi;
         if (!daqifi_settings_SaveToNvm(&daqifiSettings)) {
             // Apply already succeeded and REINIT may already be in flight.
@@ -1605,7 +1605,7 @@ scpi_result_t SCPI_LANSettingsSave(scpi_t * context) {
     wifi_manager_settings_t * pWifiSettings = BoardRunTimeConfig_Get(
             BOARDRUNTIME_WIFI_SETTINGS);
     DaqifiSettings daqifiSettings;
-    memcpy(&daqifiSettings.settings.wifi, pWifiSettings, sizeof (wifi_manager_settings_t));
+    WifiSettingsStage_Snapshot(&daqifiSettings.settings.wifi, pWifiSettings);  // #1347
     daqifiSettings.type = DaqifiSettings_Wifi;
     if (!daqifi_settings_SaveToNvm(&daqifiSettings)) {
         return SCPI_RES_ERR;
@@ -1646,6 +1646,8 @@ scpi_result_t SCPI_LANSettingsLoad(scpi_t * context) {
         // RUNTIME copy (getters, APPLY, SAVE) once the update returned true, from
         // this handler's own struct (the WiFi task can rewrite LIVE ssid/host),
         // keeping runtime's MAC. A rejected/rolled-back call leaves runtime as is.
+        // Whole against the other protected copies only, not the setters; APPLY's
+        // runtime->live copy in UpdateNetworkSettings stays unprotected (see header).
         if (!WifiSettingsStage_ApplyThenStage(pRunTimeWifiSettings,
                 &daqifiSettings.settings.wifi,
                 wifi_manager_UpdateNetworkSettings)) {
@@ -1655,7 +1657,7 @@ scpi_result_t SCPI_LANSettingsLoad(scpi_t * context) {
     } else {
         // No apply requested -- just stage in runtime so callers can inspect /
         // edit before a future APPLY.
-        memcpy(pRunTimeWifiSettings, &daqifiSettings.settings.wifi, sizeof(wifi_manager_settings_t));
+        WifiSettingsStage_Overwrite(pRunTimeWifiSettings, &daqifiSettings.settings.wifi);
     }
 
     return SCPI_RES_OK;
@@ -1697,7 +1699,7 @@ scpi_result_t SCPI_LANSettingsFactoryLoad(scpi_t * context) {
             return SCPI_RES_ERR;
         }
     } else {
-        memcpy(pRunTimeWifiSettings, &daqifiSettings.settings.wifi, sizeof(wifi_manager_settings_t));
+        WifiSettingsStage_Overwrite(pRunTimeWifiSettings, &daqifiSettings.settings.wifi);
     }
 
     return SCPI_RES_OK;

@@ -37,7 +37,20 @@ typedef struct {
     bool powerSaveDisabled;
 } wifi_manager_settings_t;
 
+/* The critical-section stub COUNTS depth, and memcpy is wrapped so each copy
+ * records the depth it ran at: a copy outside the section (or a second copy
+ * inside it) is visible, which a bare no-op stub never was. */
 static int g_crit;
+static int g_copies;          /* memcpy calls since the last reset */
+static int g_depth_at_copy;   /* depth seen by the last memcpy */
+static int g_crit_in_update;  /* depth seen inside the update callback */
+static void *crit_memcpy(void *d, const void *src, size_t n)
+{
+    g_copies++;
+    g_depth_at_copy = g_crit;
+    return (memcpy)(d, src, n);
+}
+#define memcpy(d, src, n) crit_memcpy((d), (src), (n))
 #define taskENTER_CRITICAL() (g_crit++)
 #define taskEXIT_CRITICAL()  (g_crit--)
 #include "WifiSettingsStage.h"   /* real header (via -I firmware/src/Util) */
@@ -46,6 +59,7 @@ static bool g_accept;
 static int  g_update_calls;
 static bool fake_update(wifi_manager_settings_t *p) {
     (void) p;
+    g_crit_in_update = g_crit;
     g_update_calls++;
     return g_accept;
 }
@@ -133,6 +147,63 @@ TEST(no_argument_style_stage_is_idempotent)
     ASSERT_BYTES(&rt, &once, sizeof rt);
 }
 
+static void reset_counters(void)
+{
+    g_copies = 0;
+    g_depth_at_copy = -1;
+    g_crit_in_update = -1;
+}
+
+TEST(snapshot_copies_every_field_in_exactly_one_depth_1_section)
+{
+    wifi_manager_settings_t rt = mk("OldNet", 1, MAC_RT);
+    wifi_manager_settings_t dst;
+    memset(&dst, 0xAB, sizeof dst);
+    reset_counters();
+    WifiSettingsStage_Snapshot(&dst, &rt);
+    ASSERT_EQ(g_copies, 1);
+    ASSERT_EQ(g_depth_at_copy, 1);
+    ASSERT_EQ(g_crit, 0);
+    ASSERT_BYTES(&dst, &rt, sizeof rt);
+}
+
+TEST(overwrite_copies_every_field_incl_mac_in_one_depth_1_section)
+{
+    wifi_manager_settings_t rt = mk("OldNet", 1, MAC_RT);
+    wifi_manager_settings_t ld = mk("DAQiFi", 4, MAC_NVM);
+    reset_counters();
+    WifiSettingsStage_Overwrite(&rt, &ld);
+    ASSERT_EQ(g_copies, 1);
+    ASSERT_EQ(g_depth_at_copy, 1);
+    ASSERT_EQ(g_crit, 0);
+    ASSERT_BYTES(&rt, &ld, sizeof rt);               /* the whole struct, MAC too */
+    ASSERT_BYTES(rt.macAddr.addr, MAC_NVM, 6);       /* unchanged no-argument behaviour */
+}
+
+TEST(into_runtime_is_one_depth_1_section_and_the_update_runs_outside_it)
+{
+    wifi_manager_settings_t rt = mk("OldNet", 1, MAC_RT);
+    wifi_manager_settings_t ld = mk("DAQiFi", 4, MAC_NVM);
+    g_accept = true;
+    reset_counters();
+    ASSERT_TRUE(WifiSettingsStage_ApplyThenStage(&rt, &ld, fake_update));
+    ASSERT_EQ(g_crit_in_update, 0);                  /* update is NOT inside a section */
+    ASSERT_EQ(g_copies, 1);
+    ASSERT_EQ(g_depth_at_copy, 1);
+    ASSERT_EQ(g_crit, 0);
+}
+
+TEST(a_rejected_update_takes_no_section_and_no_copy)
+{
+    wifi_manager_settings_t rt = mk("OldNet", 1, MAC_RT);
+    wifi_manager_settings_t ld = mk("DAQiFi", 4, MAC_NVM);
+    g_accept = false;
+    reset_counters();
+    ASSERT_FALSE(WifiSettingsStage_ApplyThenStage(&rt, &ld, fake_update));
+    ASSERT_EQ(g_copies, 0);
+    ASSERT_EQ(g_crit, 0);
+}
+
 int main(void)
 {
     printf("WifiSettingsStage.h -- #1347 LOAD 1 / FACRESET 1 runtime staging\n");
@@ -142,5 +213,9 @@ int main(void)
     RUN(mac_is_kept_not_nvms_and_not_the_zeroed_factory_one);
     RUN(the_loaded_struct_is_not_modified);
     RUN(no_argument_style_stage_is_idempotent);
+    RUN(snapshot_copies_every_field_in_exactly_one_depth_1_section);
+    RUN(overwrite_copies_every_field_incl_mac_in_one_depth_1_section);
+    RUN(into_runtime_is_one_depth_1_section_and_the_update_runs_outside_it);
+    RUN(a_rejected_update_takes_no_section_and_no_copy);
     return TEST_SUMMARY();
 }

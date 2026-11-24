@@ -29,7 +29,7 @@
  * and APPLY keeps the live MAC. Keeping runtime's own MAC therefore only avoids
  * changing the bytes a later SAVE stores.
  *
- * No #includes on purpose: the includer must already have <stdbool.h>, the
+ * No #includes on purpose: the includer must already have <stdbool.h>, <string.h>, the
  * taskENTER_CRITICAL/taskEXIT_CRITICAL pair and wifi_manager_settings_t. The
  * firmware gets them from wifi_manager.h; the host test defines stand-ins.
  *
@@ -37,17 +37,46 @@
 #ifndef WIFI_SETTINGS_STAGE_H
 #define WIFI_SETTINGS_STAGE_H
 
-/* Copy `loaded` over `runtime`, keeping runtime's macAddr. The copy is one
- * critical section (taskENTER_CRITICAL/taskEXIT_CRITICAL, which the includer
- * must provide) so the other SCPI task (USB, pri 7, can preempt a TCP-SCPI
- * handler) never sees a half-written runtime copy mid-memcpy. */
+/* WHAT THE CRITICAL SECTIONS DO AND DO NOT COVER. Every whole-struct access to
+ * the runtime copy in this file is one critical section holding the memcpy and
+ * nothing else (the pointers are looked up and the struct is built BEFORE it):
+ * the SAVE and APPLY 1 snapshots, and the LOAD / FACRESET copies, with or
+ * without the argument. Those are whole against each other. They are NOT whole
+ * against the single setters (SSID, PASs, NETType, ...), which write the runtime
+ * copy unprotected, so a snapshot can still catch a setter halfway, as on main.
+ * APPLY's own copy of runtime into the LIVE copy (inside
+ * wifi_manager_UpdateNetworkSettings) is unprotected too, as on main.
+ * The includer provides taskENTER_CRITICAL / taskEXIT_CRITICAL. */
+
+/* Copy `loaded` over `runtime`, keeping runtime's macAddr, in one critical
+ * section. */
 static inline void WifiSettingsStage_IntoRuntime(
         wifi_manager_settings_t *runtime,
         const wifi_manager_settings_t *loaded) {
     wifi_manager_settings_t local = *loaded;
     taskENTER_CRITICAL();
     local.macAddr = runtime->macAddr;
-    *runtime = local;
+    memcpy(runtime, &local, sizeof(*runtime));
+    taskEXIT_CRITICAL();
+}
+
+/* Whole-struct copy of the runtime copy into `dst` (SAVE, APPLY 1): the memcpy
+ * and nothing else inside the critical section. */
+static inline void WifiSettingsStage_Snapshot(
+        wifi_manager_settings_t *dst,
+        const wifi_manager_settings_t *runtime) {
+    taskENTER_CRITICAL();
+    memcpy(dst, runtime, sizeof(*dst));
+    taskEXIT_CRITICAL();
+}
+
+/* The no-argument LOAD / FACRESET copy: the whole loaded struct over the runtime
+ * copy, MAC included (unchanged behaviour), memcpy only inside the section. */
+static inline void WifiSettingsStage_Overwrite(
+        wifi_manager_settings_t *runtime,
+        const wifi_manager_settings_t *loaded) {
+    taskENTER_CRITICAL();
+    memcpy(runtime, loaded, sizeof(*runtime));
     taskEXIT_CRITICAL();
 }
 
