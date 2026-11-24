@@ -3417,6 +3417,11 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
 // (FIND_BACKOFF).  Structure mirrors SCPI_RunThroughputBench.
 #define FIND_DEFAULT_START_HZ   1000u   // conservative baseline
 #define FIND_DEFAULT_MAX_HZ     20000u  // backstop; further clamped to the ADC cap
+/* #939: highest startHz/maxHz accepted. It is the largest rate an existing
+ * caller sends (test_891), NOT a measured hang boundary. FINd? 40000,40000 hung
+ * the board with and without a TCP client; 25000,25000 without one answered
+ * (AIN0, n = 1 each); nothing between was measured. */
+#define FIND_ARG_MAX_HZ         25000
 #define FIND_SETTLE_MS          500u    // prime + let the pipeline reach steady state
 #define FIND_DWELL_MS           3000u   // observation window — long enough for the
                                         // buffer to actually fill at a near-ceiling
@@ -3999,6 +4004,14 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context,
         SCPI_OptionalParamInt32(context, &maxArg) == SCPI_OPT_BAD) {
         return SCPI_RES_ERR;
     }
+    // #939: reject before anything is read or changed. 0 stays the default.
+    if (startArg < 0 || startArg > FIND_ARG_MAX_HZ ||
+        maxArg < 0 || maxArg > FIND_ARG_MAX_HZ) {
+        LOG_E("SYST:STR:WIFI:FIND: startHz/maxHz must be 0 (default) or 1..%d (#939)",
+              FIND_ARG_MAX_HZ);
+        SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+        return SCPI_RES_ERR;
+    }
 
     StreamingRuntimeConfig* cfg = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
@@ -4029,8 +4042,17 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context,
         return SCPI_RES_ERR;
     }
 
-    // RAW-throughput finder: the climb is bounded only by a sane backstop, NOT
-    // by the ADC-accuracy caps (T2 1000 Hz muxed-scan limit, ISR ceiling, etc.).
+    // #939: with no client to drain it, every soak runs until the transport
+    // auto-stop (#1072) and the sweep holds the sending port for ~12 min.
+    // A TCP caller is its own client, so it passes. This sees a socket, not a
+    // reader: a client that stops reading, or leaves mid-sweep, is not caught.
+    if (!wifi_tcp_server_HasActiveClient()) {
+        SCPI_ExecutionError(context, "SYST:STR:WIFI:FIND: connect a TCP client first");
+        return SCPI_RES_ERR;
+    }
+
+    // RAW-throughput finder: the climb is bounded by FIND_ARG_MAX_HZ, NOT by the
+    // ADC-accuracy caps (T2 1000 Hz muxed-scan limit, ISR ceiling, etc.).
     // Those caps are a separate ADC-sampling-accuracy layer — the finder's job
     // is to measure what the WiFi transport can actually push for this packet
     // size.  The usable streaming rate is set downstream from the finder result
