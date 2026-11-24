@@ -244,7 +244,7 @@ restore
 echo "== M4 (PIN 9): stop preserving the marker across MainState ENTRY -- the   =="
 echo "==            r3 HIGH. ⭐ EVERY OTHER PIN STILL PASSES: the flag is still  =="
 echo "==            set, cleared and re-attempted; it is simply erased by the   =="
-echo "==            memset one transition later, which is why r3 shipped.       =="
+echo "==            reset one transition later, which is why r3 shipped.        =="
 if sub "$F" '                    WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_REQUESTED |
                     WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING);' \
             '                    WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_REQUESTED);'; then

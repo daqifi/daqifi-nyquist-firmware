@@ -48,7 +48,6 @@ static int      g_depth;          /* current nesting */
 static int      g_enter, g_exit;  /* calls */
 static int      g_underflow;      /* EXIT with depth 0 */
 static uint16_t g_pre_set;        /* a "preempting writer" ORs this at ENTER */
-static bool     g_pre_fire_once;
 
 /* Where is the watched word, so the stubs can observe it. */
 static wifi_manager_stateFlag_t *g_watch;
@@ -59,9 +58,6 @@ static void stub_enter(void) {
     if (g_depth == 0 && g_pre_set != 0 && g_watch != NULL) {
         /* Another task running just before the section is taken. */
         g_watch->value = (uint16_t)(g_watch->value | g_pre_set);
-        if (g_pre_fire_once) {
-            g_pre_set = 0;
-        }
     }
     g_depth++;
     if (g_watch != NULL) {
@@ -94,7 +90,6 @@ static void stub_exit(void) {
 static void reset_world(wifi_manager_stateFlag_t *f, uint16_t initial) {
     g_depth = g_enter = g_exit = g_underflow = 0;
     g_pre_set = 0;
-    g_pre_fire_once = false;
     g_value_at_enter = g_value_at_exit = 0;
     f->value = initial;
     g_watch = f;

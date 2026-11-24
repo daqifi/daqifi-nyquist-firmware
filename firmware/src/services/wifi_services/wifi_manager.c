@@ -445,10 +445,8 @@ static void RssiEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHan
     // about (assocHandle matched above) — signal the next ProcessState
     // pump to repair STA_CONNECTED if it drifted.  Don't touch
     // eventFlags here: this callback runs from WDRV_WINC_Tasks
-    // (priority 2, same as app_WifiTask, time-sliced), so the repair
-    // is signalled to the next ProcessState pump instead of writing
-    // the flag word from a third context (Qodo #451 review; since
-    // #1182 the write itself is atomic, but this keeps one writer).
+    // (priority 2, same as app_WifiTask, time-sliced), so it only records
+    // the request; the next ProcessState pump applies it (Qodo #451 review).
     //
     // Capture the assocHandle alongside the pending flag so Phase 1
     // can detect a disconnect race: if StaEventCallback clears
@@ -1822,9 +1820,10 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                         WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
                 if ((WDRV_WINC_STATUS_OK == retryStatus) ||
                     (WDRV_WINC_STATUS_REQUEST_ERROR == retryStatus)) {
-                    /* #1060 r4: same RMW rule as the AP->STA site. The LOG_I
-                     * stays OUTSIDE the lock -- logging from a critical
-                     * section is its own hazard. */
+                    /* #1060 r4 critical section, kept unchanged (redundant
+                     * for atomicity since #1182). The LOG_I stays OUTSIDE
+                     * it -- logging from a critical section is its own
+                     * hazard. */
                     taskENTER_CRITICAL();
                     ResetEventFlag(&pInstance->eventFlags,
                             WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING);
@@ -2064,18 +2063,10 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     // switch. INIT below sets STA_STARTED again once it
                     // reaches BSSConnect.
                     //
-                    // Critical section (since #1182 ResetEventFlag takes its
-                    // own, and this one nests; kept so the two clears below
-                    // are ONE step against a preempting writer, not two).
-                    // eventFlags.value is a read-modify-write, and not every
-                    // writer of that word runs on this task:
-                    // wifi_manager_RequestWifiFirmwareUpdate() sets
-                    // WIFI_FW_UPDATE_REQUESTED from whichever SCPI task took
-                    // SYST:COMM:LAN:FWUpdate -- USB SCPI, priority 7,
-                    // included -- which could preempt between this task's
-                    // load and store and lose its bit to the stale store.
-                    // Same wrap as MaybeReconcileStaConnected()'s
-                    // SetEventFlag.
+                    // Critical section: the two clears are ONE step, so no
+                    // other task sees STA_CONNECTED clear while STA_STARTED
+                    // is still set (or the reverse).  Each clear is atomic
+                    // on its own since #1182; this keeps the pair together.
                     taskENTER_CRITICAL();
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
@@ -2181,16 +2172,10 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                             discStatus = WDRV_WINC_BSSDisconnect(
                                     pInstance->wdrvHandle);
                         }
-                        /* ⛔ #1060 r4: CRITICAL SECTION, because
-                         * eventFlags.value is a read-modify-write on
-                         * one shared 16-bit word (since #1182 each
-                         * Set/ResetEventFlag takes its own too). A
-                         * higher-priority USB-task SYST:COMM:LAN:FWUpdate
-                         * setting WIFI_FW_UPDATE_REQUESTED between this load
-                         * and its store would be ERASED. The two STA flag
-                         * clears a few lines up already take this lock and say
-                         * exactly this -- I added writers to the same word
-                         * without extending it to them. */
+                        /* #1060 r4 critical section, kept unchanged. Since
+                         * #1182 the single Set/ResetEventFlag inside it is
+                         * atomic on its own, so the section is no longer what
+                         * protects the flag word. */
                         taskENTER_CRITICAL();
                         if ((WDRV_WINC_STATUS_OK == discStatus) ||
                             (WDRV_WINC_STATUS_REQUEST_ERROR == discStatus)) {
@@ -2403,45 +2388,12 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                         }
                         // Clear socket + STA state flags so callers that
                         // check status during the chip-reset window (~2 s)
-                        // don't observe stale "connected" state.  No
-                        // critical section here, but NOT because every
-                        // writer is on WifiTask — it isn't:
-                        // wifi_manager_RequestWifiFirmwareUpdate() sets
-                        // WIFI_FW_UPDATE_REQUESTED from whichever SCPI task
-                        // ran SYST:COMM:LAN:FWUpdate (USB SCPI, priority 7,
-                        // included), so pInstance->eventFlags does have a
-                        // cross-task writer (see the #1060 AP->STA branch's
-                        // critical-section comment, which cites this same
-                        // site).
-                        //
-                        // ⛔ CORRECTED (#1060 r5). This comment used to say the
-                        // exposure was "a torn read against that one unrelated
-                        // bit" and was "judged benign here". BOTH HALVES WERE
-                        // WRONG, and the disposition was the dangerous half.
-                        //
-                        // Not a torn read: docs/MCU_REFERENCE.md says an
-                        // aligned 16/32-bit load or store on PIC32MZ IS
-                        // atomic, so tearing cannot happen here. What is NOT
-                        // atomic is the read-modify-write — ResetEventFlag is
-                        // `value &= ~flag`, which that same doc lists as
-                        // exactly the form requiring taskENTER_CRITICAL().
-                        //
-                        // Not benign: the failure is a LOST WRITE, not a
-                        // corrupted read. USB SCPI (priority 7) running
-                        // SYST:COMM:LAN:FWUpdate between this load and its
-                        // store has its WIFI_FW_UPDATE_REQUESTED set ERASED.
-                        // The user asked for firmware-update mode, the request
-                        // is silently dropped, and the device carries on in
-                        // the wrong mode with nothing logged. "One unrelated
-                        // bit" understated it: that bit is a mode request.
-                        //
-                        // #1182 then made Set/ResetEventFlag themselves
-                        // atomic, so every flag write in this file is covered
-                        // and this caller-side section is no longer the only
-                        // thing standing between the request and the loss.
-                        //
-                        // Don't cite "single-threaded" as the reason if this is
-                        // copied elsewhere — and don't cite "benign" either.
+                        // don't observe stale "connected" state.  Each
+                        // Set/ResetEventFlag is atomic (#1182), so a
+                        // SYST:COMM:LAN:FWUpdate request from another task
+                        // cannot be lost between these clears.  They are
+                        // still separate steps, so a reader can see some of
+                        // them done and not others.
                         //
                         // Also clear UDP_SOCKET_CONNECTED so it doesn't
                         // outlast UDP_SOCKET_OPEN.
@@ -2521,10 +2473,9 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                      * exhaustion arm exactly rather than inventing a second
                      * shape for the same fact.
                      *
-                     * RMW under a critical section for the same reason the two
-                     * flag clears above take it: a higher-priority USB-task
-                     * write to the same flags word would otherwise erase this
-                     * store.
+                     * The write sits in a critical section kept from #1060
+                     * r4; since #1182 each flag write is atomic on its own, so
+                     * the section is no longer what protects the word.
                      *
                      * ⚠ Still log-only in the DIAGNOSTIC sense -- the LOG_E
                      * stays, outside the lock, because logging from a critical
@@ -3675,11 +3626,9 @@ static void MaybeReconcileStaConnected(void) {
     // an out-of-mode signal can't promote into AP mode where AP_STARTED
     // is the active flag.
     //
-    // The SetEventFlag call itself is wrapped in a critical section to
-    // satisfy the PIC32MZ atomicity rule (docs/MCU_REFERENCE.md: "RMW |= needs
-    // critical section") — the value |= flag inside SetEventFlag is
-    // a non-atomic RMW shared with other task-context writers in this
-    // file.  Qodo #451 pass 3 findings.
+    // The SetEventFlag call is wrapped in a critical section kept from
+    // Qodo #451 pass 3; since #1182 SetEventFlag is atomic on its own, so the
+    // wrap is redundant.
     bool repairPending;
     WDRV_WINC_ASSOC_HANDLE pendingHandle;
     taskENTER_CRITICAL();

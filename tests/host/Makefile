@@ -1423,10 +1423,10 @@ $(APSTA1060_BIN): test_1060_apsta_disconnect_retry.c test_framework.h \
 	       echo "       ZERO means the pattern or the path is broken, not that"; \
 	       echo "       the code is clean."; exit 1; }
 	@# ⛔ PIN 9 -- r4: THE TEARDOWN MARKER SURVIVES MainState ENTRY.
-	@# ResetAllEventFlags() is a memset of the whole flag word, so without an
-	@# explicit preserve the marker dies on the fresh-init fall-through -- and
-	@# that falsifies r3's central claim that the disconnect is re-attempted on
-	@# every REINIT pass. It is re-attempted ONCE, then the marker is erased.
+	@# ENTRY clears the whole flag word on the fresh-init fall-through, so
+	@# without an explicit preserve the marker dies there -- and that falsifies
+	@# r3's central claim that the disconnect is re-attempted on every REINIT
+	@# pass. It is re-attempted ONCE, then the marker is erased.
 	@# #1182: the reset is ONE atomic keep-mask step (ResetEventFlagsExcept),
 	@# and the marker must be in that mask. The behaviour of the helper is
 	@# driven by test_1182_event_flag_atomic; this pin only says the ENTRY call
@@ -1447,11 +1447,11 @@ $(APSTA1060_BIN): test_1060_apsta_disconnect_retry.c test_framework.h \
 	@# ⛔ PIN 10 -- ⭐ EVERY write of the marker is inside a CRITICAL SECTION,
 	@# counted and positional, per PIN 8's lesson.
 	@#
-	@# Set/ResetEventFlag are plain read-modify-writes on one shared 16-bit word
-	@# ($(WIFI_MGR_SRC):948 and :952). A higher-priority USB-task
-	@# SYST:COMM:LAN:FWUpdate setting WIFI_FW_UPDATE_REQUESTED between a load
-	@# and its store is ERASED. This PR already documented that and took the
-	@# lock for two writes, and r3 then added three more without it.
+	@# Since #1182 each Set/ResetEventFlag is atomic on its own, so these
+	@# caller-side sections are no longer what protects the flag word. What this
+	@# pin still checks is the shape the code has: every write of the marker is
+	@# bracketed by a critical section, and there are exactly this many of them,
+	@# so a marker write that is added unbracketed, or removed, is noticed.
 	@#
 	@# ⛔ NOT A DEPTH COUNTER. A depth counter is the wrong MODEL of this file:
 	@# critical sections here have MULTIPLE EXIT PATHS (an early return inside
@@ -1493,11 +1493,9 @@ $(APSTA1060_BIN): test_1060_apsta_disconnect_retry.c test_framework.h \
 	       exit 1; }; \
 	 test "$$bad" -eq 0 \
 	  || { echo "ERROR: $$bad write(s) of the #1060 teardown marker are OUTSIDE"; \
-	       echo "       a critical section. Set/ResetEventFlag are plain"; \
-	       echo "       read-modify-writes on one shared 16-bit word, so a"; \
-	       echo "       higher-priority task's flag write in that window is"; \
-	       echo "       silently erased -- including the FWUpdate request this"; \
-	       echo "       file already preserves by hand."; exit 1; }
+	       echo "       a critical section. Each Set/ResetEventFlag is atomic on"; \
+	       echo "       its own since #1182, but the marker writes here are"; \
+	       echo "       expected to stay bracketed as #1060 r4 left them."; exit 1; }
 	@# ⛔⛔⛔ #1186 r6 PIN -- THE ACTIVE MODE IS DERIVED LIVE. NO CACHED STATE.
 	@#
 	@# This replaces five rounds of pins (r2-r5) that each guarded one way a
@@ -1580,7 +1578,7 @@ $(APSTA1060_BIN): test_1060_apsta_disconnect_retry.c test_framework.h \
 EVTFLAG1182_BIN := run_1182_event_flag_tests
 EVTFLAG1182_HELPERS := gen_1182_helpers.h
 EVTFLAG1182_FLAGS := gen_1182_flags.h
-$(EVTFLAG1182_BIN): test_1182_event_flag_atomic.c test_framework.h $(WIFI_MGR_SRC)
+$(EVTFLAG1182_BIN): test_1182_event_flag_atomic.c test_framework.h $(WIFI_MGR_SRC) $(RECIPES)
 	@for fn in SetEventFlag ResetEventFlag ResetEventFlagsExcept; do \
 	   sed -n "/^static .* $$fn(.*{ *\r*$$/,/^}/p" $(WIFI_MGR_SRC) | tr -d '\r' > $(EVTFLAG1182_HELPERS).$$fn; \
 	   test "`grep -c '^}' $(EVTFLAG1182_HELPERS).$$fn`" = 1 \
@@ -1596,7 +1594,7 @@ $(EVTFLAG1182_BIN): test_1182_event_flag_atomic.c test_framework.h $(WIFI_MGR_SR
 	   | tr -d '\r' | sed '$$d' > $(EVTFLAG1182_FLAGS); \
 	 test "`grep -c 'WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING' $(EVTFLAG1182_FLAGS)`" -ge 1 \
 	 || { echo "ERROR: #1182 -- could not splice the flag enum out of $(WIFI_MGR_SRC)"; exit 1; }
-	$(CC) $(CFLAGS) -Wno-attributes -o $@ test_1182_event_flag_atomic.c
+	$(CC) $(CFLAGS) -o $@ test_1182_event_flag_atomic.c
 
 $(BIN): test_circularbuffer.c test_framework.h stubs/Logger.h stubs/osal/osal.h $(FW_UTIL)/CircularBuffer.c $(FW_UTIL)/CircularBuffer.h $(RECIPES)
 	cp $(FW_UTIL)/CircularBuffer.c $(UUT)

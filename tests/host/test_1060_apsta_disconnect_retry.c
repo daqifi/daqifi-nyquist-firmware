@@ -74,7 +74,7 @@ typedef struct {
     bool clearsModeFlags;    /* this PR's fix: the link state becomes honest */
     bool retryAcrossSettle;  /* r2: bounded re-attempt during the settle */
     bool teardownPendingFlag;/* r3: a dedicated flag drives an UNBOUNDED retry */
-    bool flagSurvivesEntry;  /* r4: ENTRY's ResetAllEventFlags preserves it */
+    bool flagSurvivesEntry;  /* r4: ENTRY's flag reset preserves it */
 } Shape;
 
 /* BASE -- before this PR. The stale STA_CONNECTED is left set, which reports a
@@ -173,17 +173,17 @@ static bool model_dhcp_would_be_refused(const Chip *c) {
     return c->chipConnected;
 }
 
-/* ⛔ MainState ENTRY. ResetAllEventFlags() is a memset of the whole flag word,
- * so EVERY flag in it dies here unless something preserves it -- the
- * firmware-update request is read into a local before the reset and re-set
- * after, and r4 does the same for the teardown marker.
+/* ⛔ MainState ENTRY clears the whole flag word, so EVERY flag in it dies here
+ * unless something preserves it -- since #1182 ENTRY keeps the firmware-update
+ * request and the teardown marker through one keep-mask step
+ * (ResetEventFlagsExcept); r4 introduced the preserve for the marker.
  *
  * ⭐ THE MODEL COULD NOT REPRESENT THIS TRANSITION, which is exactly why it
  * passed r3 while r3's central claim was false. A model that cannot express a
  * state change cannot test any property that depends on one. */
 static void model_mainstate_entry(Chip *c, Shape s) {
     if (!s.flagSurvivesEntry) {
-        c->teardownPending = false;      /* erased by the memset */
+        c->teardownPending = false;      /* erased by the reset */
     }
 }
 
