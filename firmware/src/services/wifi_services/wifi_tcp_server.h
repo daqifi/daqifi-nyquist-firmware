@@ -418,6 +418,26 @@ bool wifi_tcp_server_HasActiveClient(void);
 uint32_t wifi_tcp_server_GetCircularBufferAvailable(void);
 
 /**
+ * fw#1265: ask for the CURRENT client connection to be closed, if it is still
+ * the connection identified by `generation` (#599).
+ *
+ * Called by the SD task when a tagged SD:GET's padding stopped short, which
+ * leaves the host mid-way through a definite-length read with no in-band way
+ * to be told. The close is PERFORMED by WifiTask through
+ * wifi_tcp_server_DrainPendingClientClose(), not here -- see the
+ * implementation for why the SD task must not touch the socket itself.
+ * A request for a connection that is already gone is dropped.
+ */
+void wifi_tcp_server_RequestClientClose(uint32_t generation);
+
+/**
+ * Perform a close requested by wifi_tcp_server_RequestClientClose(). Call from
+ * WifiTask only. Re-checks the #599 generation, so a connection that changed
+ * since the request is left alone.
+ */
+void wifi_tcp_server_DrainPendingClientClose(void);
+
+/**
  * #1279: bytes queued in the TCP write circular buffer that
  * wifi_tcp_server_SetWriteBuffer would discard, read under wMutex. 0 when no
  * client is connected (those bytes are undeliverable and the close path

@@ -18,6 +18,10 @@
  */
 
 #include "streaming.h"
+/* fw#1269: the session-start claim's admission test reads the SD:GET data
+ * window and the armed-tagged-GET flag. See Streaming_BeginSessionStart. */
+#include "services/SCPI/SCPIInterface.h"
+#include "services/sd_card_services/sd_card_manager.h"
 
 #if PB_PROFILE_COUNTERS
 #include <xc.h>  // for _CP0_GET_COUNT() — coprocessor 0 cycle counter
@@ -4945,9 +4949,50 @@ StreamingStartClaim Streaming_BeginSessionStart(void) {
      * be outside the critical section. */
     bool cfgHeld = false;
 
+    bool sdGetHeld = false;
+
     taskENTER_CRITICAL();
     if (gSessionStartBusy != 0u) {
         result = STREAM_START_CLAIM_BUSY;
+    } else if (ScpiSdWindow_AnyOpen() ||
+               sd_card_manager_TaggedGetPending()) {
+        /* ⭐ fw#1269: STREAM ADMISSION AND TAGGED-GET ADMISSION ARE ONE
+         * DECISION, AND THIS IS WHERE IT IS MADE.
+         *
+         * A tagged SD:GET delivers an IEEE 488.2 definite-length block, so the
+         * host reads exactly <n> bytes without inspecting them; a streaming
+         * session writes to the same transport from its OWN task, unprompted,
+         * which no input gate can reach. The two must never overlap.
+         *
+         * ⛔ CHECKING "IS A STREAM LIVE" FROM THE GET SIDE IS NOT ENOUGH, and
+         * that was the defect (#1267 round-2 audit, 4). An arm finishes buffer
+         * prep and is preempted before it publishes IsEnabled; the GET's check
+         * passes, its window opens, its header goes out; the arm then publishes
+         * and writes frames inside the block while the GET reports OK. The
+         * publication is simply too late to be the thing a GET tests.
+         *
+         * So the two sides test each other's ADMISSION state, each inside one
+         * critical section, and on this port taskENTER_CRITICAL masks
+         * interrupts -- no task switch can occur inside either -- so the two
+         * decisions are serialized against one another. Whichever runs first
+         * wins and the other refuses:
+         *   - here: an open window, or a tagged GET armed and about to open one
+         *     (sd_card_manager_TaggedGetPending covers the gap between the SCPI
+         *     handler arming and the SD task opening);
+         *   - in ScpiSdWindow_TryOpen: Streaming_SessionStartInProgress(),
+         *     which is gSessionStartBusy -- held across this whole arm,
+         *     including the publication.
+         * Neither side needs new state, so neither adds a pairing to get
+         * wrong: each reads a flag the other already releases on every path.
+         *
+         * ⚠ LAYERING. This calls up into the SCPI and SD-manager layers from a
+         * service, which is the same direction sd_card_manager.c already takes
+         * to reach ScpiSdWindow_*. The alternative -- a registered predicate
+         * -- would add a mechanism to avoid naming two functions, and the
+         * decision has to be HERE because this critical section is the one
+         * that takes the claim. */
+        result = STREAM_START_CLAIM_SD_GET;
+        sdGetHeld = true;
     } else if (gCfgChangeBusy != 0u) {
         /* #977: the interlock. A guarded config change holds the other claim,
          * and both families reach PrepareStreamingBuffers.
@@ -4970,8 +5015,20 @@ StreamingStartClaim Streaming_BeginSessionStart(void) {
         LOG_E("Streaming session start refused (#977): a config change holds "
               "the interlocked claim on the other transport. Retry.");
     }
+    if (sdGetHeld) {
+        /* 104 characters. Outside the critical section, same reason as the
+         * twin above. */
+        LOG_E("Streaming session start refused (#1269): a tagged SD:GET is "
+              "framing a block. Retry after it ends.");
+    }
 
     return result;
+}
+
+bool Streaming_SessionStartInProgress(void) {
+    /* fw#1269. One aligned 32-bit read; see the header for why the answer is
+     * only used inside the caller's own critical section. */
+    return (gSessionStartBusy != 0u);
 }
 
 void Streaming_EndSessionStart(void) {
@@ -5056,5 +5113,34 @@ bool Streaming_IsActiveOnWifiInterface(void) {
     if (cfg == NULL) return false;
     if (!cfg->IsEnabled) return false;
     return (cfg->ActiveInterface == StreamingInterface_WiFi);
+}
+
+/* fw#1265: "is a streaming session live, on ANY interface?" -- the predicate
+ * #854 wrote as a file-static in SCPIStorageSD.c, moved here so the SD manager
+ * can ask the same question rather than composing an answer from the two
+ * interface-specific predicates above. Composing them would be two reads of
+ * IsEnabled, and a flip between them answers false from both -- the exact
+ * two-samples-of-one-state defect #860's comment is about.
+ *
+ * `IsEnabled || Running`, not `&&`: the two are set (and cleared) in separate
+ * steps at start and stop, so an `&&` leaves a window open in both
+ * directions. Same form as SCPI_SetStreamFormat's #619 guard.
+ *
+ * Under a critical section so the PAIR is one snapshot. Each flag is
+ * individually atomic on PIC32MZ, but reading them a few instructions apart
+ * can straddle a start that sets IsEnabled between the two loads. That is a
+ * snapshot and NOT a lock -- it says what was true at one instant, not what
+ * will still be true when the caller acts on it. */
+bool Streaming_SessionIsLive(void) {
+    const volatile StreamingRuntimeConfig* cfg =
+        (const volatile StreamingRuntimeConfig*)gpRuntimeConfigStream;
+    if (cfg == NULL) {
+        return false;
+    }
+    bool live;
+    taskENTER_CRITICAL();
+    live = (cfg->IsEnabled || (cfg->Running != 0u));
+    taskEXIT_CRITICAL();
+    return live;
 }
 

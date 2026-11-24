@@ -76,6 +76,28 @@ uint64_t UsbCdc_GetWireBytesSent(void)
 static UsbCdcData_t gRunTimeUsbSttings __attribute__((coherent));
 static bool UsbCdc_FinalizeWrite(UsbCdcData_t* client);
 
+/* fw#1265 round 5: which CDC host session is on the wire -- the USB twin of
+ * the TCP #599 connection generation. Bumped when a host asserts DTR after
+ * having been disconnected (UsbCdc_CDCEventHandler), so every session gets a
+ * value no earlier session had. A tagged SD:GET's data window records the
+ * session it was opened for, which is what stops a window owed to a session
+ * that has ENDED from pausing the next one. Wraps only after 2^32 sessions.
+ *
+ * One writer (that event branch; control transfers on EP0 are serialized, so
+ * it cannot preempt itself), so the increment needs no lock; readers take a
+ * single aligned 32-bit load. Reset in UsbCdc_Initialize (#409: retained
+ * .bss is not zeroed on MCLR). */
+static volatile uint32_t gUsbSessionGeneration;
+
+/* fw#1265 round 7: a NEW host session asserted DTR while a previous session's
+ * tagged-GET output may still be queued or in flight, so it has NOT been
+ * admitted (state stays WAIT, which every reader, writer and feeder of this
+ * file already refuses to act in). UsbCdc_TryAdmitHeldSession lifts it.
+ * Written by the CDC event handler and by the admit path, which is why the
+ * admit decision is taken in a critical section and the handler never writes
+ * `state` in the held case. Reset in UsbCdc_Initialize. */
+static volatile bool gUsbAdmissionHeld;
+
 /* A write DMA that hasn't completed within this long means the host has
  * stopped draining the CDC IN endpoint (not a transient hiccup). #525:
  * bail out of the wait rather than block — the in-flight transfer completes
@@ -292,8 +314,49 @@ USB_DEVICE_CDC_EVENT_RESPONSE UsbCdc_CDCEventHandler
                     gRunTimeUsbSttings.state = USB_CDC_STATE_WAIT;
                 }
                 gRunTimeUsbSttings.isCdcHostConnected=0;
+                gUsbAdmissionHeld = false;   /* round 7: the held session ended */
             } else {
-                gRunTimeUsbSttings.state = USB_CDC_STATE_PROCESS;
+                /* fw#1265: a host asserting DTR while none was connected is a
+                 * NEW session. Every path that ends a session clears
+                 * isCdcHostConnected (DTR drop above, bus reset/deconfigure,
+                 * VBUS loss, bus error), and this is the only place that sets
+                 * it, so "was 0" is exactly "a different session from now
+                 * on". A repeat SET_CONTROL_LINE_STATE inside a session (an
+                 * RTS change) does not bump it. Bumped BEFORE PROCESS is
+                 * published, so the USB task never feeds under the old value
+                 * once the new session can be fed at all. */
+                bool admit = true;
+                if (!gRunTimeUsbSttings.isCdcHostConnected) {
+                    gUsbSessionGeneration = gUsbSessionGeneration + 1u;
+                    /* fw#1265 round 7 (#1267 round-6 finding 1): THE ONE
+                     * PLACE A REPLACEMENT USB SESSION IS ADMITTED.
+                     *
+                     * If a tagged SD:GET's output may still be queued for, or
+                     * in flight to, the session that just ended, the new one
+                     * must not see it: every byte of it would land ahead of
+                     * (or inside) the new session's replies, and file data
+                     * can contain a whole forged `#SDGET <tag>` frame, so a
+                     * matching tag proves nothing. So the session is NOT
+                     * published as PROCESS. `state` stays WAIT, in which this
+                     * file feeds nothing, arms no read and submits no write
+                     * (UsbCdc_Wrapper_Write, UsbCdc_BeginRead and the PROCESS
+                     * arm all test it), and UsbCdc_TryAdmitHeldSession -- run
+                     * from the SD task once the old GET's writer has stopped
+                     * -- discards the ring, waits for the DMA to drain, and
+                     * only then admits. Held is published BEFORE the stale
+                     * flag is re-read on the other side, so the admit side
+                     * cannot miss it. The handler never writes `state` in the
+                     * held case, so a concurrent admit cannot be overwritten. */
+                    if (ScpiSdWindow_UsbOutputStale()) {
+                        gUsbAdmissionHeld = true;
+                        admit = false;
+                    }
+                }
+                /* A repeat DTR=1 inside a held session (a host that sets DTR
+                 * and RTS in separate requests) must not bypass the hold. */
+                if (admit && !gUsbAdmissionHeld) {
+                    gRunTimeUsbSttings.state = USB_CDC_STATE_PROCESS;
+                }
                 gRunTimeUsbSttings.isCdcHostConnected=1;
                 // #525: a freshly connecting host must not inherit a stall
                 // latch from a prior session that disconnected mid-stall
@@ -317,6 +380,26 @@ USB_DEVICE_CDC_EVENT_RESPONSE UsbCdc_CDCEventHandler
         {
             /* This means that the host has sent some data*/
             USB_DEVICE_CDC_EVENT_DATA_READ_COMPLETE* readResult = (USB_DEVICE_CDC_EVENT_DATA_READ_COMPLETE*) pData;
+            /* ⛔ FEEDBEGIN FIRST, FOR THE SAME REASON AS THE TCP TWIN -- and
+             * the USB side is MORE exposed, not less (#1267 round-3 audit
+             * defect 2, whose main leg raised only the TCP site).
+             *
+             * I checked whether this ordering was safe here by construction
+             * and it is not. This handler runs on F_USB_DEVICE_Tasks, which
+             * tasks.c raises to priority 6; the consumer of readBufferLength
+             * is UsbCdc_ProcessState on app_USBDeviceTask, which app_freertos.c
+             * raises to 7. The consumer is the HIGHER priority of the two and
+             * gates on `readTransferHandle == INVALID`, so the store below is
+             * the publication -- and a preemption right after it lets the
+             * consumer feed the packet and run FeedEnd before this FeedBegin
+             * executes, stranding `feeding` TRUE and failing the next tagged
+             * GET with `FAILED busy`.
+             *
+             * Set unconditionally, including for a zero-length packet: the
+             * clear site runs on every pass through the read branch, so a
+             * spurious `feeding` costs at most one retry of TryOpen, while a
+             * stranded one is permanent. */
+            ScpiSdWindow_FeedBegin(SCPI_SD_WINDOW_USB);
             pUsbCdcDataObject->readBufferLength = readResult->length;
             pUsbCdcDataObject->readTransferHandle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
             break;
@@ -388,6 +471,7 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
             // NanoPB_Encoder reads it directly for the streaming device_status
             // "USB connected" bit. Clear it on real teardown (stale-global audit).
             gRunTimeUsbSttings.isCdcHostConnected = 0;
+            gUsbAdmissionHeld = false;   /* fw#1265 round 7 */
             /* #127/#617: a write in flight at teardown may never get its
              * WRITE_COMPLETE (comment below), so the writeInProgress claim
              * and the transfer handle would stay set forever and wedge every
@@ -758,6 +842,22 @@ static bool UsbCdc_FinalizeWrite(UsbCdcData_t* client) {
 static bool UsbCdc_BeginRead(UsbCdcData_t* client) {
     if (client->state != USB_CDC_STATE_PROCESS) {
         return false;
+    }
+    /* fw#1265: ARM NO READ WHILE A TAGGED SD:GET WINDOW IS OPEN ON USB.
+     *
+     * This is the pause. Returning TRUE rather than false is load-bearing:
+     * UsbCdc_Tasks treats false as "something is wrong, leave the state" and
+     * BREAKS before UsbCdc_BeginWrite -- which is the call that actually pushes
+     * the file's bytes to the host, so a false here would stall the very
+     * transfer this window exists to protect.
+     *
+     * Not arming is loss-free: the host's bytes stay in the CDC endpoint and
+     * the hardware NAKs when it fills, which is flow control, not a drop.
+     *
+     * Keyed on the CURRENT session (gUsbSessionGeneration), so a window owed
+     * to a session that has ended never pauses the next one. */
+    if (ScpiSdWindow_IsOpenFor(SCPI_SD_WINDOW_USB, gUsbSessionGeneration)) {
+        return true;
     }
     // Schedule the next read
     if (gRunTimeUsbSttings.readTransferHandle ==
@@ -1198,6 +1298,16 @@ static size_t UsbCdc_ScpiWrite(const char* data, size_t len) {
  */
 static size_t SCPI_USB_Write(scpi_t * context, const char* data, size_t len) {
     UNUSED(context);
+    /* fw#1265: NO WINDOW GATE HERE, DELIBERATELY, AND THAT IS THE ROUND-2
+     * REDESIGN. An earlier revision held SCPI output here while a tagged
+     * SD:GET block was being delivered. The round-1 audit of PR #1267 found
+     * six defects in it, and the first is why no gate on this path can work:
+     * microrl_echo writes straight to UsbCdc_WriteToBuffer (below) and never
+     * passes through here, so the echo of whatever the host typed during the
+     * transfer went into the block anyway. A gate on the output side cannot
+     * see every writer. Pausing this transport's INPUT while its window is
+     * open means no echo, no prompt and no reply is PRODUCED -- see
+     * UsbCdc_Tasks and UsbCdc_BeginRead. */
     return SCPI_WriteWithRetry(UsbCdc_ScpiWrite, data, len);
 }
 
@@ -1347,6 +1457,9 @@ void UsbCdc_Initialize() {
      * gUsbCdcTaskHandle). No write can be submitted before this returns. */
     gUsbCdcTaskHandle = xTaskGetCurrentTaskHandle();
 
+    gUsbSessionGeneration = 0u;   /* fw#1265; see its definition */
+    gUsbAdmissionHeld = false;    /* round 7; #409 retained .bss */
+
     gRunTimeUsbSttings.state = USB_CDC_STATE_INIT;
 
     gRunTimeUsbSttings.deviceHandle = USB_DEVICE_HANDLE_INVALID;
@@ -1467,12 +1580,51 @@ void UsbCdc_ProcessState() {
             // If a write operation is not in progress
             if (gRunTimeUsbSttings.readTransferHandle ==
                     USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID) {
-                // Process any input. #1279: deferred (not dropped) while an idle
-                // SD-buffer restore on the TCP task holds the command gate; the
-                // bytes stay in readBuffer and the host is NAKed until it lowers.
-                if (ScpiCmdGate_TryEnter(SCPI_CMD_GATE_USB)) {
-                    UsbCdc_FinalizeRead(&gRunTimeUsbSttings);
-                    ScpiCmdGate_Exit(SCPI_CMD_GATE_USB);
+                /* fw#1265: FEED NOTHING WHILE A TAGGED SD:GET WINDOW IS OPEN.
+                 *
+                 * UsbCdc_BeginRead's own gate stops the NEXT read being armed;
+                 * this one stops a read that was ALREADY armed when the window
+                 * opened from being fed when it completes. Both are needed and
+                 * neither is redundant -- they guard different actions -- and
+                 * this half has to be at the call site because the FeedEnd
+                 * below is only correct when the feed actually happened.
+                 *
+                 * Feeding here would produce echo, a prompt and a reply in the
+                 * middle of the block, which is the whole thing the window
+                 * exists to prevent. Instead the buffer waits: readBuffer
+                 * keeps its bytes, readBufferLength stays non-zero, and
+                 * everything the host sent reaches SCPI in order on the first
+                 * pass after the window closes -- or, if the window is owed to
+                 * a session that has since ended, on the first pass of the
+                 * new one (the same session key as UsbCdc_BeginRead). */
+                if (!ScpiSdWindow_IsOpenFor(SCPI_SD_WINDOW_USB,
+                                            gUsbSessionGeneration)) {
+                    // Process any input. #1279: deferred (not dropped) while an idle
+                    // SD-buffer restore on the TCP task holds the command gate; the
+                    // bytes stay in readBuffer and the host is NAKed until it lowers.
+                    // The gate entry is kept as ONE statement of exactly this shape:
+                    // tests/host/check_1279_sd_idle_restore.py pins "the only command
+                    // entry is gated" on it, so nothing may be added inside the braces.
+                    if (ScpiCmdGate_TryEnter(SCPI_CMD_GATE_USB)) {
+                        UsbCdc_FinalizeRead(&gRunTimeUsbSttings);
+                        ScpiCmdGate_Exit(SCPI_CMD_GATE_USB);
+                    }
+                    /* fw#1265: end the feed only if it HAPPENED, once per fed
+                     * buffer. FinalizeRead zeroes readBufferLength on every path
+                     * that consumes the buffer, and the gate-deferred pass leaves
+                     * it untouched, so a non-zero length here means the buffer is
+                     * still waiting and the transport is still "feeding". (Round
+                     * 8: this used to be a FeedEnd INSIDE the gate block, which
+                     * broke the #1279 single-gated-entry pin; the condition is
+                     * equivalent because no read is armed here -- the enclosing
+                     * readTransferHandle == INVALID test -- so the read-complete
+                     * event cannot store a new length between FinalizeRead and
+                     * this test.) One site, on the path that always runs after a
+                     * feed, rather than a clear at each of FinalizeRead's several
+                     * returns. */
+                    if (gRunTimeUsbSttings.readBufferLength == 0u) {
+                        ScpiSdWindow_FeedEnd(SCPI_SD_WINDOW_USB);
+                    }
                 }
 
                 // Schedule the next read
@@ -1559,6 +1711,83 @@ bool UsbCdc_IsConfigured(void) {
 tRunTimeUsbSettings* UsbCdc_GetRuntimeSettings(void) {
     // Return pointer to runtime settings for monitoring USB state
     return (tRunTimeUsbSettings*)&gRunTimeUsbSttings;
+}
+
+uint32_t UsbCdc_GetCircularBufferAvailable(void) {
+    /* fw#1265: bytes QUEUED for the host and not yet transmitted. The twin of
+     * wifi_tcp_server_GetCircularBufferAvailable; ScpiSdWindow_Service polls
+     * it to release a completed tagged SD:GET's window once its tail and end
+     * line have left the ring. Unlocked single read of the two counters
+     * CircularBuf_NumBytesAvailable derives; a stale value costs one more
+     * ~1 ms poll. */
+    return (uint32_t) CircularBuf_NumBytesAvailable(&gRunTimeUsbSttings.wCirbuf);
+}
+
+/* fw#1265 round 7: the admit half of the replacement-session choke point (the
+ * hold half is the DTR branch of UsbCdc_CDCEventHandler). Called from
+ * ScpiSdWindow_Service on the SD task, only while no USB window is open --
+ * and a window closes only after its transfer has ended, so by now the old
+ * GET's writer has stopped producing.
+ *
+ * WHAT IS DISCARDED, WHAT IS DRAINED, AND WHY NOT CANCELLED.
+ *  - The write RING is ours and nothing consumes it outside PROCESS, so it is
+ *    reset under wMutex (the lock every producer and the consumer hold).
+ *  - The DMA/IRP already handed to the USB driver is NOT cancelled. Harmony's
+ *    cancel path, USB_DEVICE_IRPCancelAll -> DRV_USBHS_DEVICE_IRPCancelAll
+ *    (drv_usbhs_device.c:2098), empties the endpoint's IRP queue and flushes
+ *    the TX FIFO but does not stop an in-progress USB DMA channel, and the
+ *    DMA-complete handler then dereferences endpointObjTransmit->irpQueue
+ *    with no NULL test on the TX path (drv_usbhs_device.c:3714-3716; only the
+ *    RX path tests it). Cancelling mid-DMA is therefore a crash hazard, not a
+ *    discard. It is DRAINED instead: the session stays held until the write
+ *    completes (writeTransferHandle INVALID, writeInProgress clear), which
+ *    needs only the new host to read.
+ *  - Residual, stated rather than hidden: that one transfer's bytes (at most
+ *    one DMA buffer of the old file) reach the new host before admission,
+ *    ahead of any reply it could have provoked. Nothing is interleaved with a
+ *    reply, because no reply exists yet.
+ *
+ * Stale is cleared once ring and DMA are both clean, even if the session has
+ * since gone: the condition it records is resolved either way. */
+void UsbCdc_TryAdmitHeldSession(void) {
+    if (!gUsbAdmissionHeld) {
+        return;
+    }
+    if (gRunTimeUsbSttings.state == USB_CDC_STATE_PROCESS) {
+        gUsbAdmissionHeld = false;      /* already admitted: never wipe a live ring */
+        return;
+    }
+    if (xSemaphoreTake(gRunTimeUsbSttings.wMutex, 0) != pdTRUE) {
+        return;                         /* retried on the next ~1 ms pass */
+    }
+    CircularBuf_Reset(&gRunTimeUsbSttings.wCirbuf);
+    xSemaphoreGive(gRunTimeUsbSttings.wMutex);
+
+    if (gRunTimeUsbSttings.writeInProgress ||
+        gRunTimeUsbSttings.writeTransferHandle != USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID) {
+        return;                         /* old DMA still draining */
+    }
+    ScpiSdWindow_UsbOutputStaleClear();
+
+    taskENTER_CRITICAL();
+    if (gUsbAdmissionHeld) {
+        if (gRunTimeUsbSttings.isCdcHostConnected &&
+            gRunTimeUsbSttings.controlLineStateData.dtr != 0) {
+            if (gRunTimeUsbSttings.state == USB_CDC_STATE_WAIT) {
+                gRunTimeUsbSttings.state = USB_CDC_STATE_PROCESS;
+                gUsbAdmissionHeld = false;
+            }
+            /* else: the CDC is still passing through its close/init states
+             * after a re-enumeration; stay held and retry on the next pass. */
+        } else {
+            gUsbAdmissionHeld = false;   /* the held session has ended */
+        }
+    }
+    taskEXIT_CRITICAL();
+}
+
+uint32_t UsbCdc_GetSessionGeneration(void) {
+    return gUsbSessionGeneration;   /* fw#1265; see its definition */
 }
 
 bool UsbCdc_ResizeWriteBuffer(uint32_t newSize) {

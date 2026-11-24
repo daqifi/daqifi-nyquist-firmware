@@ -18,6 +18,13 @@
 //! Timeout for waiting when WiFi device is full and returning EWOULDBLOCK error
 #define TCPSERVER_EWOULDBLOCK_ERROR_TIMEOUT         1
 wifi_tcp_server_context_t *gpServerData;
+
+/* fw#1265 round 4: a client close REQUESTED by the SD task and PERFORMED by
+ * WifiTask -- see wifi_tcp_server_RequestClientClose for why it is deferred.
+ * Defined up here with the other file statics so wifi_tcp_server_Initialize,
+ * which is above those functions, can scrub them (#409 retained RAM). */
+static volatile bool gPendingClientClose = false;
+static volatile uint32_t gPendingClientCloseGen = 0u;
 //// Function Prototypes
 
 /**
@@ -251,6 +258,10 @@ static size_t SCPI_TCP_Write(scpi_t * context, const char* data, size_t len) {
     if (gpServerData == NULL || gpServerData->client.clientSocket < 0) {
         return 0;
     }
+    /* fw#1265: no window gate on this path -- see SCPI_USB_Write for why an
+     * output-side hold cannot work (microrl_echo bypasses it). A tagged
+     * SD:GET pauses this transport's INPUT instead, at the recv() re-arm in
+     * wifi_manager.c, so no reply is produced during the block. */
     return SCPI_WriteWithRetry(wifi_tcp_server_WriteBuffer, data, len);
 }
 
@@ -402,6 +413,10 @@ static int CircularBufferToTcpWrite(uint8_t* buf, uint32_t len) {
 //==========================External Apis==========================
 
 void wifi_tcp_server_Initialize(wifi_tcp_server_context_t *pServerData) {
+    /* #409-class retained-RAM scrub: these two survive an MCLR, and a stale
+     * pending close would shut down the first client of the new session. */
+    gPendingClientClose = false;
+    gPendingClientCloseGen = 0u;
     static bool isInitDone = false;
     if (!isInitDone) {
         gpServerData = pServerData;
@@ -552,6 +567,63 @@ void wifi_tcp_server_CloseSocket() {
     }
 }
 
+/* fw#1265 round 4: A CLOSE REQUESTED BY THE SD TASK, PERFORMED BY WifiTask.
+ *
+ * ⛔ WHY DEFERRED RATHER THAN A DIRECT CALL. When a tagged SD:GET's padding
+ * stops short the host is mid-way through a definite-length read, and closing
+ * the connection is the only out-of-band signal that cannot be mistaken for
+ * file bytes (#1267 round-4 brief). But the SD task must not perform it:
+ * CloseClientSocket calls shutdown() into the WINC socket API and rewrites the
+ * client slot, and the slot's state machine belongs to WifiTask and the WINC
+ * callbacks -- a close racing a SOCKET_MSG_ACCEPT could tear down a socket a
+ * NEW client has just been given. This is the same deferred shape #437 already
+ * uses in this file for the circular-buffer reset, for a related reason.
+ *
+ * The #599 generation is checked twice, deliberately: here, so a request for a
+ * connection that has already gone is dropped, and again at the drain, so a
+ * connection that changed between the request and the drain is not closed in
+ * the new client's place.
+ *
+ * ⭐ THE GAP BETWEEN REQUEST AND CLOSE IS COVERED BY THE DATA WINDOW, NOT BY
+ * SPEED (#1267 round-5 audit, 4). sd_get_send_end holds the window
+ * (ScpiSdWindow_HoldUntilSessionEnd) rather than closing it, so this
+ * connection's input stays paused until ConnIsCurrent turns false -- which is
+ * the clientSocket = -1 written by the close below, or the host leaving first.
+ * Round 5 reopened input at the request and let WifiTask's rx drain answer a
+ * queued command into the partial block before this ran.
+ *
+ * The drain runs on every WifiTask pass, unconditionally, and drops a request
+ * only when its connection has already gone -- in which case the window is
+ * released anyway. While the request is pending, that host is deaf, which is
+ * the point; it is not a wedge, because the close ends it. */
+void wifi_tcp_server_RequestClientClose(uint32_t generation) {
+    taskENTER_CRITICAL();
+    if ((gpServerData != NULL) &&
+            (gpServerData->client.clientSocket >= 0) &&
+            (gpServerData->client.connGeneration == generation)) {
+        gPendingClientCloseGen = generation;
+        gPendingClientClose = true;
+    }
+    taskEXIT_CRITICAL();
+}
+
+void wifi_tcp_server_DrainPendingClientClose(void) {
+    bool doClose = false;
+    taskENTER_CRITICAL();
+    if (gPendingClientClose) {
+        gPendingClientClose = false;
+        doClose = (gpServerData != NULL) &&
+                (gpServerData->client.clientSocket >= 0) &&
+                (gpServerData->client.connGeneration == gPendingClientCloseGen);
+    }
+    taskEXIT_CRITICAL();
+    if (doClose) {
+        LOG_E("[SD] tagged GET: closing the TCP client - the block it was "
+              "reading is short");
+        wifi_tcp_server_CloseClientSocket();
+    }
+}
+
 void wifi_tcp_server_CloseClientSocket() {
     if (gpServerData->client.clientSocket != -1) {
         shutdown(gpServerData->client.clientSocket);
@@ -697,6 +769,13 @@ bool wifi_tcp_server_ProcessReceivedBuff() {
     }
     gpServerData->client.readBufferLength = 0;
     gpServerData->client.readBuffer[gpServerData->client.readBufferLength] = '\0';
+    /* fw#1265: the whole packet has been fed and every SCPI_Input it triggered
+     * has returned, so this transport is idle again and a tagged SD:GET window
+     * may open. Paired with the ScpiSdWindow_FeedBegin at SOCKET_MSG_RECV in
+     * wifi_manager.c -- the span between them is what TryOpen refuses to open
+     * inside, so that a second command sharing one TCP segment with the GET is
+     * answered BEFORE the header goes out. */
+    ScpiSdWindow_FeedEnd(SCPI_SD_WINDOW_TCP);
     return true;
 }
 

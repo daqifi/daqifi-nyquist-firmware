@@ -5703,7 +5703,7 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
      $(NVM1153_BIN) $(NVM1206_BIN) $(ARMREFUSE_BIN) $(SDCRC_BIN) $(SDWRITE_BIN) $(LOGRING1248_BIN) $(HIF881_BIN) \
      $(HIF881SPI_BIN) $(WIFI881_BIN) $(ARMEXIT_BIN) \
      $(CMDHIST_BIN) \
-     $(SDLEAF1187_BIN) $(CRASH1190_BIN)
+     $(SDLEAF1187_BIN) $(CRASH1190_BIN) check-1267-verdict
 	./$(HIF881_BIN)
 	./$(HIF881SPI_BIN)
 	./$(WIFI881_BIN)
@@ -6382,5 +6382,16 @@ check-1200-parity: check_1200_eviction_loss_parity.py \
                    ../../docs/STREAMING_AND_ADC.md $(RECIPES)
 	@python3 check_1200_eviction_loss_parity.py >/dev/null \
 	  || { python3 check_1200_eviction_loss_parity.py; exit 1; }
+
+# fw#1267 round 8: a tagged SD:GET's verdict holds the data window even when
+# it fails BEFORE the header. Function-scoped text pin over sd_card_manager.c:
+# see check_1267_verdict_window.py (its --self-test proves each check can fail).
+.PHONY: check-1267-verdict
+check-1267-verdict: check_1267_verdict_window.py \
+                    ../../firmware/src/services/sd_card_services/sd_card_manager.c $(RECIPES)
+	@python3 check_1267_verdict_window.py >/dev/null \
+	  || { python3 check_1267_verdict_window.py; exit 1; }
+	@python3 check_1267_verdict_window.py --self-test >/dev/null \
+	  || { python3 check_1267_verdict_window.py --self-test; exit 1; }
 
 .PHONY: run clean

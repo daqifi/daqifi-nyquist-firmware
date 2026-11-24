@@ -259,6 +259,22 @@ uint64_t UsbCdc_GetWireBytesSent(void);
      */
     void UsbCdc_SetWriteBuffer(uint8_t* buf, uint32_t size);
 
+    /*! fw#1265: bytes queued for the host and not yet transmitted. Twin of
+     *  wifi_tcp_server_GetCircularBufferAvailable. */
+    uint32_t UsbCdc_GetCircularBufferAvailable(void);
+
+    /*! fw#1265: which CDC host session is on the wire. Changes whenever a host
+     *  asserts DTR after none was connected, and does not repeat short of 2^32
+     *  sessions, so a tagged
+     *  SD:GET's data window can be keyed to the session it was opened for --
+     *  the USB twin of wifi_tcp_server_GetConnGeneration (#599). */
+    uint32_t UsbCdc_GetSessionGeneration(void);
+
+    /*! fw#1265 round 7: admit a replacement host session that was held out of
+     *  PROCESS because a tagged SD:GET's output was still stranded. Call only
+     *  from the SD task with no USB window open. No-op when nothing is held. */
+    void UsbCdc_TryAdmitHeldSession(void);
+
     /**
      * #1279: bytes queued in the write circular buffer -- what
      * UsbCdc_SetWriteBuffer would discard. Read under wMutex. 0 unless the

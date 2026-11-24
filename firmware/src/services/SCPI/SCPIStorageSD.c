@@ -1245,6 +1245,51 @@ scpi_result_t SCPI_StorageSDCrcGet(scpi_t * context) {
     return SCPI_RES_ERR;
 }
 
+/* fw#1265 / #1267 round-3 audit defect 3: IS THE TAG ECHOED EXACTLY AS SENT?
+ *
+ * ⛔ libscpi SATURATES AND REPORTS SUCCESS. SCPI_ParamToInt32 reaches
+ * strBaseToInt32, which calls strtol and never checks errno for ERANGE, so
+ * `SD:GET "f.bin",2147483648` consumes the whole token, yields 2147483647 and
+ * returns TRUE. The transfer was then framed `#SDGET 2147483647`: a header the
+ * host cannot match against the tag it sent, and every overflowing tag
+ * collapsing to the same one. Silent, and indistinguishable on the wire from a
+ * host that really asked for 2147483647.
+ *
+ * ⭐ SO COMPARE THE TOKEN WITH WHAT WE WOULD ECHO. If rendering the parsed
+ * value does not reproduce the digits the host wrote, the value is not the
+ * host's tag and the GET is refused. That is the whole guarantee the tag
+ * exists for -- a reply carrying it cannot be mistaken for another request's
+ * -- expressed as the check rather than as a comment. It needs no range
+ * constant, it cannot drift from INT32_MAX, and it keeps the full
+ * 0..2147483647 range rather than trading a defect for a narrower API.
+ *
+ * libscpi's shared strBaseToInt32 is deliberately NOT touched: it is used by
+ * every numeric parameter in the firmware and fixing it there is a wider
+ * change than this PR (the round-4 brief says so explicitly).
+ *
+ * ⚠ WHAT THIS NARROWS, stated because it is wire-visible: a tag must be a
+ * plain decimal integer. An optional leading `+` is skipped (IEEE 488.2
+ * allows it, and it round-trips), but LEADING ZEROS (`007`) and the `#H`/`#B`
+ * radix forms are refused -- none of them can be echoed back as written, so
+ * accepting them would break the guarantee this function exists to keep. No
+ * shipped host passes a tag at all yet (python-core #260 is the first
+ * adopter), so the narrowing costs nothing today and is documented in the
+ * wiki row. */
+static bool SD_TagEchoesExactly(const scpi_parameter_t *tok, int32_t value) {
+    if ((tok == NULL) || (tok->ptr == NULL) || (tok->len <= 0)) {
+        return false;
+    }
+    const char *p = tok->ptr;
+    size_t len = (size_t) tok->len;
+    if (*p == '+') {
+        p++;
+        len--;
+    }
+    char echo[12];
+    const int n = snprintf(echo, sizeof(echo), "%ld", (long) value);
+    return (n > 0) && ((size_t) n == len) && (memcmp(echo, p, len) == 0);
+}
+
 scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
     /* #747: NULL, not indeterminate. SCPI_ParamCharacters(..., mandatory=false)
      * leaves pBuff untouched when the argument is omitted, and the operand
@@ -1314,6 +1359,116 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
      * prefix the device itself emitted. */
     pBuff = SD_StripConfiguredDir(pBuff, &fileLen, pSDCardRuntimeConfig->directory);
 
+    /* fw#1265: the OPTIONAL host-chosen tag. READ here, from the parameter
+     * list, but STORED below under the #829 claim with the other operands --
+     * the claim is what stops a concurrent GET swapping them.
+     *
+     * Absent is not an error: with mandatory == FALSE libscpi returns FALSE
+     * and pushes nothing (parser.c:711-718), so TRUE means "a tag was
+     * supplied". A malformed one IS an error: DAQiFi #880's
+     * DaqifiIntTokenFullyConsumed rejects a truncated prefix such as `7abc`
+     * with -104, so a typo cannot silently become tag 7. */
+    int32_t tagParam = 0;
+    /* ⛔ r1 FINDING 10: FALSE MEANS TWO DIFFERENT THINGS AND THEY MUST NOT BE
+     * CONFLATED. `SCPI_ParamInt32(..., FALSE)` returns FALSE both when the
+     * parameter is ABSENT (fine: an untagged GET) and when it is PRESENT BUT
+     * MALFORMED (`,7abc`, `,1e9`, a suffix). My first version treated both as
+     * "no tag", so a host that asked for a framed download got an UNTAGGED
+     * one -- it then waited for a `#SDGET` header that was never coming while
+     * the file streamed past it, with only a queued error to explain why.
+     *
+     * libscpi distinguishes them: a parse failure goes through
+     * SCPI_ErrorPushEx, which sets `context->cmd_error` (error.c:199), and
+     * the flag is cleared per command in parser.c:137. Snapshot it around the
+     * call rather than reading it absolutely, so an error already pushed by
+     * THIS command (a bad filename) is not misread as a bad tag.
+     *
+     * A malformed tag is refused at the COMMAND boundary, before the #829
+     * claim and before arming -- nothing is in flight there, so the refusal
+     * costs the caller one error and no transfer. libscpi has already pushed
+     * the specific parse error, so pushing another would bury it. */
+    const scpi_bool_t tagErrBefore = context->cmd_error;
+    /* fw#1265 / round-3 defect 3: taken as a TOKEN, not straight to an int32,
+     * because the raw digits are needed to prove the parse did not saturate --
+     * see SD_TagEchoesExactly. Same two-step shape SCPI_StartStreaming uses
+     * for its frequency (#674), and the same absent-vs-malformed
+     * discriminator. */
+    /* Not pre-initialized, and that is checked rather than assumed:
+     * SCPI_Parameter's FIRST action is invalidateToken(parameter, NULL)
+     * (libscpi parser.c:686/707), which writes all three fields, so `.type` is
+     * defined on every path that returns here. The ABSENT path then overwrites
+     * it with SCPI_TOKEN_PROGRAM_MNEMONIC (parser.c:715) while a malformed
+     * token leaves SCPI_TOKEN_UNKNOWN -- which is what makes the two
+     * distinguishable below. */
+    scpi_parameter_t tagTok;
+    const bool haveTag = (SCPI_Parameter(context, &tagTok, FALSE) == TRUE);
+    const bool tagMalformed =
+            (!haveTag) &&
+            ((tagTok.type == SCPI_TOKEN_UNKNOWN) ||
+             (context->cmd_error && (!tagErrBefore)));
+    if (tagMalformed) {
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+    if (haveTag) {
+        if ((!SCPI_ParamIsNumber(&tagTok, FALSE)) ||
+                (!SCPI_ParamToInt32(context, &tagTok, &tagParam))) {
+            /* #880's guard: only push if the layer below did not already. */
+            if (!SCPI_ParamErrorOccurred(context)) {
+                SCPI_ErrorPush(context, SCPI_ERROR_DATA_TYPE_ERROR);
+            }
+            result = SCPI_RES_ERR;
+            goto __exit_point;
+        }
+        if (tagParam < 0) {
+            SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+            result = SCPI_RES_ERR;
+            goto __exit_point;
+        }
+        if (!SD_TagEchoesExactly(&tagTok, tagParam)) {
+            /* -222 "Data out of range": the value cannot be echoed as the
+             * host wrote it, which for an overflowing tag is exactly what
+             * happened. Refused HERE, before the #829 claim and before
+             * anything is armed, so no transfer starts. */
+            LOG_E("[SD] GET tag refused: not echoable as sent (%d digits)",
+                  (int) tagTok.len);
+            SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+            result = SCPI_RES_ERR;
+            goto __exit_point;
+        }
+    }
+
+    /* fw#1265 round 2, re-sited in round 5: A TAGGED GET IS REFUSED WHILE A
+     * STREAM IS LIVE **OR ARMING**, and the test is now ATOMIC WITH THE ARM --
+     * see the critical section further down. This early copy is gone, not
+     * moved-and-duplicated: a check here and an arm forty lines later is the
+     * check-then-act pair the round-4 audit exploited.
+     *
+     * The original reasoning, which still holds:
+     *
+     * ⭐ EXPLICIT EXCLUSION AT THE COMMAND BOUNDARY, which is this codebase's
+     * existing pattern (#850, #854, #977) and is what the round-1 audit asked
+     * for in place of trying to police every writer. A tagged transfer
+     * promises that the bytes between the header and the end line are the
+     * file: the input pause stops this transport ANSWERING during the block,
+     * but a streaming session writes to it unprompted, from another task, and
+     * no input gate can reach that. So the two are made mutually exclusive --
+     * loud, cheap, and it holds nothing.
+     *
+     * Most stream/GET combinations are already refused upstream: a WiFi stream
+     * suspends SD entirely (SD_RefuseIfSuspended, above) and a USB stream with
+     * SD logging staged arms an SD WRITE, which READ excludes. This covers the
+     * remainder in one place rather than reasoning case by case about which
+     * combinations survive.
+     *
+     * ⛔ ONLY FOR A TAGGED GET. An untagged GET keeps its exact pre-#1265
+     * behaviour, refusals included -- adding one here would break hosts that
+     * download during a stream today, and the compatibility promise is the
+     * reason the whole feature is behind the tag. An untagged stream makes no
+     * framing promise, so it has nothing to protect.
+     *
+     * Placed BEFORE the #829 claim: nothing is in flight yet, so the refusal
+     * costs one error and no transfer. */
     /* #829: claim before the operand and replyTarget writes below. replyTarget
      * decides which interface this file is delivered to, so a lost race here
      * sends a client's file to the OTHER transport. The two validation paths
@@ -1345,15 +1500,76 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
         snprintf(pSDCardRuntimeConfig->opFile, sizeof(pSDCardRuntimeConfig->opFile),
                  "%s", pSDCardRuntimeConfig->file);
     }
+    /* fw#1265: BOTH fields, on every armed GET, so a previous tagged GET
+     * cannot leak its tag into this one. The earlier validation bails release
+     * the claim and return WITHOUT arming, so `mode` never becomes READ on
+     * those paths and these fields are never read with stale contents -- they
+     * are only consulted by an armed transfer, and arming happens below. */
+    pSDCardRuntimeConfig->opGetTag = haveTag ? (uint32_t) tagParam : 0u;
+    pSDCardRuntimeConfig->opGetTagValid = haveTag;
     /* #598: route the async file data back to the interface that asked.
      * #599: capture the requesting TCP connection's generation so the SD
      * reply can't leak into a different client that later inherits the slot. */
     const bool getOverTcp = wifi_tcp_server_ContextIsTcp(context);
     pSDCardRuntimeConfig->replyTarget = getOverTcp
             ? SD_CARD_REPLY_WIFI_TCP : SD_CARD_REPLY_USB;
+    /* fw#1265 round 7: USB captures its CDC session generation too, so a tagged
+     * GET's writer can tell when its session has ended (DataReadyCB). */
     pSDCardRuntimeConfig->replyGeneration =
-            getOverTcp ? wifi_tcp_server_GetConnGeneration() : 0u;
-    pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_READ;  /* #829: LAST write */
+            getOverTcp ? wifi_tcp_server_GetConnGeneration()
+                       : UsbCdc_GetSessionGeneration();
+    /* ⭐ THE ARM AND THE STREAM TEST ARE ONE DECISION (#1267 round-4 audit C).
+     *
+     * `mode = READ` is the #829 arm -- the last write, and the single store
+     * that makes sd_card_manager_TaggedGetPending() true. Round 4 tested
+     * "is a stream live" forty lines above this, which the audit broke like
+     * this: a TCP START passes PrepareStreamingBuffers but has not published
+     * IsEnabled yet; a higher-priority USB GET sees IsEnabled and Running
+     * both false and arms anyway, even though gSessionStartBusy is held;
+     * streaming then starts and the SD task's graceful shutdown sets mode to
+     * NONE, tearing the accepted GET down with no header and no FAILED line.
+     * The host waits forever.
+     *
+     * ⛔ TWO FIXES IN ONE, AND BOTH ARE NEEDED. The predicate gains
+     * `Streaming_SessionStartInProgress()`, because the claim is held across
+     * the publication while IsEnabled is not -- testing IsEnabled alone can
+     * never see an arm in flight. And the test moves INSIDE the critical
+     * section that performs the arm, because a correct predicate evaluated
+     * before the store is still a check-then-act.
+     *
+     * ⭐ THE EXCLUSION ARGUMENT, BOTH ORDERS, since the audit disproved the
+     * last one I wrote. taskENTER_CRITICAL masks interrupts, so neither
+     * section can be entered while the other runs:
+     *   - GET first: this section sets mode = READ, so TaggedGetPending() is
+     *     true from that instant. START's own admission
+     *     (Streaming_BeginSessionStart) tests it inside ITS critical section
+     *     and refuses.
+     *   - START first: BeginSessionStart has set gSessionStartBusy, so
+     *     SessionStartInProgress() is true here and this section does NOT
+     *     arm -- the GET is refused at the command boundary, before anything
+     *     is in flight to be torn down.
+     * There is no interleaving left in which both proceed, because each
+     * side's observable effect is published inside the same section that
+     * tests the other's. */
+    bool armBlocked = false;
+    taskENTER_CRITICAL();
+    if (pSDCardRuntimeConfig->opGetTagValid &&
+            (Streaming_SessionIsLive() ||
+             Streaming_SessionStartInProgress())) {
+        armBlocked = true;
+    } else {
+        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_READ;  /* #829: LAST write */
+    }
+    taskEXIT_CRITICAL();
+    if (armBlocked) {
+        sd_card_manager_ReleaseClaim();  /* #829 release */
+        /* 71 bytes at a 10-digit tag, against Logger.c's usable 125. */
+        LOG_E("[SD] GET tag %d refused: streaming is live or arming - "
+              "SYST:STR:STOP first", (int) tagParam);
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
     if (!SD_ArmOrRefuse(context, "GET", pSDCardRuntimeConfig)) {
         /* #955: `mode` is cleared inside SD_ArmOrRefuse, under the claim. */
         result = SCPI_RES_ERR;
@@ -1543,16 +1759,13 @@ __exit_point:
  * Read under a critical section so the PAIR is one snapshot. Each flag is
  * individually atomic on PIC32MZ, but reading them a few instructions apart
  * can straddle a start that sets IsEnabled between the two loads. That is a
- * snapshot and not a lock -- see the arm site for what remains. */
+ * snapshot and not a lock -- see the arm site for what remains.
+ *
+ * fw#1265: the body moved to Streaming_SessionIsLive() so the SD manager's
+ * own late check asks the identical question. This stays as the name #854's
+ * call sites use, and as the place the reasoning above lives. */
 static bool SD_StreamingIsLive(void) {
-    const StreamingRuntimeConfig *cfg =
-            (const StreamingRuntimeConfig *)BoardRunTimeConfig_Get(
-                    BOARDRUNTIME_STREAMING_CONFIGURATION);
-    bool live;
-    taskENTER_CRITICAL();
-    live = (cfg->IsEnabled || (cfg->Running != 0u));
-    taskEXIT_CRITICAL();
-    return live;
+    return Streaming_SessionIsLive();
 }
 
 /**

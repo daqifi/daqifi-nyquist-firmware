@@ -87,6 +87,23 @@ extern "C" {
          * just-referenced file. The READ/CRC/DELETE path construction and the INIT
          * filename validation use this field for those modes; WRITE uses `file`. */
         char opFile[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX + 1];
+        /* fw#1265: the OPTIONAL host-chosen tag from
+         * `SYSTem:STORage:SD:GET "f.bin",<tag>`, and whether one was given.
+         *
+         * A SEPARATE validity flag rather than a sentinel: tag 0 is a legal
+         * host choice, and "0 means absent" is exactly the trap that would
+         * hand a host passing 0 the untagged wire format without saying so.
+         *
+         * BOTH fields are written on every ARMED GET -- the earlier bails
+         * (SD disabled, busy, suspended, no card, bad name, claim refused)
+         * return before the store, and an unarmed GET never reads them. So a
+         * tagged GET cannot leak its tag into a later untagged one, which
+         * would otherwise open a data
+         * window for a host that never asked for one, and an untagged GET
+         * must stay byte-identical to the pre-#1265 wire format. Transient
+         * operands, written under the #829 claim like opFile. */
+        uint32_t opGetTag;
+        bool opGetTagValid;
         uint64_t maxFileSizeBytes;  // Max file size before auto-split (0 = unlimited)
         // Pre-start free-space floor (#498).  When > 0, SYST:STR:START
         // for SD-output sessions runs a SYS_FS_DriveSectorGet() check
@@ -410,6 +427,31 @@ extern "C" {
      *         Bench/test diagnostic only -- see above. */
     bool sd_card_manager_FailNextWriteArmed(void);
 
+    /*! fw#1265: is a TAGGED SYSTem:STORage:SD:GET armed or running?
+     *
+     * True from the moment the GET handler arms the transfer (`mode` = READ,
+     * its last write under the #829 claim) until the SD task's teardown clears
+     * it. It is deliberately WIDER than "a data window is open": the window
+     * opens later, on the SD task, and a streaming start arriving in that gap
+     * would otherwise pass its own window check and then stream into the
+     * block. Read by Streaming_BeginSessionStart (fw#1269), inside the
+     * critical section that takes the session-start claim, so that an arm and
+     * a tagged GET can never both be admitted. */
+    bool sd_card_manager_TaggedGetPending(void);
+
+    /* fw#1265 round 10: retry a tagged GET's verdict that could not get a data
+     * window. SD task idle loop only (never inside a transfer). */
+    void sd_card_manager_ServicePendingVerdict(void);
+
+    /* fw#1265 round 10: verdicts that could never be delivered (session ended
+     * or superseded). Every one is also LOG_E'd; this is the counter. */
+    uint32_t sd_card_manager_GetVerdictLostCount(void);
+
+    /*! fw#1265 round 7: is the USB CDC session a tagged GET was armed on still
+     *  the one on the wire? `generation` is settings->replyGeneration, which
+     *  for USB is UsbCdc_GetSessionGeneration() at arm time. */
+    bool sd_card_manager_UsbReplySessionCurrent(uint32_t generation);
+
     /** @brief #1031: arm/disarm the one-shot that fails the next write of a
      *         LIVE session (SYST:STOR:SD:FAILNext 2). Bench/test only; same
      *         rails as SetFailNextWrite, without its teardown-only gate --
@@ -660,7 +702,23 @@ bool sd_card_manager_WriteIsStreamingLog(void);
      * @note This function is called from the context of the SD card manager's state machine.
      *       Processing within this callback should be kept minimal to prevent blocking the state machine.
      */
-    void sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff, size_t dataLen);
+    /*! @return the number of bytes the transport ACTUALLY ACCEPTED, which can
+     *  be less than dataLen and can be 0.
+     *
+     * ⛔ IT WAS `void`, AND THAT COST A DEFECT (#1267 round-2 audit, 2). The
+     * callback writes through an all-or-nothing transport shim that clamps one
+     * write to 1024 bytes and gives up after a bounded retry, so a partial
+     * write is a normal outcome, not an error case. With no return value the
+     * caller could only assume the whole chunk had gone -- and the tagged
+     * SD:GET path did: it advanced its delivered-bytes counter by the chunk it
+     * OFFERED, so the padding that keeps the end line outside the advertised
+     * block came out short by the difference and the terminator landed INSIDE
+     * the block, where the host reads it as file data and then waits forever.
+     *
+     * Same shape as the `writeBytesTotal` defect (documented as confirmed,
+     * counts attempted): a counter named for delivery that increments on
+     * submission. Callers that do not care may ignore the value. */
+    size_t sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff, size_t dataLen);
 
     /**
      * @brief SD write metrics for diagnosing performance and errors.
@@ -716,7 +774,7 @@ bool sd_card_manager_WriteIsStreamingLog(void);
      * @param scpiError   A negative libscpi error code (SD_ASYNC_ERR_*).
      * @param target      Which transport's reply this failure belongs to.
      * @param generation  The TCP connection generation the operation was armed
-     *                    for (settings->replyGeneration, #599); 0 for USB.
+     *                    for (settings->replyGeneration, #599); the CDC session generation for USB.
      */
     void sd_card_manager_LatchAsyncError(int32_t scpiError,
                                          sd_card_manager_reply_target_t target,

@@ -2740,15 +2740,28 @@ static inline void StreamFreq_Set(StreamingRuntimeConfig* c, uint64_t f) {
  * is unchanged: -200, which is what the arm-time cfgChanging refusal this
  * supersedes already answered -- the difference is that the refusal now lands
  * before PrepareStreamingBuffers instead of after it. */
-static scpi_result_t SCPI_RefuseSessionStartBusy(scpi_t * context,
-                                                 const char *what) {
-    /* 105 characters at the longest `what` this is called with
-     * ("SYSTem:STReam:THRoughput", 24), against Logger.c's usable 125.
-     * "on the other SCPI transport" was dropped to fit rather than "Retry.":
-     * the remedy is the actionable half, and WHICH transport holds it is in
-     * the Streaming_Begin* line this one follows. */
-    LOG_E("%s refused (#850/#977): another session start or config change is "
-          "in flight. Retry.", what);
+/* fw#1269: it now also reports a refusal by a tagged SD:GET, which is why it
+ * takes the claim result rather than being called only on BUSY. One function
+ * for every way the claim can be refused, for the #850 reason above: two
+ * refusal sites that build their own messages drift. */
+static scpi_result_t SCPI_RefuseSessionStart(scpi_t * context,
+                                             const char *what,
+                                             StreamingStartClaim claim) {
+    if (claim == STREAM_START_CLAIM_SD_GET) {
+        /* 102 characters at the longest `what` (24). */
+        /* log_budget: max=24 */
+        LOG_E("%s refused (#1269): a tagged SD:GET is framing a block. Retry "
+              "after it ends.", what);
+    } else {
+        /* 105 characters at the longest `what` this is called with
+         * ("SYSTem:STReam:THRoughput", 24), against Logger.c's usable 125.
+         * "on the other SCPI transport" was dropped to fit rather than
+         * "Retry.": the remedy is the actionable half, and WHICH transport
+         * holds it is in the Streaming_Begin* line this one follows. */
+        /* log_budget: max=24 */
+        LOG_E("%s refused (#850/#977): another session start or config change "
+              "is in flight. Retry.", what);
+    }
     SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
     return SCPI_RES_ERR;
 }
@@ -2875,8 +2888,13 @@ static scpi_result_t SCPI_RunSessionStartClaimed(scpi_t * context,
     stopActivePinned = (gStreamStopsActive != 0u);
     taskEXIT_CRITICAL();
 
-    if (Streaming_BeginSessionStart() != STREAM_START_CLAIM_OK) {
-        return SCPI_RefuseSessionStartBusy(context, what);
+    /* fw#1269: the claim's admission test now also refuses while a tagged
+     * SD:GET is framing or armed, so the round-2 pre-check that used to sit
+     * above is gone -- one decision, in the critical section that takes the
+     * claim, instead of a check before it that an arm could race. */
+    const StreamingStartClaim claim = Streaming_BeginSessionStart();
+    if (claim != STREAM_START_CLAIM_OK) {
+        return SCPI_RefuseSessionStart(context, what, claim);
     }
     scpi_result_t result = body(context, stopGenPinned, stopActivePinned);
     Streaming_EndSessionStart();
@@ -7244,8 +7262,12 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         return SCPI_RES_OK;
     }
 
-    if (Streaming_BeginSessionStart() != STREAM_START_CLAIM_OK) {
-        return SCPI_RefuseSessionStartBusy(context, "SYSTem:STReam:START");
+    /* fw#1269: refused here, by the claim itself, rather than by a check
+     * ahead of it. The `freq == 0` disable branch above has already returned,
+     * so a STOP is still never refused. */
+    const StreamingStartClaim claim = Streaming_BeginSessionStart();
+    if (claim != STREAM_START_CLAIM_OK) {
+        return SCPI_RefuseSessionStart(context, "SYSTem:STReam:START", claim);
     }
     scpi_result_t result = SCPI_StartStreamingClaimed(context, freq,
                                                       freqProvided,
@@ -9037,6 +9059,55 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize,
      * exit path after this point. */
     if (!sd_card_manager_TryLockBuffer()) {
         LOG_E("PrepareStreamingBuffers: refused - SD read/list/CRC holds the buffer lock (#703)");
+        return false;
+    }
+
+    /* ⛔ fw#1265 / #1267 round-4 audit A: DO NOT RE-PARTITION OVER A TAGGED
+     * SD:GET's UNDELIVERED TAIL.
+     *
+     * This function re-partitions the pool and then pointer-swaps both
+     * transports' write rings (UsbCdc_SetWriteBuffer /
+     * wifi_tcp_server_SetWriteBuffer below), which resets insert/remove and
+     * discards everything queued. The round-4 scenario: a tagged SD:GET
+     * queues its tail and end line, input resumes, and a SYST:MEM:AUTO the
+     * host had sent during the transfer runs BEFORE the ring is transmitted
+     * -- so the tail and the end line are thrown away.
+     *
+     * ⛔ THIS USED TO BE A WAIT FOR BOTH RINGS TO DRAIN, AND THAT WAS A
+     * DEADLOCK (#1267 round-5 audit, 1). Over USB this function runs on
+     * app_USBDeviceTask, the ONLY task that moves the USB ring to the host
+     * (UsbCdc_BeginWrite runs after the command returns), and microrl has
+     * already queued this very command's echo. vTaskDelay pumps nothing, so
+     * with echo on (the default) a valid SYST:MEM:AUTO always timed out and
+     * was refused. TCP had the same shape on WifiTask. A wait cannot be
+     * satisfied by the task that is doing the waiting.
+     *
+     * ⭐ SO THE PROTECTION MOVED TO WHERE THE HAZARD STARTS. A tagged GET's
+     * data window -- which stops the requesting transport feeding input --
+     * now stays open until that transport's ring has DRAINED, not merely
+     * until the end line was queued (ScpiSdWindow_ReleaseWhenDrained). A
+     * command deferred on the requesting transport therefore cannot run
+     * while the tail is still queued, and the queued-echo case above is back
+     * to exactly main's behaviour: the echo of the command that asked for
+     * the re-partition is discarded with the ring, as it always was.
+     *
+     * What is left for THIS check is the OTHER transport: a MEM:AUTO arriving
+     * over TCP while a USB window is still open (or the reverse) is not
+     * paused by that window. So refuse while any window is open -- fail-fast,
+     * no wait. Sound here, after TryLockBuffer: a window opens only inside
+     * the SD READ state, which holds gSDOpMutex -- the lock just taken --
+     * from before sd_get_open_window until its teardown, or inside
+     * sd_get_send_end_claimed (the OPEN_FILE failure verdict, which takes
+     * the same mutex around its window open and queue; fw#1265 round 9,
+     * pinned by tests/host/check_1267_verdict_window.py), so none can open
+     * between this test and the swap. The stream-start callers are already
+     * refused by Streaming_BeginSessionStart on the same predicate; this is
+     * what covers SYST:MEM:AUTO and SYST:MEM:RESet, whose claim does not
+     * test it. All four callers already handle false. */
+    if (ScpiSdWindow_AnyOpen()) {
+        LOG_E("PrepareStreamingBuffers: refused - a tagged SD:GET window is "
+              "open (fw#1265); retry after it ends");
+        sd_card_manager_UnlockBuffer();
         return false;
     }
 
@@ -11391,6 +11462,275 @@ scpi_result_t SCPI_Help(scpi_t* context) {
 
 #define SCPI_WRITE_MAX_RETRIES      200
 #define SCPI_WRITE_RETRY_DELAY_MS   5
+
+/* ===== fw#1265: the SD:GET data window =====================================
+ * The contract, and why this pauses INPUT rather than holding OUTPUT, is on
+ * the API in SCPIInterface.h. This is the mechanism only, and it is small on
+ * purpose: four booleans and a tick stamp, no buffer, no deferred delivery.
+ *
+ * ⛔ NOTHING HERE WRITES TO A TRANSPORT. That is the whole point of the
+ * round-2 redesign: the output-hold version had to capture, store and replay
+ * bytes in order, and every ordering defect the round-1 audit found lived in
+ * that replay. */
+typedef struct {
+    volatile bool open;
+    /* "input received on this transport and not yet fully handed to SCPI".
+     * Set when the transport takes delivery of a packet, cleared once it has
+     * been fed through microrl and SCPI_Input has returned. It is the IDLE
+     * test TryOpen makes, and it has to cover the whole packet so a second
+     * command sharing one write is processed BEFORE the header. */
+    volatile bool feeding;
+    /* The session that owns an open window: the TCP connection generation
+     * (#599), or the USB CDC session generation. */
+    volatile uint32_t generation;
+    volatile TickType_t lastProgress;
+    /* What an open window that has OUTLIVED its transfer is waiting for --
+     * one of the SCPI_SD_RELEASE_* values below. NONE means the window still
+     * belongs to a running transfer, or is an orphan for the staleness
+     * backstop. Written only on the SD task (TryOpen, the hand-over at the end
+     * of a transfer, and Service), so it needs no lock of its own. */
+    volatile uint8_t release;
+} ScpiSdWindowState_t;
+
+#define SCPI_SD_RELEASE_NONE      0u
+/* Release once the transport's write ring is empty: the block and the end
+ * line were queued in full, and only their transmission is outstanding. */
+#define SCPI_SD_RELEASE_ON_DRAIN  1u
+/* Release only once the owning session has ENDED: the host is part-way
+ * through a block that will never be completed, so no byte of ours may follow
+ * it on that session -- not a reply, not an echo, not a prompt. */
+#define SCPI_SD_RELEASE_ON_SESSION_END 2u
+
+static ScpiSdWindowState_t gScpiSdWindow[SCPI_SD_WINDOW_COUNT];
+
+/* fw#1265 round 7: see ScpiSdWindow_UsbOutputStale. Set inside TryOpen's
+ * critical section, so a USB window can never be open without it. Cleared on
+ * the SD task (Service, UsbCdc_TryAdmitHeldSession) and read by the USB CDC
+ * event handler; one aligned flag, so no lock. */
+static volatile bool gUsbOutputStale;
+
+bool ScpiSdWindow_UsbOutputStale(void) {
+    return gUsbOutputStale;
+}
+
+void ScpiSdWindow_UsbOutputStaleClear(void) {
+    gUsbOutputStale = false;
+}
+
+bool ScpiSdWindow_UsbOpen(void) {
+    return gScpiSdWindow[SCPI_SD_WINDOW_USB].open;
+}
+
+static ScpiSdWindowState_t* ScpiSdWindow_For(ScpiSdWindowTransport_t t) {
+    /* A bad enum must not index the array: return NULL and let every entry
+     * point no-op, rather than corrupting the other transport's state. */
+    if ((t != SCPI_SD_WINDOW_USB) && (t != SCPI_SD_WINDOW_TCP)) {
+        return NULL;
+    }
+    return &gScpiSdWindow[t];
+}
+
+void ScpiSdWindow_FeedBegin(ScpiSdWindowTransport_t transport) {
+    ScpiSdWindowState_t* w = ScpiSdWindow_For(transport);
+    if (w != NULL) {
+        w->feeding = true;
+    }
+}
+
+void ScpiSdWindow_FeedEnd(ScpiSdWindowTransport_t transport) {
+    ScpiSdWindowState_t* w = ScpiSdWindow_For(transport);
+    if (w != NULL) {
+        w->feeding = false;
+    }
+}
+
+bool ScpiSdWindow_IsOpenFor(ScpiSdWindowTransport_t transport,
+                            uint32_t generation) {
+    const ScpiSdWindowState_t* w = ScpiSdWindow_For(transport);
+    /* One read of each, no critical section: both are plain aligned loads and
+     * the caller is deciding whether to feed on THIS pass. A decision made
+     * from a value that changed a microsecond later is not wrong -- the window
+     * opens and closes around whole packets, not single bytes. */
+    return (w != NULL) && w->open && (w->generation == generation);
+}
+
+bool ScpiSdWindow_AnyOpen(void) {
+    for (unsigned i = 0; i < (unsigned) SCPI_SD_WINDOW_COUNT; i++) {
+        if (gScpiSdWindow[i].open) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ScpiSdWindow_TryOpen(ScpiSdWindowTransport_t transport,
+                          uint32_t generation) {
+    ScpiSdWindowState_t* w = ScpiSdWindow_For(transport);
+    if (w == NULL) {
+        return false;
+    }
+    bool opened = false;
+    /* ONE critical section for the test AND the set. Interrupts are masked, so
+     * neither the USB read-complete event nor the WINC receive callback can
+     * set `feeding` between them, and no other task can run either. */
+    taskENTER_CRITICAL();
+    if ((!w->open) && (!w->feeding) &&
+            (!Streaming_SessionStartInProgress())) {
+        w->generation = generation;
+        w->lastProgress = xTaskGetTickCount();
+        w->release = SCPI_SD_RELEASE_NONE;
+        if (transport == SCPI_SD_WINDOW_USB) {
+            gUsbOutputStale = true;   /* round 7: cleared only when provably clean */
+        }
+        w->open = true;
+        opened = true;
+    }
+    taskEXIT_CRITICAL();
+    return opened;
+}
+
+void ScpiSdWindow_ReleaseWhenDrained(ScpiSdWindowTransport_t transport) {
+    ScpiSdWindowState_t* w = ScpiSdWindow_For(transport);
+    /* Only a window that is open and still belongs to a running transfer has
+     * anything to hand over: the pre-window failure exits (open, buffer, busy)
+     * reach sd_get_send_end too, and must not re-label a window an EARLIER
+     * transfer already handed over. */
+    if ((w != NULL) && w->open && (w->release == SCPI_SD_RELEASE_NONE)) {
+        w->release = SCPI_SD_RELEASE_ON_DRAIN;
+    }
+}
+
+void ScpiSdWindow_HoldUntilSessionEnd(ScpiSdWindowTransport_t transport) {
+    ScpiSdWindowState_t* w = ScpiSdWindow_For(transport);
+    /* Same guard as ReleaseWhenDrained, for the same reason. */
+    if ((w != NULL) && w->open && (w->release == SCPI_SD_RELEASE_NONE)) {
+        w->release = SCPI_SD_RELEASE_ON_SESSION_END;
+    }
+}
+
+/* Is the session that owned this window still the one on the wire? TCP by the
+ * #599 generation (ConnIsCurrent is false once the socket is closed or a new
+ * client holds the slot, and neither can revert); USB by the CDC session
+ * generation plus the host flag, which a DTR drop, a bus reset/deconfigure,
+ * VBUS loss and a bus error all clear -- and the flag returns to true only by
+ * starting a NEW generation. So a false answer means that session has ended
+ * for good, whichever field was read first, and acting on it cannot be
+ * premature. */
+static bool ScpiSdWindow_SessionLive(unsigned i, uint32_t generation) {
+    if (i == (unsigned) SCPI_SD_WINDOW_TCP) {
+        return wifi_tcp_server_ConnIsCurrent(generation);
+    }
+    return (UsbCdc_GetSessionGeneration() == generation) &&
+           UsbCdc_GetSettings()->isCdcHostConnected;
+}
+
+/* Has everything queued for this transport left its write ring? For USB the
+ * last bytes may still be in the DMA staging buffer, which is fine: anything
+ * that would swap that buffer waits for the in-flight DMA first
+ * (PrepareStreamingBuffers, #486). */
+static bool ScpiSdWindow_RingEmpty(unsigned i) {
+    if (i == (unsigned) SCPI_SD_WINDOW_TCP) {
+        return (wifi_tcp_server_GetCircularBufferAvailable() == 0u);
+    }
+    return (UsbCdc_GetCircularBufferAvailable() == 0u);
+}
+
+void ScpiSdWindow_NoteProgress(ScpiSdWindowTransport_t transport) {
+    ScpiSdWindowState_t* w = ScpiSdWindow_For(transport);
+    if (w != NULL) {
+        w->lastProgress = xTaskGetTickCount();
+    }
+}
+
+void ScpiSdWindow_Service(void) {
+    for (unsigned i = 0; i < (unsigned) SCPI_SD_WINDOW_COUNT; i++) {
+        ScpiSdWindowState_t* w = &gScpiSdWindow[i];
+        if (!w->open) {
+            continue;
+        }
+        if (w->release == SCPI_SD_RELEASE_ON_DRAIN) {
+            /* fw#1265 round 5: a COMPLETED transfer's window, kept open only
+             * until its tail and end line have left the ring (see
+             * ScpiSdWindow_ReleaseWhenDrained). Not subject to the staleness
+             * bound below: a host that is not reading is the only thing that
+             * keeps it open, and closing it early is exactly the round-4 A
+             * defect. A session that has gone needs nothing protected. */
+            const bool live = ScpiSdWindow_SessionLive(i, w->generation);
+            if (ScpiSdWindow_RingEmpty(i) || !live) {
+                w->release = SCPI_SD_RELEASE_NONE;
+                w->open = false;
+                /* Round 7: a USB transfer that drained while its OWN session
+                 * was still on the wire stranded nothing. One whose session
+                 * ended before the drain leaves bytes in the ring and
+                 * possibly a DMA in flight: the flag stays set, and the next
+                 * session is held out of PROCESS until they are gone. */
+                if ((i == (unsigned) SCPI_SD_WINDOW_USB) && live) {
+                    gUsbOutputStale = false;
+                }
+            }
+            continue;
+        }
+        if (w->release == SCPI_SD_RELEASE_ON_SESSION_END) {
+            /* fw#1265 round 5: a transfer that left its block SHORT. Its host
+             * is part-way through a blind read of <n> bytes, so anything this
+             * transport sends on that session -- an echo, a reply, a prompt --
+             * is counted as file data. The window therefore stays open until
+             * the session itself is gone, and NEVER by elapsed time: the
+             * staleness bound below is exactly how round 4's "recoverable
+             * silence" let queued input be answered into the partial block.
+             * The window is keyed to its session, so a NEW session (another
+             * TCP client; a USB host that reopened the port) is not paused by
+             * it even before this releases it. */
+            if (!ScpiSdWindow_SessionLive(i, w->generation)) {
+                w->release = SCPI_SD_RELEASE_NONE;
+                w->open = false;
+            }
+            continue;
+        }
+        /* Wrap-safe: (now - start) >= window, never now >= deadline. */
+        const TickType_t elapsed =
+                (TickType_t)(xTaskGetTickCount() - w->lastProgress);
+        if (elapsed < pdMS_TO_TICKS(SCPI_SD_WINDOW_STALE_MS)) {
+            continue;
+        }
+        /* ⭐ THE LOCKOUT GUARD. While this window is open the transport feeds
+         * nothing, so it is DEAF: the host cannot even send an abort. A window
+         * left open is therefore not a stalled download, it is a connection
+         * that can never be talked to again -- so the window is what has to
+         * yield.
+         *
+         * ⚠ EVERY WINDOW THAT REACHES THIS POINT IS AN ORPHAN OR THE CALLING
+         * TRANSFER'S OWN -- one that no transfer handed over above. Every
+         * caller is the SD task: its loop between transfers,
+         * sd_get_open_window before the new transfer's window exists, and
+         * (round 9) the READ loop once per chunk. The third can see its own
+         * transfer's window, but it calls right after
+         * ScpiSdWindow_NoteProgress, so that window is 0 ms stale and falls
+         * through the elapsed test above. Still no verdict term here: a window
+         * closed by this function was by construction not the caller's -- see
+         * the API comment in SCPIInterface.h.
+         *
+         * Not a critical section: this is the only task that force-closes and
+         * `open` is a plain aligned store. A close racing the transfer's own
+         * close is the same outcome twice. */
+        w->open = false;
+        /* log_budget: max=3 */
+        LOG_E("[SD] data window on %s left open, closed after %u ms without "
+              "progress - the transport was deaf until now",
+              (i == (unsigned) SCPI_SD_WINDOW_TCP) ? "TCP" : "USB",
+              (unsigned) SCPI_SD_WINDOW_STALE_MS);
+    }
+    /* ⭐ fw#1265 round 7 -- THE USB SESSION-ADMISSION CHOKE POINT, SD-task
+     * half. A replacement CDC session that asserted DTR while stale output was
+     * owed is parked outside PROCESS (UsbCdc event handler). It is admitted
+     * here, and only once no USB window is open -- i.e. the old GET's writer
+     * has stopped (a window closes only after its transfer ended) -- and then
+     * only after UsbCdc has thrown the stale ring away and seen the DMA go
+     * idle. Cheap when nothing is held: one flag test. */
+    if (!gScpiSdWindow[SCPI_SD_WINDOW_USB].open) {
+        UsbCdc_TryAdmitHeldSession();
+    }
+}
 
 size_t SCPI_WriteWithRetry(ScpiTransportWriteFn writeFn,
                            const char* data, size_t len) {

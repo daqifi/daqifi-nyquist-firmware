@@ -9,8 +9,12 @@
 #include "Util/StreamingBufferPool.h"
 #include "sd_card_manager.h"
 #include "services/UsbCdc/UsbCdc.h"
+#include "services/SCPI/SCPIInterface.h"   /* fw#1265: ScpiSdWindow_* */
 #include "Util/CRC32.h"   /* #306 */
 #include "services/streaming.h"  // Streaming_GetSdFileHeader / Streaming_ReportSdDiscard
+/* fw#1265 round 4: wifi_tcp_server_RequestClientClose -- how a TCP session
+ * is ended when a tagged GET could not finish its frame. */
+#include "services/wifi_services/wifi_tcp_server.h"
 #include <stddef.h>
 #include "ff.h"   /* #810: FILINFO, for the layout assert below */
 
@@ -626,6 +630,824 @@ static const char eofMarker[] = "__END_OF_FILE__";
  * by the marker. */
 static const char transferErrorMarker[] = "__TRANSFER_ERROR__";
 
+/* ===== fw#1265: the TAGGED SD:GET wire format =============================
+ *
+ * An UNTAGGED GET stays BYTE-IDENTICAL to the pre-#1265 format: no header, no
+ * block, the bare eofMarker, prompt still ahead of the data. That is not
+ * conservatism, it is forced: each element #1265 proposed for the untagged
+ * stream breaks a shipped receiver, measured before the format was chosen.
+ * (Three elements were tested, below -- not "every conceivable change".)
+ *
+ *   - a definite-length block prefix puts 4 bytes ("#280") INSIDE the file on
+ *     daqifi-python-core ca5c6079 (measured);
+ *   - an `__END_OF_FILE__ OK <n>` suffix makes daqifi-core 97c1161 throw
+ *     SdCardAmbiguousTransferException: its HoldsFileContent accepts ONLY CR
+ *     or LF after the marker, and the confirmation runs for sized AND unsized
+ *     transfers (read in source);
+ *   - holding the prompt costs python-core 26 bytes, because its stripper
+ *     uses the prompt as the discriminator that proves the echo is an echo.
+ *
+ * So every new element is gated behind the tag and a host opts in. A tagged
+ * host gets: `#SDGET <tag>` CRLF, an IEEE 488.2 definite-length block, then
+ * `__END_OF_FILE__ OK <n>` or `__END_OF_FILE__ FAILED <reason>`. The bare
+ * token stays the prefix so a host that only searches for it still finds it.
+ */
+/* fw#1265 r1 finding 7: an IEEE 488.2 definite-length block spends ONE digit
+ * on the length's digit COUNT, so the length itself is 1-9 digits. A file of
+ * 1,000,000,000 bytes or more cannot be framed at all -- "#10..." is not a
+ * conforming block and a parser reading one digit would take the "1" as the
+ * count and then misread everything after it. Such a file is refused BEFORE
+ * any header rather than mis-framed. */
+#define SD_GET_MAX_BLOCK_BYTES 1000000000u
+
+/* fw#1265: the filler a short read is padded with, so the block's declared
+ * length is still delivered in full. Static and const: the pad can be handed
+ * to the reply writer without a stack buffer on the SD task, and it lives in
+ * flash rather than RAM.
+ *
+ * 1024 bytes because that is what the reply shims clamp a single write to
+ * (sd_reply_write_usb / _tcp in app_freertos.c), so this is the largest chunk
+ * that costs one write. At the old 64 bytes, padding a ~960 KB block meant
+ * ~15,000 calls instead of ~960 -- see sd_get_pad_to_declared for why the call
+ * COUNT, not just the byte count, is what mattered. */
+static const uint8_t sdGetPadByte[1024] = { 0 };
+
+/* ⛔ THERE IS NO WALL-CLOCK BUDGET ON THE PAD, AND ADDING ONE IS A DEFECT.
+ *
+ * Round 3 of #1267 had `SD_GET_PAD_BUDGET_MS` here, 10 s for the whole pad.
+ * The round-3 audit found what that costs: a host reading SLOWLY but steadily
+ * (the audit used ~1 KiB/s) gets cut off mid-block. The pad returns with most
+ * of the balance still owed, the end line goes out anyway, and the host --
+ * still inside its definite-length read -- consumes the terminator and the
+ * replies after it as file bytes, then waits for a balance that will never
+ * come. A total budget cannot tell "the reader stopped" from "the reader is
+ * slow", and those need opposite answers.
+ *
+ * The ~45-hour stall that budget was meant to fix is fixed by the OTHER half,
+ * which is kept: stop at the first short write. Each DataReadyCB call already
+ * carries its own ~10 s no-progress bound, so a host that genuinely stops
+ * reading ends the pad in about one such bound -- no total budget needed.
+ *
+ * What remains unbounded is the pad's duration against a reader that keeps
+ * accepting, and that is correct rather than merely tolerable: it is bounded
+ * by the reader's own pace, and it is no longer than the un-aborted transfer
+ * that reader had already asked for. */
+
+/* Hand bytes to the requesting transport and report how many it TOOK.
+ *
+ * Every tagged-GET emission goes through here rather than calling
+ * sd_card_manager_DataReadyCB directly, so no site can forget that the return
+ * value exists -- which is the defect this wraps (#1267 round-2 audit, 2: a
+ * counter named for delivery that was incremented on submission). */
+static uint32_t sd_get_emit(const uint8_t* data, uint32_t len) {
+    return (uint32_t) sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
+                                                  (uint8_t*) data,
+                                                  (size_t) len);
+}
+
+bool sd_card_manager_TaggedGetPending(void) {
+    bool pending;
+    /* One snapshot of the pair: `mode` is the LAST field SCPI_StorageSDGetData
+     * writes under the #829 claim (deliberately -- it is what arms the
+     * transfer), and opGetTagValid is written just before it, so reading them
+     * apart can see mode==READ with the PREVIOUS GET's tag validity. */
+    taskENTER_CRITICAL();
+    pending = (gpSDCardSettings != NULL) &&
+              gpSDCardSettings->opGetTagValid &&
+              (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_READ);
+    taskEXIT_CRITICAL();
+    return pending;
+}
+
+bool sd_card_manager_UsbReplySessionCurrent(uint32_t generation) {
+    /* The same pair ScpiSdWindow_SessionLive reads for USB: a DTR drop, a bus
+     * reset and VBUS loss all clear the host flag, and it returns to true only
+     * through a NEW generation. */
+    return (UsbCdc_GetSessionGeneration() == generation) &&
+           (UsbCdc_GetSettings()->isCdcHostConnected != 0);
+}
+
+static ScpiSdWindowTransport_t sd_get_window_transport(void) {
+    return ((gpSDCardSettings != NULL) &&
+            (gpSDCardSettings->replyTarget == SD_CARD_REPLY_WIFI_TCP))
+            ? SCPI_SD_WINDOW_TCP : SCPI_SD_WINDOW_USB;
+}
+
+static bool sd_get_is_tagged(void) {
+    return (gpSDCardSettings != NULL) && gpSDCardSettings->opGetTagValid;
+}
+
+/* The owed verdict of an ARMED tagged GET (#1267 round-9 finding 3).
+ *
+ * Set when the SD task starts an armed tagged READ (INIT), cleared the moment
+ * sd_get_send_end_core takes responsibility for the verdict (queued OR kept
+ * pending). Every state-machine exit that can leave an armed GET without one
+ * settles it: MOUNT_DISK (both exits), CURRENT_DRIVE, and the ERROR and DEINIT
+ * funnels that every other exit passes through. The snapshot of the GET's
+ * identity guards the funnels, which run after `mode` was already cleared. */
+static bool gGetVerdictOwed;
+static bool gGetHeaderOut;
+static uint32_t gGetOwedTag;
+static uint32_t gGetOwedGeneration;
+static sd_card_manager_reply_target_t gGetOwedTarget;
+
+/* fw#1265: ONE teardown for the exits this feature adds.
+ *
+ * The READ state already carries two hand-duplicated teardowns and the r1
+ * audit found that a third (the abort branch) skipped the window close
+ * entirely. Rather than add two more copies, the new exits share this. The
+ * pre-existing teardowns are deliberately left alone: their ordering carries
+ * #703's comment about mirroring the normal exit, and rewriting them would put
+ * unrelated churn in this diff. */
+static void sd_get_read_teardown(TaskHandle_t task, UBaseType_t prio) {
+    if (gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
+        (void) SYS_FS_FileClose(gSDCardData.fileHandle);
+        gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
+    }
+    vTaskPrioritySet(task, prio);
+    if (gSDOpMutex) {
+        xSemaphoreGive(gSDOpMutex);
+    }
+    gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
+    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
+}
+
+/* fw#1265 r1 finding 8: AFTER THE HEADER, THE LENGTH IS A PROMISE. Deliver the
+ * balance of `declared - sent` so the host's blind read of <n> bytes still
+ * lands on the end line.
+ *
+ * @return true when the FULL balance reached the transport. The caller must
+ *         act on it: an end line may only be written when this is true, or it
+ *         lands inside the block. sd_get_send_end enforces that.
+ *
+ * ⚠ WHAT IS PROMISED, AND TO WHOM. Delivery is guaranteed to a host that KEEPS
+ * READING -- at whatever pace it likes, for as long as it takes. It is not
+ * guaranteed to a host that stops: there the pad ends at the first short write
+ * and the transfer sends no end line at all, and that session is never
+ * written to again by its own input -- the window is held until the session
+ * ends, which over TCP we cause with a close and over USB the host causes by
+ * closing the port. See sd_get_send_end. (Round 5 claimed a "CDC session
+ * reset" here; it did not end the session, and it is gone.)
+ *
+ * ⛔ AN EARLIER VERSION OF THIS COMMENT CLAIMED THE OPPOSITE OF THE CODE, and
+ * the round-3 audit quoted it as the thing it disproved. It said the 10 s total
+ * budget "cannot cut short a pad the host IS draining", which was exactly what
+ * the budget did to a slow reader. The budget is gone; what remains is a
+ * guarantee narrow enough to be true and stated in terms of the host's
+ * behaviour rather than the device's effort.
+ *
+ * The verdict stays separate from delivery, which is the part that was always
+ * right: a transfer whose declared length was not met by REAL bytes reports
+ * FAILED, never OK. A host can be left waiting; it cannot be told a short file
+ * is complete. */
+static bool sd_get_pad_to_declared(uint32_t declared, uint32_t sent) {
+    while (sent < declared) {
+        const uint32_t owed = declared - sent;
+        const uint32_t chunk = (owed < sizeof(sdGetPadByte))
+                ? owed : (uint32_t) sizeof(sdGetPadByte);
+        const uint32_t took = sd_get_emit(sdGetPadByte, chunk);
+        sent += took;
+        if (took >= chunk) {
+            /* ⭐ fw#1265 round 10 (#1267 round-9 finding 2): THIS LOOP IS THE
+             * SD TASK TOO, AND IT CAN RUN FOR HOURS AGAINST A SLOW BUT STEADY
+             * READER (there is deliberately no wall-clock budget, see above).
+             * Round 9 serviced the windows from the READ loop and missed this
+             * twin: a window another transport had handed over stayed open,
+             * and a USB session held out of PROCESS stayed unadmitted, for the
+             * whole pad. Same cadence as the READ loop (one call per chunk
+             * taken), same order: stamp progress FIRST so Service cannot
+             * force-close the window of the transfer that is calling it.
+             * The invariant, not the site: every long-running loop in the SD
+             * task's GET path services the windows -- pinned for ALL of them
+             * by check_1267_verdict_window.py. */
+            ScpiSdWindow_NoteProgress(sd_get_window_transport());
+            ScpiSdWindow_Service();
+        }
+        if (took < chunk) {
+            /* ⭐ THE ONE STOP CONDITION: THE READER'S TRANSPORT STOPPED
+             * ACCEPTING. The shim is all-or-nothing after its own ~10 s
+             * no-progress retry, so a short return means the peer is not
+             * draining -- and the next 1024 bytes will not fare better.
+             *
+             * ⛔ DELIBERATELY NOT `gTransferAbortRequested`. Round 3 stopped
+             * here on a fresh abort too, which is the same defect as the
+             * wall-clock budget wearing a different hat: while this pad runs
+             * the REQUESTING transport's input is paused, so an abort arriving
+             * now can only have come from the OTHER transport -- never from
+             * the host that is reading. Honouring it cuts a draining reader
+             * short and puts the end line inside its block. The one abort that
+             * CAN be the reader's own problem (its transport died) already
+             * reaches us as a short write, because DataReadyCB requests the
+             * abort and returns short in the same breath. */
+            LOG_E("[SD] GET pad stopped at %u of %u bytes - peer not draining",
+                  (unsigned) sent, (unsigned) declared);
+            return false;
+        }
+    }
+    return true;
+}
+
+/* Pause the requesting transport, within a bound.
+ *
+ * ⭐ THE WINDOW MUST OPEN WHILE THAT TRANSPORT IS IDLE, which is why this is a
+ * retry loop rather than one call. ScpiSdWindow_TryOpen refuses while the
+ * transport is still handing a received packet to SCPI, and refusing is the
+ * point: a host that puts `SD:GET "f",7` and `*IDN?` in ONE write must get the
+ * *IDN? answer BEFORE the header, not inside the block. So the SD task waits
+ * for that packet to finish instead of opening over the top of it.
+ *
+ * ⛔ BOUNDED, AND NOTHING IS PARKED. Operator ruling 2026-10-25 (#756 item 4
+ * -> A) withdrew a bounded wait that parked a TRANSPORT task because it lost
+ * acquired samples. This waits on the SD task -- the task that owns this
+ * transfer and nothing else -- and vTaskDelay here lets both transport tasks
+ * and the streaming task run, which is exactly how the condition clears. On
+ * expiry the caller reports FAILED before any header: a transport that will
+ * not go idle means some other command is in flight, and the honest answer is
+ * to refuse the download rather than frame it around foreign bytes.
+ *
+ * Wrap-safe deadline arithmetic: (now - start) < window.
+ *
+ * Returns NULL once the window is open, or the end-line reason to fail with.
+ * A reason rather than a bool because there are two ways to fail and the host
+ * should be told which. */
+static const char* sd_get_open_window(void) {
+    const ScpiSdWindowTransport_t transport = sd_get_window_transport();
+    /* #599's generation, captured when the GET was armed -- so the window
+     * belongs to the connection that ASKED, not to whoever holds the slot by
+     * the time the SD task gets here. Round 7: USB captures its CDC session
+     * generation at arm time too, so a DTR toggle between the command and this
+     * point leaves the window owed to a session that is already gone, and
+     * DataReadyCB then stops the writer rather than feeding the new one. */
+    const uint32_t generation = gpSDCardSettings->replyGeneration;
+    const TickType_t start = xTaskGetTickCount();
+
+    for (;;) {
+        /* fw#1265 round 5: release first any window an EARLIER transfer
+         * handed over whose session has since ended -- otherwise TryOpen
+         * would refuse on it and this transfer would fail `busy` for a host
+         * that is gone. Service normally runs from the SD task's loop, which
+         * cannot run while this task is in here. Same task, same calls. */
+        ScpiSdWindow_Service();
+        if (ScpiSdWindow_TryOpen(transport, generation)) {
+            break;
+        }
+        /* An abort that lands during the wait ends the transfer HERE, before
+         * any header, so nothing is owed (#1267 round-2 audit, 5). Waiting out
+         * the full bound first would be two seconds spent to reach the same
+         * verdict. */
+        if (gTransferAbortRequested) {
+            return "abort";
+        }
+        if ((TickType_t)(xTaskGetTickCount() - start) >=
+                pdMS_TO_TICKS(SCPI_SD_WINDOW_IDLE_WAIT_MS)) {
+            return "busy";
+        }
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+
+    /* The late streaming check, now a SECOND line of defence rather than the
+     * only one.
+     *
+     * ⭐ fw#1269 CLOSED THE RACE THIS USED TO BOUND, and the comment is
+     * rewritten rather than left to flatter it. The arm-vs-window race is now
+     * settled by one interlock: ScpiSdWindow_TryOpen (just above) refuses
+     * while a session arm holds the #850 claim, and
+     * Streaming_BeginSessionStart refuses while a window is open or a tagged
+     * GET is armed -- each inside a critical section, so the two decisions are
+     * serialized and cannot both pass. An earlier revision of this comment
+     * said the residual could not be closed without a redesign; that was
+     * wrong, and what it missed is that the claim is held across the
+     * publication while IsEnabled is not.
+     *
+     * What remains for this check is the case the interlock does not cover: a
+     * stream that was ALREADY LIVE before this GET was armed holds no claim,
+     * so nothing above would see it. SCPI_StorageSDGetData refuses a tagged
+     * GET on exactly that condition at the command boundary, which makes this
+     * a duplicate -- kept because it is two lines, it runs on the task that
+     * owns the transfer, and it fails BEFORE any header rather than trusting a
+     * check made earlier on another task. */
+    if (Streaming_SessionIsLive()) {
+        /* ⛔ DO NOT CLOSE THE WINDOW HERE. An earlier revision did, out of
+         * tidiness, and that put this one path back under the defect round 3
+         * had just fixed: the caller's sd_get_send_end then queued
+         * `FAILED stream` with input ALREADY RESUMED, so a pending packet's
+         * echo and reply could be queued ahead of the terminator. Leave it
+         * open; sd_get_send_end releases it after queueing, like every other
+         * path. ONE function releases the window -- that is the whole
+         * discipline, and it is greppable: every ScpiSdWindow_ release call
+         * in this file is inside sd_get_send_end. */
+        return "stream";
+    }
+    return NULL;
+}
+
+/* Write `#SDGET <tag>` CRLF `#<digits><length>`.
+ *
+ * The window is ALREADY OPEN when this runs (sd_get_open_window, called by the
+ * READ state before it gets here). That order matters: the header goes out
+ * through the bypass writer, which yields on a partial write, so the
+ * requesting transport must already be paused before the first header byte --
+ * otherwise a reply could land between the header and the first data byte and
+ * shift the whole block. */
+static bool sd_get_send_header(uint32_t length) {
+    char hdr[48];
+    int n;
+
+    n = snprintf(hdr, sizeof(hdr), "#SDGET %u\r\n",
+                 (unsigned) gpSDCardSettings->opGetTag);
+    if ((n > 0) && ((size_t) n < sizeof(hdr))) {
+        /* IEEE 488.2 definite-length block: '#', the DIGIT COUNT of the
+         * length, then the length itself. */
+        char lenStr[12];
+        const int ln = snprintf(lenStr, sizeof(lenStr), "%u", (unsigned) length);
+        if ((ln > 0) && ((size_t) ln < sizeof(lenStr))) {
+            const int m = snprintf(&hdr[n], sizeof(hdr) - (size_t) n,
+                                   "#%u%s", (unsigned) ln, lenStr);
+            if ((m > 0) && ((size_t)(n + m) < sizeof(hdr))) {
+                n += m;
+            }
+        }
+        /* ⭐ RETURNS WHETHER A HEADER WENT OUT, because that single fact
+         * decides whether the failure exit owes the host padding
+         * (#1267 round-2 audit, 5). A PARTIAL header counts as "went out":
+         * the host has seen some of a block prefix and is owed a terminator it
+         * can find, and over-padding a prefix it never parsed is harmless
+         * where under-padding a block it did parse desyncs it. */
+        const bool out = (sd_get_emit((const uint8_t*) hdr, (uint32_t) n) != 0u);
+        if (out) {
+            gGetHeaderOut = true;
+        }
+        return out;
+    }
+    return false;
+}
+
+/* fw#1265 round 8: make sure a data window is open for THIS session before a
+ * verdict that no window protects is queued. Bounded by the same idle wait as
+ * sd_get_open_window. It OPENS a window and never releases one: the single
+ * release site stays sd_get_send_end.
+ *
+ * ⛔ fw#1265 round 10 (#1267 round-9 finding 1): RETURNS WHETHER THE WINDOW IS
+ * HELD, AND ON TIMEOUT THE ANSWER IS `false` -- THE CALLER MUST NOT QUEUE.
+ * Rounds 8 and 9 queued the verdict anyway on timeout ("a late verdict beats
+ * none"). The audit's scenario: a stalled other-transport command keeps the
+ * transport busy for over two seconds, the verdict is queued with no window,
+ * and a SYST:MEM:AUTO that was already queued behind it resets the ring and
+ * deletes the verdict. A verdict is never queued without a window; instead it
+ * stays PENDING (sd_get_defer_verdict) and is retried on every service pass. */
+static bool sd_get_hold_window_for_verdict(void) {
+    const ScpiSdWindowTransport_t transport = sd_get_window_transport();
+    const uint32_t generation = gpSDCardSettings->replyGeneration;
+    const TickType_t start = xTaskGetTickCount();
+
+    for (;;) {
+        /* Already ours (the "stream" refusal opens it before it fails, and an
+         * earlier transfer on this session may have handed one over): it holds
+         * this partition until its ring drains, and the verdict queued next
+         * goes into that ring. */
+        if (ScpiSdWindow_IsOpenFor(transport, generation)) {
+            return true;
+        }
+        ScpiSdWindow_Service();
+        if (ScpiSdWindow_TryOpen(transport, generation)) {
+            return true;
+        }
+        if ((TickType_t)(xTaskGetTickCount() - start) >=
+                pdMS_TO_TICKS(SCPI_SD_WINDOW_IDLE_WAIT_MS)) {
+            return false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+}
+
+/* ⭐ fw#1265 round 10: THE PENDING VERDICT. One slot, owned by the SD task.
+ *
+ * A pre-header verdict whose window could not be opened is kept here instead of
+ * being queued unprotected. It carries its OWN copy of the identity (tag,
+ * reply target, session generation) because the settings fields describing
+ * "the current GET" are overwritten by the next arm, and the shared reply
+ * writer (DataReadyCB) reads them. sd_card_manager_ServicePendingVerdict()
+ * delivers it only while the settings still describe the SAME GET, so a
+ * verdict can never be framed with another request's tag.
+ *
+ * NEVER A SILENT DROP: a verdict that can no longer be delivered (its session
+ * ended, or a newer GET superseded it) is counted and LOG_E'd. */
+typedef struct {
+    bool active;
+    uint32_t count;
+    const char* reason;               /* a string literal at every call site */
+    uint32_t tag;
+    uint32_t generation;
+    sd_card_manager_reply_target_t target;
+} sd_get_pending_verdict_t;
+
+static sd_get_pending_verdict_t gGetPendingVerdict;
+static uint32_t gGetVerdictLostCount;
+
+uint32_t sd_card_manager_GetVerdictLostCount(void) {
+    return gGetVerdictLostCount;
+}
+
+static void sd_get_verdict_lost(const char* why) {
+    gGetVerdictLostCount++;
+    /* log_budget: max=14 */
+    LOG_E("[SD] GET verdict lost (%s) tag=%u", why,
+          (unsigned) gGetPendingVerdict.tag);
+    gGetPendingVerdict.active = false;
+}
+
+static void sd_get_defer_verdict(uint32_t count, const char* reason) {
+    if (gGetPendingVerdict.active) {
+        sd_get_verdict_lost("superseded");
+    }
+    gGetPendingVerdict.count = count;
+    gGetPendingVerdict.reason = reason;
+    gGetPendingVerdict.tag = gpSDCardSettings->opGetTag;
+    gGetPendingVerdict.generation = gpSDCardSettings->replyGeneration;
+    gGetPendingVerdict.target = gpSDCardSettings->replyTarget;
+    gGetPendingVerdict.active = true;
+    LOG_E("[SD] GET: no data window yet - verdict kept pending");
+}
+
+
+/* The end line, and the ONE place a transfer gives up its data window.
+ *
+ * Here rather than at each teardown is deliberate: the READ state has several
+ * exits and at least two hand-duplicated teardowns, so a release placed
+ * per-exit is one that will eventually be missed -- and a window left open
+ * silences that transport for good. Every exit DOES reach an end line, and
+ * ScpiSdWindow_Service()'s staleness bound is the independent backstop for any
+ * path that somehow does not.
+ *
+ * Nothing is held or replayed: the requesting transport produced no output at
+ * all while its window was open, and resumes feeding input -- and so
+ * answering -- once the window is released. For a completed transfer that is
+ * when its tail and end line have left the transport's write ring
+ * (ScpiSdWindow_ReleaseWhenDrained), not when they were queued. */
+static void sd_get_send_end_core(bool ok, uint32_t count, const char* reason,
+                                 bool blockDelivered, bool headerOut,
+                                 bool windowHeld) {
+    const ScpiSdWindowTransport_t transport = sd_get_window_transport();
+    const bool tagged = sd_get_is_tagged();
+
+    if (!tagged) {
+        /* Untagged: exactly what every shipped host already parses, and no
+         * window is ever opened for one, so there is nothing to close. */
+        sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
+                                    (uint8_t*) eofMarker,
+                                    sizeof(eofMarker) - 1);
+        return;
+    }
+
+    /* ⛔ NO "THE BACKSTOP TOOK MY WINDOW" TERM HERE, and its absence is
+     * deliberate rather than an omission. This used to force FAILED when
+     * ScpiSdWindow_Service had force-closed the window, which reads as the
+     * right guard and is unreachable: Service runs on the SD task's loop and
+     * so does this transfer, so a window Service can see is always one a
+     * FINISHED transfer left behind. The term could never be true, which made
+     * it dead code carrying a false claim. See ScpiSdWindow_Service's comment
+     * for the whole argument. */
+
+    /* ⛔ NO END LINE INTO A BLOCK WE KNOW IS SHORT (#1267 round-3 audit, 1).
+     *
+     * `blockDelivered` false means a header advertised <n> bytes and fewer
+     * than <n> reached the transport, because the reader stopped accepting.
+     * The host is still inside its blind read of <n>, so a terminator written
+     * now is consumed AS FILE DATA -- and so is every reply after it. Writing
+     * it would turn a recoverable stall into a desync the host cannot detect:
+     * it would believe it had a complete file.
+     *
+     * ⛔ WITHHOLDING THE TERMINATOR IS NECESSARY AND IS NOT SUFFICIENT, and
+     * round 4's comment here claimed otherwise. It said the host is "left
+     * waiting, which IS recoverable". The round-4 audit disproved that: the
+     * window still closed, so a command the host had queued during the
+     * transfer was fed, and ITS echo, reply and prompt were appended behind
+     * the partial block -- counted inside the block by a host that resumes,
+     * with the query losing its answer. The bytes that break the frame are the
+     * NEXT ones, not ours, so no decision about our own terminator can fix it.
+     *
+     * ⭐ SO THAT SESSION NEVER HEARS FROM ITS OWN INPUT AGAIN. The window is
+     * held, not closed, until the session ends
+     * (ScpiSdWindow_HoldUntilSessionEnd): nothing the host queued is fed, so
+     * nothing is appended behind the partial block. TCP additionally closes
+     * the connection (guarded by the #599 generation), which is what ends
+     * that session -- and the hold covers the gap until WifiTask performs
+     * that close. USB has no way for us to end it -- see the USB branch --
+     * so it ends when the host closes the port.
+     *
+     * The reason reaches the host through SYST:LOG? (the LOG_E below),
+     * readable from the next session or the other transport. NOT through
+     * SYST:ERR?: an earlier version of this comment said so, but nothing on
+     * this path latches an error -- the only #914 latch in the GET is the
+     * open failure's.
+     *
+     * What remains true from before: the verdict is never conditional. A
+     * transfer that did not deliver <n> real bytes reports FAILED, never OK --
+     * a host can lose its session, but it cannot be told a short file is
+     * complete. */
+    /* ⛔ AN END LINE THE TRANSPORT DID NOT TAKE IS NOT AN END LINE (#1267
+     * round-5 audit, 3). This used to discard sd_get_emit's return. A host that
+     * stops reading near EOF lets the last data bytes in (so the block counts
+     * as delivered) and then leaves no room for the terminator; the writer's
+     * retries run out, and the transfer ended with no verdict and no session
+     * end -- the host got the whole block and then silence, or whatever
+     * deferred input produced next, where it expected OK/FAILED. A partial end
+     * line is the same case: "__END_OF_FILE__ O" is not a verdict either.
+     *
+     * So the end line is queued FIRST, and only an end line taken in full
+     * counts. Anything less is handled exactly like a short block below: the
+     * block may be whole, but the host is still waiting for a line that will
+     * never complete, so nothing else may follow it on that session. */
+    /* ⭐ fw#1265 round 8 (#1267 round-7 finding 2): EVERY TAGGED OUTCOME HOLDS
+     * THE WINDOW UNTIL ITS REPLY DRAINS -- the pre-header failures too.
+     *
+     * Open, buffer, size and busy fail before sd_get_open_window ever opened a
+     * window (or after it refused to), so ReleaseWhenDrained below was a no-op
+     * for them and the framed verdict sat in the write ring unprotected. A
+     * SYST:MEM:AUTO processed before WifiTask transmitted it took the
+     * non-idle partition path, which resets the TCP ring and DELETED the
+     * verdict: the requester got neither a header nor a failure. This is the
+     * one choke point every tagged outcome passes through, so the window is
+     * made sure of HERE, before the verdict is queued: afterwards
+     * ReleaseWhenDrained hands it over exactly as it does for a completed
+     * transfer, and no re-partition can be fed until the ring is empty. */
+    /* fw#1265 round 10: THE VERDICT IS QUEUED ONLY ONCE A WINDOW IS HELD. If it
+     * cannot be opened inside the bound, keep the verdict PENDING and return;
+     * sd_card_manager_ServicePendingVerdict retries on every service pass and
+     * re-enters here with windowHeld set. (`ok` is always false on this path:
+     * a success verdict follows a header, so headerOut is true.) */
+    gGetVerdictOwed = false;
+    if (!headerOut && !windowHeld) {
+        if (!sd_get_hold_window_for_verdict()) {
+            sd_get_defer_verdict(count, reason);
+            return;
+        }
+    }
+
+    const char* const label = (reason != NULL) ? reason
+                                               : (ok ? "ok" : "error");
+    bool endQueued = false;
+    if (blockDelivered) {
+        char line[96];
+        int n = 0;
+        /* ⭐ fw#1265 round 7 (#1267 round-6 finding 2): A FAILURE BEFORE THE
+         * HEADER STILL CARRIES THE TAG. The documented recovery for a tagged
+         * host is "discard everything until my own `#SDGET <tag>` header", so a
+         * bare `__END_OF_FILE__ FAILED open` was discarded with the echo and
+         * the host waited for a verdict that had already been sent. When no
+         * header went out, the failure is framed exactly like an empty
+         * success -- `#SDGET <tag>`, the empty block `#10`, then the end line
+         * -- in ONE write, so the host's single parser reads header, zero
+         * block bytes, FAILED <reason>, and no second code path exists.
+         * Accepting an untagged marker instead is not an option: file data
+         * left over from an earlier session can contain that marker. */
+        if (!headerOut) {
+            n = snprintf(line, sizeof(line), "#SDGET %u\r\n#10",
+                         (unsigned) gpSDCardSettings->opGetTag);
+            if ((n < 0) || ((size_t) n >= sizeof(line))) {
+                n = 0;
+            }
+        }
+        const size_t off = (size_t) n;
+        int m;
+        if (ok) {
+            m = snprintf(&line[off], sizeof(line) - off, "%s OK %u\r\n",
+                         eofMarker, (unsigned) count);
+        } else {
+            m = snprintf(&line[off], sizeof(line) - off, "%s FAILED %s\r\n",
+                         eofMarker, label);
+        }
+        n = (m > 0) ? (int) off + m : m;
+        if ((n > 0) && ((size_t) n < sizeof(line))) {
+            endQueued = (sd_get_emit((const uint8_t*) line, (uint32_t) n)
+                         == (uint32_t) n);
+        }
+        if (!endQueued) {
+            /* log_budget: max=6 */
+            LOG_E("[SD] GET: end line not delivered (%s) - holding the session",
+                  label);
+        }
+    } else {
+        /* log_budget: max=6 */
+        LOG_E("[SD] GET: block left short, no end line sent (%s)", label);
+    }
+
+    if (!endQueued) {
+        if (transport == SCPI_SD_WINDOW_TCP) {
+            /* ⛔ THE CLOSE IS ONLY REQUESTED HERE, SO THE WINDOW MUST NOT
+             * OPEN UNTIL IT IS DONE (#1267 round-5 audit, 4). WifiTask
+             * performs it on a later pass of its loop. Round 5 closed the
+             * window right after this request, so in between, WifiTask's rx
+             * drain could feed a command the host had queued and append its
+             * echo, reply and prompt behind the partial block -- the round-4
+             * defect, moved into the gap. The window is held instead (below):
+             * it pauses that connection's input until ConnIsCurrent turns
+             * false, which happens exactly when WifiTask's close sets
+             * clientSocket to -1 (or the host leaves first). A request
+             * dropped because the connection had already gone is the same
+             * case, released on the next Service pass. */
+            wifi_tcp_server_RequestClientClose(
+                    gpSDCardSettings->replyGeneration);
+        } else {
+            /* ⭐ THE USB ANSWER: HOLD THE WINDOW, AND END NOTHING FROM HERE.
+             *
+             * ⛔ ROUND 5 "RESET THE CDC SESSION" AND THAT RESET NOTHING
+             * (#1267 round-5 audit, 2). It drove the state machine through
+             * BEGIN_CLOSE/CLOSED, but USB_DEVICE_Close only clears the
+             * client's handle bookkeeping: it neither detaches from the bus
+             * nor cancels endpoint transfers, and CLOSED does not touch the
+             * write ring. The host saw no disconnect, stayed inside its blind
+             * read, and a DTR toggle resumed PROCESS with the old bytes still
+             * queued. The comments that called it an out-of-band termination
+             * were false, and the mechanism is gone.
+             *
+             * What replaces it is the hold itself: the window stays open for
+             * THIS CDC session, so nothing the host queued is fed and nothing
+             * is appended behind the partial block or the partial end line.
+             * What the host can rely on is the framing it was promised: fewer
+             * than <n> block bytes arrive, or the end line never completes
+             * with its CRLF -- and its own read timeout to stop waiting for
+             * the rest. Either means FAILED; nothing after it on this session
+             * will ever be ours. It recovers by closing
+             * and reopening the port: that is a new CDC session, which the
+             * window does not pause (it is keyed by session), and
+             * ScpiSdWindow_Service then releases it. A real detach/re-attach
+             * would end the session from our side; it is not done because it
+             * drops the host's port and re-enumerates the device.
+             *
+             * ⭐ ROUND 7: WHAT IS LEFT IN THE RING IS NOW SCRUBBED. A new CDC
+             * session that asserts DTR while this output is owed is held out
+             * of PROCESS (UsbCdc event handler), and
+             * UsbCdc_TryAdmitHeldSession discards the write ring and waits for
+             * the DMA already handed to the driver to drain before it admits
+             * that session -- so the partial block is not delivered into it
+             * behind its own header. (The DMA is drained, not cancelled: see
+             * that function.) A tagged host still skips to its own
+             * `#SDGET <tag>` header, which is what the tag is for. */
+        }
+        ScpiSdWindow_HoldUntilSessionEnd(transport);
+    }
+
+    /* ⭐ THE END LINE IS QUEUED FIRST AND THE WINDOW IS RELEASED AFTER IT, AND
+     * THAT ORDER IS THE WHOLE PROMISE (#1267 round-2 audit, 3).
+     *
+     * It used to close first. Closing resumes the transport's input, so the
+     * SD task could then lose its slice to the equal-priority USB task (both
+     * at 7 during a READ), which would process the packet that had been
+     * waiting -- queueing an echo, a reply and a prompt AHEAD of
+     * `__END_OF_FILE__`. The host, reading the end line to find out how the
+     * transfer went, would find someone else's reply there instead. Round 2's
+     * I-case passed only because the scheduler happened not to switch at that
+     * point, which is exactly the kind of pass that means nothing.
+     *
+     * Queueing first makes the ordering structural rather than lucky: the
+     * terminator is in the transport's buffer before any deferred input can
+     * be fed, so a reply cannot be queued AHEAD of the end line.
+     *
+     * ⚠ QUEUED IS NOT TRANSMITTED, AND THE ORIGINAL WORDING HERE OVERCLAIMED.
+     * It said the ordering "holds however the scheduler behaves", and the
+     * round-4 audit disproved that twice over: between queueing and
+     * transmission the ring can still be DISCARDED by a pool re-partition, or
+     * APPENDED to behind a short block. What this ordering alone buys is the
+     * narrower and true statement above -- relative order within the ring.
+     *
+     * ⭐ SO A COMPLETED TRANSFER DOES NOT CLOSE ITS WINDOW HERE; IT HANDS IT
+     * OVER (#1267 round-5 audit, 1). The window stays open -- input still
+     * paused -- until the ring is empty, and ScpiSdWindow_Service releases it
+     * then. That is what stops a deferred SYST:MEM:AUTO discarding the tail:
+     * it cannot be FED while the tail is queued. Round 4 tried to close this
+     * with a drain wait inside PrepareStreamingBuffers instead, which ran on
+     * the very task that drains the USB ring and so could never be satisfied;
+     * that wait is gone. The other transport's re-partition is refused there
+     * while any window is open.
+     *
+     * Keyed on `endQueued`, not `blockDelivered`: a refused or partial end
+     * line was handed to the session-end branch above, and a malformed
+     * snprintf (endQueued stays false) goes the same way rather than being
+     * left to the staleness backstop. Every outcome hands the window over;
+     * none closes it here, on either transport -- only ScpiSdWindow_Service
+     * releases a window, once its condition is met. */
+    if (endQueued) {
+        ScpiSdWindow_ReleaseWhenDrained(transport);
+    }
+}
+
+static void sd_get_send_end(bool ok, uint32_t count, const char* reason,
+                            bool blockDelivered, bool headerOut) {
+    sd_get_send_end_core(ok, count, reason, blockDelivered, headerOut, false);
+}
+
+/* ⭐ fw#1265 round 9 (#1267 round-8 finding 1): THE PRE-HEADER OPEN FAILURE
+ * RUNS ONLY THE VERDICT, SO IT MUST TAKE THE CLAIM ITSELF.
+ *
+ * Every other sd_get_send_end caller is inside the READ_FROM_FILE state, which
+ * takes gSDOpMutex before sd_get_open_window and releases it in teardown --
+ * that is the fact PrepareStreamingBuffers relies on when it says a window
+ * opens only under the mutex it try-locked (sd_card_manager_TryLockBuffer), so
+ * its ScpiSdWindow_AnyOpen() test cannot race an open. The open FAILURE in
+ * OPEN_FILE never reaches READ_FROM_FILE: it opened a window
+ * (sd_get_hold_window_for_verdict) and queued the framed verdict with NO
+ * mutex held, so a SYST:MEM:AUTO on the other transport could try-lock, see no
+ * window yet, and reset the ring between the open and the queue -- deleting the
+ * verdict the window exists to protect.
+ *
+ * The take is BLOCKING and costs nothing it should not: this is the SD task,
+ * the only task that ever holds gSDOpMutex for a transfer, and the only other
+ * holder is PrepareStreamingBuffers' try-lock, which never waits for this
+ * task. The mutex is released as soon as the verdict is queued and the window
+ * handed to ReleaseWhenDrained: from then on the OPEN WINDOW is what refuses
+ * a re-partition, exactly as for a completed transfer.
+ *
+ * tests/host/check_1267_verdict_window.py pins that every sd_get_send_end
+ * caller is either inside READ_FROM_FILE or inside this function. */
+static void sd_get_send_end_claimed(bool ok, uint32_t count, const char* reason,
+                                    bool blockDelivered, bool headerOut) {
+    if (gSDOpMutex) {
+        SD_TakeMutexDebug(gSDOpMutex, "get_open_failure_verdict");
+    }
+    sd_get_send_end(ok, count, reason, blockDelivered, headerOut);
+    if (gSDOpMutex) {
+        xSemaphoreGive(gSDOpMutex);
+    }
+}
+
+/* ⭐ fw#1265 round 10: retry a pending verdict. Called from the SD task's idle
+ * loop only (app_freertos.c, next to ScpiSdWindow_Service), so it never runs
+ * inside a transfer and never holds gSDOpMutex already. Non-blocking: the
+ * mutex is try-taken and a miss just retries on the next pass.
+ *
+ * Delivery requires (1) the settings still describe the SAME GET -- DataReadyCB
+ * and the framing read them, so a newer GET would mis-frame it -- and (2) the
+ * requesting session still live. Otherwise the verdict is counted lost and
+ * logged, never dropped silently. It re-enters sd_get_send_end_core with the
+ * window held, under the same claim sd_get_send_end_claimed takes. */
+void sd_card_manager_ServicePendingVerdict(void) {
+    if (!gGetPendingVerdict.active || (gpSDCardSettings == NULL)) {
+        return;
+    }
+    const bool same = gpSDCardSettings->opGetTagValid &&
+            (gpSDCardSettings->opGetTag == gGetPendingVerdict.tag) &&
+            (gpSDCardSettings->replyGeneration == gGetPendingVerdict.generation) &&
+            (gpSDCardSettings->replyTarget == gGetPendingVerdict.target);
+    if (!same) {
+        sd_get_verdict_lost("superseded");
+        return;
+    }
+    const bool live = (gGetPendingVerdict.target == SD_CARD_REPLY_WIFI_TCP)
+            ? wifi_tcp_server_ConnIsCurrent(gGetPendingVerdict.generation)
+            : sd_card_manager_UsbReplySessionCurrent(gGetPendingVerdict.generation);
+    if (!live) {
+        sd_get_verdict_lost("session ended");
+        return;
+    }
+    if (gSDOpMutex && (xSemaphoreTake(gSDOpMutex, 0) != pdTRUE)) {
+        return;
+    }
+    const ScpiSdWindowTransport_t transport = sd_get_window_transport();
+    ScpiSdWindow_Service();
+    if (ScpiSdWindow_IsOpenFor(transport, gGetPendingVerdict.generation) ||
+            ScpiSdWindow_TryOpen(transport, gGetPendingVerdict.generation)) {
+        const uint32_t count = gGetPendingVerdict.count;
+        const char* const reason = gGetPendingVerdict.reason;
+        /* fw#1265 round 11 (#1267 round-10 finding 1): `active` STAYS TRUE
+         * ACROSS THE DELIVERY and is cleared only after the framing is done.
+         * While it is true IsBusyLocked() is true, so no GET (or any other
+         * claim) can be admitted and rewrite the settings sd_get_send_end_core
+         * reads to frame the reply (tag, reply target, DataReadyCB). Clearing
+         * it first reopened exactly that window. */
+        sd_get_send_end_core(false, count, reason, true, false, true);
+        gGetPendingVerdict.active = false;
+    }
+    if (gSDOpMutex) {
+        xSemaphoreGive(gSDOpMutex);
+    }
+}
+
+/* ⭐ fw#1265 round 10 (#1267 round-9 finding 3): EVERY EXIT FROM AN ARMED
+ * TAGGED GET EMITS A VERDICT. Settles the owed verdict, if any, through the
+ * claimed finalizer. Idempotent: sd_get_send_end_core clears the owed flag, so
+ * the call sites need not know which of them ran first. `mode` is already NONE
+ * when the ERROR / DEINIT funnels get here, so the GET's identity is the
+ * snapshot taken at INIT, not the settings (a newer arm would differ: then the
+ * old verdict cannot be framed and is counted lost). */
+static void sd_get_settle_owed_verdict(const char* reason) {
+    if (!gGetVerdictOwed) {
+        return;
+    }
+    gGetVerdictOwed = false;
+    if ((gpSDCardSettings == NULL) || !gpSDCardSettings->opGetTagValid ||
+            (gpSDCardSettings->opGetTag != gGetOwedTag) ||
+            (gpSDCardSettings->replyGeneration != gGetOwedGeneration) ||
+            (gpSDCardSettings->replyTarget != gGetOwedTarget)) {
+        gGetPendingVerdict.tag = gGetOwedTag;
+        sd_get_verdict_lost("superseded");
+        return;
+    }
+    /* A header that went out means a block of unknown completeness: hold the
+     * session (blockDelivered false) rather than frame an end line into it. */
+    sd_get_send_end_claimed(false, 0u, reason, !gGetHeaderOut, gGetHeaderOut);
+}
+
 /* #914: per-transport, one-deep latch for a failure the SD TASK detects AFTER
  * the SCPI handler that armed the operation has already returned SCPI_RES_OK
  * (e.g. a GET whose file will not open). The SD task owns no scpi_t and must
@@ -692,6 +1514,13 @@ void sd_card_manager_LatchAsyncError(int32_t scpiError,
     if (((int)target < 0) || ((int)target >= SD_ASYNC_ERR_SLOT_COUNT)) {
         return;   /* unreachable today; costs nothing and cannot corrupt BSS */
     }
+    /* fw#1265 round 7: USB's replyGeneration is now a real CDC session
+     * generation, but the drain asks for 0 on USB (SCPI_DrainDeferredSdError:
+     * the USB slot is not session-keyed, by #914's design). Normalise here so
+     * the USB latch still matches its drain. */
+    if (target == SD_CARD_REPLY_USB) {
+        generation = 0u;
+    }
     taskENTER_CRITICAL();
     gSdAsyncError[target].code = scpiError;
     gSdAsyncError[target].generation = generation;
@@ -748,8 +1577,26 @@ static int32_t SdAsyncErrorForFsError(SYS_FS_ERROR fsErr) {
     }
 }
 
-void __attribute__((weak)) sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff, size_t dataLen) {
+/* The weak default's answer lives in an EXTERNAL-LINKAGE volatile (a static one is
+ * still folded to 0 by cppcheck 2.13) so it is NOT a compile-time
+ * constant. This translation unit contains the default, so a static analyser
+ * (cppcheck, which cannot know app_freertos.c overrides it at link time) folds
+ * the call to 0 and reports sd_get_emit's callers' `== n`, `endQueued` and
+ * `!endQueued` tests as always false/true (the 3 knownConditionTrueFalse
+ * findings of round 7). They were not dead code -- the strong definition in
+ * app_freertos.c returns what the transport really took -- so the fix is to
+ * stop the default pretending to be one, not to suppress the finding. */
+extern volatile size_t gNoTransportAccepted;
+volatile size_t gNoTransportAccepted = 0u;
 
+size_t __attribute__((weak)) sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff, size_t dataLen) {
+    /* No transport in this build: nothing was accepted. Returning dataLen
+     * would tell a tagged GET its bytes had been delivered to a host that
+     * does not exist. */
+    (void) mode;
+    (void) pDataBuff;
+    (void) dataLen;
+    return gNoTransportAccepted;
 }
 
 static int SDCardWrite() {
@@ -1942,6 +2789,15 @@ void sd_card_manager_ProcessState() {
                 if ((!needsDir || dirValid) && (!needsFile || fileValid)) {
                     errorLogged = false;  // Reset flag on successful validation
                     gSDCardData.mountRetryCount = 0;
+                    /* fw#1265 round 10: an armed tagged GET owes a verdict from
+                     * here on (settled by sd_get_send_end_core or, on any other
+                     * exit, sd_get_settle_owed_verdict). */
+                    gGetVerdictOwed = (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_READ) &&
+                                      sd_get_is_tagged();
+                    gGetHeaderOut = false;
+                    gGetOwedTag = gpSDCardSettings->opGetTag;
+                    gGetOwedGeneration = gpSDCardSettings->replyGeneration;
+                    gGetOwedTarget = gpSDCardSettings->replyTarget;
                     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_MOUNT_DISK;
                 } else {
                     // Only log error once per enable, not continuously
@@ -1987,6 +2843,7 @@ void sd_card_manager_ProcessState() {
                             Streaming_SdInterfaceReleased();
                         }
                         gSDCardData.lastOperationSuccess = false;
+                        sd_get_settle_owed_verdict("mount");
                         gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
                         gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
                     } else {
@@ -2014,6 +2871,7 @@ void sd_card_manager_ProcessState() {
                             Streaming_SdInterfaceReleased();
                         }
                         gSDCardData.lastOperationSuccess = false;
+                        sd_get_settle_owed_verdict("filesystem");
                         gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
                         gSDCardData.discMounted = true;  // Mark mounted so ERROR→UNMOUNT can clean up
                         gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
@@ -2317,6 +3175,7 @@ void sd_card_manager_ProcessState() {
             if (SYS_FS_CurrentDriveSet(SD_CARD_MANAGER_DISK_MOUNT_NAME) == SYS_FS_RES_FAILURE) {
                 /* Error while setting current drive */
                 LOG_E("[%s:%d]Error Setting SD Card drive", __FILE__, __LINE__);
+                sd_get_settle_owed_verdict("drive");
                 gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
             } else if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_GET_SPACE) {
                 gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_GET_SPACE;
@@ -3584,8 +4443,23 @@ void sd_card_manager_ProcessState() {
                         sd_card_manager_LatchAsyncError(
                                 SdAsyncErrorForFsError(openFsError),
                                 replyTarget, replyGeneration);
-                        sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
-                                (uint8_t*)eofMarker, sizeof(eofMarker) - 1);
+                        /* fw#1265: #914 deliberately kept the bare marker here
+                         * so a missing file still ENDS the reply for shipped
+                         * hosts, and made the failure loud through the latched
+                         * error instead. That stays exactly so for untagged.
+                         * A tagged host gets what #1265 asked for: FAILED in
+                         * the stream, distinguishable from an empty file
+                         * without a round trip to SYST:ERR?. */
+                        if (sd_get_is_tagged()) {
+                            /* No header went out on this path, so the end
+                             * line cannot be inside a block: delivered. */
+                            sd_get_send_end_claimed(false, 0u, "open", true, false);
+                        } else {
+                            sd_card_manager_DataReadyCB(
+                                    SD_CARD_MANAGER_MODE_READ,
+                                    (uint8_t*)eofMarker,
+                                    sizeof(eofMarker) - 1);
+                        }
                     }
                     gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
                     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
@@ -4178,6 +5052,14 @@ void sd_card_manager_ProcessState() {
             TickType_t lastYieldTime = xTaskGetTickCount();
             const TickType_t yieldInterval = pdMS_TO_TICKS(1000);
 
+            /* fw#1265: the declared block length (0 when untagged), how many
+             * REAL file bytes have gone out under it, and whether the promise
+             * still holds. Set below, after the pre-transfer bails -- see the
+             * header block for why the order is load-bearing. */
+            uint32_t declaredLen = 0u;
+            uint32_t sentReal = 0u;
+            const char* lenFail = NULL;
+
             // eofMarker / transferErrorMarker: file-scope now (#914), so the
             // open-failure path above can send eofMarker without a second copy
             // of the literal. transferErrorMarker is used only here, in the
@@ -4199,8 +5081,10 @@ void sd_card_manager_ProcessState() {
                 LOG_E("[SD] Buffer too small for read (%u < %u) - aborting GET",
                       (unsigned)gSdSharedBufferSize, (unsigned)SD_READ_ALIGNMENT_SIZE);
                 sd_wait_usb_drain();
-                sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
-                        (uint8_t*)eofMarker, sizeof(eofMarker) - 1);
+                /* fw#1265: same end line as every other exit, so a tagged
+                 * host never has to distinguish "no data" from "no
+                 * terminator". Closes the window too. */
+                sd_get_send_end(false, 0u, "buffer", true, false);
                 if (gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
                     (void)SYS_FS_FileClose(gSDCardData.fileHandle);
                     gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
@@ -4219,6 +5103,135 @@ void sd_card_manager_ProcessState() {
 
             // Clear abort flag at start of transfer
             gTransferAbortRequested = false;
+
+            /* fw#1265 r1 findings 7 and 9: THE HEADER GOES OUT HERE -- after
+             * the pre-transfer bails, and after the abort flag is cleared.
+             *
+             * ⛔ NOT EARLIER, which is where I first put it. Two defects, both
+             * found by the r1 audit:
+             *
+             *   (9) the clear above ERASED an abort raised BY the header write
+             *       itself. sd_card_manager_DataReadyCB aborts the transfer
+             *       when a TCP client has gone, so writing the header could
+             *       set the flag and this line then wiped it: the transfer ran
+             *       on and ended OK with no header ever delivered. Clearing
+             *       first and writing second cannot lose it, and the explicit
+             *       check below catches one raised DURING the write.
+             *
+             *   (8) the buffer-too-small bail now precedes any header, so it
+             *       can no longer leave the host owed padding that this exit
+             *       has no way to send.
+             *
+             *   (7) the block's length field is 1-9 digits (see
+             *       SD_GET_MAX_BLOCK_BYTES), so a file that cannot be framed
+             *       is refused BEFORE a header instead of being emitted as a
+             *       malformed "#10...". */
+            if (sd_get_is_tagged()) {
+                const int32_t fileSize =
+                        SYS_FS_FileSize(gSDCardData.fileHandle);
+                const char* headerFail = NULL;
+                /* fw#1265 / #1267 round-2 audit defect 5: did a block header
+                 * reach the transport? The pre-loop failure exit reads this to
+                 * decide whether the host is owed the declared length. Scoped
+                 * to this block (cppcheck variableScope, round 7): nothing
+                 * after the pre-loop exit reads it. */
+                bool headerSent = false;
+                if (fileSize < 0) {
+                    headerFail = "size";
+                    LOG_E("[SD] GET tag %u: file size unavailable",
+                          (unsigned) gpSDCardSettings->opGetTag);
+                } else if ((uint32_t) fileSize >= SD_GET_MAX_BLOCK_BYTES) {
+                    headerFail = "size";
+                    LOG_E("[SD] GET tag %u: %u bytes cannot be framed in a "
+                          "9-digit block", (unsigned) gpSDCardSettings->opGetTag,
+                          (unsigned) fileSize);
+                }
+                if (headerFail == NULL) {
+                    declaredLen = (uint32_t) fileSize;
+                    /* fw#1265 round 2: PAUSE THE TRANSPORT BEFORE THE HEADER,
+                     * and only once it is idle. If it will not go idle inside
+                     * the bound, end the transfer here -- before a header, so
+                     * the host is never owed a block that cannot be kept clean,
+                     * and never owed padding this exit cannot send. */
+                    headerFail = sd_get_open_window();
+                    if (headerFail != NULL) {
+                        /* log_budget: max=6 */
+                        LOG_E("[SD] GET tag %u: cannot frame (%s) - the "
+                              "transport would not go idle, or a stream went "
+                              "live", (unsigned) gpSDCardSettings->opGetTag,
+                              headerFail);
+                    }
+                }
+                if (headerFail == NULL) {
+                    /* ⭐ THE ABORT IS TESTED IMMEDIATELY BEFORE THE HEADER
+                     * GOES OUT (#1267 round-2 audit, 5).
+                     *
+                     * The READ path cleared gTransferAbortRequested well
+                     * above, and everything since -- the size read and the
+                     * window wait, which yields -- is time in which an
+                     * SD:ABORt from the OTHER transport can land. Without this
+                     * test the header and its `#3512` went out anyway, and the
+                     * post-write check below then emitted `FAILED abort`
+                     * WITHOUT padding the 512 bytes just advertised, so the
+                     * terminator landed inside the block.
+                     *
+                     * Testing here means the common case emits no header at
+                     * all, so nothing is owed. */
+                    if (gTransferAbortRequested) {
+                        gTransferAbortRequested = false;
+                        headerFail = "abort";
+                        LOG_E("[SD] GET tag %u: aborted before the header",
+                              (unsigned) gpSDCardSettings->opGetTag);
+                    } else {
+                        headerSent = sd_get_send_header(declaredLen);
+                        if (gTransferAbortRequested || (!headerSent)) {
+                            /* Either an abort was raised while the header was
+                             * going out, or the transport accepted none of it.
+                             *
+                             * ⭐ ONE BRANCH FOR BOTH, because they are the same
+                             * condition: DataReadyCB returns 0 only after it
+                             * has requested the abort itself (retries
+                             * exhausted, or the TCP client gone), so a refused
+                             * header always arrives with the flag set. The
+                             * `!headerSent` term is therefore not a second
+                             * path, it is the same one named directly -- which
+                             * matters because WITHOUT it the transfer would
+                             * fall through to the read loop and stream raw
+                             * file bytes to a host that never received a
+                             * `#SDGET` header to frame them.
+                             *
+                             * `headerSent` still decides the padding below:
+                             * nothing of the block went out, so nothing is
+                             * owed. */
+                            gTransferAbortRequested = false;
+                            headerFail = "abort";
+                            LOG_E("[SD] GET tag %u: aborted during the header "
+                                  "(sent=%u)",
+                                  (unsigned) gpSDCardSettings->opGetTag,
+                                  (unsigned) headerSent);
+                        }
+                    }
+                }
+                if (headerFail != NULL) {
+                    /* ⛔ ONE PLACE DECIDES THE PADDING, and it reads one fact:
+                     * did a header go out? Every pre-loop failure exit funnels
+                     * through here, so there is no second exit to keep in step
+                     * -- which is what the audit asked for. If a header went
+                     * out the host is reading <declared> bytes blindly and
+                     * must get them before the end line; if none did, padding
+                     * would be bytes the host never asked for. */
+                    /* `headerSent` decides whether anything is owed, and the
+                     * pad's RESULT decides whether an end line may be sent --
+                     * the two questions the round-3 audit showed are
+                     * different. With no header, nothing is owed and nothing
+                     * can be short. */
+                    const bool padOk = (!headerSent) ||
+                            sd_get_pad_to_declared(declaredLen, 0u);
+                    sd_get_send_end(false, 0u, headerFail, padOk, headerSent);
+                    sd_get_read_teardown(currentTask, originalPriority);
+                    break;
+                }
+            }
 
             // Read entire file in continuous loop
             while (1) {
@@ -4253,7 +5266,23 @@ void sd_card_manager_ProcessState() {
                      * Skipping the emit on the partial path also avoids a
                      * second stall: DataReadyCB retries for 10 s, and the abort
                      * is reached precisely when the peer is not draining. */
-                    if (totalBytesRead == 0u) {
+                    if (sd_get_is_tagged()) {
+                        /* fw#1265, and r1 finding 4: a TAGGED transfer always
+                         * ends with an end line, and #725's reasoning for
+                         * staying silent does not apply to it. That reasoning
+                         * is about a BARE terminator after partial data, which
+                         * a host cannot tell from a complete file. `FAILED
+                         * abort` is distinguishable by construction, so the
+                         * honest move is to deliver the promised length and
+                         * say what happened -- and it is also what closes the
+                         * data window on this path, which r1 found was the one
+                         * exit that never closed it. */
+                        {
+                            const bool padOk = sd_get_pad_to_declared(
+                                    declaredLen, sentReal);
+                            sd_get_send_end(false, sentReal, "abort", padOk, true);
+                        }
+                    } else if (totalBytesRead == 0u) {
                         sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
                                 (uint8_t*)eofMarker, sizeof(eofMarker) - 1);
                     } else {
@@ -4288,6 +5317,17 @@ void sd_card_manager_ProcessState() {
                 // Abort if file handle became invalid
                 if (gSDCardData.fileHandle == SYS_FS_HANDLE_INVALID) {
                     LOG_E("[SD] Transfer ABORTED: file handle invalid");
+                    /* fw#1265 r1 finding 8: this exit sent NOTHING, which for
+                     * a tagged transfer leaves the host blocked part-way
+                     * through a block it was told the length of. Untagged
+                     * behaviour is unchanged (silence, per #725). */
+                    if (sd_get_is_tagged()) {
+                        {
+                            const bool padOk = sd_get_pad_to_declared(
+                                    declaredLen, sentReal);
+                            sd_get_send_end(false, sentReal, "handle", padOk, true);
+                        }
+                    }
                     totalBytesRead = 0;
                     readCount = 0;
                     break;
@@ -4317,9 +5357,26 @@ void sd_card_manager_ProcessState() {
                      *
                      * A separate marker lets the host do the right thing: stop
                      * waiting, and know the data is incomplete. */
-                    sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
-                            (uint8_t*)transferErrorMarker,
-                            sizeof(transferErrorMarker) - 1);
+                    /* fw#1265: untagged keeps __TRANSFER_ERROR__, which is
+                     * what #725 shipped and hosts recognise. A tagged host
+                     * gets the FAILED end line instead -- one end-line shape
+                     * to parse, with the reason in it, rather than two
+                     * different terminators. */
+                    if (sd_get_is_tagged()) {
+                        /* r1 finding 8: the end line must not land INSIDE the
+                         * block. Deliver the balance of the promise first, so
+                         * the host's blind read of <n> bytes finishes before
+                         * it starts looking for a terminator. */
+                        {
+                            const bool padOk = sd_get_pad_to_declared(
+                                    declaredLen, sentReal);
+                            sd_get_send_end(false, sentReal, "read", padOk, true);
+                        }
+                    } else {
+                        sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
+                                (uint8_t*)transferErrorMarker,
+                                sizeof(transferErrorMarker) - 1);
+                    }
 
                     // Close file handle to prevent resource leak
                     if (SYS_FS_FileClose(gSDCardData.fileHandle) == SYS_FS_RES_FAILURE) {
@@ -4334,10 +5391,40 @@ void sd_card_manager_ProcessState() {
                     // End of file - wait for USB to drain before sending EOF marker
                     sd_wait_usb_drain();
 
-                    // Send EOF marker using literal constant (safer than sprintf)
-                    sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
-                            (uint8_t*)eofMarker,
-                            sizeof(eofMarker) - 1);
+                    /* fw#1265: untagged sends the bare marker exactly as
+                     * before. Tagged owes the declared length first.
+                     *
+                     * r1 finding 8: a file that SHRANK (truncated by a
+                     * rotation, or never as long as its directory entry said)
+                     * leaves the host blocked mid-block waiting for bytes that
+                     * will never come. Pad the balance so its read completes
+                     * and lands on the end line -- and report FAILED, because
+                     * the promise was not met by real bytes. OK is emitted
+                     * only when exactly <n> REAL bytes went out. */
+                    if (declaredLen > 0u && sentReal < declaredLen) {
+                        LOG_E("[SD] GET tag %u: file ended at %u of %u bytes "
+                              "- padding and failing",
+                              (unsigned) gpSDCardSettings->opGetTag,
+                              (unsigned) sentReal, (unsigned) declaredLen);
+                        {
+                            const bool padOk = sd_get_pad_to_declared(
+                                    declaredLen, sentReal);
+                            sd_get_send_end(false, sentReal, "short", padOk, true);
+                        }
+                    } else {
+                        /* `sentReal` rather than `totalBytesRead`: the audit's
+                         * note on defect 2 was to check every counter on the
+                         * path, not just the one it found. totalBytesRead
+                         * counts bytes READ FROM THE FILE, which is its own
+                         * correct meaning but is not what `OK <n>` promises --
+                         * that number is what the host should expect to have
+                         * received. On this branch the two are equal (a short
+                         * accept aborts, and an abort cannot reach here), so
+                         * this changes no wire byte; it makes the equality a
+                         * property of the expression instead of an argument
+                         * about reachability. */
+                        sd_get_send_end(true, sentReal, NULL, true, true);
+                    }
 
                     // Close file handle
                     if (SYS_FS_FileClose(gSDCardData.fileHandle) == SYS_FS_RES_FAILURE) {
@@ -4354,9 +5441,97 @@ void sd_card_manager_ProcessState() {
                     totalBytesRead += bytesRead;
                     readCount++;
 
-                    sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
-                            gSdSharedBuffer,
-                            bytesRead);
+                    /* fw#1265 r1 finding 8: NEVER EXCEED THE DECLARED
+                     * LENGTH. A file being appended to by a logging session
+                     * grows after its size was read, and the host reads
+                     * exactly <n> bytes: the surplus would land where the end
+                     * line should be and desync it. Cap here and fail the
+                     * transfer -- a file that grew is not the file whose
+                     * length we promised. */
+                    size_t toHost = (size_t) bytesRead;
+                    if (declaredLen > 0u) {
+                        const uint32_t room = declaredLen - sentReal;
+                        if ((uint32_t) toHost > room) {
+                            toHost = (size_t) room;
+                            lenFail = "grew";
+                        }
+                    }
+                    if (toHost > 0u) {
+                        /* ⛔ ADVANCE BY WHAT THE TRANSPORT TOOK, NOT BY WHAT WE
+                         * OFFERED (#1267 round-2 audit, 2). DataReadyCB writes
+                         * through an all-or-nothing shim clamped to 1024 bytes
+                         * with a bounded retry, so a partial accept is normal.
+                         * Counting the offer made `sentReal` an upper bound,
+                         * the pad that follows an abort came out short by the
+                         * difference, and the `FAILED abort` end line landed
+                         * INSIDE the advertised block -- read by the host as
+                         * file data, after which it waits for bytes that never
+                         * come.
+                         *
+                         * No separate failure branch is needed here: a short
+                         * accept means DataReadyCB exhausted its retries and
+                         * already called sd_card_manager_AbortTransfer(), so
+                         * the top of this loop takes the abort exit on its
+                         * next pass -- and now pads from a TRUE delivered
+                         * count. */
+                        sentReal += sd_get_emit(gSdSharedBuffer,
+                                                (uint32_t) toHost);
+                    }
+                    /* fw#1265: keep a progressing transfer clear of the
+                     * window's staleness backstop. Unconditional: a no-op when
+                     * no window is open. */
+                    ScpiSdWindow_NoteProgress(sd_get_window_transport());
+                    /* ⭐ fw#1265 round 9 (#1267 round-8 finding 2): SERVICE THE
+                     * WINDOWS FROM INSIDE THE TRANSFER, once per chunk.
+                     *
+                     * ScpiSdWindow_Service used to run only from the SD task's
+                     * loop, and this loop is that task for the whole of a
+                     * download. So a window another transport had handed over
+                     * (RELEASE_ON_DRAIN, an earlier GET whose ring has long
+                     * since emptied) was not released until THIS transfer
+                     * ended -- that transport stayed deaf, and a USB session
+                     * held out of PROCESS by it (UsbCdc_TryAdmitHeldSession,
+                     * the tail of Service) waited too.
+                     *
+                     * One call per chunk iteration is the cadence a running
+                     * transfer can honestly offer: an iteration is one SD read
+                     * plus one transport write, so it is as fast as the
+                     * transfer, and it blocks for as long as the reader does.
+                     * (The ~1 ms figure belongs to the idle loop only.)
+                     *
+                     * ⛔ AFTER NoteProgress, NOT BEFORE. Service now CAN see
+                     * this transfer's own window (release NONE, so only its
+                     * staleness branch applies); stamping progress first makes
+                     * that window 0 ms stale on this call, so Service cannot
+                     * force-close the window of the transfer that is calling
+                     * it. No new mechanism: the same function, the same task. */
+                    ScpiSdWindow_Service();
+                    if (lenFail != NULL) {
+                        /* ⛔ NO sd_get_read_teardown HERE. This `break` leaves
+                         * the while(1) and falls into the case's own teardown
+                         * at the bottom, so calling the shared one as well
+                         * would give gSDOpMutex TWICE and set the priority
+                         * back twice. Only the PRE-loop exits use the shared
+                         * teardown, because their `break` leaves the switch
+                         * and never reaches the bottom. */
+                        sd_wait_usb_drain();
+                        /* ⛔ PAD AND USE THE RESULT, like every other in-loop
+                         * exit. I first wrote `true` here, reasoning that
+                         * `grew` caps the delivery AT declaredLen so the block
+                         * must be complete. That is only true if the capped
+                         * write was fully ACCEPTED -- and the write above
+                         * advances sentReal by what the transport took, which
+                         * is the whole point of the round-2 fix. A short
+                         * accept leaves the block short while this branch
+                         * claimed it was whole, which is the very defect
+                         * `blockDelivered` exists to prevent. When the accept
+                         * was full the pad loop does not run and returns true,
+                         * so this costs nothing in the normal case. */
+                        const bool padOk = sd_get_pad_to_declared(declaredLen,
+                                                                  sentReal);
+                        sd_get_send_end(false, sentReal, lenFail, padOk, true);
+                        break;
+                    }
 
                     // Delay every 1 second to allow lower priority tasks to run
                     if ((xTaskGetTickCount() - lastYieldTime) >= yieldInterval) {
@@ -4643,6 +5818,8 @@ void sd_card_manager_ProcessState() {
 
             break;
         case SD_CARD_MANAGER_PROCESS_STATE_DEINIT:
+            /* fw#1265 round 10: the funnel for every teardown of an armed GET. */
+            sd_get_settle_owed_verdict("abort");
             /* #1031: a deliberate teardown ends the session; never continue it. */
             gSDCardData.errorRemountPending = false;
             gSDCardData.resumingAfterError = false;
@@ -4650,6 +5827,9 @@ void sd_card_manager_ProcessState() {
             gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_UNMOUNT_DISK;
             break;
         case SD_CARD_MANAGER_PROCESS_STATE_ERROR:
+            /* fw#1265 round 10: the funnel for every error exit of an armed GET
+             * (idempotent: the exits that know better settled it already). */
+            sd_get_settle_owed_verdict("error");
             gSDCardData.errorRemountPending =
                     (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE);
             gSDCardData.lastOperationSuccess = false;
@@ -5356,6 +6536,21 @@ static bool sd_card_manager_IsBusyLocked(void) {
     // Busy if any operation mode is active (WRITE, READ, LIST, DELETE, FORMAT)
     // Mode is set when operation starts and cleared when complete
     if (gpSDCardSettings->mode != SD_CARD_MANAGER_MODE_NONE) {
+        return true;
+    }
+
+    /* fw#1265 round 11 (#1267 round-10 findings 1 and 3): A PENDING TAGGED-GET
+     * VERDICT KEEPS THE MANAGER BUSY. The verdict is framed from the shared
+     * GET settings (tag, reply target, session generation), so a second GET
+     * admitted before it is delivered would rewrite them and the owner would
+     * either be told another request's outcome or lose its verdict. Refusing
+     * admission (TryClaim and IsBusy both land here) is the whole fix: no new
+     * state, one more term in the existing busy predicate. `active` is set by
+     * the SD task while `mode` is still READ (so busy is already true) and
+     * cleared by sd_card_manager_ServicePendingVerdict after delivery or by
+     * sd_get_verdict_lost, so there is no gap on either side. Bounded: it
+     * ends when the window opens or the requesting session does. */
+    if (gGetPendingVerdict.active) {
         return true;
     }
 
