@@ -2,6 +2,7 @@
 #define LOG_MODULE LOG_MODULE_SCPI
 
 #include "SCPIInterface.h"
+#include "SCPICmdGate.h"
 #include "ScpiBoundedWrite.h"  /* #1098: pure bounded-write decision, host-tested */
 #include "semphr.h"  // #347: mutex for SysInfoGet static buffer
 
@@ -27,6 +28,7 @@
                               * transitively via PowerApi.h -> definitions.h;
                               * named explicitly so it does not depend on that) */
 #include "Util/Logger.h"
+#include "Util/CrashRecord.h"
 #include "state/data/BoardData.h"
 #include "state/board/BoardConfig.h"
 #include "services/daqifi_settings.h"
@@ -62,7 +64,7 @@
 #include "state/data/AInSample.h"  // For AInSampleList_PoolCapacity
 #include "services/wifi_services/wifi_tcp_server.h"  // For WIFI_CIRCULAR_BUFF_SIZE
 #include "services/wifi_services/iperf2/iperf2.h"   // #377 iperf2 control
-#include "config/default/driver/winc/include/dev/wdrv_winc_spi.h"  // For WDRV_WINC_SPI_SetBuffer/WaitIdle
+#include "config/default/driver/winc/include/dev/wdrv_winc_spi.h"  // For WDRV_WINC_SPI_SetBuffer/IdleForSwap
 #include "config/default/WincIdleGate.h"  // For SYST:WINC:GATE? debug accessor
 #ifndef DAQIFI_WINC_SPI_PATCHED
 #error "wdrv_winc_spi.h was overwritten by Harmony/MCC! Re-apply DAQiFi patches. See wiki: Harmony-Driver-Patches"
@@ -517,8 +519,10 @@ static void SCPI_SyncQuesBits(void) {
 static scpi_result_t SCPI_Reset(scpi_t * context) {
     // Send notification that reset is occurring
     // This gives connected clients a chance to know what happened
-    const char* msg = "System reset initiated\r\n";
-    context->interface->write(context, msg, strlen(msg));
+    if (context->interface && context->interface->write) {
+        const char* msg = "System reset initiated\r\n";
+        context->interface->write(context, msg, strlen(msg));
+    }
     
     // Ensure the message is sent before reset
     if (context->interface && context->interface->flush) {
@@ -1082,7 +1086,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  User ADC: %d/%d | Internal ADC: %d/%d | DIO: %d/%d inputs\r\n", 
         userAdcEnabled, userAdcTotal,
         internalAdcEnabled, internalAdcTotal,
-        dioInputs, pDIOConfig ? pDIOConfig->Size : 0);
+        dioInputs, pDIOConfig ? (int)pDIOConfig->Size : 0);
     SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
     
     // Show which specific user ADC channels are enabled
@@ -1425,8 +1429,27 @@ __stalled_exit:
  * @return SCPI_RES_OK, or SCPI_RES_ERR with -200 queued if truncated
  */
 static scpi_result_t SCPI_SysLogGet(scpi_t * context) {
+    /* #1190: a crash record that survived the last reset is reported as one
+     * "CRASH ..." line ahead of the log, until SYSTem:LOG:CLEar discards it.
+     * Read-only: dumping does not consume it. */
+    bool complete = true;
+    CrashRecordView crash;
+    /* The snapshot read is log-free; the transport WRITE below is not (a stalled
+     * write retries and its error callback LOG_E's), so the write sits inside the
+     * dump bracket with the dump's own writes: those records are not buffered
+     * and cannot overwrite the unread ring entries this dump is about to send. */
+    bool haveCrash = CrashRecord_Read(&crash);
     bool bracketed = LogMessageDumpBegin();
-    bool complete = LogMessageDump(context);
+    if (haveCrash) {
+        char line[CRASH_LINE_MAX];   /* worst-case line is 146 bytes (#1190 r3) */
+        size_t n = CrashRecord_Format(line, sizeof(line), &crash);
+        if (context->interface->write(context, line, n) != n) {
+            complete = false;
+        }
+    }
+    if (complete) {
+        complete = LogMessageDump(context);
+    }
     if (!complete) {
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
     }
@@ -1442,6 +1465,16 @@ static scpi_result_t SCPI_SysLogGet(scpi_t * context) {
  * @return 
  */
 static scpi_result_t SCPI_SysLogTest(scpi_t * context) {
+#ifdef CRASH_RECORD_TEST_HOOK
+    /* #1190 test builds only (-DCRASH_RECORD_TEST_HOOK=1): SYSTem:LOG:TEST <n>
+     * forces crash-capture path n (1 overflow hook, 2 general exception, 3
+     * malloc failure) and the build then resets. Not compiled into a shipped
+     * image, and registers no new pattern. */
+    int32_t crashPath = 0;
+    if (SCPI_ParamInt32(context, &crashPath, FALSE) && crashPath != 0) {
+        CrashRecord_TestFire(crashPath);
+    }
+#endif
     // Add test messages to the log (task context)
     LOG_D("Test log message 1");
     LOG_E("Test error message");
@@ -1465,6 +1498,7 @@ static scpi_result_t SCPI_SysLogTest(scpi_t * context) {
 static scpi_result_t SCPI_SysLogClear(scpi_t * context) {
 
     LogMessageClear();
+    CrashRecord_Clear();   /* #1190: the persisted crash record is part of the log */
     context->interface->write(context, "Log cleared\n", 12);
     return SCPI_RES_OK;
 }
@@ -2647,7 +2681,8 @@ static scpi_result_t SCPI_GetBenchmarkMode(scpi_t * context) {
 // Shared streaming-buffer setup (partition + DMA pool + sample pool).  Defined
 // near SCPI_MemAutoBalance; forward-declared here for the throughput bench, the
 // WiFi finder, and SCPI_StartStreaming, which all route through it.
-static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize);
+static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize,
+                                    bool idleLayout);
 
 // #520/Qodo: PrepareStreamingBuffers() quiesces SD by forcing WRITE->NONE so
 // f_write can't be mid-DMA during the coherent-pool reset (see
@@ -2971,7 +3006,8 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context,
         uint8_t ec = (chMap != NULL && chMap->count > 0) ? chMap->count : 1;
         MemoryConfig* mcfg = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
         if (!PrepareStreamingBuffers(mcfg->samplePoolCount,
-                                     AInSampleList_ElementSize(ec))) {
+                                     AInSampleList_ElementSize(ec),
+                                     false)) {
             Streaming_SetBenchmarkMode(savedBenchmark);
             Streaming_SetTestPattern(savedPattern);
             StreamFreq_Set(pStreamCfg, savedFrequency);     // no-op here (poke is later), kept for consistency
@@ -4064,7 +4100,8 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context,
         uint8_t ec = (chMap != NULL && chMap->count > 0) ? chMap->count : 1;
         MemoryConfig* mcfg = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
         if (!PrepareStreamingBuffers(mcfg->samplePoolCount,
-                                     AInSampleList_ElementSize(ec))) {
+                                     AInSampleList_ElementSize(ec),
+                                     false)) {
             Streaming_SetBenchmarkMode(savedBenchmark);
             Streaming_SetTestPattern(savedPattern);
             RestoreSdMode(savedSdMode);
@@ -5172,12 +5209,14 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
 }
 
 /**
- * Quiesce all DMA consumers and reset the coherent pool.
- * Closes SD file (filesystem safety), waits for WiFi SPI idle.
- * USB is assumed already waited by caller.
+ * Quiesce the SD card before its DMA write buffer is replaced.
+ * Closes the SD write file (filesystem safety) and waits for SD idle.
+ * USB is assumed already waited by caller. The WINC SPI is NOT handled here:
+ * "idle" is only true at the instant it is read, so SCPI_SwapCoherentDmaBuffers
+ * checks it and swaps in one step (#1279 r3).
  * @return true if successful, false if a timeout occurred
  */
-static bool SCPI_QuiesceAndResetCoherentPool(void) {
+static bool SCPI_QuiesceSdForDmaResize(void) {
     // SD: close write file so f_write can't be mid-DMA during reset.
     // Only interrupt WRITE mode (DMA consumer). Leave READ/LIST/DELETE alone.
     {
@@ -5196,12 +5235,87 @@ static bool SCPI_QuiesceAndResetCoherentPool(void) {
             return false;
         }
     }
-    // WiFi: wait for any in-flight SPI DMA to complete.
-    if (!WDRV_WINC_SPI_WaitIdle(1000)) {
-        LOG_E("WiFi SPI idle timeout before DMA resize");
+    return true;
+}
+
+_Static_assert(SD_CARD_MANAGER_MIN_WBUFFER_SIZE + USBCDC_DMA_WBUFFER_MIN + WIFI_DMA_MIN
+               + 3u * COHERENT_POOL_ALIGNMENT <= COHERENT_POOL_DEFAULT_SIZE,
+               "the minimum DMA layout must fit the coherent pool");
+
+/* #1279 r3/r4: reset the coherent pool, carve the three DMA buffers and install
+ * ALL THREE with NO task able to run in between, and only if EVERY owner of
+ * coherent-pool memory is proven idle INSIDE that same suspended span.
+ *
+ * Why inside the span: each owner is idle only at the instant it is read.
+ * r3 re-checked the WINC SPI there and left USB outside; during the retry
+ * yield DTR rose, CDC went WAIT->PROCESS and UsbCdc_BeginWrite submitted queued
+ * bytes from the OLD USB staging region, which the reset then handed to the SD
+ * buffer (codex r4). The owners, from every CoherentPool_Alloc caller:
+ *   USB_write  UsbCdc_DmaSwapAcquire          (transfer, mid-BeginWrite, ring)
+ *   SD_write   sd_card_manager_DmaSwapAcquire (state IDLE/INIT, mode NONE,
+ *                                              no task mid-copy)
+ *   WiFi_SPI   WDRV_WINC_SPI_IdleForSwap      (busy flags, r3)
+ * Each Acquire's header comment carries its proof that nothing can START a
+ * transfer from the old region once the scheduler is suspended.
+ *
+ * NOTHING in the span may block, yield or log. The Acquires take the owners'
+ * mutexes with a ZERO wait (legal suspended) and hold them to Commit/Release,
+ * which is how the SD buffer install moved inside the span.
+ *
+ * keepQueuedOutput: an idle restore must not lose reply bytes queued on the
+ * USB ring; Acquire refuses (this loop retries and pumps the writer) while a
+ * deliverable ring is non-empty, and discards bytes that cannot be delivered
+ * (CDC not in PROCESS) at commit, atomically with the swap, so DTR rising
+ * later cannot deliver a ring the re-carve is about to reset. Refuses (false)
+ * with NOTHING changed if an owner stays busy for 1 s or the layout does not
+ * fit. */
+static bool SCPI_SwapCoherentDmaBuffers(uint32_t sdDmaSize, uint32_t usbDmaSize,
+                                        uint32_t wifiDmaSize, bool keepQueuedOutput) {
+    enum { BUSY_USB = 1u, BUSY_SD = 2u, BUSY_WINC = 4u };
+    if ((uint64_t)sdDmaSize + usbDmaSize + wifiDmaSize + 3u * COHERENT_POOL_ALIGNMENT
+            > CoherentPool_TotalSize()) {
         return false;
     }
-    CoherentPool_Reset();
+    uint32_t discarded = 0u;
+    bool swapped = false;
+    TickType_t start = xTaskGetTickCount();
+    for (;;) {
+        vTaskSuspendAll();
+        bool usbHeld = UsbCdc_DmaSwapAcquire(keepQueuedOutput, &discarded);
+        bool sdHeld  = usbHeld && sd_card_manager_DmaSwapAcquire();
+        uint32_t busy = !usbHeld ? BUSY_USB : !sdHeld ? BUSY_SD
+             : !WDRV_WINC_SPI_IdleForSwap() ? BUSY_WINC : 0u;
+        if (busy == 0u) {
+            CoherentPool_Reset();
+            uint8_t *sdDmaBuf   = CoherentPool_Alloc("SD_write", sdDmaSize);
+            uint8_t *usbDmaBuf  = CoherentPool_Alloc("USB_write", usbDmaSize);
+            uint8_t *wifiDmaBuf = CoherentPool_Alloc("WiFi_SPI", wifiDmaSize);
+            sd_card_manager_DmaSwapCommitAndRelease(sdDmaBuf, sdDmaSize);
+            UsbCdc_DmaSwapCommitAndRelease(usbDmaBuf, usbDmaSize);
+            WDRV_WINC_SPI_SetBuffer(wifiDmaBuf, wifiDmaSize);
+            swapped = true;
+        } else {
+            if (sdHeld)  sd_card_manager_DmaSwapRelease();
+            if (usbHeld) UsbCdc_DmaSwapRelease();
+        }
+        (void)xTaskResumeAll();
+        if (swapped) {
+            break;
+        }
+        if ((xTaskGetTickCount() - start) > pdMS_TO_TICKS(1000)) {
+            LOG_E("DMA buffers not resized: owner busy 0x%x for 1 s (#1279)",
+                  (unsigned)busy);
+            return false;
+        }
+        if (busy == BUSY_USB) {
+            UsbCdc_PumpWrite();   /* drain the ring / finish a transfer */
+        }
+        vTaskDelay(1);
+    }
+    if (discarded != 0u) {
+        LOG_I("idle restore: discarded %u B queued with no USB host (#1279)",
+              (unsigned)discarded);
+    }
     return true;
 }
 
@@ -6184,7 +6298,8 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
         uint8_t enabledChannels = (chMapping->count > 0) ? chMapping->count : 1;
         MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
         if (!PrepareStreamingBuffers(mc->samplePoolCount,
-                                     AInSampleList_ElementSize(enabledChannels))) {
+                                     AInSampleList_ElementSize(enabledChannels),
+                                     false)) {
             /* An SD file can still be open here -- PrepareStreamingBuffers can
              * fail BEFORE the quiesce that tears it down (its USB-DMA wait
              * times out first). Every sibling abort releases it; this one did
@@ -8807,7 +8922,10 @@ static scpi_result_t SCPI_GetMemFree(scpi_t * context) {
 // 16ch default; or the real values after Streaming_BuildChannelMapping.
 // Returns false on partition/quiesce failure (caller pushes the SCPI error).
 // NOTE: duplicates SCPI_MemAutoBalance's body for now — DRY once verified.
-static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
+// idleLayout (#1279): carve the layout the device has when NO stream is being
+// set up -- see SCPI_RestoreIdleSdBuffers. false for every streaming caller.
+static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize,
+                                    bool idleLayout) {
     uint32_t usbSize, wifiSize, sdCircSize;
     uint32_t sdDmaSize, usbDmaSize, wifiDmaSize, encSize;
 
@@ -8844,7 +8962,17 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
                        mc->usbCircularBufSize == 0 &&
                        mc->encoderBufSize == 0 &&
                        mc->samplePoolCount == 0);
-    if (isAutoMode) {
+    /* #1279: auto-balance sizes every region for the stream being set up, so
+     * it starves whatever that stream does not use -- including the SD
+     * circular and SD DMA write buffer when SD is not a consumer. The idle
+     * layout is the fixed-size branch below instead: with an all-zero
+     * MemoryConfig those are the boot SIZES (app_freertos.c's
+     * StreamingBufferPool_Init arguments, and the 64 KB SD, 16 KB USB and
+     * 32 KB WiFi DMA buffers the drivers allocate at init -- the coherent
+     * ORDER differs, the sizes do not), and with a static
+     * SYSTem:MEMory:* config it is the user's sizes, honoured as they are for
+     * a stream. */
+    if (isAutoMode && !idleLayout) {
         Streaming_ComputeAutoBuffers(&usbSize, &wifiSize, &sdCircSize,
                                      &sdDmaSize, &usbDmaSize, &wifiDmaSize, &encSize);
     } else {
@@ -8894,24 +9022,48 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
         return false;
     }
 
-    StreamingBufferPool_Partition(usbSize, wifiSize, encSize,
-                                  sdCircSize, poolCount, sampleElemSize);
-
-    uint8_t *usbBuf, *wifiBuf, *encBuf, *sdCircBuf;
-    uint32_t usbLen, wifiLen, encLen, sdCircLen;
-    StreamingBufferPool_GetUsb(&usbBuf, &usbLen);
-    StreamingBufferPool_GetWifi(&wifiBuf, &wifiLen);
-    StreamingBufferPool_GetEncoder(&encBuf, &encLen);
-    StreamingBufferPool_GetSdCircular(&sdCircBuf, &sdCircLen);
-    if (usbBuf == NULL || wifiBuf == NULL || encBuf == NULL || sdCircBuf == NULL) {
-        LOG_E("PrepareStreamingBuffers: partition failed USB=%u WiFi=%u enc=%u sd=%u",
-              (unsigned)usbLen, (unsigned)wifiLen, (unsigned)encLen, (unsigned)sdCircLen);
-        sd_card_manager_UnlockBuffer();   /* #703: release SD buffer lock on abort */
+    /* #1279: UsbCdc_SetWriteBuffer below resets its ring, discarding any reply
+     * still queued in it (the WiFi swap re-queues its ring's bytes since #1223,
+     * but only as many as fit its staging buffer and the new slice). An idle
+     * restore runs from inside an SD command, and libscpi writes each reply
+     * into the ring as it is produced and flushes only at the end of the
+     * message, so `*IDN?;:SYST:STOR:SD:GET "x"` (or the command's own echo)
+     * would lose its earlier output. SCPI_RestoreIdleSdBuffers drains both
+     * rings before calling this; this is the authoritative check, at the LAST
+     * point that can still refuse -- after every wait above, immediately
+     * before the re-carve, after which there is no clean way back.
+     *
+     * Producers, once this check passes: the OTHER transport's SCPI task is
+     * gated (SCPI_RestoreIdleSdBuffers raises the SCPICmdGate before its drain
+     * and this check, so no command can start there and none is still
+     * executing -- ScpiCmdGate_OthersIdle); the calling task writes nothing
+     * here; a live stream is excluded by the config claim; SD reply writers by
+     * the buffer lock just taken. The gate is what closes the check-then-act
+     * window across this function's waits (SD idle, the TCP
+     * in-flight wait inside wifi_tcp_server_BeginWriteBufferSwap) -- holding both
+     * wMutexes across them would block the WINC driver's own drain. The guard
+     * fails closed: an idle caller that never raised the gate refuses.
+     * wifi_serial_bridge also writes the USB ring outside any command; it runs
+     * only in the WINC bridge state, where USB is transparent and there is no
+     * TCP client (inferred from its state machine, not driven).
+     *
+     * #1279 r4: for the USB ring this check is FAIL-FAST ONLY. It reads 0 while
+     * the CDC is not in PROCESS, yet DTR rising flips it to PROCESS at any
+     * moment and the USB task then delivers the ring. The authoritative USB
+     * decision is made inside SCPI_SwapCoherentDmaBuffers' suspended span
+     * (UsbCdc_DmaSwapAcquire: refuse a deliverable non-empty ring, discard an
+     * undeliverable one atomically with the swap).
+     *
+     * Idle restores only: the streaming callers re-partition with the same
+     * reset and are left as they were (out of #1279's scope). */
+    if (idleLayout && (!ScpiCmdGate_OthersIdle() ||
+                       UsbCdc_PendingWriteBytes() != 0u ||
+                       wifi_tcp_server_PendingWriteBytes() != 0u)) {
+        LOG_I("PrepareStreamingBuffers: idle restore refused - transport "
+              "output still queued (#1279)");
+        sd_card_manager_UnlockBuffer();
         return false;
     }
-    // NOTE: buffer-pointer Set calls are deferred to the END (after the coherent
-    // DMA allocs also succeed) so a later alloc failure can't leave a partially
-    // applied configuration — all-or-nothing (Qodo #521 transactional setup).
 
     sdDmaSize &= ~(511U);
     if (sdDmaSize < 512) sdDmaSize = 512;
@@ -8930,38 +9082,43 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
         usbDmaSize = USBCDC_DMA_WBUFFER_MIN;
         wifiDmaSize = WIFI_DMA_MIN;
     }
-    if (!SCPI_QuiesceAndResetCoherentPool()) {
+    /* #1279 r3: swap the coherent DMA buffers BEFORE the re-carve, so every
+     * refusal up to and including this one leaves the device as it was. */
+    if (!SCPI_QuiesceSdForDmaResize() ||
+        !SCPI_SwapCoherentDmaBuffers(sdDmaSize, usbDmaSize, wifiDmaSize, idleLayout)) {
+        sd_card_manager_UnlockBuffer();
+        return false;
+    }
+    StreamingBufferPool_Partition(usbSize, wifiSize, encSize,
+                                  sdCircSize, poolCount, sampleElemSize);
+
+    uint8_t *usbBuf, *wifiBuf, *encBuf, *sdCircBuf;
+    uint32_t usbLen, wifiLen, encLen, sdCircLen;
+    StreamingBufferPool_GetUsb(&usbBuf, &usbLen);
+    StreamingBufferPool_GetWifi(&wifiBuf, &wifiLen);
+    StreamingBufferPool_GetEncoder(&encBuf, &encLen);
+    StreamingBufferPool_GetSdCircular(&sdCircBuf, &sdCircLen);
+    if (usbBuf == NULL || wifiBuf == NULL || encBuf == NULL || sdCircBuf == NULL) {
+        LOG_E("PrepareStreamingBuffers: partition failed USB=%u WiFi=%u enc=%u sd=%u",
+              (unsigned)usbLen, (unsigned)wifiLen, (unsigned)encLen, (unsigned)sdCircLen);
         sd_card_manager_UnlockBuffer();   /* #703: release SD buffer lock on abort */
         return false;
     }
-    // Allocate all three coherent DMA buffers; ABORT if any fails rather than
-    // continuing with a stale/unset buffer pointer (Qodo #521).  Unreachable in
-    // normal operation (sizes are clamped to fit the pool above).
-    uint8_t* sdDmaBuf  = CoherentPool_Alloc("SD_write", sdDmaSize);
-    uint8_t* usbDmaBuf = CoherentPool_Alloc("USB_write", usbDmaSize);
-    uint8_t* wifiDmaBuf = CoherentPool_Alloc("WiFi_SPI", wifiDmaSize);
-    if (sdDmaBuf == NULL || usbDmaBuf == NULL || wifiDmaBuf == NULL) {
-        LOG_E("PrepareStreamingBuffers: coherent alloc failed SD=%u USB=%u WIFI=%u",
-              (unsigned)sdDmaSize, (unsigned)usbDmaSize, (unsigned)wifiDmaSize);
-        sd_card_manager_UnlockBuffer();   /* #703: release SD buffer lock on abort */
-        return false;
-    }
-    // All allocations succeeded — now apply every buffer pointer together
-    // (circular pool + coherent DMA) so the config is all-or-nothing.
+    // NOTE: the coherent DMA buffers were swapped above (all-or-nothing, #1279
+    // r3); the circular-pool pointers are applied together here, after the
+    // partition is known good.
     //
     // #1223: the WiFi ring's queued output (this command's own echo, when it
     // came in over TCP) is staged out of the pool BEFORE the USB swap, which
     // can hand USB the bytes it sits in, and the WiFi write lock stays held
     // until the WiFi swap re-queues it. No return may come between the two.
-    // No abort path needs undoing: every one is above, before anything moved.
+    // No abort path needs undoing: every one is above, before anything in the
+    // rings moved.
     wifi_tcp_server_BeginWriteBufferSwap();
     UsbCdc_SetWriteBuffer(usbBuf, usbLen);
     wifi_tcp_server_SetWriteBuffer(wifiBuf, wifiLen);
     Streaming_SetEncoderBuffer(encBuf, encLen);
     sd_card_manager_SetCircularBuffer(sdCircBuf, sdCircLen);
-    sd_card_manager_SetWriteBuffer(sdDmaBuf, sdDmaSize);
-    UsbCdc_SetDmaWriteBuffer(usbDmaBuf, usbDmaSize);
-    WDRV_WINC_SPI_SetBuffer(wifiDmaBuf, wifiDmaSize);
     /* #703: swap complete — release the SD buffer lock. Any SD op that armed
      * during the swap was blocked at its read_operation take and now proceeds
      * against the new buffer size. */
@@ -9020,6 +9177,163 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
     return true;
 }
 
+/* #1279: are the SD buffers smaller than the idle layout gives them?
+ *
+ * Pure, on purpose: tests/host splices it out of this file and drives it with
+ * the sizes the real Streaming_ComputeAutoBuffers produces for each interface.
+ *
+ * TWO buffers, because both collapse when a stream does not use SD and either
+ * one alone throttles SD:BENCHmark. The SD circular falls to
+ * STREAMING_SD_CIRCULAR_MIN (4 KB), and the SD DMA write buffer to
+ * SD_CARD_MANAGER_MIN_WBUFFER_SIZE (512 B) -- and the drain extracts at most
+ * one write buffer per card write (sd_card_manager.c, the #738 `wbufCap`
+ * bound), so after a WiFi or USB stream every card write was ONE sector.
+ *
+ * `sdCircConfigured` is MemoryConfig.sdCircularBufSize: 0 in auto mode, else
+ * the user's SYSTem:MEMory:SD:BUFfer, which is then the idle size -- a user who
+ * asked for 4096 gets 4096, and is not re-partitioned for having asked. The
+ * DMA bound is the same in both modes because PrepareStreamingBuffers' fixed
+ * branch always installs SD_CARD_MANAGER_CONF_WBUFFER_SIZE, and every
+ * auto-balanced layout with SD as a consumer installs more than that.
+ *
+ * `<`, never `!=`: a buffer LARGER than idle (an SD session's partition) is
+ * not a defect, and re-carving it would only cost time. */
+static bool SdIdleRestoreDue(uint32_t sdCircNow, uint32_t sdWriteBufNow,
+                             uint32_t sdCircConfigured) {
+    uint32_t sdCircIdle = (sdCircConfigured != 0u)
+            ? sdCircConfigured : SD_CARD_MANAGER_DEFAULT_CIRCULAR_SIZE;
+    return (sdCircNow < sdCircIdle) ||
+           (sdWriteBufNow < SD_CARD_MANAGER_CONF_WBUFFER_SIZE);
+}
+
+/* #1279: give an SD operation the idle-size SD buffers before it arms.
+ *
+ * Auto-balance shrinks the SD buffers for any stream SD does not consume, and
+ * nothing grew them back when that stream stopped, so SD:BENCHmark measured
+ * the leftover partition (~4.5x slow) until the next SD stream or a reboot.
+ *
+ * WHY HERE AND NOT AT STREAM STOP. A stream ends on at least six paths
+ * (SYSTem:STReam:STOP, START 0, the #397 transport-dead auto-stop in the
+ * streaming task, the THRoughput and WiFi-finder teardowns, a failed START),
+ * one of them on the streaming task, which cannot run this: the re-partition
+ * waits for that very task to go quiescent. Restoring at stop would also take
+ * the config claim at the end of EVERY session, so a START sent right after a
+ * STOP on the other transport would be refused -200 by the #977 interlock,
+ * and it would re-carve the pool under an SD session's still-draining
+ * teardown. Asking at the point of use asks about the STATE, which no stop path
+ * can skip, and costs nothing unless the buffers are actually small.
+ *
+ * Under the config-change claim, like SYSTem:MEMory:AUTO -- this is that
+ * re-partition with the idle layout -- so it cannot overlap a session start or
+ * another SYSTem:MEMory:* change on the other transport, and it refuses while a
+ * stream is live. The predicate is asked again under the claim so a restore
+ * that the other transport just finished is not repeated.
+ *
+ * Also refuses while the SD manager has any mode armed: the re-partition's
+ * coherent-pool quiesce forces a WRITE to NONE and waits for the manager to
+ * go idle, which would cancel an armed write or time out behind a FORMAT.
+ *
+ * SEND QUEUED OUTPUT FIRST. The re-partition resets the USB and TCP output
+ * rings (UsbCdc_SetWriteBuffer, wifi_tcp_server_SetWriteBuffer). libscpi
+ * writes every reply into the ring as it is produced and flushes only at the
+ * end of the message, and neither transport task drains its ring while it is
+ * inside a SCPI callback, so at this point the ring can hold an earlier reply
+ * of the same message (`*IDN?;:SYST:STOR:SD:BENCH 1024,0`), this command's own
+ * echo (on by default for both consoles), or a reply of the other transport.
+ * They are pumped out here, bounded, before the re-partition; if any are still
+ * queued at the deadline (a host that is not reading, a stuck WINC) the
+ * restore is refused instead, and PrepareStreamingBuffers re-checks
+ * immediately before its re-carve.
+ *
+ * COMMAND GATE (audit r2). The checks above are check-then-act: the waits
+ * before the reset yield, and the other transport's task could queue a reply
+ * meanwhile. So the restore raises SCPICmdGate for its own transport first; the
+ * other transport defers (not drops) new commands until it is lowered, and a
+ * command already executing is waited out, bounded by the same 500 ms.
+ *
+ * The USB ring is pumped from either task (UsbCdc_PumpWrite is documented safe
+ * cross-task). The TCP ring is pumped only off the USB task: on WifiTask --
+ * the TCP command's own task -- nothing else would send it; on the USB task,
+ * WifiTask's loop sends it while this waits, and pumping it here would make
+ * the USB task block in the WINC driver's send().
+ *
+ * Returns true when the buffers are at idle size (already, or now), false when
+ * they are small and could not be restored. SD:BENCHmark refuses on false,
+ * because measuring the small buffers is the defect; SD:GET proceeds, because
+ * a read through them is correct, only slower, and that includes a GET during
+ * a live non-SD stream, which must keep working. */
+bool SCPI_RestoreIdleSdBuffers(void) {
+    MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
+    if (!SdIdleRestoreDue(StreamingBufferPool_SdCircularSize(),
+                          sd_card_manager_GetWriteBufferSize(),
+                          mc->sdCircularBufSize)) {
+        return true;
+    }
+    if (Streaming_BeginConfigChange() != STREAM_CFG_CLAIM_OK) {
+        return false;
+    }
+    /* Audit r2: raise the OTHER transport's command gate BEFORE the emptiness
+     * check, so a reply cannot be queued between the check and the ring reset
+     * (the waits in between yield). The other transport defers new commands
+     * (processed after Lower, not dropped) and a command already executing is
+     * waited out below. NO `return` between Raise and the final return: the
+     * gate is lowered on every path. It is lowered AFTER the claim is released
+     * so a deferred STR:START cannot meet a still-held claim (false -200). */
+    ScpiCmdGateTransport self = UsbCdc_CallerIsUsbTask() ? SCPI_CMD_GATE_USB
+                                                         : SCPI_CMD_GATE_TCP;
+    bool raised = ScpiCmdGate_Raise(self);
+    bool ok = raised;
+    if (ok && SdIdleRestoreDue(StreamingBufferPool_SdCircularSize(),
+                               sd_card_manager_GetWriteBufferSize(),
+                               mc->sdCircularBufSize)) {
+        ok = !sd_card_manager_IsBusy();
+        TickType_t drainStart = xTaskGetTickCount();
+        while (ok) {
+            /* Read FIRST: once true, no other-transport command can start, so
+             * the pending counts read next include all of its output. */
+            bool othersIdle = ScpiCmdGate_OthersIdle();
+            bool usbQueued = (UsbCdc_PendingWriteBytes() != 0u);
+            bool wifiQueued = (wifi_tcp_server_PendingWriteBytes() != 0u);
+            if (othersIdle && !usbQueued && !wifiQueued) {
+                break;
+            }
+            if ((xTaskGetTickCount() - drainStart) > pdMS_TO_TICKS(500)) {
+                ok = false;
+                break;
+            }
+            if (usbQueued) {
+                UsbCdc_PumpWrite();
+            }
+            if (wifiQueued && !UsbCdc_CallerIsUsbTask()) {
+                (void)wifi_tcp_server_TransmitBufferedData();
+            }
+            vTaskDelay(1);
+        }
+        /* The command waited out above may have armed an SD op. */
+        ok = ok && !sd_card_manager_IsBusy();
+        ok = ok &&
+             PrepareStreamingBuffers(mc->samplePoolCount
+                                         ? mc->samplePoolCount
+                                         : DEFAULT_AIN_SAMPLE_COUNT,
+                                     0, true);
+        /* A true return from the re-partition means the allocations and
+         * sample slots succeeded, NOT that the SD buffers got their idle
+         * size: an oversubscribed static SYSTem:MEMory:* config (e.g. SD, USB
+         * and WIFI buffers all 65536) makes StreamingBufferPool_Partition log
+         * and fall back to its minimums (StreamingBufferPool.c:236-242),
+         * including a 4 KB SD circular. Ask the predicate again, so that is
+         * reported as "could not restore" and SD:BENCHmark refuses. */
+        ok = ok && !SdIdleRestoreDue(StreamingBufferPool_SdCircularSize(),
+                                     sd_card_manager_GetWriteBufferSize(),
+                                     mc->sdCircularBufSize);
+    }
+    Streaming_EndConfigChange();
+    if (raised) {
+        ScpiCmdGate_Lower(self);
+    }
+    return ok;
+}
+
 static scpi_result_t SCPI_MemAutoBalanceClaimed(scpi_t * context) {
     /* #857: the stream-state rejection lives in this command's
      * SCPI_MemRunClaimed wrapper below, not here. */
@@ -9031,7 +9345,7 @@ static scpi_result_t SCPI_MemAutoBalanceClaimed(scpi_t * context) {
     // StartStreamData stays in auto mode.  poolCount/elemSize 0/0 = generic
     // 16ch default (actual channel count isn't known until StartStreamData).
     memset(mc, 0, sizeof(MemoryConfig));
-    if (!PrepareStreamingBuffers(0, 0)) {
+    if (!PrepareStreamingBuffers(0, 0, false)) {
         SCPI_ExecutionError(context, "SYST:MEM:AUTO: buffer partition failed");
         return SCPI_RES_ERR;
     }
@@ -9612,7 +9926,10 @@ static uint32_t SCPI_FirmwareImageCrc32(void)
 
 void SCPI_PrecomputeFirmwareImageCrc32(void)
 {
-    (void)SCPI_FirmwareImageCrc32();
+    /* #1190 r3: the same fingerprint identifies the image a crash record was
+     * written by, so a record that outlives a firmware update reads as
+     * "previous". Published here, before the scheduler starts. */
+    CrashRecord_SetImageId(SCPI_FirmwareImageCrc32());
 }
 
 static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
@@ -10834,6 +11151,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:MEMory:STACk?", .callback = SCPI_GetStackStats,},
     //
     {.pattern = "SYSTem:STORage:SD:FILE", .callback = SCPI_StorageSDLoggingSet,},
+    {.pattern = "SYSTem:STORage:SD:FILE?", .callback = SCPI_StorageSDLoggingGet,},   /* #1176 */
     {.pattern = "SYSTem:STORage:SD:GET", .callback = SCPI_StorageSDGetData},
     {.pattern = "SYSTem:STORage:SD:CRC", .callback = SCPI_StorageSDCrcStart,},
     {.pattern = "SYSTem:STORage:SD:CRC?", .callback = SCPI_StorageSDCrcGet,},

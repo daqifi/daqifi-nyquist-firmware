@@ -1000,6 +1000,7 @@
           <itemPath>../src/services/SCPI/SCPIInterface.c</itemPath>
           <itemPath>../src/services/SCPI/SCPILAN.c</itemPath>
           <itemPath>../src/services/SCPI/SCPIStorageSD.c</itemPath>
+          <itemPath>../src/services/SCPI/SCPICmdGate.c</itemPath>
           <itemPath>../src/services/SCPI/SCPIDAC.c</itemPath>
         </logicalFolder>
         <logicalFolder name="SDcard" displayName="sd_card_services" projectFiles="true">

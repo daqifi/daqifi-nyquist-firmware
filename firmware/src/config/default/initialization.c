@@ -244,6 +244,12 @@ static const DRV_I2C_INIT drvI2C0InitData =
 static const WDRV_WINC_SPI_CFG wdrvWincSpiInitData =
 {
     .drvIndex           = DRV_SPI_INDEX_0,
+    /* #1278: Do Not Let the code generator drop this. Without it the rate is
+     * 0, SPI4_TransferSetup refuses the WINC's setup before writing SPI4BRG or
+     * SPI4CON, and every WINC transfer runs with the previous SPI4 client's
+     * clock AND mode: 400 kHz after an SD detect poll or init step, CKE=0
+     * after a SpiBusHealth probe. WDRV_WINC_SPIOpen now refuses a 0. */
+    .baudRateInHz       = DRV_WINC_SPI_SPEED_HZ_IDX0,
     .chipSelect         = SYS_PORT_PIN_RK4  //Do Not Let the code generator change this
 };
 

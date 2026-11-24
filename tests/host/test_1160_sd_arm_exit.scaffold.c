@@ -158,6 +158,8 @@ STUB void SCPI_UnpublishStartInterface(void *s, int a, int b, int c, int d) {
     (void)s; (void)a; (void)b; (void)c; (void)d;
 }
 STUB scpi_result_t SCPI_StartFailedAfterStop(void) { return SCPI_RES_ERR; }
+/* #1279: SD:BENCH and SD:GET restore the idle SD buffers before arming. */
+STUB bool SCPI_RestoreIdleSdBuffers(void) { return true; }
 
 /* ======================= REAL TEXT, extracted verbatim ===================== */
 /*@@FUNCS@@*/
