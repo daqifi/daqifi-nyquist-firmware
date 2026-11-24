@@ -125,7 +125,7 @@ static size_t generateJsonHeader(char *out, size_t buffSize) {
     uint32_t tickRate = TimerApi_FrequencyGet(boardConfig->StreamingConfig.TSTimerIndex);
 
     // #1179: unit of the analog values, so a reader need not infer it.
-    StreamingRuntimeConfig *pUnitsCfg = BoardRunTimeConfig_Get(
+    const StreamingRuntimeConfig *pUnitsCfg = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
     const char *units = sample_units_name(
             (pUnitsCfg != NULL) ? pUnitsCfg->RawOutputMode : false,
