@@ -574,6 +574,37 @@ static void lDRV_SDSPI_IoAbort(DRV_SDSPI_OBJ* dObj, uint8_t cause)
     dObj->taskBufferIOState = DRV_SDSPI_TASK_READ_WRITE_ABORT;
 }
 
+/* #1235: the resync's CMD24 block is meant to be rejected when CRC is on.
+ * Accepted means the card had captured part of a block and the rest hashed to
+ * the 0xFFFF CRC slot: it PROGRAMMED that prefix plus filler as the sector. A
+ * re-send of the request in hand rewrites it, but this resync may be for a
+ * later request after the one in doubt failed, so say which sector. With CRC
+ * off the card programs the resync's block whatever state it was in, by design
+ * (see above), and the resolved line already carries its token; that is not
+ * the corruption reported here. A CMD25 exists only with CRC off.
+ *
+ * Called at the two places resyncToken is captured, not from
+ * lDRV_SDSPI_WriteResyncEnd: the card programmed the sector when it answered,
+ * whether or not the rest of the resync (the flush's remaining reads, the busy
+ * waits, CMD12) then finishes, so every exit of the resync keeps the evidence.
+ * Each capture site runs only while resyncToken is still 0xFF, which one resync
+ * leaves once, so an accepted block is counted once. */
+static void lDRV_SDSPI_WriteResyncTokenCaptured(DRV_SDSPI_OBJ* dObj, uint8_t token)
+{
+    dObj->resyncToken = token;
+    if ((dObj->writeInDoubt == DRV_SDSPI_WRITE_IN_DOUBT_SINGLE) &&
+            (dObj->writeInDoubtCrc == true) &&
+            ((token & DRV_SDSPI_WRITE_RESPONSE_TOKEN_MASK) == DRV_SDSPI_DATA_ACCEPTED))
+    {
+        if (dObj->resyncFillerCount < UINT8_MAX)
+        {
+            dObj->resyncFillerCount++;
+        }
+        LOG_E("SD: resync block ACCEPTED: filler programmed at blk=%lu (#1235)",
+                (unsigned long)dObj->writeInDoubtBlock);
+    }
+}
+
 static void lDRV_SDSPI_WriteResyncEnd(DRV_SDSPI_OBJ* dObj, bool resolved)
 {
     (void) DRV_SDSPI_CmdResponseTimerStop(dObj);
@@ -589,26 +620,6 @@ static void lDRV_SDSPI_WriteResyncEnd(DRV_SDSPI_OBJ* dObj, bool resolved)
          * after a fault should be visible in SYST:LOG?, not just the first. */
         LOG_E("SD: write in doubt resynced (type=%u token=0x%02X)",
                 (unsigned)dObj->writeInDoubt, (unsigned)dObj->resyncToken);
-        /* #1235: with CRC on, the resync's CMD24 block is meant to be
-         * rejected. Accepted means the card had captured part of a block and
-         * the rest hashed to the 0xFFFF CRC slot: it PROGRAMMED that prefix
-         * plus filler as the sector. A re-send of the request in hand rewrites
-         * it, but this resync may be for a later request after the one in
-         * doubt failed, so say which sector. With CRC off the card programs
-         * the resync's block whatever state it was in, by design (see above),
-         * and the line above already carries its token; that is not the
-         * corruption reported here. A CMD25 exists only with CRC off. */
-        if ((dObj->writeInDoubt == DRV_SDSPI_WRITE_IN_DOUBT_SINGLE) &&
-                (dObj->writeInDoubtCrc == true) &&
-                ((dObj->resyncToken & DRV_SDSPI_WRITE_RESPONSE_TOKEN_MASK) == DRV_SDSPI_DATA_ACCEPTED))
-        {
-            if (dObj->resyncFillerCount < UINT8_MAX)
-            {
-                dObj->resyncFillerCount++;
-            }
-            LOG_E("SD: resync block ACCEPTED: filler programmed at blk=%lu (#1235)",
-                    (unsigned long)dObj->writeInDoubtBlock);
-        }
         dObj->writeInDoubt = DRV_SDSPI_WRITE_IN_DOUBT_NONE;
         (void) DRV_SDSPI_SPIExclusiveAccess(dObj, false);
         dObj->cmdState = DRV_SDSPI_CMD_FRAME_PACKET;
@@ -703,7 +714,7 @@ static void lDRV_SDSPI_WriteResyncTasks(DRV_SDSPI_OBJ* dObj)
                 {
                     if (dObj->pCmdResp[i] != 0xFFU)
                     {
-                        dObj->resyncToken = dObj->pCmdResp[i];
+                        lDRV_SDSPI_WriteResyncTokenCaptured(dObj, dObj->pCmdResp[i]);
                         break;
                     }
                 }
@@ -738,7 +749,7 @@ static void lDRV_SDSPI_WriteResyncTasks(DRV_SDSPI_OBJ* dObj)
             if ((dObj->resyncStage == DRV_SDSPI_RESYNC_STAGE_AFTER_BLOCK) &&
                     (dObj->resyncToken == 0xFFU))
             {
-                dObj->resyncToken = rxByte;
+                lDRV_SDSPI_WriteResyncTokenCaptured(dObj, rxByte);
             }
 
             if (dObj->resyncStage == DRV_SDSPI_RESYNC_STAGE_CMD12_R1)
