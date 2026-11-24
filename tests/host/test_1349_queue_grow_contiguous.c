@@ -78,6 +78,14 @@ TEST(one_alignment_step_less_refuses)
                 != QueueGrowFits(n, SLOT, free_total, block_of(n) - 8u + 4u));
 }
 
+/* 3b. The ticket's measured state: 1101 slots, HeapFree 6536. A largest block
+ *     of 4488 (the old queue's hole) refuses; 4496 grants. */
+TEST(the_measured_heap_state_refuses_at_4488_and_grants_at_4496)
+{
+    ASSERT_TRUE(!QueueGrowFits(1101u, SLOT, 6536u, 4488u));
+    ASSERT_TRUE(QueueGrowFits(1101u, SLOT, 6536u, 4496u));
+}
+
 /* 4. The existing total-heap check stays: a big contiguous block does not
  *    waive the 1024-byte total margin. */
 TEST(the_total_heap_margin_is_kept)
@@ -103,6 +111,7 @@ int main(void)
     RUN(the_block_size_matches_the_measured_queue);
     RUN(a_largest_block_exactly_the_needed_size_grants);
     RUN(one_alignment_step_less_refuses);
+    RUN(the_measured_heap_state_refuses_at_4488_and_grants_at_4496);
     RUN(the_total_heap_margin_is_kept);
     RUN(the_slot_size_is_a_parameter);
     return TEST_SUMMARY();

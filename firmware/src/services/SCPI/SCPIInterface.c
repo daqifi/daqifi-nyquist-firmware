@@ -8906,7 +8906,8 @@ static scpi_result_t SCPI_GetMemFree(scpi_t * context) {
     /* #828: the partition and the queue can disagree. StreamingBufferPool_Partition
      * carves as many slots as the pool fits (`samplePoolCount == 0` means maximize),
      * but AInSampleList_InitializeExternal refuses to GROW the FreeRTOS sample queue
-     * unless freeHeap >= needed + 1024 -- and on a clamp it keeps the old queue size.
+     * unless freeHeap >= needed + 1024 AND the largest free heap block holds the new
+     * queue's whole block (#1349) -- and on a clamp it keeps the old queue size.
      * SamplePoolCount above is the USABLE depth; without the two fields below the
      * shortfall was announced only in a LOG_E line, so a host saw a depth that
      * silently disagreed with the partition. Clamped > 0 is NOT by itself a fault

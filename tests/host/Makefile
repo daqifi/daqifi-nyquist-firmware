@@ -729,14 +729,22 @@ $(GROW1349_BIN): test_1349_queue_grow_contiguous.c test_framework.h \
 	  || { echo "ERROR: could not splice QueueGrowFits() out of"; \
 	       echo "       $(GROW1349_SRC): got $$lines line(s) ending in '$$last'."; \
 	       rm -f $(GROW1349_GEN); exit 1; }
-	@# Call-site pin, comment-stripped via the compiler: the grow branch must
-	@# read the largest free block, gate on QueueGrowFits, and only afterwards
-	@# vQueueDelete the old queue.
-	@flat=`$(CC) -fpreprocessed -E $(GROW1349_SRC) 2>/dev/null | tr -d '\r' | tr '\n' ' '`; \
-	 echo "$$flat" | grep -qE 'vPortGetHeapStats[^;]*;[[:space:]]*if \( *! *QueueGrowFits *\(' \
-	  && echo "$$flat" | grep -qE 'if \( *! *QueueGrowFits *\(.*vQueueDelete *\( *analogInputsQueue *\)' \
-	  || { echo "FAIL: #1349 -- AInSample.c's queue grow no longer decides on the"; \
-	       echo "      largest free block (QueueGrowFits) before vQueueDelete."; \
+	@# Call-site pin, comment-stripped via the compiler. Scoped to the body of
+	@# AInSampleList_InitializeExternal (another function also deletes a queue),
+	@# whitespace and line breaks tolerated. In that body: the ARGUMENTS of
+	@# QueueGrowFits (3rd freeHeap, 4th the largest free block), a
+	@# vPortGetHeapStats(&heapStats) BEFORE the guard, and the ONE
+	@# vQueueDelete(analogInputsQueue) AFTER it.
+	@body=`$(CC) -fpreprocessed -E $(GROW1349_SRC) 2>/dev/null | tr -d '\r' \
+	   | sed -n '/^void AInSampleList_InitializeExternal(/,/^}/p' | tr '\n' ' ' \
+	   | tr -s '[:space:]' ' '`; \
+	 deletes=`echo "$$body" | grep -o 'vQueueDelete' | wc -l | tr -d ' '`; \
+	 test "$$deletes" = 1 \
+	  && echo "$$body" | grep -qE 'vPortGetHeapStats *\( *& *heapStats *\) *;.*if *\( *! *QueueGrowFits *\( *maxSize *, *sizeof *\( *AInPublicSampleList_t *\* *\) *, *freeHeap *, *heapStats\.xSizeOfLargestFreeBlockInBytes *\) *\) *\{.*vQueueDelete *\( *analogInputsQueue *\)' \
+	  || { echo "FAIL: #1349 -- AInSampleList_InitializeExternal no longer decides on"; \
+	       echo "      QueueGrowFits(maxSize, .., freeHeap, heapStats.xSizeOfLargestFreeBlockInBytes)"; \
+	       echo "      after vPortGetHeapStats(&heapStats) and before its single vQueueDelete"; \
+	       echo "      (vQueueDelete count in the function: $$deletes)."; \
 	       rm -f $(GROW1349_GEN); exit 1; }
 	$(CC) $(CFLAGS) -o $(GROW1349_BIN) test_1349_queue_grow_contiguous.c
 

@@ -398,8 +398,9 @@ void AInSampleList_InitializeExternal(void* poolMem, int16_t* freeMem,
                  * The static is written under poolMutex, taken above before
                  * this block, so it needs no critical section of its own. */
                 if (ClampReportDue(needed, true, &sLastClampNeeded)) {
-                    LOG_E("Sample queue resize skipped: need %u, heap free %u",
-                          (unsigned)needed, (unsigned)freeHeap);
+                    LOG_E("Sample queue resize skipped: need %u, heap free %u, largest %u",
+                          (unsigned)needed, (unsigned)freeHeap,
+                          (unsigned)heapStats.xSizeOfLargestFreeBlockInBytes);
                 }
                 maxSize = queueSize;  // Keep old queue, clamp pool to fit
             } else {
