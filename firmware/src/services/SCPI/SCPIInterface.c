@@ -3416,7 +3416,7 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
 // Reported rate = highest rate whose pool stayed below full, minus a margin
 // (FIND_BACKOFF).  Structure mirrors SCPI_RunThroughputBench.
 #define FIND_DEFAULT_START_HZ   1000u   // conservative baseline
-#define FIND_DEFAULT_MAX_HZ     20000u  // backstop; further clamped to the ADC cap
+#define FIND_DEFAULT_MAX_HZ     20000u  // backstop; not clamped to the ADC caps
 /* #939: highest startHz/maxHz accepted. It is the largest rate an existing
  * caller sends (test_891), NOT a measured hang boundary. FINd? 40000,40000 hung
  * the board with and without a TCP client; 25000,25000 without one answered
