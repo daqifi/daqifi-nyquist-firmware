@@ -4,16 +4,19 @@
  * WHAT IS UNDER TEST
  *
  * A PB streaming message carries a bare packed analog_in_data array whose
- * length is the number of channels that produced a value THIS tick, not the
- * number the client enabled. When a Type-1 channel misses its ARDY (or a scan
- * freezes) the array is short and nothing on the wire says which channel is
- * missing, so a client that maps values to channels by position misassigns
- * every value after the gap.
+ * length is the number of channels that had a VALID sample THIS tick, not the
+ * number the client enabled. When a Type-1 channel misses its ARDY (or a
+ * shared-scan channel's slot is not yet valid) the array is short and nothing
+ * on the wire says which channel is missing, so a client that maps values to
+ * channels by position misassigns every value after the gap.
  *
  * The fix adds `analog_in_data_mask` (tag 73): bit j = the j-th ENABLED
- * channel is present in analog_in_data. It is emitted ONLY for a short frame;
- * a full frame omits it, so the steady-state wire is unchanged and a client
- * that does not know tag 73 skips it as an unknown field.
+ * channel is present in analog_in_data. It is emitted ONLY when
+ * analog_in_data is short; a message with a full analog_in_data omits it, so
+ * that wire is unchanged and a client that does not know tag 73 skips it as an
+ * unknown field. "Absent means complete" holds only for a message that carries
+ * a non-empty analog_in_data: a message with no analog_in_data at all (the
+ * standalone DIO message) carries no tag 73 either.
  *
  * HOW IT IS TESTED
  *
@@ -144,7 +147,7 @@ static void client_remap(const DaqifiOutMessage *m, size_t enabled,
 
 /* ---- tests ------------------------------------------------------------- */
 
-/* The steady state must not change: no tag 73, and the bytes are exactly the
+/* A full frame must not change: no tag 73, and the bytes are exactly the
  * pre-change encoding of {timestamp, analog_in_data}. Hand-built expected. */
 TEST(full_frame_omits_tag_73_and_wire_is_unchanged)
 {
@@ -264,6 +267,51 @@ TEST(every_single_channel_miss_at_every_width_remaps_exactly)
     }
 }
 
+/* Several channels missing at once, including the first: 8 enabled, only
+ * channels 1, 3 and 7 present (mask 0x8A). */
+TEST(several_missing_channels_including_the_first_are_tagged)
+{
+    const int32_t v[3] = { 21, 23, 27 };           /* channels 1, 3, 7 */
+    uint8_t buf[64];
+    size_t n = encode(buf, sizeof buf, 3, v, 3, 0x8Au, 8);
+    ASSERT_TRUE(n > 0);
+    DaqifiOutMessage m;
+    ASSERT_TRUE(decode(buf, n, &m));
+    ASSERT_EQ((long long)m.analog_in_data_mask, 0x8A);
+    ASSERT_EQ((long long)popcount32(m.analog_in_data_mask),
+              (long long)m.analog_in_data_count);
+    int32_t val[8] = {0};
+    bool have[8] = {false};
+    client_remap(&m, 8, val, have);
+    ASSERT_FALSE(have[0]);
+    ASSERT_TRUE(have[1]);  ASSERT_EQ(val[1], 21);
+    ASSERT_TRUE(have[3]);  ASSERT_EQ(val[3], 23);
+    ASSERT_TRUE(have[7]);  ASSERT_EQ(val[7], 27);
+    ASSERT_FALSE(have[2]); ASSERT_FALSE(have[4]);
+}
+
+/* The standalone DIO message: no analog values, nothing enabled counted. It
+ * must carry no analog_in_data and no tag 73 (so "absent = complete" is NOT a
+ * statement about this message). */
+TEST(dio_only_message_carries_no_analog_data_and_no_tag_73)
+{
+    const uint8_t dio[2] = { 0x03, 0x00 };
+    uint8_t buf[64];
+    pb_ostream_t s = pb_ostream_from_buffer(buf, sizeof buf);
+    ASSERT_TRUE(encode_streaming_fields(&s, 9, NULL, 0, 0, 0,
+                                        dio, sizeof dio, NULL, 0));
+    WireField f;
+    ASSERT_TRUE(wire_find(buf, s.bytes_written,
+                          DaqifiOutMessage_analog_in_data_mask_tag, &f));
+    ASSERT_FALSE(f.present);
+    ASSERT_TRUE(wire_find(buf, s.bytes_written,
+                          DaqifiOutMessage_analog_in_data_tag, &f));
+    ASSERT_FALSE(f.present);
+    ASSERT_TRUE(wire_find(buf, s.bytes_written,
+                          DaqifiOutMessage_digital_data_tag, &f));
+    ASSERT_TRUE(f.present);
+}
+
 /* The encoder checks room against STREAMING_MSG_MAX_SIZE before it pops a
  * sample, so the worst short frame (16 enabled, 15 present, maximal varints,
  * DIO data and direction attached) plus the length prefix must fit. */
@@ -295,6 +343,8 @@ int main(void)
     RUN(a_client_can_rebuild_the_channel_mapping_from_the_mask);
     RUN(missing_last_channel_is_tagged_too);
     RUN(every_single_channel_miss_at_every_width_remaps_exactly);
+    RUN(several_missing_channels_including_the_first_are_tagged);
+    RUN(dio_only_message_carries_no_analog_data_and_no_tag_73);
     RUN(worst_case_short_frame_fits_streaming_msg_max_size);
     return TEST_SUMMARY();
 }

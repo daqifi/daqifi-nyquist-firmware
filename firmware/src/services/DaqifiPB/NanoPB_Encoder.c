@@ -1289,11 +1289,13 @@ void int2PBByteArray(const size_t integer,
  *
  * WHY THIS EXISTS:
  * ----------------
- * DaqifiOutMessage has 65 fields, but streaming only uses 4 of them
- * (timestamp, analog data, digital data, digital port direction).
- * The standard nanopb pb_encode_delimited() must iterate ALL 65 field
- * descriptors twice (sizing pass + encoding pass) even when only 4 have
- * data. This took 248us per encode on PIC32MZ@200MHz.
+ * DaqifiOutMessage has dozens of fields (see DaqifiOutMessage.proto), but
+ * streaming only uses 5 of them (timestamp, analog data, the analog
+ * valid-channel mask #62, digital data, digital port direction).
+ * The standard nanopb pb_encode_delimited() must iterate ALL the field
+ * descriptors twice (sizing pass + encoding pass) even when only a few have
+ * data. This took 248us per encode on PIC32MZ@200MHz (measured when the
+ * message had 65 fields).
  *
  * This fast encoder writes protobuf wire-format bytes directly for just
  * the streaming fields, reducing encode time to ~10-20us (~15x speedup).
@@ -1301,8 +1303,8 @@ void int2PBByteArray(const size_t integer,
  * WHY NOT A SEPARATE PROTO MESSAGE:
  * ---------------------------------
  * An alternative would be defining a small `DaqifiStreamMessage` with
- * only the 4 streaming fields. nanopb would iterate 4 descriptors instead
- * of 65, taking ~30-50us. However:
+ * only the streaming fields. nanopb would iterate a handful of descriptors
+ * instead of all of them, taking ~30-50us. However:
  *   - Still requires zero-initializing and populating a struct (~100 bytes)
  *   - Still has per-field function pointer dispatch overhead
  *   - Adds a second message type for clients to handle
@@ -1322,6 +1324,8 @@ void int2PBByteArray(const size_t integer,
  *     [zigzag varint] [zigzag varint]... <- packed sint32 channel values
  *   [0x2A] [varint: len] [bytes]       <- field 5: digital_data (optional)
  *   [0xAA 0x02] [varint: len] [bytes]  <- field 37: digital_port_dir (optional)
+ *   [0xC8 0x04] [varint: mask]         <- field 73: analog_in_data_mask (#62),
+ *                                         ONLY on a short analog_in_data
  *
  * Fields use the same tag numbers as DaqifiOutMessage, so any client
  * decoding DaqifiOutMessage will correctly parse these messages. Fields
@@ -1338,8 +1342,8 @@ void int2PBByteArray(const size_t integer,
  *   - PB_OSTREAM_SIZING  : null stream that counts bytes without writing
  *
  * The two-pass pattern (size then encode) matches how nanopb implements
- * pb_encode_delimited() internally, but only touches 2-4 fields instead
- * of 65.
+ * pb_encode_delimited() internally, but only touches the 2-5 streaming
+ * fields instead of all of them.
  *
  * WHEN TO MODIFY THIS CODE:
  * -------------------------
@@ -1435,12 +1439,16 @@ static bool encode_streaming_fields(pb_ostream_t *stream,
     }
 
     /* Field 73: analog_in_data_mask (uint32, varint) -- #62.
-     * Emitted ONLY for a short frame (ARDY miss / scan freeze left a channel
-     * out of analog_in_data), so a client can tell WHICH channels are present
-     * instead of misassigning values. A full frame omits it: the steady-state
-     * wire is byte-for-byte what it was before this field existed, and a
-     * client that has never heard of tag 73 skips it as an unknown field. */
-    if (ainCount > 0 && ainCount != ainEnabledCount && ainValidMask != 0) {
+     * Emitted ONLY when analog_in_data is short (a channel had no valid
+     * sample this tick, e.g. a T1 ARDY miss), so a client can tell WHICH
+     * channels are present instead of misassigning values. A message with a
+     * full analog_in_data omits it, so that wire is byte-for-byte what it was
+     * before this field existed, and a client that has never heard of tag 73
+     * skips it as an unknown field. A message with NO analog_in_data (the
+     * standalone DIO message) carries no tag 73 either. ainCount > 0 with
+     * ainCount != ainEnabledCount implies a non-zero mask: ainCount is the
+     * popcount of ainValidMask by construction in the caller. */
+    if (ainCount > 0 && ainCount != ainEnabledCount) {
         if (!pb_encode_tag(stream, PB_WT_VARINT, DaqifiOutMessage_analog_in_data_mask_tag))
             return false;
         if (!pb_encode_varint(stream, ainValidMask))
@@ -1547,7 +1555,10 @@ static size_t encode_streaming_msg_delimited(
  * @param state     Board data (provides DIO sample queue, stream trigger stamp)
  * @param fields    NanopbFlagsArray indicating which field tags to encode
  *                  (typically: msg_time_stamp, analog_in_data, digital_data,
- *                  digital_port_dir — set up in streaming.c)
+ *                  digital_port_dir — set up in streaming.c). Field 73
+ *                  (analog_in_data_mask) is not flag-driven: it is emitted
+ *                  per message, only when that message's analog_in_data is
+ *                  short.
  * @param pBuffer   Output buffer for encoded protobuf messages
  * @param buffSize  Available space in output buffer
  * @return Total bytes written (may contain multiple delimited messages), or 0 on error
@@ -1611,6 +1622,8 @@ size_t Nanopb_EncodeStreamingFast(tBoardData* state,
     bool dioIncluded = false;
 
     if (hasAIN) {
+        _Static_assert(MAX_AIN_PUBLIC_CHANNELS < 32,
+                       "#62: the valid-mask shift needs chCount < 32");
         uint32_t queueSize = AInSampleList_Size();
         AInPublicSampleList_t *pPublicSampleList;
 
@@ -1656,10 +1669,12 @@ size_t Nanopb_EncodeStreamingFast(tBoardData* state,
             }
 
             /* #62: capture before the list returns to the pool. Bit j is the
-             * j-th enabled channel; mask off bits beyond chCount so stale
-             * high bits can never claim a channel that is not enabled. */
+             * j-th enabled channel; mask off bits at or above chCount so a
+             * stale high bit can never claim a channel that is not enabled.
+             * chCount <= MAX_AIN_PUBLIC_CHANNELS (clamped above), so the
+             * shift below is defined (asserted just before this loop). */
             uint32_t validMaskForMsg = pPublicSampleList->validMask &
-                    ((chCount >= 32u) ? 0xFFFFFFFFu : ((1u << chCount) - 1u));
+                    ((1u << chCount) - 1u);
 
             AInSampleList_FreeToPool(pPublicSampleList);
 

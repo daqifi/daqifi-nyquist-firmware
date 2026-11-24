@@ -132,8 +132,9 @@ typedef struct _DaqifiOutMessage { /* Put repetitive information in first 15 fie
     uint32_t timestamp_ticks_per_sample; /* Exact timestamp ticks per streaming period (0 = unconfigured) */
     uint32_t actual_rate_millihz; /* Quantized streaming rate actually applied, millihertz (0 = unconfigured) */
     /* #62: streaming-only. Bit j set = the j-th ENABLED channel is present in analog_in_data.
- Field ABSENT (proto3 omits zero) = every enabled channel is present, which is the
- steady state; the encoder emits it only for a short frame (ARDY miss, scan freeze). */
+ In a message that carries a non-empty analog_in_data, field ABSENT (proto3 omits zero)
+ = every enabled channel is present; the encoder emits it only when analog_in_data is
+ short. A message with no analog_in_data (standalone digital message) carries neither. */
     uint32_t analog_in_data_mask;
 } DaqifiOutMessage;
 
