@@ -108,6 +108,35 @@ run_mutant() {
     fi
 }
 
+
+# run_equivalent_mutant <name> <old> <new>: a mutant PROVED behaviourally
+# equivalent (see its comment). It must still build and pass every test; it is
+# reported separately and never counted as caught.
+equivalent=0
+run_equivalent_mutant() {
+    local name="$1" old="$2" new="$3"
+    rm -rf "$T/mut"
+    mkdir -p "$T/mut"
+    if ! mutate "$old" "$new"; then
+        echo "MUTANT $name: ANCHOR NOT FOUND -- the harness is stale"
+        failures=$((failures + 1))
+        return
+    fi
+    if ! build_and_run "m_$name" "$T/mut"; then
+        echo "MUTANT $name: did not build"
+        failures=$((failures + 1))
+        return
+    fi
+    if grep -q " 0 failed" "$T/m_$name.out"; then
+        echo "MUTANT $name: EQUIVALENT (all tests still pass, as argued)"
+        equivalent=$((equivalent + 1))
+    else
+        echo "MUTANT $name: expected EQUIVALENT but a test failed (the argument is wrong):"
+        grep -E "^\[FAIL\]" "$T/m_$name.out"
+        failures=$((failures + 1))
+    fi
+}
+
 # ---- what each transfer's scan covers (armed by lDRV_SDSPI_WriteResyncRxReset) ----
 
 # M1: the flush chunk is not scanned (ok and error paths share the scan).
@@ -270,15 +299,39 @@ run_mutant block_sent_never_set original_writes_own_response_token_is_not_report
 # ---- r6: origin ambiguous (payload fully clocked, CRC unconfirmed) ----
 
 # M20: the "payload fully clocked" check is dropped: such a token is counted as filler.
-run_mutant payload_clocked_check_dropped "original_payload_with_a_0xffff_crc_and_a_refused_crc_write_is_not_filler original_payload_with_a_lost_crc_completion_is_not_filler" \
-"        if (dObj->writeInDoubtPayloadClocked == true)" \
-"        if (false)"
+run_mutant payload_clocked_check_dropped original_payload_with_a_lost_crc_completion_is_not_filler \
+"        if ((dObj->writeInDoubtPayloadClocked == true) ||" \
+"        if ((false) ||"
 
 # M21: the payload's completion is never recorded.
-run_mutant payload_clocked_never_set "original_payload_with_a_0xffff_crc_and_a_refused_crc_write_is_not_filler original_payload_with_a_lost_crc_completion_is_not_filler" \
+run_mutant payload_clocked_never_set original_payload_with_a_lost_crc_completion_is_not_filler \
 "            dObj->writeInDoubtPayloadClocked = true;" \
 "            dObj->writeInDoubtPayloadClocked = false;"
 
 
-echo "RESULT: $passed passed, $failures failed"
+# ---- r7: payload completion unobserved: the CRC16 decides ----
+
+# M22: the "CRC16 is 0xFFFF" condition is dropped: the lost-completion edge is counted as filler.
+run_mutant crc_ffff_check_dropped edge_lost_payload_completion_with_a_0xffff_crc_is_recorded \
+"        if ((dObj->writeInDoubtPayloadClocked == true) ||
+                (dObj->writeBlockCrc16 == 0xFFFFU))" \
+"        if (dObj->writeInDoubtPayloadClocked == true)"
+
+# M23: the clear at CMD24 admission is dropped: a write that fails before its
+# payload step inherits the previous block's 0xFFFF.
+run_mutant admission_clear_dropped a_write_that_fails_before_its_payload_does_not_inherit_the_previous_0xffff_crc \
+"                dObj->writeBlockCrc16 = DRV_SDSPI_CRC16_UNSET;
+                dObj->resyncRxUnscanned = false;" \
+"                dObj->resyncRxUnscanned = false;"
+
+# M24: the clear before the payload is armed is dropped. See the PR body: the
+# admission clear (M23) also covers a refused payload submission, so this mutant
+# is EQUIVALENT and is expected to pass every test (run_equivalent_mutant).
+run_equivalent_mutant payload_clear_dropped \
+"            dObj->writeBlockCrc16 = DRV_SDSPI_CRC16_UNSET;
+            if (DRV_SDSPI_SPIWrite(dObj, currentBufObj->buffer, 512) == true)" \
+"            if (DRV_SDSPI_SPIWrite(dObj, currentBufObj->buffer, 512) == true)"
+
+
+echo "RESULT: $passed passed, $failures failed ($equivalent proved equivalent)"
 [ "$failures" -eq 0 ]

@@ -595,9 +595,18 @@ static void lDRV_SDSPI_IoAbort(DRV_SDSPI_OBJ* dObj, uint8_t cause)
  * AMBIGUOUS origin. The card either programmed the original payload (the CRC
  * went out, its completion lost; or the resync's FF FF stood in for a CRC16 of
  * 0xFFFF) or filler. It is then neither counted nor called filler; one line
- * says so. A payload completion that is itself lost is NOT covered: it leaves
- * the flag clear and the token is still counted as filler (tried in
- * edge_lost_payload_completion_with_a_0xffff_crc_is_recorded).
+ * says so. A payload completion that is itself lost leaves the flag clear:
+ * r7 below covers that.
+ *
+ * r7 (the lost-completion edge, closed): with the payload's completion NOT
+ * observed, the CRC16 of the payload in hand (writeBlockCrc16) decides. The
+ * resync's FF FF stands in for the CRC of a block whose CRC16 is 0xFFFF, so
+ * the card can have programmed the original payload when all 512 of its
+ * bytes were delivered and only the completion was lost: such a token is ORIGIN
+ * AMBIGUOUS as well. writeBlockCrc16 is cleared at CMD24 admission and before
+ * the payload is armed, so a payload that was never submitted cannot inherit
+ * the previous block's 0xFFFF. ACCEPTED COST: a real filler behind a block
+ * whose CRC16 is 0xFFFF is logged as ambiguous, not counted.
  *
  * Counted here, once per accepted block, at the moment the token is SEEN: the
  * card programmed the sector when it answered, whether or not the rest of the
@@ -608,9 +617,12 @@ static void lDRV_SDSPI_WriteResyncRecordAcceptance(DRV_SDSPI_OBJ* dObj, uint8_t 
             (dObj->writeInDoubtCrc == true) && (dObj->writeInDoubtBlockSent == false) &&
             ((token & DRV_SDSPI_WRITE_RESPONSE_TOKEN_MASK) == DRV_SDSPI_DATA_ACCEPTED))
     {
-        if (dObj->writeInDoubtPayloadClocked == true)
+        if ((dObj->writeInDoubtPayloadClocked == true) ||
+                (dObj->writeBlockCrc16 == 0xFFFFU))
         {
-            /* r6: all 512 payload bytes were clocked, so the card holds the
+            /* r7: payload completion unobserved and CRC16 0xFFFF: the same
+             * ambiguity, since the resync's FF FF can have been the CRC.
+             * r6: all 512 payload bytes were clocked, so the card holds the
              * ORIGINAL payload; only the CRC went unconfirmed (its write was
              * refused, or its completion lost). The resync's FF FF can then
              * stand in for the CRC when CRC16 is 0xFFFF, and the card programs
@@ -1151,6 +1163,8 @@ static void lDRV_SDSPI_CommandSend
                 dObj->writeInDoubtCrc = dObj->crcEnabled;
                 dObj->writeInDoubtBlockSent = false;
                 dObj->writeInDoubtPayloadClocked = false;
+                /* r7: no CRC16 yet for THIS write; see RecordAcceptance. */
+                dObj->writeBlockCrc16 = DRV_SDSPI_CRC16_UNSET;
                 dObj->resyncRxUnscanned = false;
                 dObj->writeInDoubtBlock = (dObj->sdCardType == DRV_SDSPI_MODE_NORMAL) ?
                         (address / DRV_SDSPI_MEDIA_BLOCK_SIZE) : address;
@@ -2992,6 +3006,9 @@ static void lDRV_SDSPI_BufferIOTasks
 
         case DRV_SDSPI_TASK_WRITE_DATA:
 
+            /* #1235 r7: per write, BEFORE the payload is armed, so a refused
+             * submission cannot leave the previous block's CRC16 behind. */
+            dObj->writeBlockCrc16 = DRV_SDSPI_CRC16_UNSET;
             if (DRV_SDSPI_SPIWrite(dObj, currentBufObj->buffer, 512) == true)
             {
                 /* #1217: the block's CRC16, computed from the very bytes now

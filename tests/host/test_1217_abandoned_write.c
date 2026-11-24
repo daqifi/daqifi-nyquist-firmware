@@ -92,6 +92,11 @@ static struct {
      * was cut, whatever ended the write (flush + stop token, stop token with
      * CS held, CMD12). Set by resetAll(): the model is that card. */
     bool diesOnMultiReject;
+    /* #1235 r7: the card's CRC16 check passes whatever it computed: a card whose
+     * filler happens to hash to the CRC it was sent (the collision the resync's
+     * block is built to avoid). Lets a test reach an ACCEPTANCE on a path where
+     * the real model has none (no payload byte captured). */
+    bool forceCrcOk;
     int nextWriteR1;        /* >= 0: answer the next CMD24/25 with this, no data phase */
     unsigned nextWriteR1Times; /* how many CMD24/25s get it; 0 means 1 */
     unsigned programBusy;   /* busy bytes after a block is accepted */
@@ -351,7 +356,7 @@ static void cardCommand(uint8_t cmd, uint32_t arg, uint8_t crcField)
 static void cardBlockDone(void)
 {
     const uint16_t got = (uint16_t)(((uint16_t)card.capture[BLOCK] << 8) | card.capture[BLOCK + 1U]);
-    const bool crcBad = card.crcOn && (modelCrc16(card.capture, BLOCK) != got);
+    const bool crcBad = card.crcOn && !card.forceCrcOk && (modelCrc16(card.capture, BLOCK) != got);
 
     if (crcBad && card.isMulti && card.diesOnMultiReject)
     {
@@ -3799,10 +3804,12 @@ TEST(original_payload_with_a_lost_crc_completion_is_not_filler)
     assertCardHealthy(42U);
 }
 
-/* Disclosed edge, TRIED (not fixed in r6): the payload's own completion is lost
- * with all 512 bytes delivered, and the payload's CRC16 is 0xFFFF. The driver
- * never observed the payload finish, so it cannot know the card holds all of
- * it. Records what the driver does; see the PR body. */
+/* ---- #1235 r7: payload completion UNOBSERVED. The CRC16 of the payload in hand
+ * decides: 0xFFFF means the resync's FF FF can have stood in for the CRC. ---- */
+
+/* The r6 disclosed edge, now ASSERTED: the payload's own completion is lost with
+ * all 512 bytes delivered and the payload's CRC16 is 0xFFFF. The card programs
+ * exactly the intended payload; its acceptance is ORIGIN AMBIGUOUS. */
 TEST(edge_lost_payload_completion_with_a_0xffff_crc_is_recorded)
 {
     uint8_t data[BLOCK];
@@ -3811,13 +3818,79 @@ TEST(edge_lost_payload_completion_with_a_0xffff_crc_is_recorded)
     memset(data, 0, sizeof(data));
     data[510] = 0x84U;
     data[511] = 0xCFU;
+    ASSERT_EQ(modelCrc16(data, BLOCK), 0xFFFFU); /* the premise */
     gSilentPayloadWrite = true;
     ASSERT_EQ(writeBlocks(41U, data, 1U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
-    ASSERT_FALSE(gSilentPayloadWrite);
+    ASSERT_FALSE(gSilentPayloadWrite); /* the premise: the payload's completion was lost */
     ASSERT_TRUE(sectorIs(41U, data));
-    printf("EDGE r6: lost payload completion + CRC16 0xFFFF: filler count=%u filler line=%d ambiguous line=%d\n",
-            (unsigned)DRV_SDSPI_GetResyncFillerCount(0), (int)logged("filler programmed", NULL),
-            (int)logged("ambiguous origin", NULL));
+    ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 0U);
+    ASSERT_FALSE(logged("filler programmed", NULL));
+    ASSERT_FALSE(logged("ACCEPTED", NULL));
+    ASSERT_TRUE(logged("ambiguous origin", "blk=41 ("));
+    assertCardHealthy(42U);
+}
+
+/* A block whose CRC16 is 0xFFFF, written first and completed normally, so that
+ * the driver's writeBlockCrc16 is 0xFFFF when the next write starts. */
+static void writeAnFfffCrcBlock(uint32_t lba)
+{
+    uint8_t ffff[BLOCK];
+
+    memset(ffff, 0, sizeof(ffff));
+    ffff[510] = 0x84U;
+    ffff[511] = 0xCFU;
+    ASSERT_EQ(modelCrc16(ffff, BLOCK), 0xFFFFU);
+    ASSERT_EQ(writeBlocks(lba, ffff, 1U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+}
+
+/* Leak test, payload REFUSED: the previous block's CRC16 was 0xFFFF; the next
+ * write's payload submission is refused, so the driver never computes a CRC16
+ * for it. The card (forced collision) accepts the resync's all-filler block.
+ * That is a genuine filler, payload unobserved and nothing in hand with CRC16
+ * 0xFFFF: counted, not ambiguous. A stale 0xFFFF would turn it ambiguous. */
+TEST(a_refused_payload_does_not_inherit_the_previous_blocks_0xffff_crc)
+{
+    uint8_t data[BLOCK];
+
+    bootCard();
+    writeAnFfffCrcBlock(40U);
+    fill(data, sizeof(data), 0x61U);
+    card.forceCrcOk = true;
+    gFault.action = FAULT_REJECT;
+    gFault.isRead = 0;
+    gFault.len = 512;
+    gFault.afterCmd = 24;
+    gFault.exceptResync = true;
+    ASSERT_EQ(writeBlocks(41U, data, 1U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+    ASSERT_EQ(gFault.action, FAULT_NONE); /* the premise: the payload submission was refused */
+    ASSERT_TRUE(sectorIs(41U, data));
+    ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 1U);
+    ASSERT_TRUE(logged("ACCEPTED", "blk=41 ("));
+    ASSERT_FALSE(logged("ambiguous origin", NULL));
+}
+
+/* Leak test for the ADMISSION clear: the failure comes BEFORE the payload step
+ * is reached (the 0xFE start token's write is refused), so only the clear at
+ * CMD24 admission can have removed the previous block's 0xFFFF. */
+TEST(a_write_that_fails_before_its_payload_does_not_inherit_the_previous_0xffff_crc)
+{
+    uint8_t data[BLOCK];
+
+    bootCard();
+    writeAnFfffCrcBlock(40U);
+    fill(data, sizeof(data), 0x61U);
+    card.forceCrcOk = true;
+    gFault.action = FAULT_REJECT;
+    gFault.isRead = 0;
+    gFault.len = 1;
+    gFault.afterCmd = 24;
+    gFault.exceptResync = true;
+    ASSERT_EQ(writeBlocks(41U, data, 1U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+    ASSERT_EQ(gFault.action, FAULT_NONE); /* the premise: the start token's write was refused */
+    ASSERT_TRUE(sectorIs(41U, data));
+    ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 1U);
+    ASSERT_TRUE(logged("ACCEPTED", "blk=41 ("));
+    ASSERT_FALSE(logged("ambiguous origin", NULL));
 }
 
 /* A standard-capacity card takes a byte address; the report gives the block. */
@@ -3970,6 +4043,8 @@ int main(void)
     RUN(original_payload_with_a_0xffff_crc_and_a_refused_crc_write_is_not_filler);
     RUN(original_payload_with_a_lost_crc_completion_is_not_filler);
     RUN(edge_lost_payload_completion_with_a_0xffff_crc_is_recorded);
+    RUN(a_refused_payload_does_not_inherit_the_previous_blocks_0xffff_crc);
+    RUN(a_write_that_fails_before_its_payload_does_not_inherit_the_previous_0xffff_crc);
     RUN(resync_before_block_read_failing_with_nothing_delivered_reports_no_stale_byte);
     RUN(resync_flush_read_failing_part_way_reports_no_stale_byte);
     RUN(resync_block_accepted_on_a_byte_addressed_card_names_the_block);

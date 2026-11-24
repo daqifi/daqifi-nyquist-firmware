@@ -118,6 +118,10 @@
 
 #define DRV_SDSPI_COMMAND_RESPONSE_TRIES          (10)
 
+/* #1235 r7: writeBlockCrc16 before a write's payload is armed. Any value but
+ * 0xFFFF would do: only 0xFFFF (the resync's FF FF) is read as a CRC. */
+#define DRV_SDSPI_CRC16_UNSET   0x0000U
+
 /* #1217: what kind of write is in doubt (DRV_SDSPI_OBJ.writeInDoubt). A CMD24
  * is recorded in both SD:PROTect modes. A CMD25 exists only with CRC off (with
  * CRC on the driver does not issue one) and is ended differently: see
@@ -1605,7 +1609,8 @@ typedef struct
        PIC32MZ, mcu-hygiene section 3). */
     uint16_t                                        detachedPollCount;
 
-    /* #1217: CRC16 of the block being written, between its data and CRC phases. */
+    /* #1217: CRC16 of the block being written, between its data and CRC phases.
+     * #1235 r7: DRV_SDSPI_CRC16_UNSET until this write's payload is armed. */
     uint16_t                                        writeBlockCrc16;
 
     /* #756: FORCED detect-poll request/acknowledge pair.
