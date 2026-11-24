@@ -23,9 +23,16 @@
  *   3. The runtime copy's own macAddr is kept. The loaded struct carries NVM's
  *      MAC or the factory default's zeroed one; neither is the board's MAC.
  *
- * No #includes on purpose: the includer must already have <stdbool.h>,
- * the taskENTER_CRITICAL pair and wifi_manager_settings_t (the firmware gets it from wifi_manager.h; the host
- * test defines a minimal stand-in with the same macAddr member).
+ * ON THE MAC: the runtime copy's macAddr is NVM's value, or zero on a
+ * factory-initialised board; the WINC's MAC goes to the LIVE copy only.
+ * Nothing user-visible reads the runtime MAC (LAN:MAC? reads the live copy),
+ * and APPLY keeps the live MAC. Keeping runtime's own MAC therefore only avoids
+ * changing the bytes a later SAVE stores.
+ *
+ * No #includes on purpose: the includer must already have <stdbool.h>, the
+ * taskENTER_CRITICAL/taskEXIT_CRITICAL pair and wifi_manager_settings_t. The
+ * firmware gets them from wifi_manager.h; the host test defines stand-ins.
+ *
  * ========================================================================== */
 #ifndef WIFI_SETTINGS_STAGE_H
 #define WIFI_SETTINGS_STAGE_H
