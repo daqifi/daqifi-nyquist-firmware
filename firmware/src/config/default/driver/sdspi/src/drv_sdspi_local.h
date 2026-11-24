@@ -1779,6 +1779,10 @@ typedef struct
     bool                                            resyncRxUnscanned;
     bool                                            resyncRxLate;
     bool                                            writeInDoubtBlockSent;
+    /* r6: the in-doubt CMD24's 512-byte payload transfer COMPLETED (observed).
+     * With writeInDoubtBlockSent still false the CRC is unconfirmed, and a token
+     * is of ambiguous origin: not counted as filler. */
+    bool                                            writeInDoubtPayloadClocked;
 
 } DRV_SDSPI_OBJ;
 

@@ -599,12 +599,27 @@ static void lDRV_SDSPI_WriteResyncRecordAcceptance(DRV_SDSPI_OBJ* dObj, uint8_t 
             (dObj->writeInDoubtCrc == true) && (dObj->writeInDoubtBlockSent == false) &&
             ((token & DRV_SDSPI_WRITE_RESPONSE_TOKEN_MASK) == DRV_SDSPI_DATA_ACCEPTED))
     {
-        if (dObj->resyncFillerCount < UINT8_MAX)
+        if (dObj->writeInDoubtPayloadClocked == true)
         {
-            dObj->resyncFillerCount++;
+            /* r6: all 512 payload bytes were clocked, so the card holds the
+             * ORIGINAL payload; only the CRC went unconfirmed (its write was
+             * refused, or its completion lost). The resync's FF FF can then
+             * stand in for the CRC when CRC16 is 0xFFFF, and the card programs
+             * the original data; or a lost completion hid a CRC that did go
+             * out. Which of the two programmed the sector cannot be told from
+             * here, so it is neither counted nor called filler. */
+            LOG_E("SD: resync token of ambiguous origin at blk=%lu (#1235)",
+                    (unsigned long)dObj->writeInDoubtBlock);
         }
-        LOG_E("SD: resync block ACCEPTED: filler programmed at blk=%lu (#1235)",
-                (unsigned long)dObj->writeInDoubtBlock);
+        else
+        {
+            if (dObj->resyncFillerCount < UINT8_MAX)
+            {
+                dObj->resyncFillerCount++;
+            }
+            LOG_E("SD: resync block ACCEPTED: filler programmed at blk=%lu (#1235)",
+                    (unsigned long)dObj->writeInDoubtBlock);
+        }
     }
 }
 
@@ -1126,6 +1141,7 @@ static void lDRV_SDSPI_CommandSend
                  * shifted at BUFFER_IO_CHECK_DEVICE); log the block number. */
                 dObj->writeInDoubtCrc = dObj->crcEnabled;
                 dObj->writeInDoubtBlockSent = false;
+                dObj->writeInDoubtPayloadClocked = false;
                 dObj->resyncRxUnscanned = false;
                 dObj->writeInDoubtBlock = (dObj->sdCardType == DRV_SDSPI_MODE_NORMAL) ?
                         (address / DRV_SDSPI_MEDIA_BLOCK_SIZE) : address;
@@ -2990,6 +3006,9 @@ static void lDRV_SDSPI_BufferIOTasks
 
         case DRV_SDSPI_TASK_WRITE_CRC_BYTES:
 
+            /* #1235 r6: entered only after the 512-byte payload transfer's
+             * completion was observed: the card holds the whole payload. */
+            dObj->writeInDoubtPayloadClocked = true;
             /* Send the block's CRC16, high byte first. pCmdResp is coherent. */
             dObj->pCmdResp[0] = (uint8_t)(dObj->writeBlockCrc16 >> 8);
             dObj->pCmdResp[1] = (uint8_t)(dObj->writeBlockCrc16 & 0xFFU);

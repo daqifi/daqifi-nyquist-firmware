@@ -760,6 +760,14 @@ static unsigned gSilentResyncBusyReads;
 static unsigned gLoseResyncFlushAt;
 static unsigned gLoseResyncFlushReads;
 
+/* #1235 r6: the first 2-byte write the command FSM submits after CMD24 (the
+ * block's CRC) is clocked in full -- the card gets it -- and then NO event is
+ * delivered: the completion is lost. */
+static bool gSilentCrcWrite;
+/* #1235 r6: the first 512-byte write after CMD24 is clocked in full and then NO
+ * event is delivered: the payload's completion is lost. */
+static bool gSilentPayloadWrite;
+
 #define SPI_QUEUE 16U
 static Xfer gQueue[SPI_QUEUE];
 static unsigned gQueueHead, gQueueCount;
@@ -905,6 +913,18 @@ static void spiAdd(bool isRead, void* buf, size_t n, DRV_SPI_TRANSFER_HANDLE* ou
             (++gSilentResyncBusyReads == gSilentResyncBusyReadAt))
     {
         gSilentResyncBusyReadAt = 0U;
+        silent = true;
+    }
+    if (gSilentCrcWrite && !isRead && (rx == NULL) && (n == 2U) && !test1217_InResync() &&
+            (gLastFrameCmd == 24))
+    {
+        gSilentCrcWrite = false;
+        silent = true;
+    }
+    if (gSilentPayloadWrite && !isRead && (rx == NULL) && (n == 512U) && !test1217_InResync() &&
+            (gLastFrameCmd == 24))
+    {
+        gSilentPayloadWrite = false;
         silent = true;
     }
     if ((gLoseResyncFlushAt != 0U) && isRead && (n == 10U) && test1217_InResync() &&
@@ -3722,7 +3742,82 @@ TEST(original_writes_own_response_token_is_not_reported_as_filler)
     ASSERT_TRUE(sectorIs(41U, data));
     ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 0U);
     ASSERT_FALSE(logged("ACCEPTED", NULL));
+    ASSERT_FALSE(logged("ambiguous origin", NULL)); /* the CRC was confirmed: nothing is in doubt */
     assertCardHealthy(42U);
+}
+
+/* ---- #1235 r6: ORIGIN AMBIGUOUS. All 512 payload bytes were clocked but the
+ * CRC was not confirmed: whether the token is a filler's or the original
+ * write's cannot be told, so it is neither counted nor called filler, and ONE
+ * line says so. ----------------------------------------------------------- */
+
+/* r5 MED repro 1, verbatim: 510 zero bytes then 84 CF (CRC16 0xFFFF), the whole
+ * payload completes, and the submission of the two-byte CRC write is refused.
+ * The retry's BEFORE_BLOCK reads supply FF FF as the CRC, so the card programs
+ * exactly the intended payload and answers 0xE5 to the 0xFE transfer. */
+TEST(original_payload_with_a_0xffff_crc_and_a_refused_crc_write_is_not_filler)
+{
+    uint8_t data[BLOCK];
+
+    bootCard();
+    memset(data, 0, sizeof(data));
+    data[510] = 0x84U;
+    data[511] = 0xCFU;
+    ASSERT_EQ(modelCrc16(data, BLOCK), 0xFFFFU); /* the premise */
+    gFault.action = FAULT_REJECT;
+    gFault.isRead = 0;
+    gFault.len = 2;
+    gFault.afterCmd = 24;
+    gFault.exceptResync = true;
+    ASSERT_EQ(writeBlocks(41U, data, 1U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+    ASSERT_EQ(gFault.action, FAULT_NONE); /* the premise: the CRC write was refused */
+    ASSERT_TRUE(sectorIs(41U, data));
+    ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 0U);
+    ASSERT_FALSE(logged("filler programmed", NULL));
+    ASSERT_FALSE(logged("ACCEPTED", NULL));
+    ASSERT_TRUE(logged("ambiguous origin", "blk=41 ("));
+    assertCardHealthy(42U);
+}
+
+/* r5 MED repro 2, verbatim: the payload and both CRC bytes reach the card and
+ * the CRC transfer's completion is lost. The card programmed the original data;
+ * the retry's resync reads its 0xE5. */
+TEST(original_payload_with_a_lost_crc_completion_is_not_filler)
+{
+    uint8_t data[BLOCK];
+
+    bootCard();
+    fill(data, sizeof(data), 0x61U);
+    gSilentCrcWrite = true;
+    ASSERT_EQ(writeBlocks(41U, data, 1U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+    ASSERT_FALSE(gSilentCrcWrite); /* the premise: the CRC write was lost */
+    ASSERT_TRUE(sectorIs(41U, data));
+    ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 0U);
+    ASSERT_FALSE(logged("filler programmed", NULL));
+    ASSERT_FALSE(logged("ACCEPTED", NULL));
+    ASSERT_TRUE(logged("ambiguous origin", "blk=41 ("));
+    assertCardHealthy(42U);
+}
+
+/* Disclosed edge, TRIED (not fixed in r6): the payload's own completion is lost
+ * with all 512 bytes delivered, and the payload's CRC16 is 0xFFFF. The driver
+ * never observed the payload finish, so it cannot know the card holds all of
+ * it. Records what the driver does; see the PR body. */
+TEST(edge_lost_payload_completion_with_a_0xffff_crc_is_recorded)
+{
+    uint8_t data[BLOCK];
+
+    bootCard();
+    memset(data, 0, sizeof(data));
+    data[510] = 0x84U;
+    data[511] = 0xCFU;
+    gSilentPayloadWrite = true;
+    ASSERT_EQ(writeBlocks(41U, data, 1U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+    ASSERT_FALSE(gSilentPayloadWrite);
+    ASSERT_TRUE(sectorIs(41U, data));
+    printf("EDGE r6: lost payload completion + CRC16 0xFFFF: filler count=%u filler line=%d ambiguous line=%d\n",
+            (unsigned)DRV_SDSPI_GetResyncFillerCount(0), (int)logged("filler programmed", NULL),
+            (int)logged("ambiguous origin", NULL));
 }
 
 /* A standard-capacity card takes a byte address; the report gives the block. */
@@ -3872,6 +3967,9 @@ int main(void)
     RUN(resync_token_delivered_by_a_read_whose_completion_is_lost_then_the_bus_is_released_is_reported);
     RUN(resync_token_delivered_by_a_late_dma_after_the_watchdog_is_reported);
     RUN(original_writes_own_response_token_is_not_reported_as_filler);
+    RUN(original_payload_with_a_0xffff_crc_and_a_refused_crc_write_is_not_filler);
+    RUN(original_payload_with_a_lost_crc_completion_is_not_filler);
+    RUN(edge_lost_payload_completion_with_a_0xffff_crc_is_recorded);
     RUN(resync_before_block_read_failing_with_nothing_delivered_reports_no_stale_byte);
     RUN(resync_flush_read_failing_part_way_reports_no_stale_byte);
     RUN(resync_block_accepted_on_a_byte_addressed_card_names_the_block);

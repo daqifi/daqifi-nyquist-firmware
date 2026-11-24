@@ -267,5 +267,18 @@ run_mutant block_sent_never_set original_writes_own_response_token_is_not_report
 "            dObj->writeInDoubtBlockSent = true;" \
 "            dObj->writeInDoubtBlockSent = false;"
 
+# ---- r6: origin ambiguous (payload fully clocked, CRC unconfirmed) ----
+
+# M20: the "payload fully clocked" check is dropped: such a token is counted as filler.
+run_mutant payload_clocked_check_dropped "original_payload_with_a_0xffff_crc_and_a_refused_crc_write_is_not_filler original_payload_with_a_lost_crc_completion_is_not_filler" \
+"        if (dObj->writeInDoubtPayloadClocked == true)" \
+"        if (false)"
+
+# M21: the payload's completion is never recorded.
+run_mutant payload_clocked_never_set "original_payload_with_a_0xffff_crc_and_a_refused_crc_write_is_not_filler original_payload_with_a_lost_crc_completion_is_not_filler" \
+"            dObj->writeInDoubtPayloadClocked = true;" \
+"            dObj->writeInDoubtPayloadClocked = false;"
+
+
 echo "RESULT: $passed passed, $failures failed"
 [ "$failures" -eq 0 ]
