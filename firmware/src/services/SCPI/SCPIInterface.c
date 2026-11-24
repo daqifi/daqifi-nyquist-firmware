@@ -3394,12 +3394,12 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
 //                        delivered nothing and its scans weren't completing.
 //                        It is the one case of NO_LINK where the cause is
 //                        known: NO arm was refused, lastGoodHz is 0, and EVERY
-//                        step that ran was DRY (zero samples streamed AND at
-//                        least one stale scan tick). A zero-sample step is
+//                        step that ran was DRY (zero samples, no queue drop,
+//                        at least one stale scan tick). A zero-sample step is
 //                        never scored clean either way, so the climb trips
 //                        twice at the start rate. A sweep with a mix of dry
 //                        and lossy steps, any step that streamed a sample, or
-//                        a zero-sample step with no stale tick (labelled
+//                        a zero-sample step without that evidence (labelled
 //                        LOSSY), keeps NO_LINK. A sweep that streamed clean
 //                        steps first and ran dry only higher up reads as the
 //                        usual saturation tokens, since a dry step is a trip.
@@ -3517,8 +3517,8 @@ typedef struct {
 // `basis` is the sweep's #868 channel-mapping provenance and is required --
 // the sole caller passes the address of its own local, so it is never NULL and
 // is not tested for it.
-// *outDry (#1339) is true when the step was DRY: zero samples streamed AND at
-// least one stale scan tick. It is meaningful only when the step was scored
+// *outDry (#1339) is true when the step was DRY: zero samples, no queue drop,
+// at least one stale scan tick. It is meaningful only when the step was scored
 // (not *outStartFailed). The caller folds it into "did any scored step NOT
 // read dry" to pick NO_SAMPLES over NO_LINK. A zero-sample step is never
 // scored clean whether or not it is dry.
@@ -3943,15 +3943,17 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
      * streamed every term of `lossy` above can read zero and the step would
      * come out OK. Count it as lossy: a rate that carried no data is not
      * evidence it is sustainable.
-     * Only a DRY step is CALLED dry (label, LOG_E_ONCE, NO_SAMPLES token): zero
-     * samples AND scanStaleDropped > 0. STATS:CLEar may run mid-step and zero
-     * every counter in ONE critical section (Streaming_ClearStats), the same
-     * section Streaming_GetStats reads under, so a clear just before the
-     * snapshot leaves samples and stale both at 0 and that step must not be
-     * called dry. The stale count moves in the timer ISR on each tick whose
-     * scan did not complete (from the 2nd tick). It is the RAW count: the
-     * Steady one is gated on the startup grace and gScanFeedsUser. A zero
-     * count without stale ticks is labelled LOSSY and answers NO_LINK.
+     * Only a DRY step is CALLED dry (label, LOG_E_ONCE, NO_SAMPLES token):
+     * zero samples, queueDroppedSamples == 0 and scanStaleDropped > 0, all
+     * from the one snapshot. STATS:CLEar may run mid-step and zero every
+     * counter in ONE critical section (Streaming_ClearStats), the same section
+     * Streaming_GetStats reads under, so zero samples alone cannot tell a dry
+     * step from a cleared one. A dry tick frees its pool slot and is never
+     * booked as a drop, so a really dry step has no queue drop; a few drops
+     * after a clear mean the stream was running. The stale count moves in the
+     * timer ISR on each tick whose scan did not complete (from the 2nd tick);
+     * it is the RAW count (the Steady one is gated on grace and
+     * gScanFeedsUser). Zero samples without that evidence is LOSSY, NO_LINK.
      * Limit: all-or-nothing. A step that streamed even one sample is not
      * caught, because the count a healthy step reaches depends on the rate,
      * the dwell and the channel count, so no fixed minimum separates a sparse
@@ -3964,7 +3966,8 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
      * every dry step, so one error entry makes the cause findable without a
      * dry-heavy sweep filling the 64-entry ring with one LOG_E per step. */
     bool noSamples = (s.totalSamplesStreamed == 0);
-    bool dry = noSamples && (s.scanStaleDropped > 0);
+    bool dry = noSamples && (s.scanStaleDropped > 0) &&
+               (s.queueDroppedSamples == 0);
     if (dry) {
         LOG_E_ONCE(LOG_ONCE_FIND_NO_SAMPLES,
                    "WIFI:FIND: a step streamed 0 samples - not scored clean; "
