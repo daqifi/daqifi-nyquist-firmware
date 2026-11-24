@@ -5695,7 +5695,7 @@ $(SDLEAF1187_BIN): test_1187_sd_leaf_extension.c test_framework.h $(SD_MGR_SRC) 
 	 done; rm -f $(SDLEAF1187_GEN).part
 	$(CC) $(CFLAGS) -o $@ test_1187_sd_leaf_extension.c
 
-# #62: PB streaming analog_in_data_mask (tag 73). The REAL
+# #62: PB streaming analog_in_data_mask (tag 76). The REAL
 # encode_streaming_fields() and the PB_*/STREAMING_MSG_MAX_SIZE block are
 # spliced verbatim out of NanoPB_Encoder.c and linked against the REAL nanopb
 # encoder/decoder and the REAL generated DaqifiOutMessage.pb.c, so the test

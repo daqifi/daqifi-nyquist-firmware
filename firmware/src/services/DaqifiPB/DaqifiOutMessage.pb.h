@@ -134,7 +134,8 @@ typedef struct _DaqifiOutMessage { /* Put repetitive information in first 15 fie
     /* #62: streaming-only. Bit j set = the j-th ENABLED channel is present in analog_in_data.
  In a message that carries a non-empty analog_in_data, field ABSENT (proto3 omits zero)
  = every enabled channel is present; the encoder emits it only when analog_in_data is
- short. A message with no analog_in_data (standalone digital message) carries neither. */
+ short. A message with no analog_in_data (standalone digital message) carries neither.
+ Tags 73-75 are skipped on purpose: a client copy of this proto once used them for other fields. */
     uint32_t analog_in_data_mask;
 } DaqifiOutMessage;
 
@@ -216,7 +217,7 @@ extern "C" {
 #define DaqifiOutMessage_stream_timer_freq_tag   70
 #define DaqifiOutMessage_timestamp_ticks_per_sample_tag 71
 #define DaqifiOutMessage_actual_rate_millihz_tag 72
-#define DaqifiOutMessage_analog_in_data_mask_tag 73
+#define DaqifiOutMessage_analog_in_data_mask_tag 76
 
 /* Struct field encoding specification for nanopb */
 #define DaqifiOutMessage_FIELDLIST(X, a) \
@@ -288,7 +289,7 @@ X(a, STATIC,   SINGULAR, UINT64,   device_sn,        69) \
 X(a, STATIC,   SINGULAR, UINT32,   stream_timer_freq,  70) \
 X(a, STATIC,   SINGULAR, UINT32,   timestamp_ticks_per_sample,  71) \
 X(a, STATIC,   SINGULAR, UINT32,   actual_rate_millihz,  72) \
-X(a, STATIC,   SINGULAR, UINT32,   analog_in_data_mask,  73)
+X(a, STATIC,   SINGULAR, UINT32,   analog_in_data_mask,  76)
 #define DaqifiOutMessage_CALLBACK NULL
 #define DaqifiOutMessage_DEFAULT NULL
 

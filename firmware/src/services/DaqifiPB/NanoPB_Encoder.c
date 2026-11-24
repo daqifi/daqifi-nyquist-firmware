@@ -51,7 +51,7 @@
     (PB_AIN_MAX_COUNT * PB_VARINT32_MAX) +       /* field 2: sint32 values */\
     PB_TAG1_SIZE + 1 + PB_DIO_DATA_MAX +         /* field 5: digital_data */ \
     PB_TAG2_SIZE + 1 + PB_DIO_DIR_MAX +          /* field 37: port_dir */    \
-    PB_TAG2_SIZE + PB_VARINT32_MAX               /* field 73: ain mask (#62) */\
+    PB_TAG2_SIZE + PB_VARINT32_MAX               /* field 76: ain mask (#62) */\
 )
 
 /**
@@ -1324,7 +1324,7 @@ void int2PBByteArray(const size_t integer,
  *     [zigzag varint] [zigzag varint]... <- packed sint32 channel values
  *   [0x2A] [varint: len] [bytes]       <- field 5: digital_data (optional)
  *   [0xAA 0x02] [varint: len] [bytes]  <- field 37: digital_port_dir (optional)
- *   [0xC8 0x04] [varint: mask]         <- field 73: analog_in_data_mask (#62),
+ *   [0xE0 0x04] [varint: mask]         <- field 76: analog_in_data_mask (#62),
  *                                         ONLY on a short analog_in_data
  *
  * Fields use the same tag numbers as DaqifiOutMessage, so any client
@@ -1385,7 +1385,7 @@ void int2PBByteArray(const size_t integer,
  * @param ainCount  Number of values in ainData (the VALID channels this tick;
  *                  equals ainEnabledCount unless a channel missed its sample)
  * @param ainValidMask  Bit j set = the j-th ENABLED channel is in ainData (#62)
- * @param ainEnabledCount  Number of enabled channels; tag 73 is emitted only
+ * @param ainEnabledCount  Number of enabled channels; tag 76 is emitted only
  *                  when ainCount differs from it
  * @param dioData   Digital I/O sample bytes (2 bytes, LSB=ch0), or NULL
  * @param dioSize   Size of dioData (0 if no DIO data)
@@ -1438,14 +1438,14 @@ static bool encode_streaming_fields(pb_ostream_t *stream,
         }
     }
 
-    /* Field 73: analog_in_data_mask (uint32, varint) -- #62.
+    /* Field 76: analog_in_data_mask (uint32, varint) -- #62.
      * Emitted ONLY when analog_in_data is short (a channel had no valid
      * sample this tick, e.g. a T1 ARDY miss), so a client can tell WHICH
      * channels are present instead of misassigning values. A message with a
      * full analog_in_data omits it, so that wire is byte-for-byte what it was
-     * before this field existed, and a client that has never heard of tag 73
+     * before this field existed, and a client that has never heard of tag 76
      * skips it as an unknown field. A message with NO analog_in_data (the
-     * standalone DIO message) carries no tag 73 either. ainCount > 0 with
+     * standalone DIO message) carries no tag 76 either. ainCount > 0 with
      * ainCount != ainEnabledCount implies a non-zero mask: ainCount is the
      * popcount of ainValidMask by construction in the caller. */
     if (ainCount > 0 && ainCount != ainEnabledCount) {
@@ -1555,7 +1555,7 @@ static size_t encode_streaming_msg_delimited(
  * @param state     Board data (provides DIO sample queue, stream trigger stamp)
  * @param fields    NanopbFlagsArray indicating which field tags to encode
  *                  (typically: msg_time_stamp, analog_in_data, digital_data,
- *                  digital_port_dir — set up in streaming.c). Field 73
+ *                  digital_port_dir — set up in streaming.c). Field 76
  *                  (analog_in_data_mask) is not flag-driven: it is emitted
  *                  per message, only when that message's analog_in_data is
  *                  short.

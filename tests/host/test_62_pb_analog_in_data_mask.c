@@ -10,13 +10,13 @@
  * on the wire says which channel is missing, so a client that maps values to
  * channels by position misassigns every value after the gap.
  *
- * The fix adds `analog_in_data_mask` (tag 73): bit j = the j-th ENABLED
+ * The fix adds `analog_in_data_mask` (tag 76): bit j = the j-th ENABLED
  * channel is present in analog_in_data. It is emitted ONLY when
  * analog_in_data is short; a message with a full analog_in_data omits it, so
- * that wire is unchanged and a client that does not know tag 73 skips it as an
+ * that wire is unchanged and a client that does not know tag 76 skips it as an
  * unknown field. "Absent means complete" holds only for a message that carries
  * a non-empty analog_in_data: a message with no analog_in_data at all (the
- * standalone DIO message) carries no tag 73 either.
+ * standalone DIO message) carries no tag 76 either.
  *
  * HOW IT IS TESTED
  *
@@ -24,7 +24,7 @@
  * NanoPB_Encoder.c by the Makefile (gen_62_fields.h) and linked against the
  * REAL nanopb encoder and the REAL generated DaqifiOutMessage.pb.c. The bytes
  * it writes are then read back two ways:
- *   - a raw wire walker (no schema), which is what proves "tag 73 is absent
+ *   - a raw wire walker (no schema), which is what proves "tag 76 is absent
  *     on a full frame" and "the bytes before the new field are unchanged";
  *   - the generated nanopb DECODER, which proves a schema-aware client sees
  *     the mask and the values it was given.
@@ -147,9 +147,9 @@ static void client_remap(const DaqifiOutMessage *m, size_t enabled,
 
 /* ---- tests ------------------------------------------------------------- */
 
-/* A full frame must not change: no tag 73, and the bytes are exactly the
+/* A full frame must not change: no tag 76, and the bytes are exactly the
  * pre-change encoding of {timestamp, analog_in_data}. Hand-built expected. */
-TEST(full_frame_omits_tag_73_and_wire_is_unchanged)
+TEST(full_frame_omits_tag_76_and_wire_is_unchanged)
 {
     const int32_t v[3] = { 10, -3, 100000 };
     uint8_t buf[64];
@@ -278,6 +278,16 @@ TEST(several_missing_channels_including_the_first_are_tagged)
     DaqifiOutMessage m;
     ASSERT_TRUE(decode(buf, n, &m));
     ASSERT_EQ((long long)m.analog_in_data_mask, 0x8A);
+    /* Hand-built wire bytes, independent of the generated tag constant:
+     * field 76, varint = (76 << 3) | 0 = 608 -> E0 04, then 0x8A -> 8A 01. */
+    {
+        static const uint8_t mask_field[4] = { 0xE0, 0x04, 0x8A, 0x01 };
+        bool found = false;
+        for (size_t i = 0; i + sizeof mask_field <= n; i++) {
+            if (memcmp(buf + i, mask_field, sizeof mask_field) == 0) { found = true; break; }
+        }
+        ASSERT_TRUE(found);
+    }
     ASSERT_EQ((long long)popcount32(m.analog_in_data_mask),
               (long long)m.analog_in_data_count);
     int32_t val[8] = {0};
@@ -291,9 +301,9 @@ TEST(several_missing_channels_including_the_first_are_tagged)
 }
 
 /* The standalone DIO message: no analog values, nothing enabled counted. It
- * must carry no analog_in_data and no tag 73 (so "absent = complete" is NOT a
+ * must carry no analog_in_data and no tag 76 (so "absent = complete" is NOT a
  * statement about this message). */
-TEST(dio_only_message_carries_no_analog_data_and_no_tag_73)
+TEST(dio_only_message_carries_no_analog_data_and_no_tag_76)
 {
     const uint8_t dio[2] = { 0x03, 0x00 };
     uint8_t buf[64];
@@ -336,15 +346,15 @@ TEST(worst_case_short_frame_fits_streaming_msg_max_size)
 
 int main(void)
 {
-    printf("#62 -- PB analog_in_data_mask (tag 73)\n");
+    printf("#62 -- PB analog_in_data_mask (tag 76)\n");
     printf("--------------------------------------\n");
-    RUN(full_frame_omits_tag_73_and_wire_is_unchanged);
+    RUN(full_frame_omits_tag_76_and_wire_is_unchanged);
     RUN(short_frame_carries_mask_whose_popcount_equals_value_count);
     RUN(a_client_can_rebuild_the_channel_mapping_from_the_mask);
     RUN(missing_last_channel_is_tagged_too);
     RUN(every_single_channel_miss_at_every_width_remaps_exactly);
     RUN(several_missing_channels_including_the_first_are_tagged);
-    RUN(dio_only_message_carries_no_analog_data_and_no_tag_73);
+    RUN(dio_only_message_carries_no_analog_data_and_no_tag_76);
     RUN(worst_case_short_frame_fits_streaming_msg_max_size);
     return TEST_SUMMARY();
 }
