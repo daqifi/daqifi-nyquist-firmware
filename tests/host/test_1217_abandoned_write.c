@@ -3830,6 +3830,27 @@ TEST(edge_lost_payload_completion_with_a_0xffff_crc_is_recorded)
     assertCardHealthy(42U);
 }
 
+/* Misattribution TRIED (r7): the payload's completion is lost with all 512 bytes
+ * delivered, and the CRC16 is an ordinary one. The resync's FF FF is NOT that
+ * CRC, so the card rejects the block: there is no acceptance to classify, and
+ * nothing is counted or logged as filler or ambiguous. */
+TEST(lost_payload_completion_with_an_ordinary_crc_yields_no_acceptance)
+{
+    uint8_t data[BLOCK];
+
+    bootCard();
+    fill(data, sizeof(data), 0x61U);
+    ASSERT_TRUE(modelCrc16(data, BLOCK) != 0xFFFFU); /* the premise */
+    gSilentPayloadWrite = true;
+    ASSERT_EQ(writeBlocks(41U, data, 1U), DRV_SDSPI_EVENT_COMMAND_COMPLETE);
+    ASSERT_FALSE(gSilentPayloadWrite); /* the premise: the payload's completion was lost */
+    ASSERT_TRUE(sectorIs(41U, data));
+    ASSERT_EQ(DRV_SDSPI_GetResyncFillerCount(0), 0U);
+    ASSERT_FALSE(logged("filler programmed", NULL));
+    ASSERT_FALSE(logged("ambiguous origin", NULL));
+    assertCardHealthy(42U);
+}
+
 /* A block whose CRC16 is 0xFFFF, written first and completed normally, so that
  * the driver's writeBlockCrc16 is 0xFFFF when the next write starts. */
 static void writeAnFfffCrcBlock(uint32_t lba)
@@ -4043,6 +4064,7 @@ int main(void)
     RUN(original_payload_with_a_0xffff_crc_and_a_refused_crc_write_is_not_filler);
     RUN(original_payload_with_a_lost_crc_completion_is_not_filler);
     RUN(edge_lost_payload_completion_with_a_0xffff_crc_is_recorded);
+    RUN(lost_payload_completion_with_an_ordinary_crc_yields_no_acceptance);
     RUN(a_refused_payload_does_not_inherit_the_previous_blocks_0xffff_crc);
     RUN(a_write_that_fails_before_its_payload_does_not_inherit_the_previous_0xffff_crc);
     RUN(resync_before_block_read_failing_with_nothing_delivered_reports_no_stale_byte);
