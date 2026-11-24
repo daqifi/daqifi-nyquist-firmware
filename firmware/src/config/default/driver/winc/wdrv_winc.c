@@ -48,6 +48,7 @@ Microchip or any third party.
 #include "wdrv_winc.h"
 #include "wdrv_winc_common.h"
 #include "Util/Logger.h"
+#include "services/wifi_services/wifi_manager.h"
 #include "wdrv_winc_gpio.h"
 #include "wdrv_winc_spi.h"
 #ifdef WDRV_WINC_DEVICE_LITE_DRIVER
@@ -666,6 +667,15 @@ static void wincMACCheckRecvPacket(WDRV_WINC_DCPT *const pDcpt)
 static void wincWifiCallback(uint8_t msgType, const void *const pMsgContent)
 {
     WDRV_WINC_DCPT *const pDcpt = &wincDescriptor[0];
+
+    /* DAQiFi #1324: m2m_wifi.c delivers M2M_WIFI_RESP_IP_CONFLICT with a NULL
+     * message, so it must be taken before the NULL-content guard below (which
+     * would otherwise drop it silently). */
+    if (M2M_WIFI_RESP_IP_CONFLICT == msgType)
+    {
+        wifi_manager_NoteIpConflict();
+        return;
+    }
 
     if ((NULL == pMsgContent) || (NULL == pDcpt->pCtrl))
     {

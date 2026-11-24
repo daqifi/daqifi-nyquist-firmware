@@ -14,8 +14,8 @@
 # Include paths derived from firmware/daqifi.X/nbproject/Makefile-default.mk.
 #
 # Invocation (#1169 -- the DEFAULT checks, writing the baseline is opt-in):
-#   bash tools/lint/cppcheck.sh                          CHECK: diff against the
-#                                                        committed baseline, exit 1 on any difference
+#   bash tools/lint/cppcheck.sh                          CHECK: compare with the committed
+#                                                        baseline (as CI does), exit 1 on any difference
 #   bash tools/lint/cppcheck.sh --write-baseline         regenerate the committed baseline
 #                                                        (refuses if any finding is not already in it)
 #   bash tools/lint/cppcheck.sh --write-baseline --force regenerate even with new findings
@@ -122,19 +122,21 @@ COMMON=(
   -I firmware/src/third_party/rtos/FreeRTOS/Source/include
   -I firmware/src/third_party/rtos/FreeRTOS/Source/portable/MPLAB/PIC32MZ
   -DHAVE_CONFIG_H
+  # Without this, every translation unit that includes FreeRTOS hits
+  # portmacro.h:150's FPU #error (suppressed in cppcheck-suppress.txt),
+  # cppcheck drops that configuration, and the file is silently NOT
+  # analysed (#1309: an injected out-of-bounds write in streaming.c
+  # produced zero findings). The XC32 build defines it for the PIC32MZ.
+  -D__mips_hard_float=1
 )
 
 # Hand-edited sub-trees of firmware/src/config that ARE analysed (#1165).
 # driver/sdspi carries our shared-SPI4 lock / quarantine / detect-poll logic.
 # Adding one is a deliberate act: regenerate the baseline and read the delta.
 #
-# They get their OWN pass because they need -D__mips_hard_float=1. Without it
-# every translation unit that includes FreeRTOS hits portmacro.h's FPU #error
-# (suppressed above), cppcheck drops that configuration, and the file is
-# silently NOT analysed -- measured: an injected out-of-bounds write in
-# drv_sdspi_file_system.c produced zero findings under the main pass's flags.
-# The define is NOT added to the main pass: doing so surfaces ~250 findings
-# in files that are currently blind (tracked as #1309).
+# They get their OWN pass only because they sit outside the main pass's
+# `-i firmware/src/config` exclusion. Both passes carry
+# -D__mips_hard_float=1 (see COMMON) so FreeRTOS-including files are analysed.
 ANALYSED_CONFIG=(firmware/src/config/default/driver/sdspi)
 
 # `if !` so set -e doesn't abort on cppcheck failure; we want to surface
@@ -152,7 +154,7 @@ fi
 
 TMP_CFG="$(mktemp)"
 trap 'rm -f "$TMP_OUT" "$SORTED_OUT" "$TMP_CFG"' EXIT
-if ! LC_ALL=C LANG=C cppcheck "${COMMON[@]}" -D__mips_hard_float=1 \
+if ! LC_ALL=C LANG=C cppcheck "${COMMON[@]}" \
   "${ANALYSED_CONFIG[@]}" 2>"$TMP_CFG"; then
   echo "::error::cppcheck (ANALYSED_CONFIG pass) exited non-zero — captured output below:"
   cat "$TMP_CFG"
@@ -164,26 +166,30 @@ LC_ALL=C sort "$TMP_OUT" >"$SORTED_OUT"
 
 case "$MODE" in
   check)
-    # --strip-trailing-cr matches the CI comparison (CRLF stragglers).
-    if diff -u --strip-trailing-cr "$BASELINE" "$SORTED_OUT"; then
-      echo "OK: cppcheck findings match $BASELINE ($(wc -l < "$BASELINE") lines)"
-      exit 0
+    # The SAME comparator CI runs (line-insensitive multiset, #1309), so the
+    # local check and the gate cannot disagree. Exit 2 (cannot compare) stays 2.
+    RC=0
+    python3 -I tools/lint/cppcheck_compare.py "$BASELINE" "$SORTED_OUT" || RC=$?
+    if [ "$RC" = 1 ]; then
+      echo "::error::cppcheck findings differ from $BASELINE" >&2
+      echo "Fix a real bug, or suppress a false positive in tools/lint/cppcheck-suppress.txt;" >&2
+      echo "regenerate the baseline ONLY for resolved findings: $0 --write-baseline" >&2
     fi
-    echo "::error::cppcheck findings differ from $BASELINE ('+' = new finding, '-' = resolved)" >&2
-    echo "Fix a real bug, or suppress a false positive in tools/lint/cppcheck-suppress.txt;" >&2
-    echo "regenerate the baseline ONLY for resolved findings: $0 --write-baseline" >&2
-    exit 1
+    exit "$RC"
     ;;
   write)
     OUT="$BASELINE"
     # Refuse on any finding NOT already in the baseline, not on a count: a
     # change that fixes one finding and adds another keeps the count level
     # and would otherwise adopt the new one silently.
-    ADDED="$(LC_ALL=C comm -13 <(LC_ALL=C sort "$BASELINE" 2>/dev/null | tr -d '\r') "$SORTED_OUT" | wc -l)"
+    # Line-insensitive, as the gate is: a finding that only moved is not new.
+    # A baseline that does not exist yet accepts nothing.
+    OLD="$BASELINE"; [ -e "$OLD" ] || OLD=/dev/null
+    ADDED="$(python3 -I tools/lint/cppcheck_compare.py --count-added "$OLD" "$SORTED_OUT")"
     if [ "$ADDED" -gt 0 ] && [ "$FORCE" != 1 ]; then
       echo "::error::refusing to write the baseline: $ADDED finding(s) not in $BASELINE." >&2
       echo "Writing them would adopt new findings. Fix or suppress them; use --force only if deliberate." >&2
-      diff -u --strip-trailing-cr "$BASELINE" "$SORTED_OUT" >&2 || true
+      python3 -I tools/lint/cppcheck_compare.py "$OLD" "$SORTED_OUT" >&2 || true
       exit 1
     fi
     ;;

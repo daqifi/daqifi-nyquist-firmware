@@ -417,6 +417,22 @@ bool wifi_tcp_server_HasActiveClient(void);
  */
 uint32_t wifi_tcp_server_GetCircularBufferAvailable(void);
 
+/**
+ * #1279: bytes queued in the TCP write circular buffer that
+ * wifi_tcp_server_SetWriteBuffer would discard, read under wMutex. 0 when no
+ * client is connected (those bytes are undeliverable and the close path
+ * discards them anyway).
+ */
+uint32_t wifi_tcp_server_PendingWriteBytes(void);
+
+/**
+ * Drain one chunk of the TCP write circular buffer to send(). Called each
+ * WifiTask loop, from the SOCKET_MSG_SEND chain and by producers; #1279's idle
+ * re-partition calls it on WifiTask to send a TCP command's own queued replies
+ * before discarding the ring.
+ */
+bool wifi_tcp_server_TransmitBufferedData(void);
+
     /* Provide C++ Compatibility */
 #ifdef __cplusplus
 }

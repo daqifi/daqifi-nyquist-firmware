@@ -6,6 +6,7 @@
 #include "wdrv_winc_client_api.h"
 #include "Util/Logger.h"
 #include "wifi_tcp_server.h"
+#include "services/SCPI/SCPICmdGate.h"
 #include "state/data/BoardData.h"
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "wifi_serial_bridge.h"
@@ -4002,7 +4003,9 @@ static void wifi_manager_ProcessStateImpl(bool drainTcpRx) {
     // Always clear the flag under the socket-valid guard, so a RECV that
     // arrived just before the client disconnected doesn't leave stale data
     // queued for the next client.
-    if (drainTcpRx && gTcpRxPending) {
+    // #1279: deferred (gTcpRxPending stays set, recv not re-armed) while an idle
+    // SD-buffer restore on the USB task holds the SCPI command gate.
+    if (drainTcpRx && gTcpRxPending && ScpiCmdGate_TryEnter(SCPI_CMD_GATE_TCP)) {
         gTcpRxPending = false;
         if (gStateMachineContext.pTcpServerContext != NULL &&
             gStateMachineContext.pTcpServerContext->client.clientSocket >= 0) {
@@ -4011,6 +4014,7 @@ static void wifi_manager_ProcessStateImpl(bool drainTcpRx) {
                  gStateMachineContext.pTcpServerContext->client.readBuffer,
                  WIFI_RBUFFER_SIZE, 0);
         }
+        ScpiCmdGate_Exit(SCPI_CMD_GATE_TCP);
     }
 
     if (xQueueReceive(gEventQH, &event, 1) == pdPASS) {
@@ -4051,6 +4055,29 @@ void wifi_manager_ProcessStateNoTcpRx(void) {
 
 wifi_tcp_server_context_t* wifi_manager_GetTcpServerContext() {
     return gStateMachineContext.pTcpServerContext;
+}
+
+// #1324: count of M2M_WIFI_RESP_IP_CONFLICT events.  Two writers: the WINC
+// event callback (WINC driver task, via m2m_wifi_handle_events) increments it,
+// and SYST:STR:STATS:CLEar (USB or WiFi SCPI task, both higher priority) zeroes
+// it.  ++ is a read-modify-write, so it runs in a critical section; otherwise a
+// clear landing between its load and store is undone.  The 32-bit read and the
+// clear's plain store are each atomic on PIC32MZ.
+static volatile uint32_t gWifiIpConflicts = 0;
+
+void wifi_manager_NoteIpConflict(void) {
+    taskENTER_CRITICAL();
+    gWifiIpConflicts++;
+    taskEXIT_CRITICAL();
+    LOG_E("WiFi: IP address conflict reported by WINC\r\n");
+}
+
+uint32_t wifi_manager_GetIpConflicts(void) {
+    return gWifiIpConflicts;
+}
+
+void wifi_manager_ClearIpConflicts(void) {
+    gWifiIpConflicts = 0;
 }
 
 uint32_t wifi_manager_GetListenSocketUptimeSec(void) {
