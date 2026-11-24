@@ -101,27 +101,45 @@ volatile static unsigned int exception_address;
 /* Code identifying the cause of the exception (CP0 Cause register). */
 volatile static uint32_t  exception_code;
 
-/* ---- #552 crash capture (custom — not MCC-generated; preserve on regen) ----
+/* ---- #552 crash capture, persisted across reset by #1190 (custom -- not
+ * MCC-generated; preserve on regen) ----
  * A task stack overflow that corrupts pxTopOfStack faults inside the FreeRTOS
  * context-switch restore (port_asm.S) and vectors to _general_exception_handler,
- * BYPASSING vApplicationStackOverflowHook. Record the culprit into these fixed
- * globals (BSS — NOT any task's stack) so the offending task is diagnosable via
- * mdb (`print gCrash*`) or a Logger dump without a live repro. Peer capture in
- * vApplicationStackOverflowHook (freertos_hooks.c) covers the guard-caught case.
- * These read valid only after a crash sets them THIS boot (not zeroed across
- * MCLR in retained-RAM regions — see #409). */
-#define CRASH_TASK_NAME_MAX 20
+ * BYPASSING vApplicationStackOverflowHook. The culprit is recorded into the
+ * fixed-address block below (NOT any task's stack) by that handler and by the
+ * overflow and malloc-failed hooks in freertos_hooks.c, then read back after
+ * the reset by SYSTem:LOG?. Layout, validity rule and placement rationale:
+ * Util/CrashRecord.h.
+ *
+ * The block is `persistent, coherent, address()`: crt0 does not clear it
+ * (XC32 DS50002799E 18.2.8) and the stores bypass the write-back D-cache so they
+ * reach SRAM before the reset. It survives MCLR / software / watchdog reset; it
+ * does NOT survive a power cycle (SRAM is then undefined, and the validity pair
+ * is what makes that read as "no record"). */
+#include "Util/CrashRecord.h"
+#include "Util/CrashRecordCore.h"
 
-volatile uint32_t gCrashReason     = 0U; /* 0 none, 1 stack-overflow hook, 2 general exception, 3 malloc-fail */
-volatile uint32_t gCrashExcCode    = 0U; /* CP0 ExcCode: 2=TLBL, 4=AdEL, 5=AdES, 7=DBE, ... */
-volatile uint32_t gCrashExcAddr    = 0U; /* EPC of the faulting instruction */
-volatile uint32_t gCrashTaskHandle = 0U; /* current TCB (pxCurrentTCB) at the fault */
-volatile char     gCrashTaskName[CRASH_TASK_NAME_MAX] = { 0 };
+static volatile uint32_t sCrashRecord[CRASH_RECORD_WORDS]
+    __attribute__((persistent, coherent, address(CRASH_RECORD_ADDR)));
 
-/* FreeRTOS accessors used below (xTaskGetCurrentTaskHandle / pcTaskGetName) are
- * declared via definitions.h -> task.h, already in scope here. Both are always
- * compiled in this config (INCLUDE_xTaskGetCurrentTaskHandle == 1; pcTaskGetName
- * is unconditional). */
+/* Identity of the RUNNING image, stored into every record by Seal() so a record
+ * that outlives a firmware update (the bootloader never touches the block) is
+ * recognisable as written by a different image (#1190 r3). Plain BSS, written
+ * ONLY through CrashRecord_SetImageId(): main() scrubs it to 0 as its first
+ * statement (per-symbol .bss is not guaranteed zeroed across a reset, #409, and a
+ * value left by the previous boot's image must not be stamped onto this one's
+ * record), then publishes the CRC32 fingerprint once it is computed. 0 = not yet
+ * known. CrashCapture_Init() must NOT touch it: it runs in the application task,
+ * AFTER main() has published (bench-found on the first r3 image: zeroing it there
+ * made every record read as id 00000000). */
+static volatile uint32_t sCrashImageId = 0U;
+
+/* sizeof() cannot see persistent/coherent: tools/lint/force_bootloader_cacheline.py
+ * owns that half. These two catch the size and alignment halves at compile time. */
+_Static_assert((sizeof(sCrashRecord) % 16u) == 0u,
+    "sCrashRecord must reserve whole 16-byte D-cache lines (#1190, #1083)");
+_Static_assert(((CRASH_RECORD_ADDR) & 0xFu) == 0u,
+    "CRASH_RECORD_ADDR must be 16-byte aligned to a D-cache line (#1190, #1083)");
 
 /* On-chip RAM bounds so a corrupt pointer can't cause a nested fault while we
  * copy a name. PIC32MZ2048EFM144 has 512 KB RAM at KSEG0 0x80000000 (KSEG1
@@ -132,45 +150,214 @@ static bool CrashCapture_PtrInRam( uint32_t p )
              ( p >= 0xA0000000U && p < 0xA0080000U ) );
 }
 
-/* Non-static: also used by vApplicationStackOverflowHook (freertos_hooks.c). */
-void CrashCapture_CopyName( const char * nm )
+/* Everything down to the boot/readback marker runs while the system is already
+ * faulting: plain aligned 32-bit stores through the volatile array, no library
+ * calls, and leaf functions (no stack frame). */
+
+void CrashRecord_Begin( void )
 {
-    unsigned int i;
-    if ( ( nm == NULL ) || !CrashCapture_PtrInRam( (uint32_t) nm ) )
+    uint32_t i;
+    /* Invalidate FIRST: a crash that dies half way through its own capture must
+     * read as "no record", not as the previous record with a torn payload. */
+    sCrashRecord[CRASH_W_MAGIC] = 0U;
+    sCrashRecord[CRASH_W_CHECK] = 0U;
+    for ( i = 0U; i < CRASH_W_MAGIC; i++ )
     {
-        return;
+        sCrashRecord[i] = 0U;
     }
-    for ( i = 0U; i < ( CRASH_TASK_NAME_MAX - 1U ); i++ )
-    {
-        /* Validate EACH byte's address: a pointer near the RAM-top boundary
-         * could otherwise read past mapped RAM and nested-fault mid-capture. */
-        if ( !CrashCapture_PtrInRam( (uint32_t) &nm[i] ) ) { break; }
-        char c = nm[i];
-        if ( c == '\0' ) { break; }
-        gCrashTaskName[i] = ( ( c >= 0x20 ) && ( c <= 0x7E ) ) ? c : '?';
-    }
-    gCrashTaskName[i] = '\0';
 }
 
-/* Zero the crash-capture globals at boot. They live in per-symbol .bss.<name>
- * sections that crt0 does NOT zero across MCLR / IPE flash (retained RAM, #409),
- * so without this an un-crashed boot could read stale metadata (e.g. a non-zero
- * gCrashReason). Call pre-scheduler alongside the other #409 retained-RAM
- * scrubs. See #552. */
-void CrashCapture_Init( void )
+void CrashRecord_SetWord( uint32_t idx, uint32_t v )
 {
-    unsigned int i;
-    gCrashReason      = 0U;
-    gCrashExcCode     = 0U;
-    gCrashExcAddr     = 0U;
-    gCrashTaskHandle  = 0U;
-    /* Clear the WHOLE buffer (not just the terminator) so a raw memory dump
-     * before any crash shows no stale bytes. */
-    for ( i = 0U; i < CRASH_TASK_NAME_MAX; i++ )
+    if ( idx < CRASH_W_MAGIC )
     {
-        gCrashTaskName[i] = '\0';
+        sCrashRecord[idx] = v;
     }
 }
+
+/* Task name -> words 4..8, 4 bytes per word little-endian, NUL padded. Every
+ * source byte's address is range-checked (a pointer near the RAM top could
+ * otherwise read past mapped RAM and nested-fault mid-capture) and
+ * non-printables become '?'. A NULL / out-of-RAM name leaves the field empty. */
+void CrashRecord_CopyName( const char * nm )
+{
+    uint32_t i;
+    uint32_t acc = 0U;
+    bool ended = ( nm == NULL ) || !CrashCapture_PtrInRam( (uint32_t) nm );
+
+    for ( i = 0U; i < CRASH_TASK_NAME_MAX; i++ )
+    {
+        uint32_t c = 0U;
+        /* The last byte is always the terminator. */
+        if ( !ended && ( i < ( CRASH_TASK_NAME_MAX - 1U ) ) )
+        {
+            if ( !CrashCapture_PtrInRam( (uint32_t) &nm[i] ) )
+            {
+                ended = true;
+            }
+            else
+            {
+                char ch = nm[i];
+                if ( ch == '\0' )
+                {
+                    ended = true;
+                }
+                else
+                {
+                    c = ( ( ch >= 0x20 ) && ( ch <= 0x7E ) ) ? (uint32_t) (uint8_t) ch : (uint32_t) '?';
+                }
+            }
+        }
+        acc |= c << ( 8U * ( i & 3U ) );
+        if ( ( i & 3U ) == 3U )
+        {
+            sCrashRecord[CRASH_W_NAME0 + ( i >> 2 )] = acc;
+            acc = 0U;
+        }
+    }
+}
+
+/* Validity LAST: payload (already stored), then the check word, then the magic.
+ * `sync` drains the uncached write buffer so every store has reached SRAM
+ * before the caller spins or resets. */
+void CrashRecord_Seal( void )
+{
+    sCrashRecord[CRASH_W_IMAGE] = sCrashImageId;   /* inside the check's fold */
+    __asm__ volatile ( "sync" : : : "memory" );
+    sCrashRecord[CRASH_W_CHECK] = ~( CRASH_RECORD_MAGIC ^ CrashRecord_FoldWords( sCrashRecord ) );
+    __asm__ volatile ( "sync" : : : "memory" );
+    sCrashRecord[CRASH_W_MAGIC] = CRASH_RECORD_MAGIC;
+    __asm__ volatile ( "sync" : : : "memory" );
+}
+
+/* ---- boot / readback side (task or pre-scheduler context, stack available) -- */
+
+/* Copy the live block into `snap` (CRASH_RECORD_WORDS words). The caller owns
+ * the exclusion: a critical section in task context, nothing pre-scheduler. */
+static void CrashRecord_Copy( uint32_t * snap )
+{
+    uint32_t i;
+    for ( i = 0U; i < CRASH_RECORD_WORDS; i++ )
+    {
+        snap[i] = sCrashRecord[i];
+    }
+}
+
+/* Magic first, so an interrupted clear leaves "no record". No locking. */
+static void CrashRecord_ClearUnlocked( void )
+{
+    uint32_t i;
+    sCrashRecord[CRASH_W_MAGIC] = 0U;
+    for ( i = 0U; i < CRASH_RECORD_WORDS; i++ )
+    {
+        sCrashRecord[i] = 0U;
+    }
+}
+
+/* SYSTem:LOG:CLEar. Task context (the scheduler is running at the only call
+ * site, SCPI_SysLogClear). The clear runs inside the SAME critical section the
+ * reader's snapshot copy uses (CrashRecord_Read), so a reader sees either the
+ * whole record or the whole clear, never a mix. */
+void CrashRecord_Clear( void )
+{
+    taskENTER_CRITICAL();
+    CrashRecord_ClearUnlocked();
+    taskEXIT_CRITICAL();
+}
+
+/* Validate the block at boot and clear it ONLY when it is not a valid record.
+ * A valid record survives until it is read and cleared (SYSTem:LOG:CLEar). The
+ * block is NOT in retained-by-accident RAM: it is placed `persistent` on purpose,
+ * so a boot that follows a crash finds the record and a cold boot (undefined
+ * SRAM) finds garbage that fails validation and is zeroed here. Call
+ * pre-scheduler (single-threaded, so no critical section is taken). See #552,
+ * #1190. */
+void CrashCapture_Init( void )
+{
+    uint32_t snap[CRASH_RECORD_WORDS];
+    CrashRecord_Copy( snap );
+    if ( !CrashRecord_SnapshotValid( snap ) )
+    {
+        CrashRecord_ClearUnlocked();
+    }
+}
+
+void CrashRecord_SetImageId( uint32_t id )
+{
+    sCrashImageId = id;
+}
+
+/* Snapshot the block inside a short critical section (12 word loads), then
+ * validate and decode the SNAPSHOT outside it. Returns true only if the copy
+ * itself validates, so a concurrent SYSTem:LOG:CLEar (other transport) yields
+ * "no record" rather than a zeroed or half-cleared one. Task context only.
+ *
+ * The capture WRITE path (CrashRecord_Begin/SetWord/CopyName/Seal, above)
+ * cannot take this critical section: it runs while the system is faulting,
+ * possibly from an exception with the kernel state undefined, and then resets.
+ * It does not need to. It is plain aligned 32-bit stores with the validity pair
+ * written last (check, then magic), after a Begin() that invalidated the magic
+ * first, and no task runs again before the reset, so the only reader that can
+ * ever observe it mid-write is a boot that finds it torn -- and a torn block
+ * fails the magic/check test and reads as absent. */
+bool CrashRecord_Read( CrashRecordView * out )
+{
+    uint32_t snap[CRASH_RECORD_WORDS];
+    if ( out == NULL )
+    {
+        return false;
+    }
+    taskENTER_CRITICAL();
+    CrashRecord_Copy( snap );
+    taskEXIT_CRITICAL();
+    return CrashRecord_SnapshotToView( snap, sCrashImageId, out );
+}
+
+/* Grammar and rationale: CrashRecord_FormatLine() in Util/CrashRecordCore.h
+ * (the pure half, compiled unchanged by the host test). */
+size_t CrashRecord_Format( char * buf, size_t n, const CrashRecordView * v )
+{
+    return CrashRecord_FormatLine( buf, n, v );
+}
+
+#ifdef CRASH_RECORD_TEST_HOOK
+/* #1190 companion-test hook, compiled ONLY with -DCRASH_RECORD_TEST_HOOK=1 (a
+ * test build; the shipped image has neither this function nor the reset below).
+ * Each case drives the REAL capture site, not a copy of it. After the capture
+ * the real sites call CrashRecord_TestReset() so a test needs no debugger to get
+ * the reset the record has to survive. */
+extern void vApplicationStackOverflowHook( TaskHandle_t xTask, char *pcTaskName );
+
+void CrashRecord_TestReset( void )
+{
+    RCON_SoftwareReset();
+    for ( ;; ) { }
+}
+
+void CrashRecord_TestFire( int32_t which )
+{
+    switch ( which )
+    {
+        case 1:
+            vApplicationStackOverflowHook( xTaskGetCurrentTaskHandle(),
+                                           pcTaskGetName( NULL ) );
+            break;
+        case 2:
+            /* Unaligned word store to valid RAM (a literal `sw`, which the compiler
+             * cannot turn into swl/swr): Address Error (store), ExcCode 5,
+             * vectors to _general_exception_handler. */
+            __asm__ volatile ( "sw $zero, 1(%0)" : : "r" ( 0x80000000U ) : "memory" );
+            break;
+        case 3:
+            /* Larger than the heap: pvPortMalloc fails and calls
+             * vApplicationMallocFailedHook. */
+            ( void ) pvPortMalloc( 0x7FFFFFF0U );
+            break;
+        default:
+            break;
+    }
+}
+#endif /* CRASH_RECORD_TEST_HOOK */
 
 
 // </editor-fold>
@@ -194,16 +381,17 @@ void __attribute__((noreturn, weak)) _general_exception_handler ( void )
     exception_code = ((_CP0_GET_CAUSE() & 0x0000007CU) >> 2U);
     exception_address = _CP0_GET_EPC();
 
-    /* #552: record the culprit into fixed globals (not any task stack) so a
-     * stack-overflow-escape TLBL — which never reaches the FreeRTOS overflow
-     * hook — is diagnosable via mdb without a live repro. pxCurrentTCB is a
-     * kernel global (not on a task stack), so it survives a task overflow; the
-     * bounds check guards against a wild pointer causing a nested fault. */
-    gCrashReason  = 2U;
-    gCrashExcCode = exception_code;
-    gCrashExcAddr = exception_address;
-    gCrashTaskName[0] = '\0';   /* fresh per-crash; overwritten below only on a good capture,
-                                 * so a failed/invalid-TCB read can't show a stale name */
+    /* #552/#1190: record the culprit into the persistent crash record (not any
+     * task stack) so a stack-overflow-escape TLBL -- which never reaches the
+     * FreeRTOS overflow hook -- is readable after the reset without a debugger.
+     * pxCurrentTCB is a kernel global (not on a task stack), so it survives a
+     * task overflow; the bounds check guards against a wild pointer causing a
+     * nested fault. Begin() invalidates the old record first, Seal() writes the
+     * validity words last, so a capture cut short reads as "no record". */
+    CrashRecord_Begin();
+    CrashRecord_SetWord( CRASH_W_REASON,  CRASH_REASON_EXCEPTION );
+    CrashRecord_SetWord( CRASH_W_EXCCODE, exception_code );
+    CrashRecord_SetWord( CRASH_W_EXCADDR, exception_address );
     /* Capture whenever the scheduler has started (RUNNING or SUSPENDED — a
      * scheduler-suspended crash still has a valid pxCurrentTCB); only skip
      * pre-scheduler (NOT_STARTED), where pxCurrentTCB is invalid and the kernel
@@ -211,12 +399,16 @@ void __attribute__((noreturn, weak)) _general_exception_handler ( void )
     if ( xTaskGetSchedulerState() != taskSCHEDULER_NOT_STARTED )
     {
         TaskHandle_t tcb = xTaskGetCurrentTaskHandle();
-        gCrashTaskHandle = (uint32_t) tcb;
+        CrashRecord_SetWord( CRASH_W_TCB, (uint32_t) tcb );
         if ( ( tcb != NULL ) && CrashCapture_PtrInRam( (uint32_t) tcb ) )
         {
-            CrashCapture_CopyName( pcTaskGetName( tcb ) );
+            CrashRecord_CopyName( pcTaskGetName( tcb ) );
         }
     }
+    CrashRecord_Seal();
+#ifdef CRASH_RECORD_TEST_HOOK
+    CrashRecord_TestReset();
+#endif
 
     while (true)
     {

@@ -59,25 +59,27 @@ jobs:
       - name: Run cppcheck
         run: bash tools/lint/cppcheck.sh /tmp/cppcheck-current.txt
 
+      - name: Comparator self-test
+        run: python3 -I tools/lint/cppcheck_compare.py --self-test
+
+      # Line-insensitive multiset comparison (#1309): a plain `diff` failed on
+      # any edit that shifted a line number above an accepted finding. See the
+      # docstring in tools/lint/cppcheck_compare.py for the normalisation and
+      # its one known residual (swap of same-message findings within a file).
       - name: Compare against committed baseline
         run: |
-          # --strip-trailing-cr makes the comparison robust against
-          # CRLF stragglers from .gitattributes drift on Windows-edited
-          # files. The baseline + suppress + workflow files are pinned
-          # to LF in .gitattributes, but this is a cheap safety net.
-          if diff -u --strip-trailing-cr tools/lint/cppcheck-baseline.txt /tmp/cppcheck-current.txt; then
-            echo "✓ Cppcheck baseline unchanged ($(wc -l < tools/lint/cppcheck-baseline.txt) lines)"
+          if python3 -I tools/lint/cppcheck_compare.py tools/lint/cppcheck-baseline.txt /tmp/cppcheck-current.txt; then
             exit 0
           fi
 
           echo ""
           echo "::error::cppcheck findings differ from committed baseline"
           echo ""
-          echo "If new findings appeared (lines starting with '+'):"
-          echo "  - Real bug → fix it"
-          echo "  - False positive → add to tools/lint/cppcheck-suppress.txt"
+          echo "NEW findings:"
+          echo "  - Real bug -> fix it"
+          echo "  - False positive -> add to tools/lint/cppcheck-suppress.txt"
           echo ""
-          echo "If existing findings were resolved (lines starting with '-'):"
+          echo "RESOLVED findings:"
           echo "  - Regenerate the baseline:"
           echo "      bash tools/lint/cppcheck.sh"
           echo "    and commit the updated tools/lint/cppcheck-baseline.txt"

@@ -547,7 +547,7 @@ size_t Json_Encode(tBoardData* state,
                 int written = snprintf(charBuffer + startIndex,
                         buffSize - startIndex,
                         "\"sec\":%u,\n",
-                        wifiSettings->securityMode);
+                        (unsigned int)wifiSettings->securityMode);
                 if (written < 0 || written >= (int)(buffSize - startIndex)) {
                     // Optional field - skip on buffer full, continue processing
                     break;

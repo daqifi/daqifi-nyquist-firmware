@@ -51,6 +51,10 @@ extern "C" {
     /**
      * Erases a page of data from address specified (test/diagnostic function)
      * @param addr The address of flash to begin the page erase
+     * @return True if the page reads back erased; false if it does not (e.g.
+     *         a write-protected page) or if a wait timed out (#1206). All three
+     *         write/erase functions here bound every wait and return false on
+     *         expiry, with DMA and the NVM mutex restored.
      */
     bool nvm_ErasePage(uint32_t addr);
     //    
