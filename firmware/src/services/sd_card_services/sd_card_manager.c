@@ -1409,8 +1409,14 @@ void sd_card_manager_ServicePendingVerdict(void) {
             ScpiSdWindow_TryOpen(transport, gGetPendingVerdict.generation)) {
         const uint32_t count = gGetPendingVerdict.count;
         const char* const reason = gGetPendingVerdict.reason;
-        gGetPendingVerdict.active = false;
+        /* fw#1265 round 11 (#1267 round-10 finding 1): `active` STAYS TRUE
+         * ACROSS THE DELIVERY and is cleared only after the framing is done.
+         * While it is true IsBusyLocked() is true, so no GET (or any other
+         * claim) can be admitted and rewrite the settings sd_get_send_end_core
+         * reads to frame the reply (tag, reply target, DataReadyCB). Clearing
+         * it first reopened exactly that window. */
         sd_get_send_end_core(false, count, reason, true, false, true);
+        gGetPendingVerdict.active = false;
     }
     if (gSDOpMutex) {
         xSemaphoreGive(gSDOpMutex);
@@ -6530,6 +6536,21 @@ static bool sd_card_manager_IsBusyLocked(void) {
     // Busy if any operation mode is active (WRITE, READ, LIST, DELETE, FORMAT)
     // Mode is set when operation starts and cleared when complete
     if (gpSDCardSettings->mode != SD_CARD_MANAGER_MODE_NONE) {
+        return true;
+    }
+
+    /* fw#1265 round 11 (#1267 round-10 findings 1 and 3): A PENDING TAGGED-GET
+     * VERDICT KEEPS THE MANAGER BUSY. The verdict is framed from the shared
+     * GET settings (tag, reply target, session generation), so a second GET
+     * admitted before it is delivered would rewrite them and the owner would
+     * either be told another request's outcome or lose its verdict. Refusing
+     * admission (TryClaim and IsBusy both land here) is the whole fix: no new
+     * state, one more term in the existing busy predicate. `active` is set by
+     * the SD task while `mode` is still READ (so busy is already true) and
+     * cleared by sd_card_manager_ServicePendingVerdict after delivery or by
+     * sd_get_verdict_lost, so there is no gap on either side. Bounded: it
+     * ends when the window opens or the requesting session does. */
+    if (gGetPendingVerdict.active) {
         return true;
     }
 

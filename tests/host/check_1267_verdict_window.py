@@ -359,6 +359,22 @@ def check_pending(s):
     for needle in ("wifi_tcp_server_ConnIsCurrent(", "sd_get_verdict_lost("):
         if needle not in sw:
             raise AssertionError("ServicePendingVerdict: missing %s" % needle)
+    # Round 11 (#1267 round-10 finding 1): `active` stays true across the
+    # framing, so no GET can be admitted and rewrite the settings the framing
+    # reads. The ONLY clear in ServicePendingVerdict is the one AFTER delivery
+    # (sd_get_verdict_lost clears it on the lost paths).
+    clears = [m.start() for m in re.finditer(r"gGetPendingVerdict\.active=false;", sw)]
+    if len(clears) != 1 or clears[0] < k:
+        raise AssertionError("ServicePendingVerdict: gGetPendingVerdict.active "
+                             "must be cleared exactly once, AFTER "
+                             "sd_get_send_end_core (not before the framing)")
+    # ...and while it is true the manager is busy (TryClaim and IsBusy both
+    # consult IsBusyLocked), which is what refuses the second GET (findings 1+3).
+    busy = ws(body(s, "sd_card_manager_IsBusyLocked"))
+    term = "if(gGetPendingVerdict.active){returntrue;}"
+    if busy.count(term) != 1 or busy.index(term) > busy.index("switch("):
+        raise AssertionError("IsBusyLocked: a pending verdict must keep the "
+                             "manager busy, before the state switch")
 
 
 def check(text):
@@ -396,6 +412,24 @@ def self_test():
             "    sd_get_send_end(ok, count, reason, blockDelivered, headerOut);", 1),
         "pending service without the mutex": lambda t: t.replace(
             "xSemaphoreTake(gSDOpMutex, 0) != pdTRUE", "0", 1),
+        "pending clears before the framing": lambda t: t.replace(
+            "        sd_get_send_end_core(false, count, reason, true, false, true);\n"
+            "        gGetPendingVerdict.active = false;\n",
+            "        gGetPendingVerdict.active = false;\n"
+            "        sd_get_send_end_core(false, count, reason, true, false, true);\n", 1),
+        "pending does not keep busy": lambda t: t.replace(
+            "    if (gGetPendingVerdict.active) {\n        return true;\n    }\n", "", 1),
+        "pending busy only after the switch": lambda t: t.replace(
+            "    if (gGetPendingVerdict.active) {\n        return true;\n    }\n", "", 1)
+        .replace("    switch (gSDCardData.currentProcessState) {\n"
+                 "        case SD_CARD_MANAGER_PROCESS_STATE_IDLE:\n"
+                 "        case SD_CARD_MANAGER_PROCESS_STATE_INIT:\n"
+                 "            return false;\n        default:\n            return true;\n    }\n",
+                 "    switch (gSDCardData.currentProcessState) {\n"
+                 "        case SD_CARD_MANAGER_PROCESS_STATE_IDLE:\n"
+                 "        case SD_CARD_MANAGER_PROCESS_STATE_INIT:\n"
+                 "            return false;\n        default:\n            return true;\n    }\n"
+                 "    if (gGetPendingVerdict.active) {\n        return true;\n    }\n", 1),
         "pending delivers without a window": lambda t: t.replace(
             "            ScpiSdWindow_TryOpen(transport, gGetPendingVerdict.generation)) {",
             "            1) {", 1),
