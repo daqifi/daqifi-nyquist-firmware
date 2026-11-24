@@ -710,6 +710,36 @@ $(CLAMP1231_BIN): test_1231_clamp_report_latch.c test_framework.h \
 	fi
 	$(CC) $(CFLAGS) -o $(CLAMP1231_BIN) test_1231_clamp_report_latch.c
 
+# #1349: the sample-queue grow needs a contiguous fit, decided before the delete.
+#
+# QueueGrowFits() is spliced verbatim out of AInSample.c. The second half
+# proves the call site: the decision must be MADE with the largest free block
+# and must come BEFORE vQueueDelete, which no host test can see.
+GROW1349_BIN := run_1349_tests
+GROW1349_GEN := gen_1349_queue_grow.h
+GROW1349_SRC := ../../firmware/src/state/data/AInSample.c
+
+$(GROW1349_BIN): test_1349_queue_grow_contiguous.c test_framework.h \
+                 $(GROW1349_SRC) $(RECIPES)
+	@sed -n '/^static inline bool QueueGrowFits(size_t slots, size_t slotBytes,/,/^}/p' \
+	     $(GROW1349_SRC) | tr -d '\r' > $(GROW1349_GEN)
+	@lines=`wc -l < $(GROW1349_GEN) | tr -d ' '`; \
+	 last=`tail -1 $(GROW1349_GEN) | tr -d '[:space:]'`; \
+	 test "$$lines" -ge 4 && test "$$lines" -le 20 && test "$$last" = "}" \
+	  || { echo "ERROR: could not splice QueueGrowFits() out of"; \
+	       echo "       $(GROW1349_SRC): got $$lines line(s) ending in '$$last'."; \
+	       rm -f $(GROW1349_GEN); exit 1; }
+	@# Call-site pin, comment-stripped via the compiler: the grow branch must
+	@# read the largest free block, gate on QueueGrowFits, and only afterwards
+	@# vQueueDelete the old queue.
+	@flat=`$(CC) -fpreprocessed -E $(GROW1349_SRC) 2>/dev/null | tr -d '\r' | tr '\n' ' '`; \
+	 echo "$$flat" | grep -qE 'vPortGetHeapStats[^;]*;[[:space:]]*if \( *! *QueueGrowFits *\(' \
+	  && echo "$$flat" | grep -qE 'if \( *! *QueueGrowFits *\(.*vQueueDelete *\( *analogInputsQueue *\)' \
+	  || { echo "FAIL: #1349 -- AInSample.c's queue grow no longer decides on the"; \
+	       echo "      largest free block (QueueGrowFits) before vQueueDelete."; \
+	       rm -f $(GROW1349_GEN); exit 1; }
+	$(CC) $(CFLAGS) -o $(GROW1349_BIN) test_1349_queue_grow_contiguous.c
+
 # #1279: SD operations restore the idle SD buffers a non-SD stream shrank.
 #
 # The REAL sizing (Streaming_ComputeAutoBuffers, streaming.c) and the REAL
@@ -5697,7 +5727,7 @@ $(SDLEAF1187_BIN): test_1187_sd_leaf_extension.c test_framework.h $(SD_MGR_SRC) 
 
 run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) \
      $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) \
-     $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(CAP1202_BIN) $(ISRLOG1197_BIN) $(STOP1201_BIN) $(CLAMP1231_BIN) $(SDIDLE1279_BIN) $(OUT1279_BIN) $(WINCSWAP1279_BIN) \
+     $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(CAP1202_BIN) $(ISRLOG1197_BIN) $(STOP1201_BIN) $(CLAMP1231_BIN) $(GROW1349_BIN) $(SDIDLE1279_BIN) $(OUT1279_BIN) $(WINCSWAP1279_BIN) \
      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(USECALTYPE_BIN) $(ARM_BIN) $(NAME_BIN) \
      $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) check-1200-parity check-885-savecal-claim \
      $(NVM1153_BIN) $(NVM1206_BIN) $(ARMREFUSE_BIN) $(SDCRC_BIN) $(SDWRITE_BIN) $(LOGRING1248_BIN) $(HIF881_BIN) \
@@ -5750,6 +5780,7 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
 	./$(LOGONCE_BIN)
 	./$(STOP1201_BIN)
 	./$(CLAMP1231_BIN)
+	./$(GROW1349_BIN)
 	./$(SDIDLE1279_BIN)
 	./$(OUT1279_BIN)
 	./$(WINCSWAP1279_BIN)
@@ -6352,7 +6383,7 @@ clean:
 	rm -f $(SDLEAF1187_BIN) $(SDLEAF1187_GEN) $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
 	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) \
 	      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(GEN_1125) $(CAP1202_BIN) $(GEN_1202) $(ISRLOG1197_BIN) $(GEN_1197) \
-	      $(STOP1201_BIN) $(STOP1201_GEN) $(CLAMP1231_BIN) $(CLAMP1231_GEN) \
+	      $(STOP1201_BIN) $(STOP1201_GEN) $(CLAMP1231_BIN) $(CLAMP1231_GEN) $(GROW1349_BIN) $(GROW1349_GEN) \
 	      $(SDIDLE1279_BIN) $(SDIDLE1279_AUTOBUF) $(SDIDLE1279_DUE) $(SDIDLE1279_DEFS) \
 	      $(WINCSWAP1279_BIN) $(WINCSWAP1279_GEN) $(OUT1279_BIN) $(OUT1279_DUE) $(OUT1279_RESTORE) $(OUT1279_DEFS) \
 	      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(SDLOG1029_GEN).tmp \

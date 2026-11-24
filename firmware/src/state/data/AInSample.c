@@ -98,6 +98,36 @@ static inline bool ClampReportDue(size_t needed, bool clamped,
     *pLastReported = needed;
     return true;
 }
+/* #1349: can the sample queue be grown to `slots` entries without reaching
+ * vApplicationMallocFailedHook?
+ *
+ * The grow below deletes the old queue and then creates the larger one. A
+ * failed xQueueCreate calls pvPortMalloc, and configUSE_MALLOC_FAILED_HOOK is
+ * 1: the hook disables interrupts and loops forever, so the configASSERT after
+ * the create is never reached and the board stops until reset. TOTAL free heap
+ * (xPortGetFreeHeapSize) says nothing about the largest CONTIGUOUS block, so a
+ * heap split into pieces that are each too small passes the total check and
+ * still halts. Hence this takes the largest free block as well, and the caller
+ * decides BEFORE any delete or allocation.
+ *
+ * The queue is one heap block: the queue struct (80 bytes, the same constant
+ * as `needed` below), the item storage, and the 8-byte heap_4 block header,
+ * rounded up to the 8-byte heap alignment. Both inputs are measured before the
+ * old queue is freed, which is conservative: freeing it may merge it with a
+ * neighbour. A refusal is the existing clamp arm, not a stop.
+ *
+ * Not closed: the check and the create are separate, and another task that
+ * allocates from the heap does not take poolMutex, so an allocation can still
+ * land between them. This narrows the window; it does not remove it.
+ *
+ * Kept as a pure function over its four inputs, with no includes of its own, so
+ * tests/host splices it verbatim instead of modelling it (as ClampReportDue). */
+static inline bool QueueGrowFits(size_t slots, size_t slotBytes,
+                                 size_t freeHeap, size_t largestFreeBlock) {
+    size_t needed = slots * slotBytes + 80u;
+    size_t block = (needed + 8u + 7u) & ~(size_t)7u;
+    return (freeHeap >= needed + 1024u) && (largestFreeBlock >= block);
+}
 static volatile bool poolActive = false;
 static bool poolOwnsMemory = false;  // false = external (StreamingBufferPool)
 
@@ -324,7 +354,12 @@ void AInSampleList_InitializeExternal(void* poolMem, int16_t* freeMem,
         if (maxSize > queueSize) {
             size_t needed = maxSize * sizeof(AInPublicSampleList_t*) + 80;
             size_t freeHeap = xPortGetFreeHeapSize();
-            if (freeHeap < needed + 1024) {
+            /* #1349: the largest CONTIGUOUS block, not just the total, decides
+             * whether the create below can succeed; see QueueGrowFits. */
+            HeapStats_t heapStats;
+            vPortGetHeapStats(&heapStats);
+            if (!QueueGrowFits(maxSize, sizeof(AInPublicSampleList_t*), freeHeap,
+                               heapStats.xSizeOfLargestFreeBlockInBytes)) {
                 /* ⛔ #1231: EMITTED ONLY WHEN THE CLAMP CHANGES.
                  *
                  * This used to fire on EVERY stream start on a healthy device
