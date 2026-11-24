@@ -3943,7 +3943,9 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
      * the rate, the dwell and the channel count, so no fixed minimum would
      * separate a sparse step from a dry one at every rate.
      *
-     * Logged at LOG_E like the other step causes, but ONCE per SYST:LOG?
+     * Logged at LOG_E like the other step causes (a STATIC message: LOG_E_ONCE
+     * passes only the format on its ISR path, so it takes no arguments; the
+     * rate is in the LOG_I step line), but ONCE per SYST:LOG?
      * cycle (LOG_E_ONCE): the per-step line below is LOG_I and carries
      * NO_SAMPLES for every dry step, so one error entry makes the cause
      * findable without a dry-heavy sweep filling the 64-entry ring with one
@@ -3951,8 +3953,8 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
     bool noSamples = (s.totalSamplesStreamed == 0);
     if (noSamples) {
         LOG_E_ONCE(LOG_ONCE_FIND_NO_SAMPLES,
-                   "WIFI:FIND %u Hz: step streamed 0 samples - not scored clean; "
-                   "see samp= in the step lines (#1339)", (unsigned)freq);
+                   "WIFI:FIND: a step streamed 0 samples - not scored clean; "
+                   "see samp= in the step lines (#1339)");
     }
     lossy = lossy || noSamples;
     *outSampled = !noSamples;
