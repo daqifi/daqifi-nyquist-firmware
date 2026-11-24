@@ -4042,10 +4042,11 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context,
         return SCPI_RES_ERR;
     }
 
-    // #939: with no client to drain it, every soak runs until the transport
-    // auto-stop (#1072) and the sweep holds the sending port for ~12 min.
-    // A TCP caller is its own client, so it passes. This sees a socket, not a
-    // reader: a client that stops reading, or leaves mid-sweep, is not caught.
+    // #939: with no client, a sweep whose climb steps score clean soaks until the
+    // transport auto-stop (#1072), up to 12 times, holding the sending port for
+    // ~12 min (measured). A TCP caller is its own client, so it passes. This sees
+    // a socket, not a reader: a client that stops reading or leaves mid-sweep is
+    // not caught.
     if (!wifi_tcp_server_HasActiveClient()) {
         SCPI_ExecutionError(context, "SYST:STR:WIFI:FIND: connect a TCP client first");
         return SCPI_RES_ERR;
