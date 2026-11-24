@@ -360,12 +360,14 @@ bool daqifi_settings_CalIsIdentity(const AInRuntimeArray* channelRuntimeConfig) 
  *
  * Bounded at three attempts rather than looping: this runs on a SCPI query
  * path, and an unbounded retry would turn a contended moment into a stall.
- * ⚠ On exhaustion it reports NONE, which is the UNDERSTATING direction -- a
- * client reading "none" treats the readings as uncalibrated and distrusts
- * absolute accuracy, which is safe. The alternative, naming a bank, is a false
- * provenance claim, and false provenance is the whole thing #908 exists to
- * prevent. Three consecutive races needs three load completions inside three
- * short scans; the fallback exists to be correct, not because it is expected.
+ * ⚠ On exhaustion it reports UNKNOWN (since #908 r10; it used to report NONE).
+ * NONE is a positive claim -- "every channel is identity" -- and a reader that
+ * never got a coherent scan has no basis for it, while naming a bank would be
+ * a false provenance claim; false provenance is the whole thing #908 exists to
+ * prevent. UNKNOWN says only that the scan could not be completed; the comment
+ * at the final return below gives the full reasoning. Three consecutive races
+ * needs three load completions inside three short scans; the fallback exists
+ * to be correct, not because it is expected.
  */
 DaqifiCalSource daqifi_settings_GetCalSource(const AInRuntimeArray* channelRuntimeConfig) {
     for (uint8_t attempt = 0; attempt < 3u; attempt++) {
