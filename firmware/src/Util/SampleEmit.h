@@ -101,4 +101,18 @@ static inline bool sample_emit_to_int32(double v, int32_t *out) {
     return true;
 }
 
+/* #1179: the unit an encoder's integer/decimal analog values are in, for the
+ * stream/log header so a reader parses by declaration instead of inference.
+ *
+ * Mirrors the encoders' own branch order exactly: raw output mode wins (the
+ * ADC code is printed as is, whatever the precision), else precision 0 prints
+ * integer millivolts, else decimal volts. Returns a string literal: "raw",
+ * "mV" or "V". Shared by both encoders so they cannot disagree. */
+static inline const char *sample_units_name(bool rawMode, uint8_t voltagePrecision) {
+    if (rawMode) {
+        return "raw";
+    }
+    return (voltagePrecision == 0) ? "mV" : "V";
+}
+
 #endif /* SAMPLEEMIT_H */
