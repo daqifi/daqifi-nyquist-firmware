@@ -221,6 +221,16 @@ extern "C" {
     void sd_card_manager_SetWriteBuffer(uint8_t* buf, uint32_t size);
 
     /**
+     * #1279 r4: SD side of the coherent-DMA swap (see UsbCdc_DmaSwapAcquire).
+     * Scheduler suspended only; never blocks. Acquire returns true with wMutex
+     * held only if the SD write DMA region is idle; then exactly one of
+     * Commit (installs the new region) or Release.
+     */
+    bool sd_card_manager_DmaSwapAcquire(void);
+    void sd_card_manager_DmaSwapCommitAndRelease(uint8_t* buf, uint32_t size);
+    void sd_card_manager_DmaSwapRelease(void);
+
+    /**
      * @brief Checks if the SD card manager is currently idle (not processing any operation).
      *
      * @return true if idle, false if busy processing an operation
@@ -496,6 +506,17 @@ bool sd_card_manager_WriteIsStreamingLog(void);
      * @return true if SD:GET can proceed, false if the buffer is too small
      */
     bool sd_card_manager_ReadBufferReady(void);
+
+    /**
+     * @brief Runtime size of the SD DMA write buffer, in bytes (#1279).
+     *
+     * The size the last partition installed (sd_card_manager_SetWriteBuffer),
+     * not the compile-time ceiling SD_CARD_MANAGER_CONF_WBUFFER_SIZE. It
+     * bounds every card write the logging drain issues, and auto-balance drops
+     * it to SD_CARD_MANAGER_MIN_WBUFFER_SIZE whenever SD is not a streaming
+     * consumer, so it is half of what SCPI_RestoreIdleSdBuffers() tests.
+     */
+    uint32_t sd_card_manager_GetWriteBufferSize(void);
 
     /**
      * @brief #703: is an SD op actively streaming into the shared SD buffer?

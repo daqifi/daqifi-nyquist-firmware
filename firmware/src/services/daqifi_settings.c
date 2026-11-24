@@ -121,7 +121,23 @@ static DaqifiSettingsType gActiveCalBank = DaqifiSettings_FactAInCalParams;
  * channel 0 as identity and moves on; one setter then CLEARS a later channel
  * while another SETS channel 0; the scan reads the later channel as identity
  * and concludes ALL identity -- a view that held at no instant. The argument
- * was about a single writer and the hazard needs only two. */
+ * was about a single writer and the hazard needs only two.
+ *
+ * ⚠ The increment in BeginCalWrite/EndCalWrite is a NON-ATOMIC read-modify-
+ * write: `gCalGeneration++` can lose an update if two writers interleave.
+ * It is correct only because writers are SERIALISED, never because the
+ * increment is safe on its own:
+ *   - the boot loads run in app_SystemInit before the transport tasks are
+ *     created, so nothing else can write yet;
+ *   - every runtime caller of Begin/EndCalWrite holds the exclusive
+ *     Streaming_BeginConfigChange claim (gCfgChangeBusy is tested and set
+ *     inside a critical section in streaming.c). Those callers are
+ *     SCPI_ADCChanCalmSet, SCPI_ADCChanCalbSet, and -- through
+ *     daqifi_settings_LoadADCCalSettings -- CalLoadCommon (LOADcal and
+ *     LOADFcal) and SCPI_ADCUseCalSet. SCPI_ADCCalFSave is not one of them:
+ *     it holds the claim to save, but never bumps the generation.
+ * A new caller outside that claim must take it, or make the increment
+ * atomic. */
 static volatile uint32_t gCalGeneration = 0u;
 
 /* The compiler barrier the seqlock above is built on. Placed BELOW the block
@@ -334,10 +350,13 @@ bool daqifi_settings_CalIsIdentity(const AInRuntimeArray* channelRuntimeConfig) 
  * r3's fix -- it stops the bank naming a load that did not land -- so the two
  * fixes are in tension and only a generation counter satisfies both.
  *
- * ⚠ CHANCALM/CHANCALB change coefficients WITHOUT changing the bank, and are
- * deliberately not detected here: either outcome they produce is a state the
- * device genuinely had, so reporting before-or-after is honest. It is only the
- * CROSS of two different banks that would be fiction.
+ * ⚠ CHANCALM/CHANCALB change coefficients WITHOUT changing the bank, but they
+ * ARE detected here: since #908 (codex r8) the setters
+ * (ADCChanCalmSetClaimed / ADCChanCalbSetClaimed) are bracketed by
+ * Begin/EndCalWrite, so a scan one of them interrupts fails the generation
+ * check and is retried. What stays true is that the before-or-after value
+ * from a SINGLE setter is a state the device genuinely had. It is the CROSS
+ * of two different banks, or of two setters, that would be fiction.
  *
  * Bounded at three attempts rather than looping: this runs on a SCPI query
  * path, and an unbounded retry would turn a contended moment into a stall.

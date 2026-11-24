@@ -134,6 +134,17 @@ extern "C" {
 #define DRV_SDSPI_SPEED_HZ_IDX0                 20000000
 #define DRV_SDSPI_POLLING_INTERVAL_MS_IDX0      1000
 
+/* #1278: the WINC1500's SPI4 client clock. It must equal the SD client's
+ * full-speed clock: the two clients share SPI4, and a request for the same
+ * rate gives the same SPI4BRG (one PLIB function, one source clock), so a
+ * switch between them never reprograms the baud rate. Different rates are the
+ * #380 failure (SD writes stopped at 32 KB). Defined from the SD rate so a
+ * build that changes the SD clock moves the WINC with it, as it always has;
+ * app_freertos.c fails the build if the two ever differ. Used by
+ * wdrvWincSpiInitData in initialization.c. Not MCC-generated: re-add after a
+ * regeneration. */
+#define DRV_WINC_SPI_SPEED_HZ_IDX0              DRV_SDSPI_SPEED_HZ_IDX0
+
 
 
 /* SDSPI Driver Instance 0 RTOS Configurations*/

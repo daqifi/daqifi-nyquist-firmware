@@ -439,7 +439,9 @@ on:
       - 'firmware/src/HAL/UI/UI.c'
       - 'firmware/src/HAL/BQ24297/BQ24297.c'
       # #1153: run_1153_tests greps nvm.c for the recursive mutex and its
-      # three write/erase entry points' lock/unlock bracket.
+      # three write/erase entry points' lock/unlock bracket. #1206:
+      # run_1206_tests COMPILES nvm.c (with nvm.h and config/default's
+      # clock_config.h, both matched by the globs above).
       - 'firmware/src/HAL/NVM/nvm.c'
       - 'firmware/src/services/sd_card_services/sd_card_manager.h'
       - 'firmware/src/config/default/FreeRTOSConfig.h'
@@ -461,6 +463,15 @@ on:
       # to one transport queued no job.
       - 'firmware/src/services/UsbCdc/UsbCdc.c'
       - 'firmware/src/services/wifi_services/wifi_tcp_server.c'
+      # #1279: run_1279_tests reads USBCDC_DMA_WBUFFER_MIN out of this header
+      # (the spliced Streaming_ComputeAutoBuffers floors USB DMA with it).
+      - 'firmware/src/services/UsbCdc/UsbCdc.h'
+      # #1279: run_1279_tests #includes both of these directly (it takes the
+      # COHERENT_POOL_DEFAULT_SIZE and STREAMING_*_MIN it sizes against from
+      # them), so a change confined to either must queue the job.
+      - 'firmware/src/Util/CoherentPool.h'
+      - 'firmware/src/Util/CoherentPool.c'
+      - 'firmware/src/Util/StreamingBufferPool.h'
       # #1118: same target ($(SCPI999_BIN)) also links the vendored libscpi
       # sources (LIBSCPI_SRCS/LIBSCPI_HDRS) that #1115 adds a second consumer
       # of ($(SCPI1003_BIN)) -- #1115 adds this same entry for its own reason;
@@ -610,7 +621,9 @@ on:
       - 'firmware/src/HAL/UI/UI.c'
       - 'firmware/src/HAL/BQ24297/BQ24297.c'
       # #1153: run_1153_tests greps nvm.c for the recursive mutex and its
-      # three write/erase entry points' lock/unlock bracket.
+      # three write/erase entry points' lock/unlock bracket. #1206:
+      # run_1206_tests COMPILES nvm.c (with nvm.h and config/default's
+      # clock_config.h, both matched by the globs above).
       - 'firmware/src/HAL/NVM/nvm.c'
       - 'firmware/src/services/sd_card_services/sd_card_manager.h'
       - 'firmware/src/config/default/FreeRTOSConfig.h'
@@ -629,6 +642,11 @@ on:
       # #1118: see the matching entries under pull_request above.
       - 'firmware/src/services/UsbCdc/UsbCdc.c'
       - 'firmware/src/services/wifi_services/wifi_tcp_server.c'
+      # #1279: see the matching entry under pull_request above.
+      - 'firmware/src/services/UsbCdc/UsbCdc.h'
+      - 'firmware/src/Util/CoherentPool.h'
+      - 'firmware/src/Util/CoherentPool.c'
+      - 'firmware/src/Util/StreamingBufferPool.h'
       - 'firmware/src/libraries/scpi/**'
       - 'firmware/src/services/sd_card_services/sd_card_manager.c'
       - 'firmware/src/services/sd_card_services/sd_card_manager.h'

@@ -115,6 +115,16 @@ extern "C" {
     void SCPI_DrainDeferredSdError(scpi_t *context);
 
     /**
+     * @brief #1279: re-partition to the idle layout if a stream that SD did
+     *        not consume left the SD circular / DMA write buffer small.
+     *        Takes the streaming config-change claim; call from SCPI task
+     *        context only, before arming an SD operation.
+     * @return true if the SD buffers are at idle size (already or now),
+     *         false if they are small and could not be restored.
+     */
+    bool SCPI_RestoreIdleSdBuffers(void);
+
+    /**
      * Size of the shared SCPI response scratch buffer. Sized to hold the
      * largest known SCPI response (DaqifiOutMessage protobuf, currently
      * 2008 bytes). All callers that need ≥256 B of scratch should use this

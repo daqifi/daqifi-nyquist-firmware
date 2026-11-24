@@ -1215,6 +1215,14 @@ and a rejection that erases first).
 
 The stubs are in `stubs/sdspi_1217/`, separate from `stubs/` because this test needs much more of Harmony's surface than the others.
 
+### Bounded NVM waits (#1206)
+
+| File | What it does |
+|---|---|
+| `test_1206_nvm_bounded_waits.c` | The **real** `HAL/NVM/nvm.c` against stubs whose DMACON / NVM PLIB / CP0 accessors drive a simulated clock, plus a SIGALRM tick that delivers the completion callback the way the NVM interrupt does. Each of the nine waits is made to never complete, per entry point, and the call must return false within a bound, with DMA restored to the caller's state and the NVM mutex released; a refused or partial erase must return false; the slowest datasheet operations (and 5x that for an erase), a CP0 wrap and a long preemption must still succeed; a late completion interrupt from a timed-out operation must not end the next one's wait early. Each case runs in a forked child, so the pre-#1206 source's hangs show as failures: `make run_1206_tests NVM1206_SRC=<other nvm.c>` builds it against any revision. |
+
+The stubs are in `stubs/nvm_1206/`.
+
 ## Framework
 
 `test_framework.h` is a ~90-line header-only harness — `TEST()` to define a
