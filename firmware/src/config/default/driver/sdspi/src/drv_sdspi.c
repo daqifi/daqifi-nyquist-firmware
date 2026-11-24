@@ -590,6 +590,15 @@ static void lDRV_SDSPI_IoAbort(DRV_SDSPI_OBJ* dObj, uint8_t cause)
  * was refused or lost: nothing was programmed that is not meant to be there, and
  * the re-send rewrites the same bytes.
  *
+ * r6 origin: when the whole PAYLOAD was clocked (writeInDoubtPayloadClocked)
+ * but the CRC was not confirmed (writeInDoubtBlockSent false), the token is of
+ * AMBIGUOUS origin. The card either programmed the original payload (the CRC
+ * went out, its completion lost; or the resync's FF FF stood in for a CRC16 of
+ * 0xFFFF) or filler. It is then neither counted nor called filler; one line
+ * says so. A payload completion that is itself lost is NOT covered: it leaves
+ * the flag clear and the token is still counted as filler (tried in
+ * edge_lost_payload_completion_with_a_0xffff_crc_is_recorded).
+ *
  * Counted here, once per accepted block, at the moment the token is SEEN: the
  * card programmed the sector when it answered, whether or not the rest of the
  * resync (the flush's remaining reads, the busy waits, CMD12) then finishes. */
