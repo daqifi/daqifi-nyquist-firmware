@@ -491,9 +491,12 @@ scpi_result_t SCPI_LANSsidGet(scpi_t * context) {
     wifi_manager_settings_t * pWifiSettings = BoardRunTimeConfig_Get(
             BOARDRUNTIME_WIFI_SETTINGS);
 
+    // #1266: report nothing rather than the unsuffixed default while the MAC
+    // suffix is pending.
     return SCPI_LANStringGetImpl(
             context,
-            pWifiSettings->ssid);
+            wifi_manager_IsDefaultSsidSuffixPending(pWifiSettings->ssid) ?
+                    "" : pWifiSettings->ssid);
 }
 
 scpi_result_t SCPI_LANSsidSet(scpi_t * context) {

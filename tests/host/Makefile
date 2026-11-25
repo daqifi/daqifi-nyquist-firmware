@@ -5745,7 +5745,7 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
      $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) \
      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(CAP1202_BIN) $(ISRLOG1197_BIN) $(STOP1201_BIN) $(CLAMP1231_BIN) $(SDIDLE1279_BIN) $(OUT1279_BIN) $(WINCSWAP1279_BIN) \
      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(USECALTYPE_BIN) $(ARM_BIN) $(NAME_BIN) \
-     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) check-1200-parity check-885-savecal-claim \
+     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) check-1200-parity check-885-savecal-claim check-1266-suffix-flag \
      $(NVM1153_BIN) $(NVM1206_BIN) $(ARMREFUSE_BIN) $(SDCRC_BIN) $(SDWRITE_BIN) $(LOGRING1248_BIN) $(HIF881_BIN) \
      $(HIF881SPI_BIN) $(WIFI881_BIN) $(ARMEXIT_BIN) \
      $(CMDHIST_BIN) $(PBMASK62_BIN) \
@@ -6422,6 +6422,21 @@ check-885-savecal-claim: check_885_savecal_claim_guard.py \
                    $(SCPIADC_SRC) $(SCPI_IFACE_SRC) $(RECIPES)
 	@python3 check_885_savecal_claim_guard.py >/dev/null \
 	  || { python3 check_885_savecal_claim_guard.py; exit 1; }
+
+# #1266: the "MAC suffix applied" flag must be cleared everywhere the suffix
+# stops being in force (BootInit, and the DEINIT that closes the WINC), and
+# set only where it is applied. wifi_manager.c is not host-includable, so this
+# pins the COMPLETE WRITER SET in the real source (comments stripped) and
+# proves its own mutants: dropping either clear, dropping the set, adding a
+# fourth writer.
+.PHONY: check-1266-suffix-flag
+check-1266-suffix-flag: check_1266_default_suffix_flag.py $(WIFI_MGR_SRC) $(RECIPES)
+	@python3 check_1266_default_suffix_flag.py --self-test >/dev/null \
+	  || { python3 check_1266_default_suffix_flag.py --self-test; exit 1; }
+	@python3 check_1266_default_suffix_flag.py --src $(WIFI_MGR_SRC) >/dev/null \
+	  || { python3 check_1266_default_suffix_flag.py --src $(WIFI_MGR_SRC); exit 1; }
+	@python3 check_1266_default_suffix_flag.py --src $(WIFI_MGR_SRC) --mutants >/dev/null \
+	  || { python3 check_1266_default_suffix_flag.py --src $(WIFI_MGR_SRC) --mutants; exit 1; }
 
 .PHONY: check-1200-parity
 check-1200-parity: check_1200_eviction_loss_parity.py \

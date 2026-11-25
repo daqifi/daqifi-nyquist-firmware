@@ -63,6 +63,7 @@ static volatile TickType_t gWifiReinitDeadlineTick;
 static volatile bool gApplyInProgress;
 static volatile TickType_t gApplyInProgressDeadlineTick;
 static volatile bool gWincDeepPowerOff;
+static volatile bool gDefaultSuffixApplied;   /* #1266: written by wifi_manager_Deinit */
 static uint32_t gRxResetHandled;   /* r5+; unused by older sources */
 /* r6+. A copy: a rename in wifi_manager.c fails this build, not the test. */
 typedef enum {
@@ -144,6 +145,27 @@ TEST(power_off_cancels_a_pending_reset_request)
     assert_wifi_stays_off();
     ASSERT_EQ(gWincDeepPowerOff, true);
     ASSERT_EQ(gDeinits, 1);                 /* PowerOff's own, only */
+}
+
+/* #1266 r3: wifi_manager_Deinit() must clear the "MAC suffix applied" flag
+ * itself. The physical power button reaches standby through it and then never
+ * processes the queued DEINIT, so the DEINIT handler's clear is unreachable on
+ * that path. Drives the REAL function body (spliced from wifi_manager.c). */
+TEST(deinit_clears_the_default_suffix_flag_itself)
+{
+    wifi_up();
+    gDefaultSuffixApplied = true;
+    ASSERT_TRUE(wifi_manager_Deinit());
+    ASSERT_EQ(gDefaultSuffixApplied, false);
+    ASSERT_EQ(gDeinits, 1);                 /* the event is queued, not processed */
+}
+
+TEST(power_off_clears_the_default_suffix_flag_via_deinit)
+{
+    wifi_up();
+    gDefaultSuffixApplied = true;
+    ASSERT_TRUE(wifi_manager_PowerOff());
+    ASSERT_EQ(gDefaultSuffixApplied, false);
 }
 
 /* A request counted while WiFi is already off is consumed, not served, and
@@ -300,6 +322,8 @@ int main(void)
     printf("#881 WINC resets vs. an explicit power-off\n");
     RUN(request_is_served_by_one_reset_while_wifi_is_up);
     RUN(power_off_cancels_a_pending_reset_request);
+    RUN(deinit_clears_the_default_suffix_flag_itself);
+    RUN(power_off_clears_the_default_suffix_flag_via_deinit);
     RUN(request_while_wifi_is_off_is_consumed);
     RUN(request_superseded_by_power_off_stays_consumed_after_power_on);
     RUN(request_during_a_reset_in_flight_is_served_by_it);

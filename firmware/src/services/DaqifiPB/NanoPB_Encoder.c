@@ -14,6 +14,7 @@
 #include "encoder.h"
 #include "NanoPB_Encoder.h"
 #include "services/daqifi_settings.h"
+#include "services/wifi_services/wifi_manager.h"
 #include "HAL/TimerApi/TimerApi.h"
 #include "state/board/BoardConfig.h"
 #include "HAL/DIO.h"
@@ -1175,7 +1176,9 @@ size_t Nanopb_Encode(tBoardData* state,
             case DaqifiOutMessage_ssid_tag:
             {
                 wifi_manager_settings_t* wifiSettings = &state->wifiSettings;
-                size_t len = min(strlen(wifiSettings->ssid), WDRV_WINC_MAX_SSID_LEN);
+                // #1266: leave the field empty while the MAC suffix is pending.
+                size_t len = wifi_manager_IsDefaultSsidSuffixPending(wifiSettings->ssid) ? 0 :
+                        min(strlen(wifiSettings->ssid), WDRV_WINC_MAX_SSID_LEN);
                 memcpy(message.ssid, wifiSettings->ssid, len);
                 message.ssid[len] = '\0';
 
