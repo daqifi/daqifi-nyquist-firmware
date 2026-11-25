@@ -126,8 +126,8 @@ extern "C" {
 
     /**
      * Size of the shared SCPI response scratch buffer. Sized to hold the
-     * largest known SCPI response (DaqifiOutMessage protobuf, currently
-     * 2008 bytes). All callers that need ≥256 B of scratch should use this
+     * largest known SCPI response (DaqifiOutMessage protobuf; see
+     * DaqifiOutMessage_size, asserted against this in SCPIInterface.c). All callers that need ≥256 B of scratch should use this
      * buffer rather than stack-allocating, especially those reachable on
      * the TCP path where WifiTask stack is tight (see #347).
      */
