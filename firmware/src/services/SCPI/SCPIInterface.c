@@ -9137,8 +9137,9 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize,
         return false;
     }
 
-    /* #1279: UsbCdc_SetWriteBuffer and wifi_tcp_server_SetWriteBuffer below
-     * reset their rings, discarding any reply still queued in them. An idle
+    /* #1279: UsbCdc_SetWriteBuffer below resets its ring, discarding any reply
+     * still queued in it (the WiFi swap re-queues its ring's bytes since #1223,
+     * but only as many as fit its staging buffer and the new slice). An idle
      * restore runs from inside an SD command, and libscpi writes each reply
      * into the ring as it is produced and flushes only at the end of the
      * message, so `*IDN?;:SYST:STOR:SD:GET "x"` (or the command's own echo)
@@ -9154,7 +9155,7 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize,
      * here; a live stream is excluded by the config claim; SD reply writers by
      * the buffer lock just taken. The gate is what closes the check-then-act
      * window across this function's waits (SD idle, the TCP
-     * in-flight wait inside wifi_tcp_server_SetWriteBuffer) -- holding both
+     * in-flight wait inside wifi_tcp_server_BeginWriteBufferSwap) -- holding both
      * wMutexes across them would block the WINC driver's own drain. The guard
      * fails closed: an idle caller that never raised the gate refuses.
      * wifi_serial_bridge also writes the USB ring outside any command; it runs
@@ -9221,7 +9222,14 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize,
     // NOTE: the coherent DMA buffers were swapped above (all-or-nothing, #1279
     // r3); the circular-pool pointers are applied together here, after the
     // partition is known good.
-
+    //
+    // #1223: the WiFi ring's queued output (this command's own echo, when it
+    // came in over TCP) is staged out of the pool BEFORE the USB swap, which
+    // can hand USB the bytes it sits in, and the WiFi write lock stays held
+    // until the WiFi swap re-queues it. No return may come between the two.
+    // No abort path needs undoing: every one is above, before anything in the
+    // rings moved.
+    wifi_tcp_server_BeginWriteBufferSwap();
     UsbCdc_SetWriteBuffer(usbBuf, usbLen);
     wifi_tcp_server_SetWriteBuffer(wifiBuf, wifiLen);
     Streaming_SetEncoderBuffer(encBuf, encLen);

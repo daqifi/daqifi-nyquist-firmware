@@ -393,9 +393,23 @@ uint32_t wifi_tcp_server_GetConnGeneration(void);
 bool wifi_tcp_server_ConnIsCurrent(uint32_t generation);
 
 /**
+ * #1223: first half of a WiFi TX ring swap.  Takes the write-ring mutex and
+ * moves the bytes still queued in the ring into a staging area outside the
+ * streaming pool, then RETURNS WITH THE MUTEX HELD.  Call it while the old
+ * pool slice is still intact -- after StreamingBufferPool_Partition, before
+ * any other subsystem is pointed at its new slice -- and follow it, in the same
+ * task and with no return in between, with wifi_tcp_server_SetWriteBuffer,
+ * which releases the mutex.  Until then every TCP writer blocks.
+ */
+void wifi_tcp_server_BeginWriteBufferSwap(void);
+
+/**
  * Swap the WiFi TCP circular write buffer to pool-managed memory.
- * Resets the buffer (discards pending data). Called by StreamingBufferPool
- * after partitioning.
+ * Output queued before the swap is re-queued in the new ring ahead of anything
+ * written later (#1223); whatever does not fit is counted in a LOG_E.  Queued
+ * output of a connection that closed during the swap is discarded.  Completes
+ * a swap opened by wifi_tcp_server_BeginWriteBufferSwap; called alone, it opens
+ * one itself.  Called by PrepareStreamingBuffers after partitioning.
  * @param buf Pointer to buffer memory (must remain valid)
  * @param size Buffer size in bytes
  */
@@ -418,8 +432,8 @@ bool wifi_tcp_server_HasActiveClient(void);
 uint32_t wifi_tcp_server_GetCircularBufferAvailable(void);
 
 /**
- * #1279: bytes queued in the TCP write circular buffer that
- * wifi_tcp_server_SetWriteBuffer would discard, read under wMutex. 0 when no
+ * #1279: bytes queued in the TCP write circular buffer that a write-buffer
+ * swap would have to stage (and may drop, #1223), read under wMutex. 0 when no
  * client is connected (those bytes are undeliverable and the close path
  * discards them anyway).
  */
