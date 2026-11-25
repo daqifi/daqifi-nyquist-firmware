@@ -118,6 +118,10 @@
 
 #define DRV_SDSPI_COMMAND_RESPONSE_TRIES          (10)
 
+/* #1235 r7: writeBlockCrc16 before a write's payload is armed. Any value but
+ * 0xFFFF would do: only 0xFFFF (the resync's FF FF) is read as a CRC. */
+#define DRV_SDSPI_CRC16_UNSET   0x0000U
+
 /* #1217: what kind of write is in doubt (DRV_SDSPI_OBJ.writeInDoubt). A CMD24
  * is recorded in both SD:PROTect modes. A CMD25 exists only with CRC off (with
  * CRC on the driver does not issue one) and is ended differently: see
@@ -1605,7 +1609,8 @@ typedef struct
        PIC32MZ, mcu-hygiene section 3). */
     uint16_t                                        detachedPollCount;
 
-    /* #1217: CRC16 of the block being written, between its data and CRC phases. */
+    /* #1217: CRC16 of the block being written, between its data and CRC phases.
+     * #1235 r7: DRV_SDSPI_CRC16_UNSET until this write's payload is armed. */
     uint16_t                                        writeBlockCrc16;
 
     /* #756: FORCED detect-poll request/acknowledge pair.
@@ -1747,6 +1752,42 @@ typedef struct
     /* Set by DRV_SDSPI_SetCrcMode from another task; consumed by the detect
      * verdict in DRV_SDSPI_Tasks, which then re-runs media init. */
     volatile bool                                   reinitRequested;
+
+    /* #1235: a CMD24 in doubt, as lDRV_SDSPI_CommandSend sent it: whether the
+     * card was checking CRC (crcEnabled then; crcEnabled itself is cleared at
+     * the start of a media init, before the resync that init's CMD0 runs) and
+     * the block number it addressed (byte addresses of standard-capacity cards
+     * converted). lDRV_SDSPI_WriteResyncRecordAcceptance uses them when the card
+     * ACCEPTED the resync's block, which then counts in resyncFillerCount
+     * (saturating). Unlike r1-r4 there is no "pending" flag: a token left
+     * unread is found by the scan of the next resync's first transfer, and by
+     * the inherited scan of whatever an aborted transfer left in the buffer
+     * (resyncRx* below). Size: sizeof(DRV_SDSPI_OBJ) was 296 B on target before
+     * #1235 (XC32 v4.60, offsetof probe, 2026-11-23); r5 adds 5 bytes of flags,
+     * not re-measured with XC32 (one instance, so at most a word). */
+    bool                                            writeInDoubtCrc;
+    uint8_t                                         resyncFillerCount;
+    uint32_t                                        writeInDoubtBlock;
+
+    /* #1235 r5 (buffer reuse): what the LAST resync transfer was going to put in
+     * pCmdResp, recorded when it was armed (lDRV_SDSPI_WriteResyncRxReset), so
+     * that whoever reuses the buffer next can first look at what that transfer
+     * left there, however it ended. resyncRxLen bytes are scanned (0 = none),
+     * resyncRxShaped says token-shaped bytes only, resyncRxUnscanned that no
+     * scan has consumed them yet, resyncRxLate that the transfer was ABORTED
+     * while DRV_SPI still held it, so more bytes can land after any scan.
+     * writeInDoubtBlockSent: the CMD24 in doubt got its whole block, payload
+     * AND CRC, clocked to the card (r5 attribution): a token after that is the
+     * original write's data response, not a filler's. */
+    uint8_t                                         resyncRxLen;
+    bool                                            resyncRxShaped;
+    bool                                            resyncRxUnscanned;
+    bool                                            resyncRxLate;
+    bool                                            writeInDoubtBlockSent;
+    /* r6: the in-doubt CMD24's 512-byte payload transfer COMPLETED (observed).
+     * With writeInDoubtBlockSent still false the CRC is unconfirmed, and a token
+     * is of ambiguous origin: not counted as filler. */
+    bool                                            writeInDoubtPayloadClocked;
 
 } DRV_SDSPI_OBJ;
 

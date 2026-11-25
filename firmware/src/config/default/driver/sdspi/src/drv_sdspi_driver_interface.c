@@ -119,6 +119,9 @@ void DRV_SDSPI_AbortedXferRecord(DRV_SDSPI_OBJ* const dObj)
     {
         dObj->abortedXferHandles[dObj->abortedXferIdx] = dObj->expectedXferHandle;
         dObj->abortedXferIdx = (uint8_t)((dObj->abortedXferIdx + 1U) % DRV_SDSPI_ABORTED_XFER_SLOTS);
+        /* #1235 r5: DRV_SPI still holds it, so its receive buffer can still
+         * be written after this. The resync scan stays armed for it. */
+        dObj->resyncRxLate = true;
     }
     OSAL_CRIT_Leave(OSAL_CRIT_TYPE_HIGH, critState);
 }
@@ -272,6 +275,41 @@ bool DRV_SDSPI_SPIRead(
     dObj->expectedXferHandle = rdTransferHandle;   /* #567: correlate completion */
 
     if (rdTransferHandle != DRV_SPI_TRANSFER_HANDLE_INVALID)
+    {
+        isSuccess = true;
+    }
+    else
+    {
+        dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_ERROR;
+    }
+
+    return isSuccess;
+}
+
+/* #1235 r4: full duplex. SPI clocks MISO whenever it clocks MOSI, and a
+ * write-only transfer hands the received bytes to the driver's dummy buffer,
+ * discarding them. The resync's 0xFE start token is clocked while a card that
+ * has just finished a block may be sending its data-response token, so it is
+ * sent with the receive buffer kept: pWriteBuffer and pReadBuffer must not
+ * overlap (the transmit byte is still being read while the receive byte
+ * arrives). */
+bool DRV_SDSPI_SPIWriteRead(
+    DRV_SDSPI_OBJ* dObj,
+    void* pWriteBuffer,
+    void* pReadBuffer,
+    uint32_t nBytes
+)
+{
+    bool isSuccess = false;
+    DRV_SPI_TRANSFER_HANDLE wrTransferHandle;
+
+    lDRV_SDSPI_AbortedXferPrune(dObj);   /* #1217: before the submit, not after */
+    dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_IN_PROGRESS;
+
+    DRV_SPI_WriteReadTransferAdd (dObj->spiDrvHandle, pWriteBuffer, nBytes, pReadBuffer, nBytes, &wrTransferHandle);
+    dObj->expectedXferHandle = wrTransferHandle;   /* #567: correlate completion */
+
+    if (wrTransferHandle != DRV_SPI_TRANSFER_HANDLE_INVALID)
     {
         isSuccess = true;
     }
