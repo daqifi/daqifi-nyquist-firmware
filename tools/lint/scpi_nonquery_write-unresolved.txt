@@ -1,0 +1,21 @@
+# Non-query callbacks defined OUTSIDE the scanned sources (#1274).
+#
+# A registered non-query callback this gate cannot find a definition for is
+# NOT assumed safe: undeclared, it fails the gate. The first version of this
+# checker silently SKIPPED such callbacks, on the stated grounds that "a
+# vendor function cannot write because it has no access to the context" --
+# FALSE for libscpi's table callbacks, which libscpi hands the context. The
+# audit caught it; it failed toward silence.
+#
+# EMPTY since round 3. Until then libscpi was excluded from the scan set, and
+# its eight minimal-interface callbacks (*CLS, *ESE, *OPC, *SRE, *WAI,
+# STATus:PRESet, STATus:OPERation:ENABle, STATus:QUEStionable:ENABle) were
+# declared here after a hand-built reachability check. libscpi is now indexed
+# as the graph's second layer, so the gate performs that check itself on
+# every run, and those eight resolve and are analysed instead of exempted.
+#
+# A line belongs here only for a callback with no source anywhere the gate
+# reads, against a reason that was CHECKED, never assumed. Shrink-only: if a
+# declared callback later resolves, the gate fails until its line is removed.
+#
+# Format: <pattern>\t<callback>\t#<issue>

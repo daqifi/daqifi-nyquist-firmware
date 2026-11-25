@@ -1,0 +1,42 @@
+# Non-query SCPI commands that write to the response stream (#1274).
+#
+# A command without '?' produces no response in IEEE 488.2, so a client does
+# not read a reply and whatever these write stays in the buffer for the NEXT
+# query to read as its own answer. Every line here is a KNOWN instance, kept
+# only so the gate can stop NEW ones landing; removing them is #1274 stage 3,
+# which waits on daqifi-core (it parses LOG:LEVel's acknowledgement as a
+# return value and matches the SD no-card text) -- see daqifi-core#991.
+#
+# Format: <pattern>\t<callback>\t#<issue>
+#
+# SHRINK-ONLY. The gate FAILS if a line here no longer writes, so a fix must
+# delete its line in the same commit. Otherwise this becomes a list of stale
+# exemptions that reads exactly like a list of live ones, and the next real
+# instance can be appended to it unnoticed.
+#
+# Grouped as the issue groups them.
+
+# Group 1 -- queries registered without '?'. The output IS the point, so these
+# need a '?' spelling rather than having their text deleted.
+HELP	SCPI_Help	#1274
+SYSTem:STReam:THRoughput	SCPI_RunThroughputBench	#1274
+SYSTem:STORage:SD:GET	SCPI_StorageSDGetData	#1274
+
+# Group 2 -- settings that print an acknowledgement on success.
+*RST	SCPI_Reset	#1274
+SYSTem:REboot	SCPI_Reset	#1274
+SYSTem:LOG:TEST	SCPI_SysLogTest	#1274
+SYSTem:LOG:CLEar	SCPI_SysLogClear	#1274
+SYSTem:LOG:LEVel	SCPI_SysLogLevelSet	#1274
+SYSTem:LOG:LEVel:ALL	SCPI_SysLogLevelAllSet	#1274
+SYSTem:POWer:BQ:ILIM	SCPI_SetBQILim	#1274
+SYSTem:POWer:BQ:DPDM	SCPI_ForceDPDM	#1274
+
+# Group 3 -- settings that print an error as text. The error is
+# ALREADY in the queue (libscpi queues -200 for a callback that
+# returns SCPI_RES_ERR without pushing one), so the text is a
+# second copy, not the only report.
+SYSTem:STORage:SD:CRC	SCPI_StorageSDCrcStart	#1274
+SYSTem:STORage:SD:DELete	SCPI_StorageSDDelete	#1274
+SYSTem:STORage:SD:FORmat	SCPI_StorageSDFormat	#1274
+SYSTem:STORage:SD:BENCHmark	SCPI_StorageSDBenchmark	#1274

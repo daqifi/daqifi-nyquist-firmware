@@ -1,0 +1,129 @@
+name: scpi-nonquery-write
+
+# #1274 stage 1. In IEEE 488.2 a program message without '?' produces no
+# response, so a client that sends one does not read a reply. Any text the
+# device writes therefore stays in the input buffer and the NEXT query reads it
+# as its own answer. Hardware-reproduced at 4ec4f91c: `SYSTem:LOG:CLEar` then
+# `*IDN?` back to back puts `Log cleared` where the identity belongs, and
+# `SD:CRC` with the card disabled puts two lines there. The reply is never
+# lost -- it is MISATTRIBUTED, and the number of stray lines varies with which
+# command ran before it, so no fixed skip count on the client can repair it.
+#
+# This gate changes no firmware behaviour. It freezes the known population (15
+# commands, tools/lint/scpi_nonquery_write-allow.txt) and fails on a NEW one.
+# Removing the texts is stage 3 and waits on clients that parse them --
+# daqifi-core reads LOG:LEVel's acknowledgement as a return value and matches
+# the SD no-card text (daqifi-core#991), python-core is pc#284/#285.
+#
+# The allowlist is SHRINK-ONLY: a command that no longer writes fails the gate
+# too, so a stage-3 fix must delete its line in the same commit. Otherwise the
+# file decays into stale exemptions that read exactly like live ones, and the
+# next real instance can be appended to it unnoticed. Same both-directions
+# rule as log-budget.yml.
+#
+# Deliberately NOT covered: the `**ERROR` line every queued error prints from
+# the transport error callbacks (UsbCdc.c SCPI_USB_Error,
+# wifi_tcp_server.c SCPI_TCP_Error). libscpi reaches them through
+# `context->interface->error(...)`, and those two libscpi call sites are
+# DECLARED in tools/lint/scpi_nonquery_write-indirect.txt rather than
+# followed; they are part of #1274 stage 3.
+#
+# Known limits, stated rather than discovered later: this is a textual call
+# graph with no control flow, so a write behind an impossible condition still
+# counts, and the preprocessor is not evaluated, so a call inside `#if 0`
+# counts. Both over-approximate -- a false positive costs an argument, the
+# opposite costs a missed defect.
+#
+# Since round 3 libscpi (firmware/src/libraries/scpi/libscpi) is indexed as a
+# second layer of the same graph, so a non-query callback that calls a
+# libscpi function which writes -- SCPI_CoreIdnQ, say -- is reported, and
+# libscpi's own eight table callbacks are analysed rather than declared.
+# A call that hands a SCPI context to a target the checker cannot name is
+# REFUSED: a parenthesised callee is normalised, a local or parameter
+# function pointer is resolved to its assigned targets or refused, and a
+# definition cdef's grammar misreads (a leading or stacked __attribute__)
+# is refused. What is left is DECLARED, and a new one fails the gate:
+#   - an indirect call the checker does not follow
+#     (tools/lint/scpi_nonquery_write-indirect.txt: a member no assignment
+#     names, libscpi's two `->error` calls, the WiFi transport's call into
+#     libscpi's parser);
+#   - a context-carrying call to a callee with no source in the tree, i.e.
+#     the C library (tools/lint/scpi_nonquery_write-external.txt, per call
+#     site);
+#   - a registered non-query callback defined outside the scan set
+#     (tools/lint/scpi_nonquery_write-unresolved.txt -- empty since round 3).
+# Round 1 of the adversarial audit found the last two kinds failing toward
+# silence -- a callback outside the scan set was being skipped outright,
+# under a docstring claim that a vendor function "cannot write because it
+# has no access to the context", which is false for a table callback since
+# libscpi hands it the context. Round 2's audit found a libscpi callee, a
+# local function pointer, a parenthesised callee and attribute placements
+# failing the same way; round 3 closes them.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      # The whole source tree, deliberately. This gate's verdict depends on the
+      # entire call graph: a write added to any helper that a non-query callback
+      # can reach changes the answer, and that helper need not live in the SCPI
+      # directory (the current findings already route through
+      # Util/-adjacent and sd_card_services/ code). Narrow paths here would be
+      # "a guard that is not triggered by a change to what it guards", which is
+      # the mistake scpi-sd-arm-path.yml calls out in its own comment.
+      - 'firmware/src/**'
+      - 'tools/lint/scpi_nonquery_write.py'
+      - 'tools/lint/scpi_nonquery_write-allow.txt'
+      - 'tools/lint/scpi_nonquery_write-indirect.txt'
+      - 'tools/lint/scpi_nonquery_write-unresolved.txt'
+      - 'tools/lint/scpi_nonquery_write-external.txt'
+      # The checker IMPORTS this. Without it, a change that gutted the shared
+      # splice/mask/span primitives would pass this gate without the gate ever
+      # running.
+      - 'tools/lint/cdef.py'
+      - '.github/workflows/scpi-nonquery-write.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'firmware/src/**'
+      - 'tools/lint/scpi_nonquery_write.py'
+      - 'tools/lint/scpi_nonquery_write-allow.txt'
+      - 'tools/lint/scpi_nonquery_write-indirect.txt'
+      - 'tools/lint/scpi_nonquery_write-unresolved.txt'
+      - 'tools/lint/scpi_nonquery_write-external.txt'
+      - 'tools/lint/cdef.py'
+      - '.github/workflows/scpi-nonquery-write.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  nonquery-write:
+    name: A SCPI command without '?' does not write to the response stream
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # The shared splice/mask/definition primitives this checker reads the
+      # source through. Its own self-test covers cases neither checker's
+      # fixtures reach.
+      - name: Self-test the shared definition rule
+        run: python3 tools/lint/cdef.py
+
+      # Runs BEFORE the check and separately: the checker's own logic is what
+      # decides whether the gate below means anything, and a checker that
+      # examines nothing reports a pass. Its --self-test covers one synthetic
+      # case per syntactic route to a write (direct, via a helper, via a
+      # FUNCTION-POINTER ARGUMENT, on an else/error branch, through a libscpi
+      # callee, a local function pointer, a parenthesised callee, a macro, and
+      # a writer defined under each __attribute__ placement), a '?' writer it
+      # must pass, the declarations that must NOT mask a write, and the
+      # vacuity cases that must FAIL: an empty scan set, a scan set missing a
+      # SCPI source, an unparseable table entry, and a list line with no
+      # issue reference.
+      - name: Self-test the checker
+        run: python3 tools/lint/scpi_nonquery_write.py --self-test
+
+      - name: Check that no non-query command writes to the response stream
+        run: python3 tools/lint/scpi_nonquery_write.py --list
