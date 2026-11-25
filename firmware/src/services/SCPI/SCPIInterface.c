@@ -3381,13 +3381,30 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
 //                        never cleared on a streak reset. Read it as a
 //                        recommendation only when recommendedHz > 0 (#1239).
 //   reason             = START_REFUSED | START_FAIL | NO_LINK | NO_CLEAN_SOAK |
-//                        BENCH_CAP | LINK_SATURATED | HIT_MAX
+//                        BENCH_CAP | LINK_SATURATED | HIT_MAX | NO_SAMPLES
 //                        #895 splits what used to be one START_FAIL token in
 //                        two: START_REFUSED = the sweep never measured
 //                        anything, its FIRST step's arm was withheld;
 //                        START_FAIL = a LATER step's was, so the reply
 //                        describes a partial sweep. Same five fields either
 //                        way; a first-step refusal reads 0,0,START_REFUSED,0,0.
+//                        NO_LINK is "no step was sustainable" (lastGoodHz == 0).
+//                        NO_SAMPLES (#1339, appended; the tokens above and
+//                        their conditions are unchanged) = every measured step
+//                        delivered nothing and its scans weren't completing.
+//                        It is the one case of NO_LINK where the cause is
+//                        known: NO arm was refused, lastGoodHz is 0, and EVERY
+//                        step that ran was DRY (zero samples, no queue drop,
+//                        at least one stale scan tick). A zero-sample step is
+//                        never scored clean either way, so the climb trips
+//                        twice at the start rate. A sweep with a mix of dry
+//                        and lossy steps, any step that streamed a sample, or
+//                        a zero-sample step without that evidence (labelled
+//                        LOSSY), keeps NO_LINK. A sweep that streamed clean
+//                        steps first and ran dry only higher up reads as the
+//                        usual saturation tokens, since a dry step is a trip.
+//                        The per-step cause is also in SYSTem:LOG? (a dry
+//                        step line ends in NO_SAMPLES, samp=0).
 //   ceilingHz/KBps     = raw arc/refine ceiling (the pre-soak, pre-clamp
 //                        overestimate) — kept unclamped for diagnostics/testing.
 //
@@ -3505,6 +3522,11 @@ typedef struct {
 // `basis` is the sweep's #868 channel-mapping provenance and is required --
 // the sole caller passes the address of its own local, so it is never NULL and
 // is not tested for it.
+// *outDry (#1339) is true when the step was DRY: zero samples, no queue drop,
+// at least one stale scan tick. It is meaningful only when the step was scored
+// (not *outStartFailed). The caller folds it into "did any scored step NOT
+// read dry" to pick NO_SAMPLES over NO_LINK. A zero-sample step is never
+// scored clean whether or not it is dry.
 // *outStopRequested (#965) is set true only when the failure's cause was
 // specifically a stop -- the #938 pin at the arm, or (#1201) the same test
 // repeated at the end of the observation, which discards a measurement a stop
@@ -3520,8 +3542,9 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
                             const FindStepBasis* basis, uint32_t clkFreq,
                             uint32_t wRingCap, uint32_t freq, uint32_t obsMs,
                             uint32_t* outKBps, bool* outStartFailed,
-                            bool* outStopRequested) {
+                            bool* outStopRequested, bool* outDry) {
     *outStopRequested = false;
+    *outDry = false;   /* #1339: set at the end, only for a scored step */
     /* #938: THE STOP PIN IS THE SWEEP'S, NOT THIS STEP'S. It is taken once,
      * under one critical section, where the caller builds `basis` -- the same
      * place, and for the same reason, as the #868 channel-mapping provenance
@@ -3917,6 +3940,46 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
     // the grace semantics already used for wifiDroppedBytesSteady).
     bool lossy = (s.queueDroppedSamplesSteady > 0) ||
                  (s.wifiDroppedBytesSteady > 0) || (s.windowLossPercent > 0);
+    /* #1339: a step that streamed NO sample measured nothing and must not be
+     * scored clean. `s` was snapshotted before the teardown, i.e. before
+     * Streaming_Stop() derives WindowLossPercent=100 for a never-completed
+     * scan (#1301), and a tick before the first scan completes is a dry tick
+     * kept out of the queue/WiFi drop counters (#745). So with no sample
+     * streamed every term of `lossy` above can read zero and the step would
+     * come out OK. Count it as lossy: a rate that carried no data is not
+     * evidence it is sustainable.
+     * Only a DRY step is CALLED dry (label, LOG_E_ONCE, NO_SAMPLES token):
+     * zero samples, queueDroppedSamples == 0 and scanStaleDropped > 0, all
+     * from the one snapshot. STATS:CLEar may run mid-step and zero every
+     * counter in ONE critical section (Streaming_ClearStats), the same section
+     * Streaming_GetStats reads under, so zero samples alone cannot tell a dry
+     * step from a cleared one. A dry tick frees its pool slot and is never
+     * booked as a drop, so a really dry step has no queue drop; a few drops
+     * after a clear mean the stream was running. The stale count moves in the
+     * timer ISR on each tick whose scan did not complete (from the 2nd tick);
+     * it is the RAW count (the Steady one is gated on grace and
+     * gScanFeedsUser). Zero samples without that evidence is LOSSY, NO_LINK.
+     * Limit: all-or-nothing. A step that streamed even one sample is not
+     * caught, because the count a healthy step reaches depends on the rate,
+     * the dwell and the channel count, so no fixed minimum separates a sparse
+     * step from a dry one at every rate.
+     *
+     * Logged at LOG_E like the other step causes (a STATIC message: LOG_E_ONCE
+     * passes only the format on its ISR path, so it takes no arguments; the
+     * rate is in the LOG_I step line), but ONCE per SYST:LOG? cycle
+     * (LOG_E_ONCE): the per-step line below is LOG_I and carries NO_SAMPLES for
+     * every dry step, so one error entry makes the cause findable without a
+     * dry-heavy sweep filling the 64-entry ring with one LOG_E per step. */
+    bool noSamples = (s.totalSamplesStreamed == 0);
+    bool dry = noSamples && (s.scanStaleDropped > 0) &&
+               (s.queueDroppedSamples == 0);
+    if (dry) {
+        LOG_E_ONCE(LOG_ONCE_FIND_NO_SAMPLES,
+                   "WIFI:FIND: a step streamed 0 samples - not scored clean; "
+                   "see samp= in the step lines (#1339)");
+    }
+    lossy = lossy || noSamples;   /* a zero-sample step is never clean */
+    *outDry = dry;
     bool tripped = poolFull || lossy;
 
     // Use the ACTUAL observed dwell (stepTicks may round up vs obsMs/N) so the
@@ -3935,7 +3998,7 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
           (unsigned)poolPeak, (unsigned)poolCap,
           (unsigned)s.queueDroppedSamples,
           (unsigned)s.wifiDroppedBytesSteady, (unsigned)s.windowLossPercent,
-          (!tripped ? "OK" : (lossy ? "LOSSY" : "BUF_FULL")));
+          (!tripped ? "OK" : (dry ? "NO_SAMPLES" : (lossy ? "LOSSY" : "BUF_FULL"))));
 
     return tripped;
 }
@@ -4149,6 +4212,9 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context,
      * this is deliberately not `lastGoodHz > 0`, which would misreport a
      * refusal following the debounce's first trip as "never started". */
     bool anyStepMeasured = false;
+    /* #1339: has ANY scored step NOT read dry? Together with anyStepMeasured it
+     * separates NO_SAMPLES (every scored step dry) from NO_LINK. */
+    bool anyStepNotDry = false;
     bool saturated = false;
     bool confirmTrip = false;   // debounce: require 2 consecutive trips to lock
 
@@ -4163,7 +4229,8 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context,
         uint32_t kbps = 0;
         bool sf = false;
         bool stopHit = false;
-        bool sat = FindMeasureStep(cfg, &basis, clkFreq, wRingCap, freq, FIND_DWELL_MS, &kbps, &sf, &stopHit);
+        bool dry = false;
+        bool sat = FindMeasureStep(cfg, &basis, clkFreq, wRingCap, freq, FIND_DWELL_MS, &kbps, &sf, &stopHit, &dry);
         if (sf) { startFailed = true; startFailedByStop = stopHit; break; }
         /* #895: past the refusal test, so this step measured.  Set at ALL
          * THREE call sites even though sites 2 and 3 cannot reach it with the
@@ -4173,6 +4240,7 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context,
          * treating one call site as special is how the twin gets left behind
          * when the gating on 2/3 is next changed. */
         anyStepMeasured = true;
+        anyStepNotDry = anyStepNotDry || !dry;   /* #1339, all three sites */
 
         if (!sat) {
             confirmTrip = false;   // clean step clears any pending debounce
@@ -4213,7 +4281,8 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context,
             uint32_t kbps = 0;
             bool sf = false;
             bool stopHit = false;
-            bool sat = FindMeasureStep(cfg, &basis, clkFreq, wRingCap, mid, FIND_DWELL_MS, &kbps, &sf, &stopHit);
+            bool dry = false;
+            bool sat = FindMeasureStep(cfg, &basis, clkFreq, wRingCap, mid, FIND_DWELL_MS, &kbps, &sf, &stopHit, &dry);
             if (sf) {
                 /* #868: PROPAGATE, don't just leave the loop. This branch used
                  * to break with startFailed still false ("keep coarse
@@ -4236,6 +4305,7 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context,
                 break;
             }
             anyStepMeasured = true;   /* #895, see site 1 */
+            anyStepNotDry = anyStepNotDry || !dry;   /* #1339 */
             if (sat) {
                 hi = mid;
             } else {
@@ -4262,9 +4332,11 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context,
         for (uint32_t it = 0; it < FIND_SOAK_MAX_ITERS && cand >= FIND_SOAK_MIN_HZ; it++) {
             uint32_t kbps = 0; bool sf = false;
             bool stopHit = false;
-            bool sat = FindMeasureStep(cfg, &basis, clkFreq, wRingCap, cand, FIND_SOAK_MS, &kbps, &sf, &stopHit);
+            bool dry = false;
+            bool sat = FindMeasureStep(cfg, &basis, clkFreq, wRingCap, cand, FIND_SOAK_MS, &kbps, &sf, &stopHit, &dry);
             if (sf) { startFailed = true; startFailedByStop = stopHit; break; }   /* #965, see site 1 */
             anyStepMeasured = true;   /* #895, see site 1 */
+            anyStepNotDry = anyStepNotDry || !dry;   /* #1339 */
             if (!sat) {                       // a clean 60 s soak
                 streak++;
                 recommendedKBps = kbps;       // track the clean rate's wire rate
@@ -4349,7 +4421,9 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context,
     if (startFailed && !anyStepMeasured)
                                 reason = "START_REFUSED"; // refused at the first arm — nothing was measured
     else if (startFailed)       reason = "START_FAIL";    // refused mid-sweep — the fields are a partial sweep
-    else if (lastGoodHz == 0)   reason = "NO_LINK";        // nothing sustainable, even the start freq
+    else if (lastGoodHz == 0)   reason = (anyStepMeasured && !anyStepNotDry)
+                                    ? "NO_SAMPLES"            // #1339: every measured step was dry (0 samples + stale scans)
+                                    : "NO_LINK";              // nothing sustainable, even the start freq
     else if (!soakClean)        reason = "NO_CLEAN_SOAK";  // walked to floor without a clean 20 s — link unstable
     else if (benchClamped)      reason = "BENCH_CAP";      // soak clean but clamped to bench wire ceiling
     else if (saturated)         reason = "LINK_SATURATED"; // confirmed ceiling + clean soak
