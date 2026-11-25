@@ -211,7 +211,16 @@ void Bootloader_ProcessBuffer( BOOTLOADER_DATA *handle )
 
         case PROGRAM_FLASH:
             if(APP_ProgramHexRecord(&handle->data->buffers.buff2[1], handle->cmdBufferLength-3) != HEX_REC_NORMAL)
+            {
+                /* #1198: drop the rejected frame and go back to reading.
+                 * A bare `break` left currentState at PROCESS_COMMAND, so
+                 * Bootloader_Tasks re-ran this same frame on every pass,
+                 * rewriting any records earlier in it (already programmed,
+                 * never re-erased) until a USB reset. No ACK is sent, as
+                 * before; the host times out and can retry or abort. */
+                handle->currentState = BOOTLOADER_GET_COMMAND;
                 break;
+            }
             handle->bufferSize = 1;
             handle->currentState = BOOTLOADER_SEND_RESPONSE;
             break;
@@ -239,6 +248,11 @@ void Bootloader_ProcessBuffer( BOOTLOADER_DATA *handle )
             break;
 
         default:
+            /* #1198: an unknown command is dropped without an ACK, for the
+             * same reason as a rejected PROGRAM_FLASH above: staying in
+             * PROCESS_COMMAND would re-dispatch this frame forever and the
+             * device would never read the host's next one. */
+            handle->currentState = BOOTLOADER_GET_COMMAND;
             break;
     }
 }
