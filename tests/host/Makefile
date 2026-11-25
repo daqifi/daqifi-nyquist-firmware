@@ -58,6 +58,11 @@ INCLUDES := -Istubs -I$(FW_UTIL)
 # follows the same rule -- assigned near the top, built wherever.
 NVM_SRC     := ../../firmware/src/HAL/NVM/nvm.c
 NVM1153_BIN := run_1153_tests
+# #1206: the REAL nvm.c compiled against stubs/nvm_1206. `?=` so a review can
+# point it at another revision of the file (e.g. origin/main's, to watch the
+# test go red) without editing this Makefile.
+NVM1206_BIN := run_1206_tests
+NVM1206_SRC ?= $(NVM_SRC)
 
 BIN := run_tests
 UUT := CircularBuffer_uut.c
@@ -704,6 +709,141 @@ $(CLAMP1231_BIN): test_1231_clamp_report_latch.c test_framework.h \
 	   exit 1; \
 	fi
 	$(CC) $(CFLAGS) -o $(CLAMP1231_BIN) test_1231_clamp_report_latch.c
+
+# #1279: SD operations restore the idle SD buffers a non-SD stream shrank.
+#
+# The REAL sizing (Streaming_ComputeAutoBuffers, streaming.c) and the REAL
+# predicate (SdIdleRestoreDue, SCPIInterface.c) are spliced verbatim and run
+# together, so the test asserts the predicate fires on exactly the partitions
+# the sizing leaves behind -- after a WiFi or USB-only stream, not after an SD
+# one. The real #defines they use come out of headers that are not
+# host-includable (sd_card_manager.h, UsbCdc.h, streaming.h).
+#
+# The call sites -- SD:BENCHmark and SD:GET asking before they arm, BENCHmark
+# refusing on failure, the helper's claim/re-ask/re-partition/release order --
+# are not host-compilable, so check_1279_sd_idle_restore.py pins them against
+# the real source, function-scoped, after its own --self-test shows each pin
+# can fail. On a tree without the fix the splice below finds no
+# SdIdleRestoreDue and fails the build, and the call-site check fails too.
+SDIDLE1279_BIN := run_1279_tests
+SDIDLE1279_AUTOBUF := gen_1279_autobuf.h
+SDIDLE1279_DUE := gen_1279_due.h
+SDIDLE1279_DEFS := gen_1279_defs.h
+SDIDLE1279_SD_HDR := ../../firmware/src/services/sd_card_services/sd_card_manager.h
+SDIDLE1279_USB_HDR := ../../firmware/src/services/UsbCdc/UsbCdc.h
+SDIDLE1279_STREAM_HDR := ../../firmware/src/services/streaming.h
+
+$(SDIDLE1279_BIN): test_1279_sd_idle_buffer_restore.c test_framework.h \
+                   check_1279_sd_idle_restore.py $(STREAMING_SRC) \
+                   $(SCPISD_START_SRC) $(SD_BENCH_SRC) $(SDIDLE1279_SD_HDR) \
+                   $(SDIDLE1279_USB_HDR) $(SDIDLE1279_STREAM_HDR) \
+                   $(FW_UTIL)/StreamingBufferPool.h $(FW_UTIL)/CoherentPool.h \
+                   $(RECIPES)
+	@splice() { \
+	   sed -n "/^$$2(/,/^}/p" "$$1" | tr -d '\r' > "$$3"; \
+	   lines=`wc -l < "$$3" | tr -d ' '`; \
+	   last=`tail -1 "$$3" | tr -d '[:space:]'`; \
+	   test "$$lines" -ge 4 && test "$$lines" -le 200 && test "$$last" = "}" \
+	   || { echo "ERROR: #1279 -- could not splice '$$2' out of $$1:"; \
+	        echo "       got $$lines line(s) ending in '$$last'. 0 lines means it"; \
+	        echo "       is absent or its signature left column 0 -- on a tree"; \
+	        echo "       without the #1279 fix SdIdleRestoreDue does not exist."; \
+	        rm -f "$$3"; return 1; }; \
+	 }; \
+	 splice $(STREAMING_SRC) "void Streaming_ComputeAutoBuffers" $(SDIDLE1279_AUTOBUF) || exit 1; \
+	 splice $(SCPISD_START_SRC) "static bool SdIdleRestoreDue" $(SDIDLE1279_DUE) || exit 1
+	@{ grep -hE '^#define (SD_CARD_MANAGER_CONF_WBUFFER_SIZE|SD_CARD_MANAGER_MIN_WBUFFER_SIZE|SD_CARD_MANAGER_DEFAULT_CIRCULAR_SIZE)[[:space:]]' $(SDIDLE1279_SD_HDR); \
+	   grep -hE '^#define USBCDC_DMA_WBUFFER_MIN[[:space:]]' $(SDIDLE1279_USB_HDR); \
+	   grep -hE '^#define WIFI_DMA_MIN[[:space:]]' $(SDIDLE1279_STREAM_HDR); } \
+	   | tr -d '\r' | sed 's://.*$$::' > $(SDIDLE1279_DEFS)
+	@n=`grep -c '^#define' $(SDIDLE1279_DEFS)`; \
+	 if [ "$$n" -ne 5 ]; then \
+	   echo "ERROR: #1279 -- expected 5 #defines in $(SDIDLE1279_DEFS), got $$n."; \
+	   rm -f $(SDIDLE1279_DEFS); exit 1; \
+	 fi
+	@python3 check_1279_sd_idle_restore.py --self-test >/dev/null \
+	  || { python3 check_1279_sd_idle_restore.py --self-test; exit 1; }
+	@python3 check_1279_sd_idle_restore.py >/dev/null \
+	  || { python3 check_1279_sd_idle_restore.py; exit 1; }
+	$(CC) $(CFLAGS) $(INCLUDES) -o $@ test_1279_sd_idle_buffer_restore.c
+
+# #1279 (audit finding 1): the idle restore must not discard queued output.
+#
+# The re-partition resets the USB and TCP output rings, and an SD command's
+# restore runs while an earlier reply of the same message (libscpi flushes only
+# at message end) or the command's own echo can still be queued. The REAL
+# SCPI_RestoreIdleSdBuffers and SdIdleRestoreDue are spliced verbatim and run
+# against a model of the two rings in which the re-partition loses whatever is
+# still queued. Unlike run_1279_tests this splice also succeeds on a tree
+# without the fix (both functions exist there), so the failure on such a tree
+# is behavioural: the loss assertions fire. The refusal inside
+# PrepareStreamingBuffers is pinned by check_1279_sd_idle_restore.py, which
+# run_1279_tests runs.
+OUT1279_BIN := run_1279_output_tests
+OUT1279_GATE_SRC := ../../firmware/src/services/SCPI/SCPICmdGate.c
+OUT1279_DUE := gen_1279_out_due.h
+OUT1279_RESTORE := gen_1279_out_restore.h
+OUT1279_DEFS := gen_1279_out_defs.h
+
+$(OUT1279_BIN): test_1279_restore_keeps_queued_output.c test_framework.h \
+                $(OUT1279_GATE_SRC) ../../firmware/src/services/SCPI/SCPICmdGate.h \
+                $(SCPISD_START_SRC) $(SDIDLE1279_SD_HDR)
+	@splice() { \
+	   sed -n "/^$$2(/,/^}/p" "$$1" | tr -d '\r' > "$$3"; \
+	   lines=`wc -l < "$$3" | tr -d ' '`; \
+	   last=`tail -1 "$$3" | tr -d '[:space:]'`; \
+	   test "$$lines" -ge 4 && test "$$lines" -le 200 && test "$$last" = "}" \
+	   || { echo "ERROR: #1279 -- could not splice '$$2' out of $$1:"; \
+	        echo "       got $$lines line(s) ending in '$$last'."; \
+	        rm -f "$$3"; return 1; }; \
+	 }; \
+	 splice $(SCPISD_START_SRC) "static bool SdIdleRestoreDue" $(OUT1279_DUE) || exit 1; \
+	 splice $(SCPISD_START_SRC) "bool SCPI_RestoreIdleSdBuffers" $(OUT1279_RESTORE) || exit 1
+	@grep -hE '^#define (SD_CARD_MANAGER_CONF_WBUFFER_SIZE|SD_CARD_MANAGER_DEFAULT_CIRCULAR_SIZE)[[:space:]]' $(SDIDLE1279_SD_HDR) \
+	   | tr -d '\r' | sed 's://.*$$::' > $(OUT1279_DEFS)
+	@n=`grep -c '^#define' $(OUT1279_DEFS)`; \
+	 if [ "$$n" -ne 2 ]; then \
+	   echo "ERROR: #1279 -- expected 2 #defines in $(OUT1279_DEFS), got $$n."; \
+	   rm -f $(OUT1279_DEFS); exit 1; \
+	 fi
+	$(CC) $(CFLAGS) -Istubs/cmdgate_1279 -I$(FW_SVC)/SCPI -o $@ test_1279_restore_keeps_queued_output.c $(OUT1279_GATE_SRC)
+
+# #1279 (codex r3): the coherent-pool reset/alloc and the WINC staging-buffer
+# swap are ONE step with the scheduler suspended, and the WINC driver says
+# whether it is mid-transfer. The REAL wdrv_winc_spi.c and CoherentPool.c are
+# compiled in, and the REAL SCPI_SwapCoherentDmaBuffers is spliced verbatim, so
+# on a tree without the fix the splice finds no function and the build fails.
+# WINC_SPI_SRC / WINC_SWAP_SRC are overridable so a mutation can point the test
+# at a deliberately broken copy (see the PR body for the mutants run).
+WINCSWAP1279_BIN := run_1279_winc_swap_tests
+WINCSWAP1279_GEN := gen_1279_swap.h
+WINC_SPI_SRC ?= ../../firmware/src/config/default/driver/winc/dev/spi/wdrv_winc_spi.c
+WINC_SWAP_SRC ?= ../../firmware/src/services/SCPI/SCPIInterface.c
+USB_SWAP_SRC ?= ../../firmware/src/services/UsbCdc/UsbCdc.c
+SD_SWAP_SRC ?= ../../firmware/src/services/sd_card_services/sd_card_manager.c
+$(WINCSWAP1279_BIN): test_1279_winc_swap.c test_framework.h $(WINC_SPI_SRC) $(WINC_SWAP_SRC) $(USB_SWAP_SRC) $(SD_SWAP_SRC) \
+                     $(FW_UTIL)/CoherentPool.c $(FW_UTIL)/CoherentPool.h \
+                     stubs/wincspi_1279/osal/osal.h stubs/wincspi_1279/driver/spi/drv_spi.h \
+                     stubs/wincspi_1279/Util/Logger.h stubs/wincspi_1279/wdrv_winc_common.h
+	@spl() { sed -n "/^$$1(/,/^}/p" $$2 | tr -d '\r'; }; \
+	 { spl "bool UsbCdc_DmaSwapAcquire" $(USB_SWAP_SRC); spl "void UsbCdc_DmaSwapCommitAndRelease" $(USB_SWAP_SRC); \
+	   spl "void UsbCdc_DmaSwapRelease" $(USB_SWAP_SRC); } > gen_1279_usb.h; \
+	 { spl "bool sd_card_manager_DmaSwapAcquire" $(SD_SWAP_SRC); spl "void sd_card_manager_DmaSwapCommitAndRelease" $(SD_SWAP_SRC); \
+	   spl "void sd_card_manager_DmaSwapRelease" $(SD_SWAP_SRC); } > gen_1279_sd.h; \
+	 test "`grep -c '^}' gen_1279_usb.h`" = 3 && test "`grep -c '^}' gen_1279_sd.h`" = 3 \
+	 || { echo "ERROR: #1279 r4 -- could not splice the USB/SD DmaSwap functions (need 3 each)"; \
+	      rm -f gen_1279_usb.h gen_1279_sd.h; exit 1; }
+	@sed -n "/^static bool SCPI_SwapCoherentDmaBuffers(/,/^}/p" $(WINC_SWAP_SRC) | tr -d '\r' > $(WINCSWAP1279_GEN); \
+	 lines=`wc -l < $(WINCSWAP1279_GEN) | tr -d ' '`; \
+	 last=`tail -1 $(WINCSWAP1279_GEN) | tr -d '[:space:]'`; \
+	 test "$$lines" -ge 4 && test "$$lines" -le 200 && test "$$last" = "}" \
+	 || { echo "ERROR: #1279 -- could not splice SCPI_SwapCoherentDmaBuffers out of $(WINC_SWAP_SRC):"; \
+	      echo "       got $$lines line(s) ending in '$$last'. On a tree without the"; \
+	      echo "       #1279 r3 fix the function does not exist."; \
+	      rm -f $(WINCSWAP1279_GEN); exit 1; }
+	$(CC) $(CFLAGS) -Wno-attributes -Wno-unused-function -I. -Istubs/wincspi_1279 -I$(FW_UTIL) \
+	    -I../../firmware/src/config/default/driver/winc/include/dev \
+	    -DWINC_SPI_SRC='"$(WINC_SPI_SRC)"' -o $@ test_1279_winc_swap.c $(FW_UTIL)/CoherentPool.c
 
 # #970: encoder consume-accounting. Like BENCH_BIN, streaming.c and
 # JSON_Encoder.c are not host-test candidates (FreeRTOS/libscpi/the whole
@@ -1709,7 +1849,7 @@ $(ARM_BIN): test_971_sd_arm_refusal_order.c test_framework.h $(SD_BENCH_SRC) has
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(ARM_BIN) test_971_sd_arm_refusal_order.c
 
-$(SYSINFO_BIN): test_947_sysinfo_write_abort.c test_framework.h $(SCPI_INTERFACE_SRC) $(FREERTOS_CONFIG_SRC)
+$(SYSINFO_BIN): test_947_sysinfo_write_abort.c test_framework.h $(SCPI_INTERFACE_SRC) $(FREERTOS_CONFIG_SRC) $(RECIPES)
 	@grep -qE '^#define[[:space:]]+SCPI_WRITE_MAX_RETRIES[[:space:]]+200[[:space:]]*$$' $(SCPI_INTERFACE_SRC) \
 	  || { echo "ERROR: SCPI_WRITE_MAX_RETRIES is no longer '200' in $(SCPI_INTERFACE_SRC)."; \
 	       echo "       Update FW_WRITE_MAX_RETRIES in test_947_sysinfo_write_abort.c and re-derive its numbers."; \
@@ -2721,7 +2861,7 @@ SCPI_BOUNDED_WRITE_H := ../../firmware/src/services/SCPI/ScpiBoundedWrite.h
 
 $(REPLYBUF_BIN): test_1098_scpi_reply_buffer_pairing.c test_framework.h \
                 $(SCPI_INTERFACE_SRC) $(SCPI_INTERFACE_H) $(SD_BENCH_SRC) \
-                $(SCPI_BOUNDED_WRITE_H) $(RECIPES)
+                $(SCPI_BOUNDED_WRITE_H) $(FREERTOS_CONFIG_SRC) $(RECIPES)
 	@grep -qE '^[[:space:]]*#define[[:space:]]+SCPI_RESPONSE_BUF_SIZE[[:space:]]+2048U' \
 	     $(SCPI_INTERFACE_H) \
 	   || { echo "ERROR: SCPI_RESPONSE_BUF_SIZE is no longer 2048U in"; \
@@ -2928,11 +3068,11 @@ $(SCPI999_BIN): test_999_scpi_context_storage_isolation.c test_framework.h \
 	       echo "       storage parameter -- #999's per-transport isolation may have"; \
 	       echo "       been reverted."; \
 	       exit 1; }
-	@grep -qE '^\s*char scpi_input_buffer\[' $(SCPI_INTERFACE_C) \
+	@grep -qE '^\s*(static\s+)?char scpi_input_buffer\[' $(SCPI_INTERFACE_C) \
 	  && { echo "ERROR: $(SCPI_INTERFACE_C) still declares the OLD file-scope"; \
 	       echo "       scpi_input_buffer[] singleton -- #999's fix removes this."; \
 	       exit 1; } || true
-	@grep -qE '^\s*scpi_error_t scpi_error_queue_data\[' $(SCPI_INTERFACE_C) \
+	@grep -qE '^\s*(static\s+)?scpi_error_t scpi_error_queue_data\[' $(SCPI_INTERFACE_C) \
 	  && { echo "ERROR: $(SCPI_INTERFACE_C) still declares the OLD file-scope"; \
 	       echo "       scpi_error_queue_data[] singleton -- #999's fix removes this."; \
 	       exit 1; } || true
@@ -3323,17 +3463,26 @@ $(NAME_BIN): test_958_sd_benchmark_filename_collision.c test_framework.h $(SD_BE
 	 fi
 	$(CC) $(CFLAGS) -o $(NAME_BIN) test_958_sd_benchmark_filename_collision.c
 
-$(SDLOG_BIN): test_1000_sd_log_arm_budget.c test_framework.h $(SCPI_IFACE_SRC) $(SD_BENCH_SRC) $(FW_LOG_H) $(FW_LOG_C) $(RECIPES)
-	@grep -qF 'return "SD quarantined after a bus jam - reseat the card, "' $(SD_BENCH_SRC) \
-	  && grep -qF '"then SYST:STOR:SD:ENAble 1";' $(SD_BENCH_SRC) \
-	  && grep -qF 'return "a WiFi firmware update owns SPI4 - retry when it completes";' $(SD_BENCH_SRC) \
-	  && grep -qF 'return "WiFi streaming owns SPI4 - SYST:STR:STOP first";' $(SD_BENCH_SRC) \
-	  || { echo "ERROR: an SD_SuspendReasonText() return statement in $(SD_BENCH_SRC)"; \
-	       echo "       no longer matches the copy in test_1000_sd_log_arm_budget.c."; \
-	       echo "       That test measures those strings against the #942 refusal's"; \
-	       echo "       LOG_E prefix, so a drifted copy measures a string the device"; \
-	       echo "       does not emit. Update the REASON_ macros there, re-derive the"; \
-	       echo "       budget, and check the new length still fits."; \
+$(SDLOG_BIN): test_1000_sd_log_arm_budget.c test_framework.h $(SCPI_IFACE_SRC) $(SD_BENCH_SRC) ../../firmware/src/services/SCPI/SDSuspendReasons.h $(FW_LOG_H) $(FW_LOG_C) $(RECIPES)
+	@grep -qF 'SD_SUSPEND_REASON_MAX 76' ../../firmware/src/services/SCPI/SDSuspendReasons.h \
+	  || { echo "ERROR: SD_SUSPEND_REASON_MAX is no longer 76 in SDSuspendReasons.h."; \
+	       echo "       The log_budget max= annotations at SD_SuspendReasonText()'s"; \
+	       echo "       callers assume 76 (#1001); change both together."; \
+	       exit 1; }
+	@n=`grep -c 'log_budget: max=76' $(SCPI_IFACE_SRC) || true`; \
+	 test "$$n" -ge 3 \
+	  || { echo "ERROR: expected >=3 'log_budget: max=76' annotations in $(SCPI_IFACE_SRC)"; \
+	       echo "       (the SD_SuspendReasonText() callers), found $$n -- #1001."; \
+	       exit 1; }
+	@body=`sed -n '/^const char \*SD_SuspendReasonText(void)[[:space:]]*$$/,/^}/p' $(SD_BENCH_SRC) | grep -v '^[[:space:]]*[*/]'`; \
+	 test -n "$$body" \
+	   || { echo "ERROR: SD_SuspendReasonText(void) not found in $(SD_BENCH_SRC)"; exit 1; }; \
+	 nr=`printf '%s\n' "$$body" | grep -c 'return SD_SUSPEND_REASON_'`; \
+	 nq=`printf '%s\n' "$$body" | grep -c '"'`; \
+	 test "$$nr" -eq 4 && test "$$nq" -eq 0 \
+	  || { echo "ERROR: SD_SuspendReasonText() must return exactly four SD_SUSPEND_REASON_*"; \
+	       echo "       macros and hold no string literal of its own (returns=$$nr, quote lines=$$nq)."; \
+	       echo "       An inline literal escapes the sizeof guard in SDSuspendReasons.h (#1001)."; \
 	       exit 1; }
 	@set -e; \
 	 msgsz=$$(sed -n 's/^#define[[:space:]]\{1,\}LOG_MESSAGE_SIZE[[:space:]]\{1,\}\([0-9]\{1,\}\)[[:space:]]*$$/\1/p' $(FW_LOG_H)); \
@@ -3447,6 +3596,18 @@ $(LOGCEIL_BIN): test_1039_log_message_ceiling.c test_framework.h \
 # count) are compared to the expected block as a single whole-block string
 # equality -- not a per-line or substring containment match, so an insert,
 # delete, duplicate, or edit of any one line inside the block fails it.
+#
+# #888 split MSG2's literal in two without changing a single emitted byte:
+# SCPIADC.c's nine channel-resolve sites now share one AdcChannelResolve
+# helper, so the format lives on the helper's LOG_E ("%s: channel %d not
+# addressable%s") and CONFigure:ADC:CHANnel's own text is passed in as the
+# cmd and hint arguments. MSG2_FORMAT is still exactly what the device
+# emits -- that is what this suite measures -- but it is now assembled from
+# two places, so it takes TWO block checks. Both are needed and neither is
+# sufficient: want2a alone would not notice the hint being dropped from the
+# call, and want2b alone would not notice the helper's format changing
+# around it. The hint exists precisely because converging nine sites onto
+# one message must not silently delete the remedy #1039 sized for this one.
 	@check_log_block() { \
 	  f="$$1"; open_re="$$2"; n="$$3"; want="$$4"; label="$$5"; fmtname="$$6"; testfile="$$7"; \
 	  count=$$(grep -cE "$$open_re" "$$f"); \
@@ -3477,13 +3638,23 @@ $(LOGCEIL_BIN): test_1039_log_message_ceiling.c test_framework.h \
 	  '^[[:space:]]*LOG_E\("Clock mismatch \(#716\): PBCLK3 %u Hz, built for %u Hz - "[[:space:]]*$$' \
 	  2 "$$want1" "the #716 clock-mismatch LOG_E" MSG1_FORMAT test_1039_log_message_ceiling.c \
 	  || exit 1; \
-	want2=$$(printf '%s\n%s\n%s' \
-	  'LOG_E("CONFigure:ADC:CHANnel: channel %d not addressable; "' \
-	  '"two-arg form is <channel>,<state>, one-arg form is a "' \
-	  '"<mask>.",'); \
+	want2a=$$(printf '%s\n%s' \
+	  'LOG_E("%s: channel %d not addressable%s", cmd, channel,' \
+	  '(hint != NULL) ? hint : "");'); \
 	check_log_block $(LOGCEIL_SRC2) \
-	  '^[[:space:]]*LOG_E\("CONFigure:ADC:CHANnel: channel %d not addressable; "[[:space:]]*$$' \
-	  3 "$$want2" "the not-addressable-channel LOG_E" MSG2_FORMAT test_1039_log_message_ceiling.c \
+	  '^[[:space:]]*LOG_E\("%s: channel %d not addressable%s", cmd, channel,[[:space:]]*$$' \
+	  2 "$$want2a" "AdcChannelResolve's shared not-addressable LOG_E" \
+	  "MSG2_FORMAT's format half" test_1039_log_message_ceiling.c \
+	  || exit 1; \
+	want2b=$$(printf '%s\n%s\n%s\n%s' \
+	  'if (!AdcChannelResolve(context, param1, "CONFigure:ADC:CHANnel",' \
+	  '"; two-arg form is <channel>,<state>, "' \
+	  '"one-arg form is a <mask>.",' \
+	  '&channelIndex)) {'); \
+	check_log_block $(LOGCEIL_SRC2) \
+	  '^[[:space:]]*if \(!AdcChannelResolve\(context, param1, "CONFigure:ADC:CHANnel",[[:space:]]*$$' \
+	  4 "$$want2b" "the CONFigure:ADC:CHANnel cmd+hint arguments" \
+	  "MSG2_FORMAT's substituted half" test_1039_log_message_ceiling.c \
 	  || exit 1
 	@grep -qF 'LOG_E("WiFi down and an SD card IS present on the shared bus - likely bus-incompatible; remove it (wiki: SD-Card-Compatibility)");' $(LOGCEIL_SRC3) \
 	  || { echo "ERROR: the SD-present LOG_E hint in $(LOGCEIL_SRC3) no longer matches"; \
@@ -4725,6 +4896,9 @@ PIN1092_I2C  := pin_1092_no_blocking_before_powerdown.py
 
 SEQ908_BIN := run_908_tests
 
+# fw#1008 (issue #995): the SYST:LOG:CMDHistory? write-abort bound.
+CMDHIST_BIN := run_995_tests
+
 # ⚠ BOTH sources are prerequisites because BOTH are read by the guards below:
 # SETTINGS_SRC for the load-order and reader-yield checks, SCPIADC_SRC for the
 # setter-bracket check. A guard that reads a file it does not depend on does
@@ -4846,9 +5020,9 @@ $(SEQ908_BIN): test_908_cal_source_seqlock.c test_framework.h $(SETTINGS_SRC) $(
 	       echo "       cannot interpret is something it knows nothing about."; \
 	       exit 1; }
 	@$(CC) -fpreprocessed -E -P -x c - < $(SCPIADC_SRC) > /tmp/.fw908_fp.$$$$ 2>/dev/null; \
-	 tot=`grep -cE 'daqifi_settings_(Clear|Mark)FactoryCalMissing\(' /tmp/.fw908_fp.$$$$`; \
+	 tot=`grep -cE 'daqifi_settings_((Clear|Mark)FactoryCalMissing|PublishFactoryCal)\(' /tmp/.fw908_fp.$$$$`; \
 	 inref=`sed -n '/^static void RefreshFactoryCalPresence/,/^}/p' /tmp/.fw908_fp.$$$$ \
-	        | grep -cE 'daqifi_settings_(Clear|Mark)FactoryCalMissing\('`; \
+	        | grep -cE 'daqifi_settings_((Clear|Mark)FactoryCalMissing|PublishFactoryCal)\('`; \
 	 val=`sed -n '/^static void RefreshFactoryCalPresence/,/^}/p' /tmp/.fw908_fp.$$$$ \
 	      | grep -c 'daqifi_settings_ValidateADCCalBank('`; \
 	 sav=`sed -n '/^static scpi_result_t CalSaveCommon/,/^}/p' /tmp/.fw908_fp.$$$$ \
@@ -4856,15 +5030,15 @@ $(SEQ908_BIN): test_908_cal_source_seqlock.c test_framework.h $(SETTINGS_SRC) $(
 	 lod=`sed -n '/^static scpi_result_t CalLoadCommon/,/^}/p' /tmp/.fw908_fp.$$$$ \
 	      | grep -c 'RefreshFactoryCalPresence()'`; \
 	 rm -f /tmp/.fw908_fp.$$$$; \
-	 test "$$tot" = "2" && test "$$inref" = "2" && test "$$val" = "1" \
+	 test "$$tot" = "1" && test "$$inref" = "1" && test "$$val" = "1" \
 	   && test "$$sav" = "1" && test "$$lod" = "1" \
 	  || { echo "ERROR: factory_present is no longer derived from the PAGE by a"; \
 	       echo "       single writer in $(SCPIADC_SRC)."; \
-	       echo "       (Clear/Mark calls: $$tot in the file, $$inref inside"; \
+	       echo "       (presence writers: $$tot in the file, $$inref inside"; \
 	       echo "        RefreshFactoryCalPresence; ValidateADCCalBank in it:"; \
 	       echo "        $$val; RefreshFactoryCalPresence calls -- save: $$sav"; \
-	       echo "        load: $$lod. Want 2 / 2 / 1 / 1 / 1.)"; \
-	       echo "       ⛔ EQUAL COUNTS ARE THE POINT: every Clear/Mark in the"; \
+	       echo "        load: $$lod. Want 1 / 1 / 1 / 1 / 1.)"; \
+	       echo "       ⛔ EQUAL COUNTS ARE THE POINT: every presence writer in the"; \
 	       echo "       file must be INSIDE the one helper. factory_present is a"; \
 	       echo "       claim about what is ON THE PAGE, and any other call site"; \
 	       echo "       would be deriving it from something else -- which is the"; \
@@ -4978,6 +5152,33 @@ $(SEQ908_BIN): test_908_cal_source_seqlock.c test_framework.h $(SETTINGS_SRC) $(
 	       echo "       move the update out of the marks."; \
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(SEQ908_BIN) test_908_cal_source_seqlock.c
+
+# ---------------------------------------------------------------------------
+# PR firmware#1008 (issue #995): SCPI_GetCommandHistory must not hold the
+# shared response buffer. Re-applied on top of main during the 2026-10-28
+# refresh: this branch adds exactly ONE binary, so the merge took main's
+# file whole and re-applied this rule, rather than text-unioning a 700-line
+# conflict region. The run/clean note below records the measured counts.
+$(CMDHIST_BIN): test_995_cmdhistory_write_abort.c test_framework.h $(SCPI_IFACE_SRC) $(FW_RTOS_CFG) $(RECIPES)
+	@grep -qE '^#define[[:space:]]+SCPI_WRITE_MAX_RETRIES[[:space:]]+200[[:space:]]*$$' $(SCPI_IFACE_SRC) \
+	  || { echo "ERROR: SCPI_WRITE_MAX_RETRIES is no longer '200' in $(SCPI_IFACE_SRC)."; \
+	       echo "       Update FW_WRITE_MAX_RETRIES in test_995_cmdhistory_write_abort.c and re-derive its numbers."; \
+	       exit 1; }
+	@grep -qE '^#define[[:space:]]+SCPI_WRITE_RETRY_DELAY_MS[[:space:]]+5[[:space:]]*$$' $(SCPI_IFACE_SRC) \
+	  || { echo "ERROR: SCPI_WRITE_RETRY_DELAY_MS is no longer '5' in $(SCPI_IFACE_SRC)."; \
+	       echo "       Update FW_WRITE_RETRY_DELAY_MS in test_995_cmdhistory_write_abort.c and re-derive its numbers."; \
+	       exit 1; }
+	@grep -qE '^#define[[:space:]]+SCPI_CMDHISTORY_WRITE_BUDGET_MS[[:space:]]+2000U[[:space:]]*$$' $(SCPI_IFACE_SRC) \
+	  || { echo "ERROR: SCPI_CMDHISTORY_WRITE_BUDGET_MS is no longer '2000U' in $(SCPI_IFACE_SRC)."; \
+	       echo "       Update FW_CMDHISTORY_BUDGET_MS in test_995_cmdhistory_write_abort.c and re-derive its numbers."; \
+	       exit 1; }
+	@grep -qE '^#define[[:space:]]+configTICK_RATE_HZ[[:space:]]+\( \( TickType_t \) 1000 \)[[:space:]]*$$' $(FW_RTOS_CFG) \
+	  || { echo "ERROR: configTICK_RATE_HZ is no longer 1000 Hz in $(FW_RTOS_CFG) -- re-derive test_995's ms<->tick assumption."; \
+	       exit 1; }
+	@grep -qE '^#define[[:space:]]+configTICK_TYPE_WIDTH_IN_BITS[[:space:]]+TICK_TYPE_WIDTH_32_BITS[[:space:]]*$$' $(FW_RTOS_CFG) \
+	  || { echo "ERROR: configTICK_TYPE_WIDTH_IN_BITS is no longer 32-bit in $(FW_RTOS_CFG) -- re-derive test_995's wrap tests."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -o $(CMDHIST_BIN) test_995_cmdhistory_write_abort.c
 
 # ⛔⛔ #1084 / #1092: A BUTTON POWER-OFF MUST STICK.
 # test_1092_button_poweroff_latch.c models Power_UpdateState /
@@ -5360,6 +5561,17 @@ $(ARMREFUSE_BIN): test_936_bench_arm_refusal.c test_framework.h $(SD_BENCH_SRC) 
 	fi
 	$(CC) $(CFLAGS) -o $(ARMREFUSE_BIN) test_936_bench_arm_refusal.c
 
+# #1160: does a REFUSED SD arm EXIT the handler? Compiles and RUNS the real text
+# of every arm site (six handlers whole, the SD:BENCHmark and SYST:STR:START arms
+# as slices) against host stand-ins, then proves the cases can fail by running the
+# four unchecked shapes (bare call, (void) cast, captured-never-tested, guard whose
+# branch does not exit) as mutants of each site. See check_1160_arm_exit.py -- the
+# extraction, the mutants and the per-region sha256 drift pin all live there, so
+# there is ONE extraction rule and it fails loudly (exit 2 = REFUSED, never a pass).
+ARMEXIT_BIN := run_1160_tests
+$(ARMEXIT_BIN): check_1160_arm_exit.py test_1160_sd_arm_exit.scaffold.c test_framework.h hash_function.py $(CDEF) $(SD_BENCH_SRC) $(SCPI_INTERFACE_SRC) $(RECIPES)
+	python3 check_1160_arm_exit.py --out $(ARMEXIT_BIN)
+
 # #1248: SYSTem:LOG? must not lose a record to a short write. Two layers of
 # REAL code: LogRing.h is included unchanged, and LogMessageDump is spliced
 # out of Logger.c (not host-includable: FreeRTOS + libscpi + xc.h) and compiled
@@ -5452,22 +5664,60 @@ $(WIFI881_BIN): test_881_wifi_reset.c test_framework.h $(WIFI_MGR_SRC) $(IPERF2_
 	 rm -f $(WIFI881_GEN).part
 	$(CC) $(CFLAGS) -o $@ test_881_wifi_reset.c
 
+# #1190 (fw#1334 audit r1): the crash-record reader reports a record only if its
+# own snapshot validates. Compiles Util/CrashRecordCore.h unchanged and pins the
+# critical-section shape of exceptions.c's reader and clear.
+CRASH1190_BIN := run_1190_tests
+
+$(CRASH1190_BIN): test_1190_crash_snapshot.c test_framework.h $(FW_UTIL)/CrashRecordCore.h \
+                  $(FW_UTIL)/CrashRecord.h ../../firmware/src/config/default/exceptions.c $(RECIPES)
+	$(CC) $(CFLAGS) -I$(FW_UTIL) -DEXCEPTIONS_C='"../../firmware/src/config/default/exceptions.c"' \
+	      -o $@ test_1190_crash_snapshot.c
+
+# #1187: the extension of a log filename comes from the LEAF only. The three
+# functions are spliced out of the real sd_card_manager.c (same technique as
+# $(WIFI881_BIN)); each must be found exactly once and end in a closing brace.
+SDLEAF1187_BIN := run_1187_tests
+SDLEAF1187_GEN := gen_1187_leaf.h
+SDLEAF1187_FNS := 'static const char* sd_leafExtension(const char* path) {' \
+                  'static void extractBaseFilename(const char* filename) {' \
+                  'static void generateFilename(char* outPath, size_t maxLen, uint32_t counter,'
+$(SDLEAF1187_BIN): test_1187_sd_leaf_extension.c test_framework.h $(SD_MGR_SRC) $(RECIPES)
+	@rm -f $(SDLEAF1187_GEN); \
+	 for f in $(SDLEAF1187_FNS); do \
+	   n=`tr -d '\r' < $(SD_MGR_SRC) | grep -cxF "$$f"`; \
+	   test "$$n" = 1 || { echo "ERROR: '$$f' found $$n time(s) in $(SD_MGR_SRC)"; rm -f $(SDLEAF1187_GEN); exit 1; }; \
+	   tr -d '\r' < $(SD_MGR_SRC) \
+	     | awk -v f="$$f" '$$0 == f { p = 1 } p { print } p && /^}/ { p = 0 }' > $(SDLEAF1187_GEN).part; \
+	   last=`tail -1 $(SDLEAF1187_GEN).part | tr -d '[:space:]'`; \
+	   test "$$last" = "}" || { echo "ERROR: '$$f' did not end in '}'"; rm -f $(SDLEAF1187_GEN) $(SDLEAF1187_GEN).part; exit 1; }; \
+	   cat $(SDLEAF1187_GEN).part >> $(SDLEAF1187_GEN); \
+	 done; rm -f $(SDLEAF1187_GEN).part
+	$(CC) $(CFLAGS) -o $@ test_1187_sd_leaf_extension.c
+
 run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) \
      $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) \
-     $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(CAP1202_BIN) $(ISRLOG1197_BIN) $(STOP1201_BIN) $(CLAMP1231_BIN) \
+     $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(CAP1202_BIN) $(ISRLOG1197_BIN) $(STOP1201_BIN) $(CLAMP1231_BIN) $(SDIDLE1279_BIN) $(OUT1279_BIN) $(WINCSWAP1279_BIN) \
      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(USECALTYPE_BIN) $(ARM_BIN) $(NAME_BIN) \
      $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(LOG1039_BIN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) check-1200-parity check-885-savecal-claim \
-     $(NVM1153_BIN) $(ARMREFUSE_BIN) $(SDCRC_BIN) $(SDWRITE_BIN) $(LOGRING1248_BIN) $(HIF881_BIN) \
-     $(HIF881SPI_BIN) $(WIFI881_BIN)
+     $(NVM1153_BIN) $(NVM1206_BIN) $(ARMREFUSE_BIN) $(SDCRC_BIN) $(SDWRITE_BIN) $(LOGRING1248_BIN) $(HIF881_BIN) \
+     $(HIF881SPI_BIN) $(WIFI881_BIN) $(ARMEXIT_BIN) \
+     $(CMDHIST_BIN) \
+     $(SDLEAF1187_BIN) $(CRASH1190_BIN)
 	./$(HIF881_BIN)
 	./$(HIF881SPI_BIN)
 	./$(WIFI881_BIN)
+	./$(SDLEAF1187_BIN)
+	./$(CRASH1190_BIN)
 	./$(LOGRING1248_BIN)
 	./$(SDCRC_BIN)
 	./$(SDWRITE_BIN)
 	./$(ARMREFUSE_BIN)
+	./$(ARMEXIT_BIN)
 	./$(NVM1153_BIN)
+	./$(NVM1206_BIN)
 	./$(SEQ908_BIN)
+	./$(CMDHIST_BIN)
 	./$(APSTA1060_BIN)
 	./$(BUTTONLATCH_BIN)
 	./$(TEAR904_BIN)
@@ -5500,6 +5750,9 @@ run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $
 	./$(LOGONCE_BIN)
 	./$(STOP1201_BIN)
 	./$(CLAMP1231_BIN)
+	./$(SDIDLE1279_BIN)
+	./$(OUT1279_BIN)
+	./$(WINCSWAP1279_BIN)
 	./$(CAP1202_BIN)
 	./$(ISRLOG1197_BIN)
 	@# #1158: no AD7609 rate override in START (SCPIInterface.c is not
@@ -6044,20 +6297,71 @@ $(NVM1153_BIN): test_1153_nvm_recursive_lock.c test_framework.h \
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(NVM1153_BIN) test_1153_nvm_recursive_lock.c
 
+# #1206: nvm.c's nine waits are bounded and nvm_ErasePage reports a failed
+# erase. Unlike $(NVM1153_BIN) this is not a model: the test LINKS the real
+# nvm.c (NVM1206_SRC), built against stubs/nvm_1206/, whose register and PLIB
+# accessors are test functions that drive a simulated CP0 clock. Each case runs
+# in a forked child under alarm(), so a wait that never ends shows up as a
+# failed case instead of hanging the suite -- which is what the pre-#1206
+# source does. clock_config.h is forwarded to the real one, so the budget the
+# test exercises is the firmware's.
+#
+# The guard below is the one the #1206 issue thread asked for: #1153's guards
+# pin only that nvm_Lock() precedes nvm_Unlock() in these three functions, not
+# that every exit releases it. #1206 gave each a single exit (set `result`,
+# restore DMA, unlock once, return once), so -- as $(NVM1153_BIN)'s round-2
+# guards already do for SaveToNvm/ClearNvm -- this asserts no `return` sits
+# between the lock and the unlock. The behavioural cases in the test cover the
+# exits that exist today; this covers an early return added tomorrow.
+NVM1206_STUB_HDRS := $(wildcard stubs/nvm_1206/*.h)
+$(NVM1206_BIN): test_1206_nvm_bounded_waits.c test_framework.h $(NVM1206_SRC) \
+                ../../firmware/src/HAL/NVM/nvm.h \
+                ../../firmware/src/config/default/clock_config.h \
+                $(NVM1206_STUB_HDRS) $(RECIPES)
+	@for fn in nvm_ErasePage nvm_WriteWordtoAddr nvm_WriteRowtoAddr; do \
+	  body=`sed -n "/^bool $$fn(/,/^}/p" $(NVM_SRC) | tr -d '\r' | grep -v '^[[:space:]]*[*/]'`; \
+	  test -n "$$body" \
+	    || { echo "ERROR: $$fn() was not found in $(NVM_SRC), or no longer"; \
+	         echo "       opens at column 0."; exit 1; }; \
+	  lk=`printf '%s\n' "$$body" | grep -n 'nvm_Lock();' | head -1 | cut -d: -f1`; \
+	  ul=`printf '%s\n' "$$body" | grep -n 'nvm_Unlock();' | head -1 | cut -d: -f1`; \
+	  nul=`printf '%s\n' "$$body" | grep -c 'nvm_Unlock();'`; \
+	  test -n "$$lk" && test -n "$$ul" && test "$$lk" -lt "$$ul" && test "$$nul" = 1 \
+	    || { echo "ERROR: $$fn() in $(NVM_SRC) no longer has exactly one"; \
+	         echo "       nvm_Lock() ... nvm_Unlock() bracket (lock='$$lk'"; \
+	         echo "       unlock='$$ul' unlocks=$$nul). #1206 gave it ONE exit."; \
+	         exit 1; }; \
+	  nret=`printf '%s\n' "$$body" | awk -v lk="$$lk" -v ul="$$ul" 'NR>lk && NR<ul && /return/'`; \
+	  test -z "$$nret" \
+	    || { echo "ERROR: $$fn() in $(NVM_SRC) has a 'return' between its"; \
+	         echo "       nvm_Lock() and nvm_Unlock(): '$$nret'."; \
+	         echo "       A return there leaves the NVM mutex held (every later"; \
+	         echo "       NVM operation deadlocks) and can leave DMA suspended"; \
+	         echo "       device-wide. Set 'result' and fall through to the"; \
+	         echo "       single nvm_OpEnd() / nvm_Unlock() / return instead."; \
+	         exit 1; }; \
+	done
+	$(CC) $(CFLAGS) -Wno-unused-parameter -Wno-old-style-declaration -Istubs/nvm_1206 -I../../firmware/src/HAL/NVM \
+	  -o $@ test_1206_nvm_bounded_waits.c $(NVM1206_SRC)
+
 clean:
 	rm -f $(HIF881_BIN) $(HIF881SPI_BIN) $(WIFI881_BIN) $(WIFI881_GEN)
 	rm -f $(LOGRING1248_BIN) $(LOGRING1248_GEN)
 	rm -f $(SDCRC_BIN) $(SDWRITE_BIN) $(SDWRITE_UUT_OBJ)
-	rm -f $(NVM1153_BIN)
-	rm -f $(SEQ908_BIN)
+	rm -f $(NVM1153_BIN) $(NVM1206_BIN)
+	rm -f $(SEQ908_BIN) \
+	      $(CMDHIST_BIN)
 	rm -f $(TEAR904_BIN)
-	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
+	rm -f $(CRASH1190_BIN)
+	rm -f $(SDLEAF1187_BIN) $(SDLEAF1187_GEN) $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
 	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) \
 	      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(GEN_1125) $(CAP1202_BIN) $(GEN_1202) $(ISRLOG1197_BIN) $(GEN_1197) \
 	      $(STOP1201_BIN) $(STOP1201_GEN) $(CLAMP1231_BIN) $(CLAMP1231_GEN) \
+	      $(SDIDLE1279_BIN) $(SDIDLE1279_AUTOBUF) $(SDIDLE1279_DUE) $(SDIDLE1279_DEFS) \
+	      $(WINCSWAP1279_BIN) $(WINCSWAP1279_GEN) $(OUT1279_BIN) $(OUT1279_DUE) $(OUT1279_RESTORE) $(OUT1279_DEFS) \
 	      $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(SDLOG1029_GEN).tmp \
 	      $(USECALTYPE_BIN) $(NAME_BIN) $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(ARM_BIN) $(SCPIDAC_RAILGATE_BIN) \
-	      $(FORCEGATE_BIN) $(LOG1039_BIN) $(LOG1039_GEN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) $(ARMREFUSE_BIN)
+	      $(FORCEGATE_BIN) $(LOG1039_BIN) $(LOG1039_GEN) $(BIN970) $(SUMBUDGET_BIN) $(BUTTONLATCH_BIN) $(APSTA1060_BIN) $(EMIT1199_BIN) $(EVICT996_BIN) $(FMT1156_BIN) $(ARMREFUSE_BIN) $(ARMEXIT_BIN)
 
 # #1200: the three encoders must book the same loss for the same discard.
 # A source-derived check rather than a mock, because a model of the encoders

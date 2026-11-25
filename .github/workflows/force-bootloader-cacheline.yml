@@ -21,12 +21,16 @@ on:
     branches: [main]
     paths:
       - 'firmware/src/services/SCPI/SCPIInterface.c'
+      - 'firmware/src/config/default/exceptions.c'
+      - 'firmware/src/Util/CrashRecord.h'
       - 'tools/lint/force_bootloader_cacheline.py'
       - '.github/workflows/force-bootloader-cacheline.yml'
   push:
     branches: [main]
     paths:
       - 'firmware/src/services/SCPI/SCPIInterface.c'
+      - 'firmware/src/config/default/exceptions.c'
+      - 'firmware/src/Util/CrashRecord.h'
       - 'tools/lint/force_bootloader_cacheline.py'
       - '.github/workflows/force-bootloader-cacheline.yml'
 
@@ -35,7 +39,7 @@ permissions:
 
 jobs:
   cacheline:
-    name: force_bootloader_flag reserves its whole D-cache line
+    name: force_bootloader_flag and the crash record reserve whole D-cache lines
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout

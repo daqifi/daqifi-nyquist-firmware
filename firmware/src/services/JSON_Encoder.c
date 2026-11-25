@@ -97,7 +97,7 @@ void json_ResetEncoder(void) {
  * @brief Generate JSON metadata header with device info (sent once per session)
  *
  * Outputs a JSON object containing device metadata similar to CSV header:
- * {"meta":{"dev":"Nyquist NQ1","sn":"0123456789ABCDEF","tick_hz":1000000}}
+ * {"meta":{"dev":"Nyquist NQ1","sn":"0123456789ABCDEF","tick_hz":1000000,"units":"V"}}
  *
  * @param out      Output buffer
  * @param buffSize Size of output buffer
@@ -124,13 +124,21 @@ static size_t generateJsonHeader(char *out, size_t buffSize) {
     // Get timestamp tick rate (0 = timer not initialized, indicates config problem)
     uint32_t tickRate = TimerApi_FrequencyGet(boardConfig->StreamingConfig.TSTimerIndex);
 
+    // #1179: unit of the analog values, so a reader need not infer it.
+    const StreamingRuntimeConfig *pUnitsCfg = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+    const char *units = sample_units_name(
+            (pUnitsCfg != NULL) ? pUnitsCfg->RawOutputMode : false,
+            (pUnitsCfg != NULL) ? pUnitsCfg->VoltagePrecision : 4);
+
     // Determine required size dynamically (avoids hardcoded buffer size)
     int need = snprintf(NULL, 0,
-        "{\"meta\":{\"dev\":\"%s %u\",\"sn\":\"%016llX\",\"tick_hz\":%u}}\n",
+        "{\"meta\":{\"dev\":\"%s %u\",\"sn\":\"%016llX\",\"tick_hz\":%u,\"units\":\"%s\"}}\n",
         DAQIFI_PRODUCT_NAME,
         variant,
         (unsigned long long)serialNum,
-        tickRate);
+        tickRate,
+        units);
     if (need < 0) {
         return 0;
     }
@@ -141,11 +149,12 @@ static size_t generateJsonHeader(char *out, size_t buffSize) {
 
     // Generate compact JSON metadata object
     int written = snprintf(out, buffSize,
-        "{\"meta\":{\"dev\":\"%s %u\",\"sn\":\"%016llX\",\"tick_hz\":%u}}\n",
+        "{\"meta\":{\"dev\":\"%s %u\",\"sn\":\"%016llX\",\"tick_hz\":%u,\"units\":\"%s\"}}\n",
         DAQIFI_PRODUCT_NAME,
         variant,
         (unsigned long long)serialNum,
-        tickRate);
+        tickRate,
+        units);
 
     if (written < 0 || (size_t)written >= buffSize) {
         return 0;
@@ -538,7 +547,7 @@ size_t Json_Encode(tBoardData* state,
                 int written = snprintf(charBuffer + startIndex,
                         buffSize - startIndex,
                         "\"sec\":%u,\n",
-                        wifiSettings->securityMode);
+                        (unsigned int)wifiSettings->securityMode);
                 if (written < 0 || written >= (int)(buffSize - startIndex)) {
                     // Optional field - skip on buffer full, continue processing
                     break;
