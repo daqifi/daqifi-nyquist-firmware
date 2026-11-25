@@ -230,11 +230,11 @@ restore
 echo "== M3 (PIN 8): re-set STA_CONNECTED to buy the retry back -- the tempting =="
 echo "==            fix, which reinstates the stale link-state report. A COUNT, =="
 echo "==            because the association handler is a LEGITIMATE writer.     =="
-if sub "$F" '            if (teardownPending) {
-                taskENTER_CRITICAL();' \
-            '            if (teardownPending) {
+if sub "$F" '            if (wifiFwUpdateRequested) {
+                SendEvent(WIFI_MANAGER_EVENT_WIFI_FW_UPDATE_INIT);' \
+            '            if (wifiFwUpdateRequested) {
                 SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
-                taskENTER_CRITICAL();'; then
+                SendEvent(WIFI_MANAGER_EVENT_WIFI_FW_UPDATE_INIT);'; then
     expect "M3 exactly one STA_CONNECTED writer" "writer(s) of STA_CONNECTED, expected exactly 1"
 else
     echo "  FAIL M3 anchor absent."; fail=$((fail+1))
@@ -244,9 +244,10 @@ restore
 echo "== M4 (PIN 9): stop preserving the marker across MainState ENTRY -- the   =="
 echo "==            r3 HIGH. ⭐ EVERY OTHER PIN STILL PASSES: the flag is still  =="
 echo "==            set, cleared and re-attempted; it is simply erased by the   =="
-echo "==            memset one transition later, which is why r3 shipped.       =="
-if sub "$F" '            bool teardownPending = GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING);' \
-            '            bool teardownPending = false;'; then
+echo "==            reset one transition later, which is why r3 shipped.        =="
+if sub "$F" '                    WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_REQUESTED |
+                    WIFI_MANAGER_STATE_FLAG_TEARDOWN_PENDING);' \
+            '                    WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_REQUESTED);'; then
     expect "M4 marker survives ENTRY" "does not preserve the #1060 teardown"
 else
     echo "  FAIL M4 anchor absent."; fail=$((fail+1))
@@ -298,14 +299,14 @@ echo "== M7 NEGATIVE CONTROL: the fix intact, plus a COMMENT naming every       
 echo "==     forbidden shape. The guards must stay CLEAN -- they read           =="
 echo "==     comment-stripped output precisely because the prose explaining     =="
 echo "==     this fix names all of these tokens.                                =="
-if sub "$F" '            if (teardownPending) {
-                taskENTER_CRITICAL();' \
+if sub "$F" '            if (wifiFwUpdateRequested) {
+                SendEvent(WIFI_MANAGER_EVENT_WIFI_FW_UPDATE_INIT);' \
             '            /* Forbidden shapes, named in prose:
              *   SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
-             *   bool teardownPending = false;
+             *   ResetEventFlagsExcept(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_REQUESTED);
              * and a marker write with no taskENTER_CRITICAL around it. */
-            if (teardownPending) {
-                taskENTER_CRITICAL();'; then
+            if (wifiFwUpdateRequested) {
+                SendEvent(WIFI_MANAGER_EVENT_WIFI_FW_UPDATE_INIT);'; then
     expect "M7 prose does not trip the guards" CLEAN
 else
     echo "  FAIL M7 anchor absent."; fail=$((fail+1))
