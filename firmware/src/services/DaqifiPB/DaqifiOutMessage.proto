@@ -100,4 +100,10 @@ message DaqifiOutMessage
 	uint32 stream_timer_freq = 70;                 //  Streaming trigger timer frequency, Hz
 	uint32 timestamp_ticks_per_sample = 71;        //  Exact timestamp ticks per streaming period (0 = unconfigured)
 	uint32 actual_rate_millihz = 72;               //  Quantized streaming rate actually applied, millihertz (0 = unconfigured)
+	// #62: streaming-only. Bit j set = the j-th ENABLED channel is present in analog_in_data.
+	// In a message that carries a non-empty analog_in_data, field ABSENT (proto3 omits zero)
+	// = every enabled channel is present; the encoder emits it only when analog_in_data is
+	// short. A message with no analog_in_data (standalone digital message) carries neither.
+	// Tags 73-75 are skipped on purpose: a client copy of this proto once used them for other fields.
+	uint32 analog_in_data_mask = 76;
 }
